@@ -2223,6 +2223,21 @@ input[type="checkbox"] {
   background: rgba(2, 6, 23, 0.55);
 }
 
+.license-machine-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.license-machine-row .ghost-button {
+  justify-content: center;
+  min-width: 74px;
+  border-color: rgba(148, 163, 184, 0.28);
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.72);
+}
+
 .login-verification-field {
   gap: 8px;
 }

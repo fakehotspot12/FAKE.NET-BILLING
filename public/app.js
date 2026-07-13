@@ -2407,12 +2407,15 @@ function renderActivation(licenseStatus = {}) {
         </div>
         <div class="notice warning">
           <strong>Aplikasi belum diaktivasi</strong>
-          <span>Masukkan license key untuk mengaktifkan billing di mesin ini.</span>
+          <span>Salin HWID dari server ini, buat license key di generator admin, lalu paste license key di halaman ini.</span>
         </div>
         <form id="activationForm" class="login-form">
           <label class="field">
             <span>HWID / Machine Code</span>
-            <input name="machineCode" value="${escapeHtml(machineCode)}" readonly>
+            <div class="license-machine-row">
+              <input name="machineCode" value="${escapeHtml(machineCode)}" readonly>
+              <button class="ghost-button" type="button" id="copyMachineCode">Copy</button>
+            </div>
           </label>
           <label class="field">
             <span>License Key</span>
@@ -2420,10 +2423,18 @@ function renderActivation(licenseStatus = {}) {
           </label>
           <button class="button" type="submit">Aktivasi Aplikasi</button>
         </form>
-        <p class="login-note">Kirim HWID / machine code ini ke pengelola lisensi untuk dibuatkan license key.</p>
+        <p class="login-note">Untuk mendapatkan license key, kirim HWID ke CS Whatsapp 083878122381. Port 8896 adalah generator khusus admin lisensi.</p>
       </div>
     </section>
   `;
+  document.getElementById('copyMachineCode')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard?.writeText(machineCode);
+      setToast('HWID disalin');
+    } catch {
+      setToast('Gagal menyalin HWID');
+    }
+  });
   document.getElementById('activationForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
