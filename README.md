@@ -22,6 +22,25 @@ Data runtime tidak disertakan ke repository. Folder `data/` diabaikan oleh Git k
 - Aktivasi lisensi berbasis HWID/machine code.
 - Backup/restore dan update aplikasi dari menu Pengaturan.
 
+## Member PPP-DHCP
+
+Member PPP-DHCP digunakan untuk pelanggan bulanan seperti PPPoE dan DHCP yang ditagihkan secara periodik. Data pelanggan dibuat dari wizard akun, member, payment, dan review sehingga informasi teknis internet, identitas pelanggan, nomor Whatsapp, alamat, lokasi peta, foto rumah, profile layanan, NAS, serta detail pembayaran tersimpan dalam satu alur.
+
+Saat user PPP-DHCP dibuat, aplikasi dapat sekaligus membuat data member dengan ID pelanggan otomatis. Profile PPP-DHCP menyimpan harga paket, mode billing, VAT, diskon, dan parameter bandwidth atau link ke profile Mikrotik. Data autentikasi dan session menggunakan FreeRADIUS, sehingga status online/offline, kick session, suspend, aktif kembali, dan terminated tidak hanya tampil di aplikasi tetapi juga terkait dengan backend Radius.
+
+Alur operasional member PPP-DHCP:
+
+1. Admin, NOC, teknisi, collector, atau role yang diberi izin membuat atau mengubah user PPP-DHCP sesuai kewenangannya.
+2. Sistem menyimpan data akun internet, data kontak member, detail pembayaran, dan profile layanan.
+3. Invoice dapat dibuat otomatis sesuai billing setting atau manual dari menu tagihan.
+4. Reminder tagihan dikirim melalui Whatsapp Gateway berdasarkan template yang bisa diatur.
+5. Pembayaran bisa dicatat manual oleh user berwenang atau diterima otomatis dari payment gateway.
+6. Jika invoice sudah paid, pelanggan tetap aktif dan tidak ikut proses isolir.
+7. Jika melewati jatuh tempo sesuai pengaturan, sistem dapat melakukan isolir otomatis dan mengirim notifikasi.
+8. Pelanggan yang sudah membayar setelah isolir dapat diaktifkan kembali, termasuk trigger session/COA Radius bila tersedia.
+
+Monitoring member PPP-DHCP memuat status pelanggan, status pembayaran, NAS, kontak, alamat, invoice, serta data pendukung untuk pekerjaan lapangan. Portal WifiKu dapat digunakan pelanggan untuk melihat pemakaian bulanan, redaman, dan aksi perangkat jika integrasi GenieACS aktif.
+
 ## Voucher Hotspot
 
 Voucher Hotspot dirancang untuk operasional jual voucher harian/mingguan/bulanan tanpa input manual berulang. Admin atau reseller dapat membuat voucher satuan maupun batch dari profile Hotspot yang sudah memiliki harga, validity, quota, shared user, NAS, dan expired mode.
