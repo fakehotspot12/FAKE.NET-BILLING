@@ -1,0 +1,20 @@
+[Unit]
+Description=WAHA Local WhatsApp Gateway for FAKE.NET Billing
+PartOf=fakenet-billing-stack.target
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/fakenet-billing-waha.env
+ExecStartPre=-/usr/bin/docker rm -f fakenet-billing-waha
+ExecStart=/usr/bin/docker run --name fakenet-billing-waha --rm --shm-size=1g --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:${WAHA_PORT}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha
+ExecStop=/usr/bin/docker stop fakenet-billing-waha
+Restart=always
+RestartSec=10
+TimeoutStartSec=0
+SyslogIdentifier=fakenet-billing-waha
+
+[Install]
+WantedBy=multi-user.target

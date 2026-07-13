@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#08204f">
+    <title>WifiKu</title>
+    <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-20260713-3">
+  </head>
+  <body>
+    <main class="wifiku-shell">
+      <header class="wifiku-head">
+        <div class="brand">
+          <img id="brandLogo" src="/fakenet-logo.png" alt="Logo">
+          <div>
+            <strong id="brandName">WifiKu</strong>
+            <span>Portal Pelanggan</span>
+          </div>
+        </div>
+        <button id="logoutButton" type="button" hidden>Logout</button>
+      </header>
+
+      <section id="loginView" class="panel">
+        <h1>WifiKu</h1>
+        <p>Akses pemakaian bulanan, redaman, dan pengaturan WiFi menggunakan nomor WhatsApp member.</p>
+        <form id="phoneForm" class="stack">
+          <label>
+            <span>Nomor WhatsApp</span>
+            <input id="phoneInput" type="tel" inputmode="tel" autocomplete="tel" placeholder="0812xxxx" required>
+          </label>
+          <button type="submit">Masuk</button>
+        </form>
+        <form id="otpForm" class="stack" hidden>
+          <label>
+            <span>Kode OTP</span>
+            <input id="otpInput" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required>
+          </label>
+          <button type="submit">Verifikasi OTP</button>
+        </form>
+      </section>
+
+      <section id="portalView" hidden>
+        <div class="toolbar">
+          <div>
+            <span class="muted">Member</span>
+            <strong id="customerName">-</strong>
+          </div>
+          <input id="periodInput" type="month">
+        </div>
+
+        <section class="grid">
+          <article class="card primary">
+            <span>Total Usage</span>
+            <strong id="usageTotal">0 B</strong>
+            <small id="usageDetail">U 0 B / D 0 B</small>
+          </article>
+          <article class="card">
+            <span>Redaman</span>
+            <strong id="rxPower">-</strong>
+            <small id="deviceStatus">-</small>
+          </article>
+          <article class="card">
+            <span>Client WiFi</span>
+            <strong id="wifiTotal">0 user</strong>
+            <small id="wifiDetail">2.4G 0 / 5G 0</small>
+          </article>
+        </section>
+
+        <section class="panel compact usage-panel">
+          <div class="usage-head">
+            <div>
+              <h2>Usage Radius</h2>
+              <span id="usagePeriod">-</span>
+            </div>
+            <small id="usageSessionCount">Total bulanan</small>
+          </div>
+          <div id="usageChart" class="usage-chart"></div>
+        </section>
+
+        <section class="panel compact">
+          <h2>WiFi</h2>
+          <div class="wifi-row">
+            <div>
+              <span>SSID 2.4G</span>
+              <strong id="ssid24">-</strong>
+            </div>
+            <button type="button" data-ssid-band="2.4g">Ubah</button>
+          </div>
+          <div class="wifi-row">
+            <div>
+              <span>SSID 5G</span>
+              <strong id="ssid5">-</strong>
+            </div>
+            <button type="button" data-ssid-band="5g">Ubah</button>
+          </div>
+          <div class="actions">
+            <button id="passwordButton" type="button">Ganti Password</button>
+            <button id="rebootButton" class="danger" type="button">Reboot Modem</button>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="actionDialog">
+      <form method="dialog" id="actionForm" class="dialog-card">
+        <h2 id="actionTitle">Aksi</h2>
+        <div id="actionBody"></div>
+        <div class="dialog-actions">
+          <button value="cancel" type="button" id="closeDialog">Batal</button>
+          <button value="confirm" type="submit">Kirim</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast"></div>
+    <script src="/wifiku.js?v=fakenet-billing-20260713-3" defer></script>
+  </body>
+</html>

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="${APP_DIR:-/opt/fakenet-billing}"
+BACKUP_DIR="${FAKENET_BACKUP_DIR:-/var/backups/fakenet-billing}"
+LOG_DIR="${FAKENET_LOG_DIR:-/var/log/fakenet-billing}"
+LOG_FILE="${FAKENET_UPDATE_LOG:-$LOG_DIR/update.log}"
+LOCK_FILE="${FAKENET_UPDATE_LOCK:-/tmp/fakenet-billing-update.lock}"
+STACK_CMD="${FAKENET_STACK_CMD:-/usr/local/bin/fakenet-billing-stack}"
+ARCHIVE_URL="${FAKENET_UPDATE_ARCHIVE_URL:-}"
+BRANCH="${FAKENET_UPDATE_BRANCH:-}"
+
+mkdir -p "$BACKUP_DIR" "$LOG_DIR"
+exec >>"$LOG_FILE" 2>&1
+
+echo
+echo "[$(date -Is)] Update dimulai"
+
+if [ -e "$LOCK_FILE" ]; then
+  echo "Update lain masih berjalan: $LOCK_FILE"
+  exit 1
+fi
+trap 'rm -f "$LOCK_FILE"' EXIT
+echo "$$" > "$LOCK_FILE"
+
+if [ ! -d "$APP_DIR" ]; then
+  echo "APP_DIR tidak ditemukan: $APP_DIR"
+  exit 1
+fi
+
+stamp="$(date +%Y%m%d%H%M%S)"
+backup_file="$BACKUP_DIR/fakenet-billing-pre-update-$stamp.tar.gz"
+echo "Backup data ke $backup_file"
+tar -czf "$backup_file" \
+  -C "$APP_DIR" data .env.example package.json package-lock.json \
+  -C / etc/fakenet-billing.env etc/fakenet-billing-waha.env 2>/dev/null || \
+tar -czf "$backup_file" -C "$APP_DIR" data .env.example package.json package-lock.json
+
+if [ -d "$APP_DIR/.git" ]; then
+  echo "Update via git pull"
+  git -C "$APP_DIR" fetch --all --prune
+  if [ -n "$BRANCH" ]; then
+    git -C "$APP_DIR" checkout "$BRANCH"
+  fi
+  git -C "$APP_DIR" pull --ff-only
+elif [ -n "$ARCHIVE_URL" ]; then
+  echo "Update via archive $ARCHIVE_URL"
+  tmpdir="$(mktemp -d)"
+  trap 'rm -f "$LOCK_FILE"; rm -rf "$tmpdir"' EXIT
+  curl -fsSL "$ARCHIVE_URL" -o "$tmpdir/source.tar.gz"
+  mkdir -p "$tmpdir/source"
+  tar -xzf "$tmpdir/source.tar.gz" -C "$tmpdir/source" --strip-components=1
+  rsync -a --delete \
+    --exclude data \
+    --exclude node_modules \
+    --exclude .env \
+    --exclude deploy/fakenet-billing.env \
+    --exclude deploy/fakenet-billing-waha.env \
+    "$tmpdir/source/" "$APP_DIR/"
+else
+  echo "Tidak ada .git atau FAKENET_UPDATE_ARCHIVE_URL. Source tidak berubah."
+fi
+
+cd "$APP_DIR"
+if command -v npm >/dev/null 2>&1; then
+  if [ -f package-lock.json ]; then
+    npm ci --omit=dev
+  else
+    npm install --omit=dev
+  fi
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+  if [ -x "$STACK_CMD" ]; then
+    "$STACK_CMD" restart
+  else
+    systemctl restart fakenet-billing.service
+  fi
+elif command -v rc-service >/dev/null 2>&1; then
+  rc-service fakenet-billing restart || true
+  rc-service fakenet-billing-isolir restart || true
+  rc-service fakenet-billing-voucher restart || true
+  rc-service fakenet-billing-wifiku restart || true
+  rc-service fakenet-billing-radius-connector restart || true
+fi
+
+echo "[$(date -Is)] Update selesai"

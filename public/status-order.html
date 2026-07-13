@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0081c2">
+    <title id="title">Cek Status Pemesanan</title>
+    <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
+    <link rel="stylesheet" href="/hotspot-voucher.css?v=20260711-50">
+  </head>
+  <body class="pink-theme" data-page="status">
+    <div class="container">
+      <div class="row mt-10">
+        <div class="col-8 mr-a" style="float:none; margin-top: 7%;">
+          <div class="row">
+            <div class="col-12" id="info_status_check">
+              <div class="card box-shadow">
+                <div class="card-header bg-template"><h3>Cek Status Pemesanan</h3></div>
+                <div class="card-body">
+                  <div id="info_response" class="response-box mr-b-10" hidden></div>
+                  <form id="statusCheckForm" method="get" action="">
+                    <input class="form-control plch-center" id="statusOrderInput" name="id" type="text" placeholder="No. Pemesanan">
+                    <div class="text-center mr-t-10">
+                      <button type="submit" class="w-12 btn bg-info pd-5">Cek Pemesanan</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12" id="info_status" hidden>
+              <div class="card box-shadow">
+                <div class="card-header bg-template"><h3>Status Order</h3></div>
+                <div class="card-body">
+                  <div id="os_detail">
+                    <table width="100%" border="0">
+                      <tr>
+                        <td width="25%">No. Order</td>
+                        <td width="1%">:</td>
+                        <td id="os_nomor"></td>
+                        <td width="15%" align="right" id="os_nomor_click"><b>Copy</b></td>
+                      </tr>
+                      <tr>
+                        <td width="30%">Pelanggan</td>
+                        <td width="5%">:</td>
+                        <td id="os_pelanggan" colspan="2"></td>
+                      </tr>
+                      <tr>
+                        <td width="30%">Whatsapp</td>
+                        <td width="5%">:</td>
+                        <td id="os_whatsapp" colspan="2"></td>
+                      </tr>
+                      <tr>
+                        <td width="30%">Paket</td>
+                        <td width="5%">:</td>
+                        <td id="os_paket" colspan="2"></td>
+                      </tr>
+                      <tr>
+                        <td width="30%">Status</td>
+                        <td width="5%">:</td>
+                        <td id="os_status" colspan="2"></td>
+                      </tr>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12" id="info_pembayaran" hidden>
+              <div class="card box-shadow">
+                <div class="card-header bg-template"><h3>Pembayaran : <span id="os_metode_pembayaran"></span></h3></div>
+                <div class="card-body">
+                  <div id="os_qris_img" align="center"></div>
+                  <b>Instruksi Pembayaran :</b>
+                  <p id="os_instruksi_pembayaran"></p>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12" id="info_voucher" hidden>
+              <div class="card box-shadow">
+                <div class="card-header bg-template"><h3>Informasi Voucher :</h3></div>
+                <div class="card-body">
+                  <table width="100%" border="0">
+                    <tr>
+                      <td width="30%">Kode Voucher</td>
+                      <td width="2%">:</td>
+                      <td id="os_voucher_kode"></td>
+                    </tr>
+                    <tr id="os_voucher_show">
+                      <td width="30%">Password Voucher</td>
+                      <td width="2%">:</td>
+                      <td id="os_voucher_password"></td>
+                    </tr>
+                  </table>
+                  <br>
+                  <a href="login" id="os_link_login" class="w-12 btn-md bg-success">Login</a>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12">
+              <div class="card box-shadow">
+                <div class="card-header bg-template"><h3>Fungsi :</h3></div>
+                <div class="card-body">
+                  <a href="#" onclick="window.location.reload(true);" class="w-12 btn-md bg-info mr-b-10" id="os_link_refresh">Refresh Status</a>
+                  <a href="order-voucher.html" class="w-12 btn-md btn-default">Kembali</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/hotspot-voucher.js?v=20260711-50" defer></script>
+  </body>
+</html>

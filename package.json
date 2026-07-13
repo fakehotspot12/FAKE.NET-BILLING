@@ -1,0 +1,31 @@
+{
+  "name": "fakenet-billing",
+  "version": "1.0.0",
+  "buildVersion": "20260713.3",
+  "description": "FAKE.NET Billing and Office ISP dan RT/RW Net solution",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "subweb": "node src/subweb-server.js",
+    "license-server": "node src/license-server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "isp",
+    "rtrw-net",
+    "finance",
+    "billing",
+    "standalone"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "qrcode": "^1.5.4"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
+  }
+}

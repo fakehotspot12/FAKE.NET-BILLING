@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pembayaran Invoice</title>
+    <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
+    <link rel="stylesheet" href="/payment-invoice.css">
+  </head>
+  <body>
+    <main class="payment-page">
+      <section class="payment-card">
+        <header class="payment-head">
+          <img id="businessLogo" src="/fakenet-logo.png" alt="">
+          <div>
+            <strong id="businessName">ISP Billing</strong>
+            <span id="paymentLabel">Payment Gateway</span>
+          </div>
+        </header>
+
+        <div id="paymentNotice" class="payment-notice" hidden></div>
+
+        <section class="invoice-summary">
+          <div>
+            <span>No Invoice</span>
+            <strong id="invoiceNo">-</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong id="invoiceStatus">-</strong>
+          </div>
+        </section>
+
+        <section class="invoice-lines">
+          <div>
+            <span>Pelanggan</span>
+            <strong id="customerName">-</strong>
+          </div>
+          <div>
+            <span>Paket</span>
+            <strong id="packageName">-</strong>
+          </div>
+          <div>
+            <span>Periode</span>
+            <strong id="period">-</strong>
+          </div>
+          <div>
+            <span>Jatuh Tempo</span>
+            <strong id="dueDate">-</strong>
+          </div>
+        </section>
+
+        <section class="amount-box">
+          <div>
+            <span>Biaya</span>
+            <strong id="amount">Rp. 0</strong>
+          </div>
+          <div>
+            <span>Fee</span>
+            <strong id="adminFee">Rp. 0</strong>
+          </div>
+          <div class="total">
+            <span>Total Bayar</span>
+            <strong id="gatewayAmount">Rp. 0</strong>
+          </div>
+        </section>
+
+        <button id="payButton" class="payment-button" type="button">Bayar Sekarang</button>
+        <button id="refreshButton" class="secondary-button" type="button">Refresh Status</button>
+
+        <section id="checkoutBox" class="checkout-box" hidden>
+          <strong>Checkout Payment Gateway</strong>
+          <p id="checkoutText"></p>
+          <a id="checkoutLink" class="payment-link" href="#" target="_blank" rel="noopener">Buka Payment Gateway</a>
+        </section>
+      </section>
+    </main>
+    <script src="/payment-invoice.js" defer></script>
+  </body>
+</html>

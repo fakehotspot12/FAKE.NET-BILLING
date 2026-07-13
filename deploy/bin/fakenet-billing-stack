@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ACTION="${1:-status}"
+APP_UNITS=(
+  fakenet-billing.service
+  fakenet-billing-isolir.service
+  fakenet-billing-voucher.service
+  fakenet-billing-wifiku.service
+  fakenet-billing-radius-connector.service
+  fakenet-billing-waha.service
+)
+LICENSE_UNITS=(
+  fakenet-billing-license.service
+)
+BASE_UNITS=(
+  redis-server.service
+  postgresql.service
+  freeradius.service
+  docker.service
+)
+
+restart_unit() {
+  local unit="$1"
+  if systemctl restart "$unit"; then
+    return 0
+  fi
+  systemctl start "$unit" || true
+  systemctl is-active --quiet "$unit"
+}
+
+case "$ACTION" in
+  start)
+    systemctl start "${BASE_UNITS[@]}" "${APP_UNITS[@]}"
+    ;;
+  restart)
+    for unit in "${BASE_UNITS[@]}" "${APP_UNITS[@]}"; do
+      restart_unit "$unit"
+    done
+    ;;
+  stop)
+    systemctl stop "${APP_UNITS[@]}" "${BASE_UNITS[@]}"
+    ;;
+  status)
+    systemctl status "${APP_UNITS[@]}" "${BASE_UNITS[@]}" --no-pager
+    ;;
+  license-status)
+    systemctl status "${LICENSE_UNITS[@]}" --no-pager
+    ;;
+  license-restart)
+    for unit in "${LICENSE_UNITS[@]}"; do
+      restart_unit "$unit"
+    done
+    ;;
+  update)
+    /usr/local/bin/fakenet-billing-update
+    ;;
+  *)
+    echo "Usage: fakenet-billing-stack {start|restart|stop|status|update|license-status|license-restart}" >&2
+    exit 2
+    ;;
+esac

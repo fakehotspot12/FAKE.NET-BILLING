@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#08204f">
+    <title>Layanan Diisolir</title>
+    <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
+    <link rel="stylesheet" href="/isolir.css?v=fakenet-billing-20260713-1">
+  </head>
+  <body>
+    <main class="isolir-shell">
+      <section class="isolir-card">
+        <header class="isolir-brand">
+          <img id="brandLogo" src="/fakenet-logo.png" alt="Logo">
+          <div>
+            <strong id="brandName">ISP Billing</strong>
+            <span id="brandSubtitle">RT/RW Net</span>
+          </div>
+        </header>
+
+        <section class="isolir-hero">
+          <span id="statusPill" class="status-pill">Layanan Diisolir</span>
+          <h1 id="heroTitle">Akses internet sementara ditangguhkan</h1>
+          <p id="heroMessage">
+            Layanan Anda belum aktif karena tagihan belum tercatat lunas atau akun sedang dalam masa isolir.
+            Silakan lakukan pembayaran atau hubungi admin layanan.
+          </p>
+        </section>
+
+        <section id="invoiceBox" class="invoice-box" hidden>
+          <div>
+            <span>No Invoice</span>
+            <strong id="invoiceNo">-</strong>
+          </div>
+          <div>
+            <span>Nama</span>
+            <strong id="customerName">-</strong>
+          </div>
+          <div>
+            <span>Periode</span>
+            <strong id="period">-</strong>
+          </div>
+          <div>
+            <span>Jatuh Tempo</span>
+            <strong id="dueDate">-</strong>
+          </div>
+          <div id="amountRow" class="amount-row">
+            <span id="amountLabel">Total Tagihan</span>
+            <strong id="amount">-</strong>
+          </div>
+        </section>
+
+        <div id="notice" class="notice" hidden></div>
+
+        <nav class="actions" aria-label="Aksi pelanggan">
+          <a id="payLink" class="button primary" href="/payment-invoice.html" hidden>Bayar Tagihan</a>
+          <a id="adminLink" class="button admin is-disabled" href="#" target="_blank" rel="noopener" aria-disabled="true">Hubungi Admin</a>
+        </nav>
+
+        <footer>
+          <span id="footerLineOne">Pembayaran otomatis akan diproses oleh sistem billing.</span>
+          <span id="footerLineTwo">Jika sudah membayar, tunggu beberapa menit lalu restart modem.</span>
+        </footer>
+      </section>
+    </main>
+    <script src="/isolir.js?v=fakenet-billing-20260713-1" defer></script>
+  </body>
+</html>

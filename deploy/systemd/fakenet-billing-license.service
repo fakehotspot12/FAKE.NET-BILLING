@@ -1,0 +1,17 @@
+[Unit]
+Description=FAKE.NET Billing License Generator
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fakenet-billing
+EnvironmentFile=-/etc/fakenet-billing-license.env
+ExecStart=/usr/bin/node src/license-server.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+SyslogIdentifier=fakenet-billing-license
+
+[Install]
+WantedBy=multi-user.target

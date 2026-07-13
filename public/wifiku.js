@@ -1,0 +1,277 @@
+'use strict';
+
+const TOKEN_KEY = 'wifikuToken';
+const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const state = {
+  settings: {},
+  challengeId: '',
+  phone: '',
+  token: localStorage.getItem(TOKEN_KEY) || '',
+  portal: null
+};
+
+const byId = (id) => document.getElementById(id);
+
+function todayPeriod() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function toast(message) {
+  const el = byId('toast');
+  el.textContent = message;
+  el.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      ...(options.headers || {})
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Request gagal');
+  }
+  return payload;
+}
+
+function setLoading(form, loading) {
+  form.querySelectorAll('button, input').forEach((node) => {
+    node.disabled = loading;
+  });
+}
+
+function showLogin() {
+  byId('loginView').hidden = false;
+  byId('portalView').hidden = true;
+  byId('logoutButton').hidden = true;
+}
+
+function showPortal() {
+  byId('loginView').hidden = true;
+  byId('portalView').hidden = false;
+  byId('logoutButton').hidden = false;
+}
+
+function usageBarPercent(value = 0, max = 1) {
+  const number = Number(value || 0);
+  const maximum = Math.max(1, Number(max || 0));
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  return Math.max(2, Math.min(100, (number / maximum) * 100));
+}
+
+function periodText(value = '') {
+  const [year, month] = String(value || todayPeriod()).split('-').map(Number);
+  if (!year || !month) return '-';
+  return `${MONTHS[month - 1] || String(month).padStart(2, '0')} ${year}`;
+}
+
+function renderUsageChart(usage = {}, period = todayPeriod()) {
+  const chart = byId('usageChart');
+  const rows = [
+    { label: 'Upload', className: 'upload', value: Number(usage.inputOctets || 0), text: usage.upload || '0 B' },
+    { label: 'Download', className: 'download', value: Number(usage.outputOctets || 0), text: usage.download || '0 B' }
+  ];
+  const maxOctets = Math.max(1, ...rows.map((row) => row.value));
+  byId('usagePeriod').textContent = periodText(usage.period || period);
+  byId('usageSessionCount').textContent = 'Total bulanan';
+  chart.innerHTML = rows.map((row) => `
+    <div class="usage-row">
+      <div class="usage-label">
+        <strong>${row.label}</strong>
+        <span>${row.text}</span>
+      </div>
+      <div class="usage-track" title="${row.label} ${row.text}">
+        <span class="usage-bar ${row.className}" style="width:${usageBarPercent(row.value, maxOctets)}%"></span>
+      </div>
+      <strong>${row.text}</strong>
+    </div>
+  `).join('');
+}
+
+function renderPortal(payload) {
+  state.portal = payload;
+  const customer = payload.customer || {};
+  const usage = payload.usage || {};
+  const device = payload.device || {};
+  byId('customerName').textContent = customer.name || customer.username || '-';
+  byId('usageTotal').textContent = usage.totalUsageText || '0 B';
+  byId('usageDetail').textContent = `U ${usage.upload || '0 B'} / D ${usage.download || '0 B'}`;
+  byId('rxPower').textContent = device.rxPowerText || '-';
+  byId('deviceStatus').textContent = device.id ? (device.online ? 'Online' : 'Offline') : (payload.genieAcs?.error || 'Device belum ditemukan');
+  const clients24 = Number(device.wifiClients24 || 0);
+  const clients5 = Number(device.wifiClients5 || 0);
+  byId('wifiTotal').textContent = `${clients24 + clients5} user`;
+  byId('wifiDetail').textContent = `2.4G ${clients24} / 5G ${clients5}`;
+  byId('ssid24').textContent = device.ssid24 || '-';
+  byId('ssid5').textContent = device.ssid5 || '-';
+  renderUsageChart(usage, payload.period || todayPeriod());
+  showPortal();
+}
+
+async function loadSettings() {
+  const payload = await api('/api/public/wifiku/settings');
+  state.settings = payload.settings || {};
+  byId('brandName').textContent = state.settings.businessName || 'WifiKu';
+  byId('brandLogo').src = state.settings.logoUrl || '/fakenet-logo.png';
+  document.title = `${state.settings.businessName || 'WifiKu'} - WifiKu`;
+  const favicon = byId('appFavicon');
+  if (favicon) favicon.href = state.settings.logoUrl || '/fakenet-logo.png';
+  if (!state.settings.enabled) {
+    byId('loginView').innerHTML = '<h1>WifiKu nonaktif</h1><p>Portal pelanggan belum diaktifkan.</p>';
+  }
+}
+
+async function loadMe() {
+  if (!state.token) return false;
+  try {
+    const period = byId('periodInput').value || todayPeriod();
+    const payload = await api(`/api/public/wifiku/me?period=${encodeURIComponent(period)}`);
+    renderPortal(payload);
+    return true;
+  } catch {
+    state.token = '';
+    localStorage.removeItem(TOKEN_KEY);
+    showLogin();
+    return false;
+  }
+}
+
+byId('periodInput').value = todayPeriod();
+
+byId('phoneForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  setLoading(form, true);
+  try {
+    state.phone = byId('phoneInput').value.trim();
+    const payload = await api('/api/public/wifiku/request-otp', {
+      method: 'POST',
+      body: JSON.stringify({ phone: state.phone, period: byId('periodInput').value || todayPeriod() })
+    });
+    if (payload.token) {
+      state.token = payload.token;
+      localStorage.setItem(TOKEN_KEY, state.token);
+      renderPortal(payload.portal);
+      return;
+    }
+    state.challengeId = payload.challengeId || '';
+    byId('otpForm').hidden = false;
+    byId('otpInput').focus();
+    toast('OTP dikirim via WhatsApp');
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setLoading(form, false);
+  }
+});
+
+byId('otpForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  setLoading(form, true);
+  try {
+    const payload = await api('/api/public/wifiku/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        phone: state.phone,
+        challengeId: state.challengeId,
+        otp: byId('otpInput').value.trim(),
+        period: byId('periodInput').value || todayPeriod()
+      })
+    });
+    state.token = payload.token;
+    localStorage.setItem(TOKEN_KEY, state.token);
+    renderPortal(payload.portal);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setLoading(form, false);
+  }
+});
+
+byId('periodInput').addEventListener('change', () => loadMe());
+
+byId('logoutButton').addEventListener('click', () => {
+  state.token = '';
+  localStorage.removeItem(TOKEN_KEY);
+  showLogin();
+});
+
+const dialog = byId('actionDialog');
+const actionForm = byId('actionForm');
+byId('closeDialog').addEventListener('click', () => dialog.close());
+
+function openAction(title, body, handler) {
+  byId('actionTitle').textContent = title;
+  byId('actionBody').innerHTML = body;
+  actionForm.onsubmit = async (event) => {
+    event.preventDefault();
+    try {
+      await handler(new FormData(actionForm));
+      dialog.close();
+      toast('Perintah dikirim');
+      setTimeout(loadMe, 1200);
+    } catch (error) {
+      toast(error.message);
+    }
+  };
+  dialog.showModal();
+}
+
+document.querySelectorAll('[data-ssid-band]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const band = button.dataset.ssidBand;
+    openAction(`Ubah SSID ${band === '5g' ? '5G' : '2.4G'}`, `
+      <label>
+        <span>Nama WiFi baru</span>
+        <input name="ssid" maxlength="32" required>
+      </label>
+    `, async (form) => {
+      await api('/api/public/wifiku/wifi-ssid', {
+        method: 'POST',
+        body: JSON.stringify({ band, ssid: form.get('ssid') })
+      });
+    });
+  });
+});
+
+byId('passwordButton').addEventListener('click', () => {
+  openAction('Ganti Password WiFi', `
+    <label>
+      <span>Password baru</span>
+      <input name="password" minlength="8" required>
+    </label>
+  `, async (form) => {
+    await api('/api/public/wifiku/wifi-password', {
+      method: 'POST',
+      body: JSON.stringify({ password: form.get('password') })
+    });
+  });
+});
+
+byId('rebootButton').addEventListener('click', async () => {
+  if (!confirm('Reboot modem sekarang?')) return;
+  try {
+    await api('/api/public/wifiku/reboot', { method: 'POST', body: '{}' });
+    toast('Perintah reboot dikirim');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+(async () => {
+  try {
+    await loadSettings();
+    if (!(await loadMe())) showLogin();
+  } catch (error) {
+    toast(error.message);
+    showLogin();
+  }
+})();

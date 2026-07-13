@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0081c2">
+    <title id="title">Order Voucher</title>
+    <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
+    <link rel="stylesheet" href="/hotspot-voucher.css?v=20260711-50">
+  </head>
+  <body class="pink-theme" data-page="buy">
+    <div class="container">
+      <div class="row mt-10">
+        <div class="col-8 mr-a" style="float:none; margin-top: 7%;">
+          <div class="row">
+            <div class="col-12">
+              <div class="card box-shadow">
+                <div class="card-header bg-template"><h3>Order Voucher</h3></div>
+                <div class="card-body">
+                  <div id="buy_response" class="response-box mr-b-10" hidden></div>
+                  <div id="paket_detail">
+                    <table width="100%" border="0">
+                      <tr>
+                        <td width="25%">Produk</td>
+                        <td width="1%">:</td>
+                        <td id="produk_info_name"></td>
+                      </tr>
+                      <tr>
+                        <td>Validity</td>
+                        <td>:</td>
+                        <td id="produk_info_validity"></td>
+                      </tr>
+                      <tr>
+                        <td>Price</td>
+                        <td width="10%">:</td>
+                        <td id="produk_info_price"></td>
+                      </tr>
+                    </table>
+                    <hr>
+                    <p>Mohon mengisi formulir pembelian dengan data yang benar. Simpan No. Order yang muncul di halaman selanjutnya untuk cek status order.</p>
+                    <p>Kode Voucher akan dikirim via WhatsApp setelah pembayaran berhasil.</p>
+                    <br>
+                    <div class="col-12">
+                      <form id="form_order" method="post" action="">
+                        <div class="form-group">
+                          <label>Nama</label>
+                          <input type="hidden" name="v_paket" id="v_paket" class="form-control" autocomplete="off" readonly required>
+                          <input type="text" name="v_nama" id="v_nama" class="form-control" autocomplete="name" required>
+                        </div>
+                        <div class="form-group">
+                          <label>Whatsapp</label>
+                          <input type="text" name="v_whatsapp" id="v_whatsapp" class="form-control" inputmode="tel" autocomplete="tel" placeholder="0812xxxx" required>
+                        </div>
+                        <div class="form-group" style="margin-bottom:15px;">
+                          <label>Metode Pembayaran</label>
+                          <select name="v_rek" id="v_rek" class="form-control" autocomplete="off" required></select>
+                          <label><i>*QRIS bisa di scan semua dompet digital dan mobile banking yang mendukung QRIS.</i></label>
+                        </div>
+                        <div style="margin-bottom:15px;">
+                          <button type="submit" id="btn_beli" name="btn_beli" class="w-12 btn bg-success pd-5">Beli</button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                  <div class="text-center mr-t-10">
+                    <a href="order-voucher.html" class="w-12 btn-md btn-default">Kembali</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/hotspot-voucher.js?v=20260711-50" defer></script>
+  </body>
+</html>

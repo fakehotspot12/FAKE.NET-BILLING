@@ -1,0 +1,7 @@
+[Unit]
+Description=FAKE.NET Billing Stack
+Wants=redis-server.service postgresql.service freeradius.service docker.service fakenet-billing-waha.service fakenet-billing-radius-connector.service fakenet-billing.service fakenet-billing-isolir.service fakenet-billing-voucher.service fakenet-billing-wifiku.service
+After=network-online.target redis-server.service postgresql.service freeradius.service docker.service fakenet-billing-waha.service fakenet-billing-radius-connector.service fakenet-billing.service fakenet-billing-isolir.service fakenet-billing-voucher.service fakenet-billing-wifiku.service
+
+[Install]
+WantedBy=multi-user.target

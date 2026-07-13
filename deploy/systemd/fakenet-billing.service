@@ -1,0 +1,18 @@
+[Unit]
+Description=FAKE.NET Billing
+PartOf=fakenet-billing-stack.target
+Wants=network-online.target redis-server.service postgresql.service freeradius.service
+After=network-online.target redis-server.service postgresql.service freeradius.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fakenet-billing
+EnvironmentFile=-/etc/fakenet-billing.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+SyslogIdentifier=fakenet-billing
+
+[Install]
+WantedBy=multi-user.target

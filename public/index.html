@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#08204f">
+    <title>FAKE.NET Billing Standalone</title>
+    <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="/styles.css?v=fakenet-billing-20260713-3">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <button class="icon-button menu-toggle fa fa-bars" id="menuToggleButton" type="button" aria-label="Buka menu" aria-controls="appSidebar" aria-expanded="false">
+          <span class="menu-bars" aria-hidden="true"></span>
+        </button>
+        <div>
+          <p class="eyebrow" id="businessName">FAKE.NET Billing</p>
+          <h1 id="viewTitle">Dashboard</h1>
+        </div>
+        <div class="top-actions">
+          <button class="icon-button theme-toggle-button" id="themeToggleButton" type="button" title="Tema" aria-label="Ubah tema">
+            <span class="theme-toggle-icon" aria-hidden="true"></span>
+          </button>
+          <button class="top-wa-status is-offline" id="topWaStatusButton" type="button" title="Whatsapp Gateway Offline" aria-label="Whatsapp Gateway Offline" hidden>
+            <span class="top-wa-logo" aria-hidden="true"></span>
+            <span class="top-wa-dot" aria-hidden="true"></span>
+          </button>
+          <div class="notification-menu" id="notificationMenu" hidden>
+            <button class="top-notification" id="notificationButton" type="button" title="Notifikasi" aria-label="Notifikasi" aria-haspopup="menu" aria-expanded="false">
+              <span class="top-notification-icon bell" aria-hidden="true"></span>
+              <span class="top-notification-count" id="notificationCount">0</span>
+            </button>
+            <div class="notification-panel" id="notificationPanel" hidden>
+              <div class="notification-panel-head">Notifikasi</div>
+              <div class="notification-list" id="notificationList"></div>
+            </div>
+          </div>
+          <div class="user-chip" aria-label="User login">
+            <strong id="currentUserName">-</strong>
+          </div>
+          <button class="ghost-button compact logout-button" id="logoutButton" type="button">Logout</button>
+        </div>
+      </header>
+
+      <button class="menu-backdrop" id="menuBackdrop" type="button" aria-label="Tutup menu"></button>
+
+      <aside class="sidebar" id="appSidebar" aria-label="Navigasi">
+        <div class="side-brand">
+          <img id="sidebarLogo" src="/fakenet-logo.png" alt="Logo FAKE.NET">
+          <div>
+            <strong>FAKE.NET</strong>
+            <span>ISP Billing</span>
+          </div>
+        </div>
+        <button class="nav-item is-active" type="button" data-view="dashboard">
+          <span class="nav-mark">D</span>
+          <span>Dashboard</span>
+        </button>
+        <div class="nav-group" data-nav-group="radius">
+          <button class="nav-item nav-toggle" type="button" data-nav-toggle="radius" aria-expanded="false">
+            <span class="nav-mark">R</span>
+            <span>Radius</span>
+          </button>
+          <div class="nav-submenu">
+            <button class="nav-subitem" type="button" data-view="radiusPppDhcp">PPP-DHCP</button>
+            <button class="nav-subitem" type="button" data-view="radiusHotspot">Hotspot</button>
+            <button class="nav-subitem" type="button" data-view="radiusSettings">Settings</button>
+          </div>
+        </div>
+        <button class="nav-item" type="button" data-view="genieAcs">
+          <span class="nav-mark">G</span>
+          <span>GenieACS</span>
+        </button>
+        <div class="nav-group" data-nav-group="monitoring">
+          <button class="nav-item nav-toggle" type="button" data-nav-toggle="monitoring" aria-expanded="false">
+            <span class="nav-mark">M</span>
+            <span>Monitoring</span>
+          </button>
+          <div class="nav-submenu">
+            <button class="nav-subitem" type="button" data-view="monitoringSite">Site</button>
+            <button class="nav-subitem" type="button" data-view="monitoringMembers">Member</button>
+            <button class="nav-subitem" type="button" data-view="monitoringCustomers">Pelanggan Online</button>
+            <button class="nav-subitem" type="button" data-view="monitoringServices">Layanan</button>
+            <button class="nav-subitem" type="button" data-view="monitoringBilling">Tagihan Pelanggan</button>
+          </div>
+        </div>
+        <div class="nav-group" data-nav-group="financeManagement">
+          <button class="nav-item nav-toggle" type="button" data-nav-toggle="financeManagement" aria-expanded="false">
+            <span class="nav-mark">K</span>
+            <span>Manajemen Keuangan</span>
+          </button>
+          <div class="nav-submenu">
+            <button class="nav-subitem" type="button" data-view="externalIncomes">Pemasukan</button>
+            <button class="nav-subitem" type="button" data-view="expenses">Pengeluaran</button>
+          </div>
+        </div>
+        <div class="nav-group" data-nav-group="assetManagement">
+          <button class="nav-item nav-toggle" type="button" data-nav-toggle="assetManagement" aria-expanded="false">
+            <span class="nav-mark">A</span>
+            <span>Manajemen Aset</span>
+          </button>
+          <div class="nav-submenu">
+            <button class="nav-subitem" type="button" data-view="inventory">Inventaris</button>
+            <button class="nav-subitem" type="button" data-view="networkAssets">Aset</button>
+          </div>
+        </div>
+        <div class="nav-group" data-nav-group="reports">
+          <button class="nav-item nav-toggle" type="button" data-nav-toggle="reports" aria-expanded="false">
+            <span class="nav-mark">L</span>
+            <span>Laporan</span>
+          </button>
+          <div class="nav-submenu">
+            <button class="nav-subitem" type="button" data-view="reportsDaily">Tagihan Harian</button>
+            <button class="nav-subitem" type="button" data-view="reportsMonthlyBilling">Tagihan Bulanan</button>
+            <button class="nav-subitem" type="button" data-view="reportsVoucherDaily">Voucher Harian</button>
+            <button class="nav-subitem" type="button" data-view="reportsVoucherMonthly">Voucher Bulanan</button>
+            <button class="nav-subitem" type="button" data-view="reportsTransactions">Mutasi Bulanan</button>
+            <button class="nav-subitem" type="button" data-view="reportsFinanceRecap">Rekapitulasi</button>
+            <button class="nav-subitem" type="button" data-view="reportsInventoryStock">Stok Inventaris</button>
+          </div>
+        </div>
+        <button class="nav-item" type="button" data-view="waGateway">
+          <span class="nav-mark">W</span>
+          <span>Whatsapp Gateway</span>
+        </button>
+        <button class="nav-item" type="button" data-view="paymentGateway">
+          <span class="nav-mark">P</span>
+          <span>Payment Gateway</span>
+        </button>
+        <button class="nav-item" type="button" data-view="users">
+          <span class="nav-mark">U</span>
+          <span>User</span>
+        </button>
+        <button class="nav-item" type="button" data-view="settings">
+          <span class="nav-mark">S</span>
+          <span>Pengaturan</span>
+        </button>
+        <footer class="app-footer" id="appFooter">
+          <span>Copyright <span id="copyrightYear">2026</span> - <span id="copyrightName">FAKE.NET</span></span>
+          <span class="app-build">v<span id="appVersion">1.0.0</span> · Build <span id="buildVersion">20260713.3</span></span>
+        </footer>
+      </aside>
+
+      <main class="content" id="app" tabindex="-1"></main>
+
+      <nav class="bottom-nav" aria-label="Navigasi mobile">
+        <button class="bottom-item is-active" type="button" data-view="dashboard">Dash</button>
+        <button class="bottom-item" type="button" data-view="monitoringSite">Site</button>
+        <button class="bottom-item" type="button" data-view="monitoringCustomers">Online</button>
+        <button class="bottom-item" type="button" data-open-nav-group="financeManagement">Keuangan</button>
+        <button class="bottom-item" type="button" data-view="reportsDaily">Laporan</button>
+        <button class="bottom-item" type="button" data-view="users">User</button>
+        <button class="bottom-item" type="button" data-view="settings">Setelan</button>
+      </nav>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <dialog id="modal">
+      <form method="dialog" class="modal-frame">
+        <div class="modal-head">
+          <h2 id="modalTitle">Form</h2>
+          <button class="icon-button" value="cancel" type="button" data-close-modal aria-label="Tutup" title="Tutup">X</button>
+        </div>
+        <div id="modalBody"></div>
+      </form>
+    </dialog>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+    <script src="/app.js?v=fakenet-billing-20260713-3" defer></script>
+  </body>
+</html>

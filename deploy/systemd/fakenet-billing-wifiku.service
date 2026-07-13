@@ -1,0 +1,19 @@
+[Unit]
+Description=FAKE.NET Billing WifiKu Subweb
+PartOf=fakenet-billing-stack.target
+Wants=network-online.target fakenet-billing.service
+After=network-online.target fakenet-billing.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fakenet-billing
+EnvironmentFile=-/etc/fakenet-billing.env
+Environment=SUBWEB_KIND=wifiku
+ExecStart=/usr/bin/node src/subweb-server.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+SyslogIdentifier=fakenet-billing-wifiku
+
+[Install]
+WantedBy=multi-user.target
