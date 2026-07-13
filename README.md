@@ -9,10 +9,10 @@ Data runtime tidak disertakan ke repository. Folder `data/` diabaikan oleh Git k
 - Dashboard keuangan, tagihan, PPP-DHCP users, Hotspot users, dan traffic NAS.
 - Radius PPP-DHCP dan Hotspot: user, profile, session, import/export, generate voucher, kick session, isolir/aktif/terminate.
 - Billing mandiri: invoice otomatis/manual, reminder, bayar, rollback, PDF kuitansi, laporan harian/bulanan.
-- Voucher Hotspot online: order dari login page, payment gateway QRIS, generate voucher otomatis setelah paid.
+- Voucher Hotspot online: order dari login page, pembayaran QRIS, generate voucher otomatis setelah paid, dan cetak voucher batch.
 - Payment Gateway terpusat untuk paket bulanan dan voucher. Provider awal: Tripay, struktur siap untuk provider lain.
 - Whatsapp Gateway API memakai WAHA lokal: template, pesan terkirim, resend, broadcast, dan notifikasi tagihan/voucher.
-- Monitoring: Site/NAS, pelanggan online, tagihan pelanggan, member, layanan TVHeadend/Emby, GenieACS.
+- Monitoring: Site/NAS, pelanggan online, tagihan pelanggan, member, dan GenieACS.
 - Portal publik:
   - Isolir untuk pelanggan yang ditangguhkan.
   - Voucher untuk pembelian voucher Hotspot.
@@ -21,6 +21,24 @@ Data runtime tidak disertakan ke repository. Folder `data/` diabaikan oleh Git k
 - Role user: admin, owner, finance, teknisi, NOC, collector, reseller voucher, viewer.
 - Aktivasi lisensi berbasis HWID/machine code.
 - Backup/restore dan update aplikasi dari menu Pengaturan.
+
+## Voucher Hotspot
+
+Voucher Hotspot dirancang untuk operasional jual voucher harian/mingguan/bulanan tanpa input manual berulang. Admin atau reseller dapat membuat voucher satuan maupun batch dari profile Hotspot yang sudah memiliki harga, validity, quota, shared user, NAS, dan expired mode.
+
+Alur voucher online:
+
+1. Pelanggan membuka halaman beli voucher dari subdomain/port Voucher.
+2. Pelanggan memilih paket voucher Hotspot yang tersedia.
+3. Sistem membuat order dan mengarahkan pembayaran ke payment gateway.
+4. Untuk voucher online, metode pembayaran dipatenkan ke QRIS.
+5. Setelah payment gateway mengirim status paid ke webhook, sistem membuat voucher otomatis dengan format username sama dengan password.
+6. Voucher dapat dikirim melalui Whatsapp Gateway jika notifikasi voucher diaktifkan.
+7. Transaksi voucher paid masuk ke laporan voucher harian/bulanan dan pendapatan reseller sesuai role pembuat voucher.
+
+Voucher batch untuk operasional loket/reseller dapat dicetak langsung dari aplikasi. Format print dibuat ringkas agar satu kertas A4 dapat memuat banyak voucher, lengkap dengan nama usaha, paket, harga, tanggal, jam, QR code, dan link login Hotspot.
+
+Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Record`, `Notice`, dan `Notice & Record`. Mode `Remove & Record` akan menghapus user voucher setelah masa aktif habis tetapi tetap menyimpan record laporan, sedangkan mode notice mempertahankan data user dengan status yang sesuai.
 
 ## Port Default
 
