@@ -4,6 +4,94 @@ Billing standalone ISP/RT-RW Net berbasis Node.js untuk operasional pelanggan PP
 
 Data runtime tidak disertakan ke repository. Folder `data/` diabaikan oleh Git kecuali `.gitkeep`, sehingga data dev/produksi tidak ikut terupload.
 
+## Quick Install
+
+Gunakan VM/VPS Linux baru. Minimal yang disarankan adalah Ubuntu 22.04 atau distro setara. Jalankan semua perintah sebagai `root`.
+
+### Ubuntu/Debian
+
+```bash
+apt update
+apt install -y git curl
+cd /root
+git clone https://github.com/fakehotspot12/FAKE.NET-BILLING.git
+cd FAKE.NET-BILLING
+bash install.sh
+```
+
+### CentOS/Rocky/Alma/Fedora
+
+```bash
+dnf install -y git curl
+cd /root
+git clone https://github.com/fakehotspot12/FAKE.NET-BILLING.git
+cd FAKE.NET-BILLING
+bash install.sh
+```
+
+### Alpine Linux
+
+```bash
+apk add --no-cache git curl bash
+cd /root
+git clone https://github.com/fakehotspot12/FAKE.NET-BILLING.git
+cd FAKE.NET-BILLING
+bash install.sh
+```
+
+Setelah installer selesai, buka:
+
+```text
+http://IP-SERVER:8891
+```
+
+Login awal:
+
+```text
+username: admin
+password: billing123
+```
+
+Segera ubah password admin setelah berhasil login.
+
+Port bawaan:
+
+```text
+Billing admin : http://IP-SERVER:8891
+Web isolir    : http://IP-SERVER:8892/isolir
+Beli voucher  : http://IP-SERVER:8893/voucher
+WifiKu        : http://IP-SERVER:8894/wifiku
+WAHA lokal    : 127.0.0.1:8895
+```
+
+Cek status service:
+
+```bash
+fakenet-billing-stack status
+```
+
+Restart semua service:
+
+```bash
+fakenet-billing-stack restart
+```
+
+Update aplikasi:
+
+```bash
+fakenet-billing-stack update
+```
+
+Hal yang perlu diatur setelah install:
+
+- Aktivasi license key dari HWID/machine code yang muncul di aplikasi.
+- Ubah password admin.
+- Isi data usaha, logo, dan subdomain publik jika dipakai.
+- Tambahkan Site/NAS, secret Radius, SNMP community, dan profile layanan.
+- Atur Payment Gateway.
+- Scan Whatsapp Gateway.
+- Buat rule MikroTik untuk Radius, isolir, dan redirect web isolir sesuai kebutuhan jaringan.
+
 ## Fitur Utama
 
 - Dashboard keuangan, tagihan, PPP-DHCP users, Hotspot users, dan traffic NAS.
