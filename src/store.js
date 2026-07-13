@@ -208,6 +208,7 @@ function createDefaultStore() {
       updatedAt: now
     }],
     radiusUsers: [],
+    radiusRemovedRecords: [],
     radiusVoucherRecords: [],
     radiusSyncState: {},
     invoices: [],
@@ -228,6 +229,22 @@ function createDefaultStore() {
   };
 }
 
+function restoreTerminatedPendingInvoices(data = {}) {
+  for (const invoice of data.invoices || []) {
+    const status = String(invoice.status || '').trim().toLowerCase();
+    const notes = String(invoice.notes || '');
+    if (!['cancelled', 'canceled'].includes(status)) continue;
+    if (!/dibatalkan otomatis karena pelanggan terminated/i.test(notes)) continue;
+    invoice.status = 'pending';
+    invoice.notes = notes
+      .replace(/\s*Dibatalkan otomatis karena pelanggan terminated\.?/i, '')
+      .trim();
+    invoice.updatedAt = invoice.updatedAt || new Date().toISOString();
+    invoice.restoredFromTerminatedCancel = true;
+  }
+  return data;
+}
+
 function ensureShape(data) {
   const base = createDefaultStore();
   const safe = data && typeof data === 'object' ? data : {};
@@ -246,7 +263,7 @@ function ensureShape(data) {
   const security = settings.security && typeof settings.security === 'object' ? settings.security : {};
   const license = settings.license && typeof settings.license === 'object' ? settings.license : {};
 
-  return {
+  const shaped = {
     ...base,
     ...safe,
     settings: {
@@ -354,6 +371,7 @@ function ensureShape(data) {
     radiusProfiles: Array.isArray(safe.radiusProfiles) ? safe.radiusProfiles : [],
     radiusHotspotTemplates: Array.isArray(safe.radiusHotspotTemplates) ? safe.radiusHotspotTemplates : base.radiusHotspotTemplates,
     radiusUsers: Array.isArray(safe.radiusUsers) ? safe.radiusUsers : [],
+    radiusRemovedRecords: Array.isArray(safe.radiusRemovedRecords) ? safe.radiusRemovedRecords : [],
     radiusVoucherRecords: Array.isArray(safe.radiusVoucherRecords) ? safe.radiusVoucherRecords : [],
     radiusSyncState: safe.radiusSyncState && typeof safe.radiusSyncState === 'object' ? safe.radiusSyncState : {},
     invoices: Array.isArray(safe.invoices) ? safe.invoices : [],
@@ -372,6 +390,7 @@ function ensureShape(data) {
     users: Array.isArray(safe.users) ? safe.users : [],
     activity: Array.isArray(safe.activity) ? safe.activity : []
   };
+  return restoreTerminatedPendingInvoices(shaped);
 }
 
 function postgresEnabled() {

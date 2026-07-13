@@ -58,7 +58,7 @@
     if (!parts || parts.month < 1 || parts.month > 12 || parts.day < 1 || parts.day > 31) {
       return periodText(text);
     }
-    return `${parts.day} ${MONTHS[parts.month - 1]} ${parts.year}`;
+    return `${String(parts.day).padStart(2, '0')}-${String(parts.month).padStart(2, '0')}-${parts.year}`;
   }
 
   function channelLabel(channel = {}) {

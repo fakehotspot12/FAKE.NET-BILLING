@@ -734,6 +734,14 @@ function radiusStatusForCustomer(user = {}) {
   return 'active';
 }
 
+function terminationSourceText(...values) {
+  return values.map((value) => String(value || '').trim().toLowerCase()).find(Boolean) || '';
+}
+
+function billingManagedTerminationSource(value = '') {
+  return ['billing', 'overdue', 'system', 'auto', 'invoice', 'payment'].includes(terminationSourceText(value));
+}
+
 function statusSeverity(status = '') {
   const normalized = normalizeCustomerStatusLocal(status);
   if (normalized === 'removed') return 4;
@@ -1246,9 +1254,6 @@ function localBillingMonitorPayload(data = {}, query = {}) {
   if (selectedStatus !== 'all') {
     rows = rows.filter((invoice) => invoice.status === selectedStatus || (selectedStatus === 'unpaid' && invoice.status === 'pending'));
   }
-  if (selectedCustomerStatus === 'all' && ['unpaid', 'overdue'].includes(selectedStatus)) {
-    rows = rows.filter((invoice) => invoice.customerStatus !== 'terminate');
-  }
   if (selectedCustomerStatus !== 'all') {
     rows = rows.filter((invoice) => invoice.customerStatus === selectedCustomerStatus);
   }
@@ -1269,8 +1274,8 @@ function localBillingMonitorPayload(data = {}, query = {}) {
   }
 
   const paidRows = periodRows.filter((invoice) => invoice.status === 'paid');
-  const unpaidRows = periodRows.filter((invoice) => ['unpaid', 'pending'].includes(invoice.status) && invoice.customerStatus !== 'terminate');
-  const overdueRows = periodRows.filter((invoice) => invoice.status === 'overdue' && invoice.customerStatus !== 'terminate');
+  const unpaidRows = periodRows.filter((invoice) => ['unpaid', 'pending'].includes(invoice.status));
+  const overdueRows = periodRows.filter((invoice) => invoice.status === 'overdue');
   const summary = {
     total: periodRows.length,
     totalAmount: periodRows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
@@ -1783,6 +1788,11 @@ function radiusUserPayload(payload = {}, serviceType = 'pppoe', data = {}) {
     isolatedByUsername: payload.isolatedByUsername || '',
     isolatedByRole: payload.isolatedByRole || '',
     terminatedAt: payload.terminatedAt || '',
+    terminationSource: payload.terminationSource || payload.terminatedSource || '',
+    terminationReason: payload.terminationReason || payload.terminateReason || '',
+    terminatedByName: payload.terminatedByName || '',
+    terminatedByUsername: payload.terminatedByUsername || '',
+    terminatedByRole: payload.terminatedByRole || '',
     validUntil: payload.validUntil || '',
     voucherMode: payload.voucherMode || '',
     voucherBatchId: payload.voucherBatchId || '',
@@ -2278,18 +2288,27 @@ function syncRadiusCustomerStatus(data = {}, radiusUser = {}) {
     customer.isolatedByUsername = '';
     customer.isolatedByRole = '';
   }
+  if (nextStatus === 'terminate') {
+    customer.terminatedAt = radiusUser.terminatedAt || customer.terminatedAt || localTodayIso();
+    customer.terminationSource = terminationSourceText(
+      radiusUser.terminationSource,
+      radiusUser.terminatedSource,
+      customer.terminationSource
+    ) || 'manual';
+    customer.terminationReason = radiusUser.terminationReason || radiusUser.terminateReason || customer.terminationReason || '';
+    customer.terminatedByName = radiusUser.terminatedByName || radiusUser.updatedBy || customer.terminatedByName || '';
+    customer.terminatedByUsername = radiusUser.terminatedByUsername || customer.terminatedByUsername || '';
+    customer.terminatedByRole = radiusUser.terminatedByRole || customer.terminatedByRole || '';
+  } else {
+    customer.terminatedAt = '';
+    customer.terminationSource = '';
+    customer.terminationReason = '';
+    customer.terminatedByName = '';
+    customer.terminatedByUsername = '';
+    customer.terminatedByRole = '';
+  }
   customer.updatedAt = new Date().toISOString();
   customer.updatedBy = radiusUser.updatedBy || 'Radius';
-  if (nextStatus === 'terminate') {
-    for (const invoice of data.invoices || []) {
-      if (invoice.customerId !== customer.id) continue;
-      const runtimeStatus = invoiceRuntimeStatus(invoice);
-      if (runtimeStatus === 'paid' || runtimeStatus === 'cancelled') continue;
-      invoice.status = 'cancelled';
-      invoice.notes = [invoice.notes, 'Dibatalkan otomatis karena pelanggan terminated.'].filter(Boolean).join(' ');
-      invoice.updatedAt = new Date().toISOString();
-    }
-  }
   return customer;
 }
 
@@ -2414,7 +2433,63 @@ function deleteRadiusLinkedMember(data = {}, radiusUser = {}, actor = {}) {
       .join(' ');
     invoice.updatedAt = new Date().toISOString();
   }
+  recordRadiusRemovedUser(data, radiusUser, removed, actor);
   return removed;
+}
+
+function radiusRemovedRecordKey(radiusUser = {}, customer = {}) {
+  return [
+    radiusUser.id,
+    customer.radiusUserId,
+    customer.id,
+    radiusUser.customerId,
+    radiusUser.username,
+    customer.username
+  ].map((value) => String(value || '').trim().toLowerCase()).find(Boolean) || '';
+}
+
+function recordRadiusRemovedUser(data = {}, radiusUser = {}, customer = {}, actor = {}) {
+  const serviceType = String(radiusUser.serviceType || customer.serviceType || 'pppoe').trim().toLowerCase();
+  if (serviceType !== 'pppoe') return null;
+  data.radiusRemovedRecords = Array.isArray(data.radiusRemovedRecords) ? data.radiusRemovedRecords : [];
+  const now = new Date().toISOString();
+  const key = radiusRemovedRecordKey(radiusUser, customer);
+  const record = {
+    id: radiusUser.id || createId('cab'),
+    key: key || createId('cab'),
+    serviceType: 'pppoe',
+    radiusUserId: radiusUser.id || customer.radiusUserId || '',
+    customerId: customer.id || radiusUser.customerId || '',
+    username: radiusUser.username || customer.username || '',
+    customerName: customer.name || customer.customerName || radiusUser.customerName || radiusUser.username || '',
+    memberCode: customer.code || customer.memberCode || '',
+    installedAt: customer.activeDate || radiusUser.activeDate || customer.createdAt || radiusUser.createdAt || '',
+    radiusCreatedAt: radiusUser.createdAt || '',
+    memberCreatedAt: customer.createdAt || '',
+    profileId: radiusUser.profileId || customer.profileId || '',
+    profileName: customer.packageName || radiusUser.profileName || '',
+    nasId: radiusUser.nasId || customer.nasId || '',
+    lastStatus: radiusUser.status || customer.status || '',
+    removedAt: now,
+    removedByName: actor?.name || actor?.username || 'Sistem',
+    removedByUsername: actor?.username || '',
+    removedByRole: actor?.role || '',
+    status: 'removed'
+  };
+  const index = data.radiusRemovedRecords.findIndex((item) => {
+    return (record.key && item.key === record.key)
+      || (record.radiusUserId && item.radiusUserId === record.radiusUserId);
+  });
+  if (index >= 0) {
+    data.radiusRemovedRecords[index] = {
+      ...data.radiusRemovedRecords[index],
+      ...record
+    };
+  } else {
+    data.radiusRemovedRecords.unshift(record);
+  }
+  data.radiusRemovedRecords = data.radiusRemovedRecords.slice(0, 10000);
+  return index >= 0 ? data.radiusRemovedRecords[index] : record;
 }
 
 function deleteOrphanRadiusMembers(data = {}, actor = {}) {
@@ -2956,6 +3031,16 @@ function dashboardMonthlyTransactionCount(data = {}, period = currentPeriod()) {
   return payments + externalIncomes + expenses;
 }
 
+function radiusRemovedRecordCount(data = {}, serviceType = 'pppoe', period = currentPeriod()) {
+  const selectedPeriod = normalizePeriod(period || currentPeriod());
+  const selectedType = String(serviceType || '').trim().toLowerCase();
+  return (data.radiusRemovedRecords || []).filter((record) => {
+    const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
+    const removedPeriod = String(record.removedAt || record.createdAt || '').slice(0, 7);
+    return type === selectedType && removedPeriod === selectedPeriod;
+  }).length;
+}
+
 function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period);
   const users = (data.radiusUsers || []).filter((user) => user.serviceType === serviceType);
@@ -2975,9 +3060,12 @@ function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period 
     const status = normalizeCustomerStatusLocal(user.status);
     if (status === 'isolated') counts.isolated += 1;
     else if (status === 'terminate') counts.terminated += 1;
-    else if (status === 'removed') counts.removed += 1;
+    else if (status === 'removed') {
+      // Cabut dihitung dari arsip delete PPP-DHCP per periode, bukan status yang tersisa.
+    }
     else counts.active += 1;
   });
+  counts.removed += radiusRemovedRecordCount(data, serviceType, selectedPeriod);
   counts.activeAccounts = counts.active;
   return counts;
 }
@@ -3367,6 +3455,7 @@ function mergeDashboardRemovedMembers(previous = {}, currentMembers = []) {
 }
 
 async function dashboardCustomerSummary(data = {}, options = {}) {
+  const selectedPeriod = normalizePeriod(options.period || currentPeriod());
   if (standaloneMode(data)) {
     const customers = Array.isArray(data.customers) ? data.customers : [];
     const resolver = radiusStatusResolver(data);
@@ -3396,7 +3485,7 @@ async function dashboardCustomerSummary(data = {}, options = {}) {
     const active = statuses.filter((status) => normalizeCustomerStatusLocal(status) === 'active').length;
     const isolated = statuses.filter((status) => normalizeCustomerStatusLocal(status) === 'isolated').length;
     const terminated = statuses.filter((status) => normalizeCustomerStatusLocal(status) === 'terminate').length;
-    const removed = statuses.filter((status) => normalizeCustomerStatusLocal(status) === 'removed').length;
+    const removed = radiusRemovedRecordCount(data, 'pppoe', selectedPeriod);
     return publicDashboardMembers({
       ok: true,
       source: 'local',
@@ -3918,7 +4007,7 @@ function sanitizeBillingSettings(payload = {}, current = {}) {
   return {
     ...current,
     postpaidDueDay: clampInteger(payload.postpaidDueDay ?? payload.defaultDueDay, 1, 28, current.postpaidDueDay || 10),
-    fixedInvoiceAdvanceDays: clampInteger(payload.fixedInvoiceAdvanceDays, 7, 31, current.fixedInvoiceAdvanceDays || 7),
+    fixedInvoiceAdvanceDays: clampInteger(payload.fixedInvoiceAdvanceDays, 0, 31, current.fixedInvoiceAdvanceDays ?? 7),
     suspendGraceDays: clampInteger(payload.suspendGraceDays, 0, 365, current.suspendGraceDays || 0),
     notificationBeforeDueDays: clampInteger(payload.notificationBeforeDueDays, 0, 31, current.notificationBeforeDueDays || 0),
     autoSuspendTime: sanitizeTime(payload.autoSuspendTime, current.autoSuspendTime || '00:00'),
@@ -4012,7 +4101,8 @@ function addDaysIso(dateIso = localTodayIso(), days = 0) {
 
 function invoiceGenerationDue(settings = {}, period = currentPeriod(), today = localTodayIso()) {
   const dueDate = dueDateForPeriod(period, settings.postpaidDueDay || 10);
-  const advanceStart = addDaysIso(dueDate, -Math.max(7, Number(settings.fixedInvoiceAdvanceDays || 7)));
+  const advanceDays = clampInteger(settings.fixedInvoiceAdvanceDays ?? 7, 0, 31, 7);
+  const advanceStart = addDaysIso(dueDate, -advanceDays);
   return today >= advanceStart;
 }
 
@@ -4081,6 +4171,11 @@ function syncCustomerToRadiusActive(data = {}, customer = {}, actor = {}) {
   user.isolatedByUsername = '';
   user.isolatedByRole = '';
   user.terminatedAt = '';
+  user.terminationSource = '';
+  user.terminationReason = '';
+  user.terminatedByName = '';
+  user.terminatedByUsername = '';
+  user.terminatedByRole = '';
   user.updatedAt = new Date().toISOString();
   user.updatedBy = actor.name || actor.username || 'Billing';
   customer.status = 'active';
@@ -4089,9 +4184,39 @@ function syncCustomerToRadiusActive(data = {}, customer = {}, actor = {}) {
   customer.isolatedByName = '';
   customer.isolatedByUsername = '';
   customer.isolatedByRole = '';
+  customer.terminatedAt = '';
+  customer.terminationSource = '';
+  customer.terminationReason = '';
+  customer.terminatedByName = '';
+  customer.terminatedByUsername = '';
+  customer.terminatedByRole = '';
   customer.updatedAt = user.updatedAt;
   customer.updatedBy = user.updatedBy;
   return user;
+}
+
+function radiusUserForCustomer(data = {}, customer = {}) {
+  if (!customer?.id && !customer?.username && !customer?.radiusUserId) return null;
+  const username = String(customer.username || '').trim().toLowerCase();
+  return (data.radiusUsers || []).find((item) => {
+    return item.customerId === customer.id
+      || item.id === customer.radiusUserId
+      || (username && String(item.username || '').trim().toLowerCase() === username);
+  }) || null;
+}
+
+function customerAutoReactivationState(data = {}, customer = {}) {
+  const user = radiusUserForCustomer(data, customer) || {};
+  const status = normalizeCustomerStatusLocal(customer.status || radiusStatusForCustomer(user));
+  if (status === 'isolated') {
+    return { eligible: true, requiresAdmin: false, status, source: customer.isolationSource || user.isolationSource || '', user };
+  }
+  if (status === 'terminate') {
+    const source = terminationSourceText(customer.terminationSource, user.terminationSource);
+    const eligible = billingManagedTerminationSource(source);
+    return { eligible, requiresAdmin: !eligible, status, source, user };
+  }
+  return { eligible: false, requiresAdmin: false, status, source: '', user };
 }
 
 function hotspotVoucherOrderForUser(data = {}, user = {}) {
@@ -4321,6 +4446,44 @@ function invoiceUncoveredPeriods(invoice = {}, paidCoverage = new Map()) {
   return periods.filter((period) => !covered.has(period));
 }
 
+function customerHasUncoveredInvoices(data = {}, customer = {}) {
+  if (!customer?.id) return false;
+  const coverage = paidInvoiceCoverageByCustomer(data);
+  return (data.invoices || []).some((item) => {
+    if (item.customerId !== customer.id) return false;
+    if (!['pending', 'overdue'].includes(invoiceRuntimeStatus(item))) return false;
+    return invoiceUncoveredPeriods(item, coverage).length > 0;
+  });
+}
+
+function reactivateCustomerAfterPaidInvoice(data = {}, invoice = {}, actor = {}) {
+  const customer = customerForInvoice(data, invoice);
+  if (!customer?.id) {
+    return { customer: null, activatedUser: null, requiresAdmin: false, source: '' };
+  }
+  const state = customerAutoReactivationState(data, customer);
+  if (!state.eligible) {
+    return {
+      customer,
+      activatedUser: null,
+      requiresAdmin: state.requiresAdmin,
+      source: state.source,
+      status: state.status
+    };
+  }
+  if (customerHasUncoveredInvoices(data, customer)) {
+    return { customer, activatedUser: null, requiresAdmin: false, source: state.source, status: state.status };
+  }
+  const activatedUser = syncCustomerToRadiusActive(data, customer, actor);
+  return {
+    customer,
+    activatedUser,
+    requiresAdmin: false,
+    source: state.source,
+    status: state.status
+  };
+}
+
 function standaloneBillingAutomation(data = {}, actor = { username: 'billing-auto', name: 'Billing Auto' }) {
   if (!standaloneMode(data)) return { created: [], isolatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] } };
   const settings = data.settings?.billing || {};
@@ -4374,9 +4537,9 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     const customer = customers.get(invoice.customerId);
     if (!customer) continue;
     const hasUnpaid = unpaidByCustomer.has(customer.id);
-    if (!hasUnpaid && normalizeCustomerStatusLocal(customer.status) === 'isolated') {
-      const user = syncCustomerToRadiusActive(data, customer, actor);
-      if (user) activatedUsers.push(user);
+    if (!hasUnpaid) {
+      const activation = reactivateCustomerAfterPaidInvoice(data, invoice, actor);
+      if (activation.activatedUser) activatedUsers.push(activation.activatedUser);
     }
   }
 
@@ -5215,9 +5378,9 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
   return [...onlineOrders, ...manualOrders];
 }
 
-async function paidVoucherOrdersForReport(data = {}, period = currentPeriod()) {
-  const firstOnlineByUsername = await generatedVoucherFirstOnlineMap(data);
-  return paidVoucherOrders(data, period, firstOnlineByUsername);
+async function paidVoucherOrdersForReport(data = {}, period = currentPeriod(), firstOnlineByUsername = null) {
+  const firstOnlineMap = firstOnlineByUsername || await generatedVoucherFirstOnlineMap(data);
+  return paidVoucherOrders(data, period, firstOnlineMap);
 }
 
 function monthlyVoucherDailyRows(data = {}, period = currentPeriod(), voucherOrders = null) {
@@ -5263,6 +5426,188 @@ function monthlyVoucherDailyRows(data = {}, period = currentPeriod(), voucherOrd
     });
   }
   return rows;
+}
+
+function statisticsDailyRow(date = '') {
+  return {
+    date,
+    newInstallCount: 0,
+    removedCount: 0,
+    netGrowth: 0,
+    voucherBuyerCount: 0,
+    voucherCount: 0,
+    voucherAmount: 0
+  };
+}
+
+function statisticsMonthlyRow(period = '') {
+  return {
+    period,
+    newInstallCount: 0,
+    removedCount: 0,
+    netGrowth: 0,
+    voucherBuyerCount: 0,
+    voucherCount: 0,
+    voucherAmount: 0
+  };
+}
+
+function statisticsPeriodRows(period = currentPeriod(), groups = new Map()) {
+  const normalized = normalizePeriod(period);
+  const [year, month] = normalized.split('-').map((item) => Number(item));
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const rows = [];
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = `${normalized}-${String(day).padStart(2, '0')}`;
+    const row = groups.get(date) || statisticsDailyRow(date);
+    row.netGrowth = Number(row.newInstallCount || 0) - Number(row.removedCount || 0);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function statisticsMonthPeriods(period = currentPeriod(), count = 12) {
+  const normalized = normalizePeriod(period);
+  const total = Math.max(1, Math.min(36, Number(count || 12) || 12));
+  const start = addMonthsToPeriod(normalized, -(total - 1));
+  const periods = [];
+  let cursor = start;
+  for (let index = 0; index < total; index += 1) {
+    periods.push(cursor);
+    cursor = addMonthsToPeriod(cursor, 1);
+  }
+  return periods;
+}
+
+function statisticsMonthlyRows(periods = [], groups = new Map()) {
+  return periods.map((period) => {
+    const normalized = normalizePeriod(period);
+    const row = groups.get(normalized) || statisticsMonthlyRow(normalized);
+    row.netGrowth = Number(row.newInstallCount || 0) - Number(row.removedCount || 0);
+    return row;
+  });
+}
+
+function pppInstallDateForUser(data = {}, user = {}) {
+  const customer = findCustomerForRadiusUser(data, user) || {};
+  return String(
+    customer.activeDate
+    || user.activeDate
+    || customer.createdAt
+    || user.createdAt
+    || ''
+  ).slice(0, 10);
+}
+
+function pppInstallDateForRemovedRecord(record = {}) {
+  return String(
+    record.installedAt
+    || record.activeDate
+    || record.radiusCreatedAt
+    || record.memberCreatedAt
+    || ''
+  ).slice(0, 10);
+}
+
+function statisticsRecordKey(prefix = '', item = {}) {
+  const value = String(item.key || item.id || item.radiusUserId || item.customerId || item.username || '').trim().toLowerCase();
+  return value ? `${prefix}:${value}` : '';
+}
+
+async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
+  const selectedPeriod = normalizePeriod(period);
+  const dailyGroups = new Map();
+  const monthlyGroups = new Map();
+  const monthPeriods = statisticsMonthPeriods(selectedPeriod, 12);
+  const monthPeriodSet = new Set(monthPeriods);
+  const newInstallKeys = new Set();
+  const removedKeys = new Set();
+  const addRow = (date = '', field = '', amount = 1) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return;
+    const rowPeriod = date.slice(0, 7);
+    if (monthPeriodSet.has(rowPeriod)) {
+      const monthlyRow = monthlyGroups.get(rowPeriod) || statisticsMonthlyRow(rowPeriod);
+      monthlyRow[field] += Number(amount || 0);
+      monthlyRow.netGrowth = monthlyRow.newInstallCount - monthlyRow.removedCount;
+      monthlyGroups.set(rowPeriod, monthlyRow);
+    }
+    if (rowPeriod === selectedPeriod) {
+      const dailyRow = dailyGroups.get(date) || statisticsDailyRow(date);
+      dailyRow[field] += Number(amount || 0);
+      dailyRow.netGrowth = dailyRow.newInstallCount - dailyRow.removedCount;
+      dailyGroups.set(date, dailyRow);
+    }
+  };
+
+  for (const user of data.radiusUsers || []) {
+    if (user.serviceType !== 'pppoe') continue;
+    const date = pppInstallDateForUser(data, user);
+    if (date.slice(0, 7) !== selectedPeriod) continue;
+    const key = statisticsRecordKey('active', user);
+    if (!key || newInstallKeys.has(key)) continue;
+    newInstallKeys.add(key);
+    addRow(date, 'newInstallCount', 1);
+  }
+
+  for (const record of data.radiusRemovedRecords || []) {
+    const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
+    if (type !== 'pppoe') continue;
+    const removedDate = String(record.removedAt || '').slice(0, 10);
+    if (removedDate.slice(0, 7) === selectedPeriod) {
+      const key = statisticsRecordKey('removed', record);
+      if (key && !removedKeys.has(key)) {
+        removedKeys.add(key);
+        addRow(removedDate, 'removedCount', 1);
+      }
+    }
+    const installedDate = pppInstallDateForRemovedRecord(record);
+    if (installedDate.slice(0, 7) === selectedPeriod) {
+      const key = statisticsRecordKey('removed-install', record);
+      if (key && !newInstallKeys.has(key)) {
+        newInstallKeys.add(key);
+        addRow(installedDate, 'newInstallCount', 1);
+      }
+    }
+  }
+
+  const firstOnlineByUsername = await generatedVoucherFirstOnlineMap(data);
+  for (const monthPeriod of monthPeriods) {
+    const voucherOrders = await paidVoucherOrdersForReport(data, monthPeriod, firstOnlineByUsername);
+    for (const order of voucherOrders) {
+      const date = String(order.date || order.paidAt || order.updatedAt || order.createdAt || '').slice(0, 10);
+      if (date.slice(0, 7) !== monthPeriod) continue;
+      addRow(date, 'voucherBuyerCount', 1);
+      addRow(date, 'voucherCount', Number(order.quantity || order.vouchers?.length || 0));
+      addRow(date, 'voucherAmount', Number(order.amount || 0));
+    }
+  }
+
+  const dailyRows = statisticsPeriodRows(selectedPeriod, dailyGroups);
+  const monthlyRows = statisticsMonthlyRows(monthPeriods, monthlyGroups);
+  const summary = dailyRows.reduce((acc, row) => {
+    acc.newInstallCount += Number(row.newInstallCount || 0);
+    acc.removedCount += Number(row.removedCount || 0);
+    acc.voucherBuyerCount += Number(row.voucherBuyerCount || 0);
+    acc.voucherCount += Number(row.voucherCount || 0);
+    acc.voucherAmount += Number(row.voucherAmount || 0);
+    return acc;
+  }, {
+    newInstallCount: 0,
+    removedCount: 0,
+    voucherBuyerCount: 0,
+    voucherCount: 0,
+    voucherAmount: 0
+  });
+  summary.netGrowth = summary.newInstallCount - summary.removedCount;
+
+  return {
+    ok: true,
+    period: selectedPeriod,
+    summary,
+    monthlyRows,
+    dailyRows,
+    checkedAt: new Date().toISOString()
+  };
 }
 
 function localManualInvoiceMembers(data = {}, query = {}) {
@@ -5345,7 +5690,7 @@ function dateDisplayText(value = '') {
   if (!parts || parts.month < 1 || parts.month > 12 || parts.day < 1 || parts.day > 31) {
     return readablePeriodText(text);
   }
-  return `${parts.day} ${INDONESIAN_MONTHS[parts.month - 1]} ${parts.year}`;
+  return `${String(parts.day).padStart(2, '0')}-${String(parts.month).padStart(2, '0')}-${parts.year}`;
 }
 
 function dateTimeDisplayText(value = '') {
@@ -5363,7 +5708,7 @@ function dateTimeDisplayText(value = '') {
     acc[part.type] = part.value;
     return acc;
   }, {});
-  return `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
+  return `${parts.day}-${parts.month}-${parts.year} ${parts.hour}:${parts.minute}`;
 }
 
 function periodDisplayText(value = '') {
@@ -6882,21 +7227,17 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
   if (paid && !wasPaid) {
     queueInvoiceWaMessage(data, paid, 'paymentPaid', actor);
   }
-  const customer = customerForInvoice(data, paid || invoice);
-  let activatedUser = null;
-  if (customer?.id && normalizeCustomerStatusLocal(customer.status) === 'isolated') {
-    const coverage = paidInvoiceCoverageByCustomer(data);
-    const hasUncovered = (data.invoices || []).some((item) => {
-      if (item.customerId !== customer.id) return false;
-      if (!['pending', 'overdue'].includes(invoiceRuntimeStatus(item))) return false;
-      return invoiceUncoveredPeriods(item, coverage).length > 0;
+  const activation = reactivateCustomerAfterPaidInvoice(data, paid || invoice, actor);
+  let activatedUser = activation.activatedUser || null;
+  if (activatedUser) {
+    queueInvoiceWaMessage(data, paid || invoice, 'accountActive', actor);
+  } else if (activation.requiresAdmin && !wasPaid) {
+    addActivity(data, 'invoice', `Pembayaran ${invoice.customerName || invoice.username || invoice.invoiceNo} tercatat, aktivasi pelanggan terminated menunggu validasi admin`, {
+      action: 'terminated-payment-awaiting-admin',
+      invoiceId: invoice.id,
+      customerId: activation.customer?.id || invoice.customerId || '',
+      source: activation.source || 'manual'
     });
-    if (!hasUncovered) {
-      activatedUser = syncCustomerToRadiusActive(data, customer, actor);
-      if (activatedUser) {
-        queueInvoiceWaMessage(data, paid || invoice, 'accountActive', actor);
-      }
-    }
   }
   const transaction = upsertPaidBillingPaymentGatewayTransaction(data, paid || invoice, {
     ...payment,
@@ -7947,7 +8288,7 @@ async function handleApi(req, res, url) {
     const summary = summarize(standaloneMode(data) ? dataWithResolvedCustomerStatuses(data) : data, period);
     summary.monthlyTransactionCount = dashboardMonthlyTransactionCount(data, period);
     summary.billingSummary = dashboardBillingSummary(data, period);
-    const members = await dashboardCustomerSummary(data, { force: refreshRadboox });
+    const members = await dashboardCustomerSummary(data, { force: refreshRadboox, period });
     const response = {
       summary: await publicDashboardSummary(summary, data, authContext.user, period),
       canViewFinance: dashboardFinanceAllowed(authContext.user),
@@ -8077,6 +8418,19 @@ async function handleApi(req, res, url) {
       radboox: radbooxStatusResponse(data),
       radbooxSync
     });
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/reports/statistics') {
+    const authContext = await requirePermission(req, res, 'reports:daily:read');
+    if (!authContext) return;
+    if (userIsCollector(authContext.user)) {
+      forbidden(res);
+      return;
+    }
+    const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
+    const payload = await reportStatisticsPayload(authContext.data, period);
+    sendJson(res, 200, payload);
     return;
   }
 
@@ -8592,7 +8946,20 @@ async function handleApi(req, res, url) {
         ...payload,
         ...actorPayload(authContext.user)
       });
-      if (invoice) queueInvoiceWaMessage(data, invoice, 'paymentPaid', authContext.user);
+      if (invoice) {
+        queueInvoiceWaMessage(data, invoice, 'paymentPaid', authContext.user);
+        const activation = reactivateCustomerAfterPaidInvoice(data, invoice, authContext.user);
+        if (activation.activatedUser) {
+          queueInvoiceWaMessage(data, invoice, 'accountActive', authContext.user);
+        } else if (activation.requiresAdmin) {
+          addActivity(data, 'invoice', `Pembayaran ${invoice.customerName || invoice.username || invoice.invoiceNo} tercatat, aktivasi pelanggan terminated menunggu validasi admin`, {
+            action: 'terminated-payment-awaiting-admin',
+            invoiceId: invoice.id,
+            customerId: activation.customer?.id || invoice.customerId || '',
+            source: activation.source || 'manual'
+          });
+        }
+      }
       return invoice;
     });
     if (!result) {
@@ -10164,7 +10531,20 @@ async function handleApi(req, res, url) {
             notes: payload.notes || `Dibayar oleh ${authContext.user.name || authContext.user.username}`,
             ...actorPayload(authContext.user)
           });
-          if (paid) queueInvoiceWaMessage(data, paid, 'paymentPaid', authContext.user);
+          if (paid) {
+            queueInvoiceWaMessage(data, paid, 'paymentPaid', authContext.user);
+            const activation = reactivateCustomerAfterPaidInvoice(data, paid, authContext.user);
+            if (activation.activatedUser) {
+              queueInvoiceWaMessage(data, paid, 'accountActive', authContext.user);
+            } else if (activation.requiresAdmin) {
+              addActivity(data, 'invoice', `Pembayaran ${paid.customerName || paid.username || paid.invoiceNo} tercatat, aktivasi pelanggan terminated menunggu validasi admin`, {
+                action: 'terminated-payment-awaiting-admin',
+                invoiceId: paid.id,
+                customerId: activation.customer?.id || paid.customerId || '',
+                source: activation.source || 'manual'
+              });
+            }
+          }
           return paid;
         }
         const rollback = markInvoiceUnpaid(data, invoice.id);
@@ -11797,23 +12177,28 @@ module.exports = {
     applyHotspotVoucherExpirations,
     collectorReportPayments,
     createHotspotVoucherOrder,
+    dashboardRadiusServiceSummary,
     dashboardCollectorScope,
     deleteRadiusLinkedMember,
     fulfillHotspotVoucherOrder,
     fulfillPaymentGatewayCallback,
     hotspotFreeUserWritable,
+    invoiceGenerationDue,
     isPaymentGatewayWebhookPath,
     localDailyReport,
     monthlyBillingDailyRows,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
     publicPaymentGatewayInvoicePayload,
+    reportStatisticsPayload,
     verifyPaymentGatewayCallback,
     filterVoucherReportOrders,
     radiusPayloadLocal,
     radiusTemplateRowsLocal,
     resellerHotspotVoucherRowVisible,
+    sanitizeBillingSettings,
     stampHotspotVoucherValidityFromFirstOnline,
+    syncRadiusCustomerStatus,
     standaloneBillingAutomation
   }
 };

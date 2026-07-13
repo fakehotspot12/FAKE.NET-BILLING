@@ -51,19 +51,40 @@ function showLogin() {
   byId('loginView').hidden = false;
   byId('portalView').hidden = true;
   byId('logoutButton').hidden = true;
+  syncOtpFormVisibility(Boolean(state.challengeId));
 }
 
 function showPortal() {
   byId('loginView').hidden = true;
   byId('portalView').hidden = false;
   byId('logoutButton').hidden = false;
+  state.challengeId = '';
+  syncOtpFormVisibility(false);
 }
 
-function usageBarPercent(value = 0, max = 1) {
-  const number = Number(value || 0);
-  const maximum = Math.max(1, Number(max || 0));
-  if (!Number.isFinite(number) || number <= 0) return 0;
-  return Math.max(2, Math.min(100, (number / maximum) * 100));
+function otpRequired() {
+  return state.settings?.requireOtp !== false;
+}
+
+function syncOtpFormVisibility(showChallenge = false) {
+  const otpForm = byId('otpForm');
+  if (!otpForm) return;
+  const enabled = otpRequired();
+  const ready = enabled && Boolean(showChallenge);
+  otpForm.hidden = !enabled;
+  const input = byId('otpInput');
+  const button = otpForm.querySelector('button[type="submit"]');
+  if (input) {
+    input.disabled = !ready;
+    input.placeholder = ready ? 'Masukkan kode OTP' : 'Kirim OTP terlebih dahulu';
+    if (!ready) input.value = '';
+  }
+  if (button) {
+    button.disabled = !ready;
+  }
+  if (!enabled) {
+    state.challengeId = '';
+  }
 }
 
 function periodText(value = '') {
@@ -102,29 +123,6 @@ function renderBillingSummary(billing = {}) {
   payButton.dataset.checkoutUrl = billing.canPay ? checkoutUrl : '';
 }
 
-function renderUsageChart(usage = {}, period = todayPeriod()) {
-  const chart = byId('usageChart');
-  const rows = [
-    { label: 'Upload', className: 'upload', value: Number(usage.inputOctets || 0), text: usage.upload || '0 B' },
-    { label: 'Download', className: 'download', value: Number(usage.outputOctets || 0), text: usage.download || '0 B' }
-  ];
-  const maxOctets = Math.max(1, ...rows.map((row) => row.value));
-  byId('usagePeriod').textContent = periodText(usage.period || period);
-  byId('usageSessionCount').textContent = 'Total bulanan';
-  chart.innerHTML = rows.map((row) => `
-    <div class="usage-row">
-      <div class="usage-label">
-        <strong>${row.label}</strong>
-        <span>${row.text}</span>
-      </div>
-      <div class="usage-track" title="${row.label} ${row.text}">
-        <span class="usage-bar ${row.className}" style="width:${usageBarPercent(row.value, maxOctets)}%"></span>
-      </div>
-      <strong>${row.text}</strong>
-    </div>
-  `).join('');
-}
-
 function renderPortal(payload) {
   state.portal = payload;
   const customer = payload.customer || {};
@@ -142,7 +140,6 @@ function renderPortal(payload) {
   byId('ssid24').textContent = device.ssid24 || '-';
   byId('ssid5').textContent = device.ssid5 || '-';
   renderBillingSummary(payload.billing || {});
-  renderUsageChart(usage, payload.period || todayPeriod());
   showPortal();
 }
 
@@ -157,6 +154,7 @@ async function loadSettings() {
   if (!state.settings.enabled) {
     byId('loginView').innerHTML = '<h1>WifiKu nonaktif</h1><p>Portal pelanggan belum diaktifkan.</p>';
   }
+  syncOtpFormVisibility(Boolean(state.challengeId));
 }
 
 async function loadMe() {
@@ -189,11 +187,17 @@ byId('phoneForm').addEventListener('submit', async (event) => {
     if (payload.token) {
       state.token = payload.token;
       localStorage.setItem(TOKEN_KEY, state.token);
+      state.challengeId = '';
+      syncOtpFormVisibility(false);
       renderPortal(payload.portal);
       return;
     }
+    if (payload.requireOtp === false || !otpRequired()) {
+      syncOtpFormVisibility(false);
+      throw new Error('OTP sedang nonaktif, silakan ulangi login');
+    }
     state.challengeId = payload.challengeId || '';
-    byId('otpForm').hidden = false;
+    syncOtpFormVisibility(Boolean(state.challengeId));
     byId('otpInput').focus();
     toast('OTP dikirim via WhatsApp');
   } catch (error) {

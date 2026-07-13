@@ -142,6 +142,11 @@ test('deleting radius user removes linked member but keeps transaction history',
   assert.equal(data.payments[0].invoiceId, 'inv-paid-1');
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-paid-1').status, 'paid');
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-unpaid-1').status, 'cancelled');
+  assert.equal(data.radiusRemovedRecords.length, 1);
+  assert.equal(data.radiusRemovedRecords[0].status, 'removed');
+  assert.equal(data.radiusRemovedRecords[0].username, 'hapus@ppp.test');
+  assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', currentPeriod()).removed, 1);
+  assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', addMonthsToPeriod(currentPeriod(), 1)).removed, 0);
 });
 
 test('standalone billing automation isolates unpaid overdue and reactivates fully paid member', () => {
@@ -172,6 +177,137 @@ test('standalone billing automation isolates unpaid overdue and reactivates full
   assert.equal(data.customers.find((customer) => customer.id === 'cus-paid').status, 'active');
   assert.equal(result.isolatedUsers.some((user) => user.id === 'rad-late'), true);
   assert.equal(result.activatedUsers.some((user) => user.id === 'rad-paid'), true);
+});
+
+test('terminating radius user keeps unpaid invoice pending and skips future invoice generation', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.customers.push({
+    id: 'cus-terminated-manual',
+    source: 'radius',
+    username: 'manual-terminated@ppp.test',
+    name: 'Manual Terminated',
+    status: 'active',
+    price: 100000
+  });
+  const radiusUser = {
+    id: 'rad-terminated-manual',
+    serviceType: 'pppoe',
+    username: 'manual-terminated@ppp.test',
+    customerId: 'cus-terminated-manual',
+    status: 'terminated',
+    terminationSource: 'manual'
+  };
+  data.radiusUsers.push(radiusUser);
+  data.invoices.push({
+    id: 'inv-terminated-pending',
+    customerId: 'cus-terminated-manual',
+    customerName: 'Manual Terminated',
+    username: 'manual-terminated@ppp.test',
+    period: '2026-07',
+    amount: 100000,
+    status: 'pending',
+    dueDate: '2026-07-10'
+  });
+
+  serverInternals.syncRadiusCustomerStatus(data, radiusUser);
+
+  assert.equal(data.customers[0].status, 'terminate');
+  assert.equal(data.customers[0].terminationSource, 'manual');
+  assert.equal(data.invoices[0].status, 'pending');
+  assert.equal(generateInvoices(data, '2026-08').length, 0);
+});
+
+test('monthly statistics combines new ppp installs, removed users, and paid vouchers by period', async () => {
+  const data = createDefaultStore();
+  const period = currentPeriod();
+  const nextPeriod = addMonthsToPeriod(period, 1);
+  data.radiusUsers.push({
+    id: 'rad-stat-active',
+    serviceType: 'pppoe',
+    username: 'stat-active',
+    status: 'active',
+    createdAt: `${period}-03T08:00:00.000Z`
+  });
+  data.radiusRemovedRecords.push(
+    {
+      id: 'rad-stat-removed',
+      key: 'rad-stat-removed',
+      serviceType: 'pppoe',
+      username: 'stat-removed',
+      installedAt: `${period}-02T08:00:00.000Z`,
+      removedAt: `${period}-10T08:00:00.000Z`,
+      status: 'removed'
+    },
+    {
+      id: 'rad-stat-removed-next',
+      key: 'rad-stat-removed-next',
+      serviceType: 'pppoe',
+      username: 'stat-removed-next',
+      installedAt: `${period}-04T08:00:00.000Z`,
+      removedAt: `${nextPeriod}-01T08:00:00.000Z`,
+      status: 'removed'
+    }
+  );
+  data.hotspotVoucherOrders.push(
+    {
+      id: 'order-stat-paid',
+      reference: 'VCH-001',
+      status: 'paid',
+      paidAt: `${period}-12T08:00:00.000Z`,
+      amount: 6000,
+      quantity: 2,
+      paymentMethod: 'QRIS'
+    },
+    {
+      id: 'order-stat-pending',
+      reference: 'VCH-002',
+      status: 'pending',
+      createdAt: `${period}-12T09:00:00.000Z`,
+      amount: 3000,
+      quantity: 1
+    }
+  );
+
+  const payload = await serverInternals.reportStatisticsPayload(data, period);
+
+  assert.equal(payload.summary.newInstallCount, 3);
+  assert.equal(payload.summary.removedCount, 1);
+  assert.equal(payload.summary.netGrowth, 2);
+  assert.equal(payload.summary.voucherBuyerCount, 1);
+  assert.equal(payload.summary.voucherCount, 2);
+  assert.equal(payload.summary.voucherAmount, 6000);
+  assert.equal(payload.dailyRows.find((row) => row.date === `${period}-10`).removedCount, 1);
+  assert.equal(payload.dailyRows.find((row) => row.date === `${nextPeriod}-01`), undefined);
+  assert.equal(payload.monthlyRows.length, 12);
+  assert.equal(payload.monthlyRows.find((row) => row.period === period).newInstallCount, 3);
+  assert.equal(payload.monthlyRows.find((row) => row.period === period).removedCount, 1);
+  assert.equal(payload.monthlyRows.find((row) => row.period === period).voucherBuyerCount, 1);
+  assert.equal(payload.monthlyRows.find((row) => row.period === nextPeriod), undefined);
+});
+
+test('ensureShape restores invoices cancelled only because customer was terminated', () => {
+  const data = ensureShape({
+    settings: { businessName: 'Restore Test' },
+    invoices: [
+      {
+        id: 'inv-restored',
+        customerId: 'cus-restored',
+        status: 'cancelled',
+        notes: 'Dibatalkan otomatis karena pelanggan terminated.'
+      },
+      {
+        id: 'inv-deleted-member',
+        customerId: 'cus-deleted',
+        status: 'cancelled',
+        notes: 'Dibatalkan otomatis karena member dihapus bersama user Radius oleh Admin.'
+      }
+    ]
+  });
+
+  assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-restored').status, 'pending');
+  assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-deleted-member').status, 'cancelled');
 });
 
 test('standalone billing automation ignores pending invoice covered by paid multi-month invoice', () => {
@@ -272,6 +408,60 @@ test('standalone billing automation queues payment reminder once before due date
   assert.equal(second.reminderInvoices.length, 0);
   assert.equal(data.waMessages.filter((message) => message.type === 'paymentReminder').length, 1);
   assert.equal(data.invoices[0].paymentReminderDueDate, dueDate);
+});
+
+test('billing settings allow H-1 invoice generation and disabled reminders', () => {
+  const sanitized = serverInternals.sanitizeBillingSettings({
+    postpaidDueDay: 10,
+    fixedInvoiceAdvanceDays: 1,
+    notificationBeforeDueDays: 0
+  }, {});
+
+  assert.equal(sanitized.fixedInvoiceAdvanceDays, 1);
+  assert.equal(sanitized.notificationBeforeDueDays, 0);
+  assert.equal(serverInternals.invoiceGenerationDue(sanitized, '2026-08', '2026-08-08'), false);
+  assert.equal(serverInternals.invoiceGenerationDue(sanitized, '2026-08', '2026-08-09'), true);
+  assert.equal(serverInternals.invoiceGenerationDue({ ...sanitized, fixedInvoiceAdvanceDays: 0 }, '2026-08', '2026-08-09'), false);
+  assert.equal(serverInternals.invoiceGenerationDue({ ...sanitized, fixedInvoiceAdvanceDays: 0 }, '2026-08', '2026-08-10'), true);
+
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.billing.notificationBeforeDueDays = 0;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Makassar',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const today = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const dueDate = `${today.year}-${today.month}-${today.day}`;
+  data.customers.push({
+    id: 'cus-reminder-disabled',
+    source: 'radius',
+    username: 'reminder-disabled@ppp.test',
+    name: 'Reminder Disabled',
+    status: 'active',
+    phone: '081234567890',
+    price: 100000
+  });
+  data.invoices.push({
+    id: 'inv-reminder-disabled',
+    customerId: 'cus-reminder-disabled',
+    customerName: 'Reminder Disabled',
+    username: 'reminder-disabled@ppp.test',
+    period: currentPeriod(),
+    amount: 100000,
+    status: 'pending',
+    dueDate,
+    externalId: '000124',
+    invoiceNo: '000124'
+  });
+
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' });
+
+  assert.equal(result.reminderInvoices.length, 0);
+  assert.equal(data.waMessages.filter((message) => message.type === 'paymentReminder').length, 0);
 });
 
 test('expired hotspot voucher remove-record keeps terminated record', () => {
@@ -3461,6 +3651,123 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   assert.equal(second.reused, true);
   assert.equal(data.payments.length, 1);
   assert.equal(data.paymentGatewayTransactions.length, 1);
+});
+
+test('payment gateway payment does not auto activate manually terminated customer', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.paymentGateway.provider = 'tripay';
+  data.customers.push({
+    id: 'cus-term-manual-pay',
+    username: 'term-manual-pay',
+    name: 'Terminated Manual Pay',
+    phone: '081234567890',
+    packageName: 'Paket Bulanan',
+    status: 'terminate',
+    terminationSource: 'manual',
+    price: 100000
+  });
+  data.radiusUsers.push({
+    id: 'rad-term-manual-pay',
+    customerId: 'cus-term-manual-pay',
+    username: 'term-manual-pay',
+    serviceType: 'pppoe',
+    status: 'terminated',
+    terminationSource: 'manual'
+  });
+  data.invoices.push({
+    id: 'inv-term-manual-pay',
+    source: 'generated',
+    externalId: '000411',
+    invoiceNo: '000411',
+    customerId: 'cus-term-manual-pay',
+    customerName: 'Terminated Manual Pay',
+    username: 'term-manual-pay',
+    packageName: 'Paket Bulanan',
+    period: '2026-07',
+    coveredPeriods: ['2026-07'],
+    amount: 100000,
+    dueDate: '2026-07-10',
+    status: 'pending',
+    paidAt: '',
+    paymentMethod: ''
+  });
+
+  const result = serverInternals.fulfillPaymentGatewayCallback(data, {
+    merchant_ref: '000411',
+    reference: 'T-MANUAL-TERM',
+    status: 'PAID',
+    total_amount: 100000,
+    payment_method: 'QRIS',
+    paid_at: '2026-07-13T04:00:00.000Z'
+  }, {
+    username: 'payment-gateway',
+    name: 'Payment Gateway'
+  });
+
+  assert.equal(result.type, 'monthly-package');
+  assert.equal(data.invoices[0].status, 'paid');
+  assert.equal(data.customers[0].status, 'terminate');
+  assert.equal(data.radiusUsers[0].status, 'terminated');
+  assert.equal(data.activity.some((item) => item.meta?.action === 'terminated-payment-awaiting-admin'), true);
+});
+
+test('payment gateway payment auto activates billing-terminated customer after all invoices paid', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.paymentGateway.provider = 'tripay';
+  data.customers.push({
+    id: 'cus-term-billing-pay',
+    username: 'term-billing-pay',
+    name: 'Terminated Billing Pay',
+    phone: '081234567891',
+    packageName: 'Paket Bulanan',
+    status: 'terminate',
+    terminationSource: 'billing',
+    price: 100000
+  });
+  data.radiusUsers.push({
+    id: 'rad-term-billing-pay',
+    customerId: 'cus-term-billing-pay',
+    username: 'term-billing-pay',
+    serviceType: 'pppoe',
+    status: 'terminated',
+    terminationSource: 'billing'
+  });
+  data.invoices.push({
+    id: 'inv-term-billing-pay',
+    source: 'generated',
+    externalId: '000412',
+    invoiceNo: '000412',
+    customerId: 'cus-term-billing-pay',
+    customerName: 'Terminated Billing Pay',
+    username: 'term-billing-pay',
+    packageName: 'Paket Bulanan',
+    period: '2026-07',
+    coveredPeriods: ['2026-07'],
+    amount: 100000,
+    dueDate: '2026-07-10',
+    status: 'pending',
+    paidAt: '',
+    paymentMethod: ''
+  });
+
+  const result = serverInternals.fulfillPaymentGatewayCallback(data, {
+    merchant_ref: '000412',
+    reference: 'T-BILLING-TERM',
+    status: 'PAID',
+    total_amount: 100000,
+    payment_method: 'QRIS',
+    paid_at: '2026-07-13T04:00:00.000Z'
+  }, {
+    username: 'payment-gateway',
+    name: 'Payment Gateway'
+  });
+
+  assert.equal(result.type, 'monthly-package');
+  assert.equal(data.invoices[0].status, 'paid');
+  assert.equal(data.customers[0].status, 'active');
+  assert.equal(data.radiusUsers[0].status, 'active');
 });
 
 test('auth creates default admin and protects admin role', () => {

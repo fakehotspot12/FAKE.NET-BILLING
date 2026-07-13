@@ -364,6 +364,7 @@ function addRadiusUser(data, input, actor) {
   const serviceType = radiusUserServiceType(data, input);
   const status = normalizeStatus(input.status);
   const isolated = status === 'isolated';
+  const terminated = status === 'terminated';
   const item = {
     id: createId('rus'),
     username,
@@ -382,7 +383,12 @@ function addRadiusUser(data, input, actor) {
     isolatedByName: isolated ? text(input.isolatedByName || actor?.name || actor?.username) : '',
     isolatedByUsername: isolated ? text(input.isolatedByUsername || actor?.username) : '',
     isolatedByRole: isolated ? text(input.isolatedByRole || actor?.role) : '',
-    terminatedAt: text(input.terminatedAt),
+    terminatedAt: terminated ? (text(input.terminatedAt) || now.slice(0, 10)) : '',
+    terminationSource: terminated ? (text(input.terminationSource || input.terminatedSource) || 'manual') : '',
+    terminationReason: terminated ? text(input.terminationReason || input.terminateReason) : '',
+    terminatedByName: terminated ? text(input.terminatedByName || actor?.name || actor?.username) : '',
+    terminatedByUsername: terminated ? text(input.terminatedByUsername || actor?.username) : '',
+    terminatedByRole: terminated ? text(input.terminatedByRole || actor?.role) : '',
     expiration: text(input.expiration),
     validUntil: text(input.validUntil),
     voucherMode: text(input.voucherMode),
@@ -447,8 +453,24 @@ function updateRadiusUser(data, id, input, actor) {
   }
   if (item.status === 'terminated' && previousStatus !== 'terminated' && !text(input.terminatedAt || item.terminatedAt)) {
     item.terminatedAt = new Date().toISOString().slice(0, 10);
+  } else if (item.status === 'terminated') {
+    item.terminatedAt = text(input.terminatedAt || item.terminatedAt);
   } else {
-    item.terminatedAt = text(input.terminatedAt);
+    item.terminatedAt = '';
+  }
+  if (item.status === 'terminated') {
+    item.terminationSource = text(input.terminationSource || input.terminatedSource || item.terminationSource)
+      || (previousStatus !== 'terminated' ? 'manual' : '');
+    item.terminationReason = text(input.terminationReason || input.terminateReason || item.terminationReason);
+    item.terminatedByName = text(input.terminatedByName || actor?.name || actor?.username || item.terminatedByName);
+    item.terminatedByUsername = text(input.terminatedByUsername || actor?.username || item.terminatedByUsername);
+    item.terminatedByRole = text(input.terminatedByRole || actor?.role || item.terminatedByRole);
+  } else {
+    item.terminationSource = '';
+    item.terminationReason = '';
+    item.terminatedByName = '';
+    item.terminatedByUsername = '';
+    item.terminatedByRole = '';
   }
   item.expiration = text(input.expiration);
   item.validUntil = text(input.validUntil);

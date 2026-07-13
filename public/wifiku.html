@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#08204f">
     <title>WifiKu</title>
     <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-20260713-4">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-20260713-8">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -21,9 +21,10 @@
         <button id="logoutButton" type="button" hidden>Logout</button>
       </header>
 
-      <section id="loginView" class="panel">
+      <section id="loginView" class="panel login-panel">
+        <span class="panel-kicker">Portal Pelanggan</span>
         <h1>WifiKu</h1>
-        <p>Akses pemakaian bulanan, redaman, dan pengaturan WiFi menggunakan nomor WhatsApp member.</p>
+        <p>Akses tagihan, pemakaian bulanan, redaman, dan pengaturan WiFi menggunakan nomor WhatsApp member.</p>
         <form id="phoneForm" class="stack">
           <label>
             <span>Nomor WhatsApp</span>
@@ -40,8 +41,8 @@
         </form>
       </section>
 
-      <section id="portalView" hidden>
-        <div class="toolbar">
+      <section id="portalView" class="portal-layout" hidden>
+        <div class="toolbar portal-toolbar">
           <div>
             <span class="muted">Member</span>
             <strong id="customerName">-</strong>
@@ -81,7 +82,7 @@
           </div>
         </section>
 
-        <section class="grid">
+        <section class="grid stats-grid">
           <article class="card primary">
             <span>Total Usage</span>
             <strong id="usageTotal">0 B</strong>
@@ -99,19 +100,13 @@
           </article>
         </section>
 
-        <section class="panel compact usage-panel">
-          <div class="usage-head">
+        <section class="panel compact wifi-panel">
+          <div class="panel-title-row">
             <div>
-              <h2>Usage Radius</h2>
-              <span id="usagePeriod">-</span>
+              <span class="panel-kicker">Kontrol Modem</span>
+              <h2>WiFi</h2>
             </div>
-            <small id="usageSessionCount">Total bulanan</small>
           </div>
-          <div id="usageChart" class="usage-chart"></div>
-        </section>
-
-        <section class="panel compact">
-          <h2>WiFi</h2>
           <div class="wifi-row">
             <div>
               <span>SSID 2.4G</span>
@@ -146,6 +141,6 @@
     </dialog>
 
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-20260713-4" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-20260713-8" defer></script>
   </body>
 </html>

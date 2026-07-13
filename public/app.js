@@ -63,6 +63,7 @@ const titles = {
   billingSettings: 'Billing Settings',
   reportsDaily: 'Tagihan Harian',
   reportsMonthlyBilling: 'Tagihan Bulanan',
+  reportsStatistics: 'Statistik',
   reportsVoucherDaily: 'Voucher Harian',
   reportsVoucherMonthly: 'Voucher Bulanan',
   reportsTransactions: 'Mutasi Bulanan',
@@ -83,6 +84,7 @@ const viewPermissions = {
   billingSettings: 'billing-settings:manage',
   reportsDaily: 'reports:daily:read',
   reportsMonthlyBilling: 'reports:daily:read',
+  reportsStatistics: 'reports:daily:read',
   reportsVoucherDaily: 'reports:voucher:read',
   reportsVoucherMonthly: 'reports:voucher:read',
   reportsTransactions: 'reports:daily:read',
@@ -163,6 +165,7 @@ const state = {
   reportMonthlyBillingStatus: 'all',
   reportMonthlyBillingPage: 1,
   reportMonthlyBillingLimit: 10,
+  reportStatisticsPeriod: todayInput().slice(0, 7),
   reportVoucherDailyDate: todayInput(),
   reportVoucherDailyPage: 1,
   reportVoucherDailyLimit: 10,
@@ -240,6 +243,9 @@ let notificationsLoading = false;
 let lastNotificationsFetchAt = 0;
 let topWaStatusTimer = null;
 let topWaStatusLoading = false;
+let renderGeneration = 0;
+let pageRequestController = new AbortController();
+let loginDomRepairing = false;
 const NOTIFICATION_CACHE_PREFIX = 'fakenetOpsNotifications';
 
 const money = new Intl.NumberFormat('id-ID', {
@@ -279,6 +285,11 @@ function periodLabel(period = state.period) {
   return `${MONTH_FULL_LABELS[Math.max(0, Math.min(11, month - 1))]} ${year}`;
 }
 
+function periodShortLabel(period = state.period) {
+  const { year, month } = periodParts(period);
+  return `${MONTH_LABELS[Math.max(0, Math.min(11, month - 1))]} ${String(year).slice(-2)}`;
+}
+
 function readablePeriodText(value = state.period) {
   const text = String(value || '').trim();
   if (!text) return '-';
@@ -301,7 +312,7 @@ function readableDateParts(value) {
 
 function readableDateFromParts(parts) {
   if (!parts || parts.month < 1 || parts.month > 12 || parts.day < 1 || parts.day > 31) return '';
-  return `${parts.day} ${MONTH_FULL_LABELS[parts.month - 1]} ${parts.year}`;
+  return `${String(parts.day).padStart(2, '0')}-${String(parts.month).padStart(2, '0')}-${parts.year}`;
 }
 
 function percentText(value) {
@@ -455,11 +466,19 @@ function dateTimeText(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return dateText(value);
-  return date.toLocaleString('id-ID', {
+  const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: APP_TIME_ZONE,
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  });
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(date).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return `${parts.day}-${parts.month}-${parts.year} ${parts.hour}:${parts.minute}`;
 }
 
 function timeText(value) {
@@ -610,6 +629,36 @@ function toggleTheme() {
   renderDashboardRouterNasCharts();
 }
 
+function nextRenderGeneration() {
+  renderGeneration += 1;
+  return renderGeneration;
+}
+
+function renderIsStale(token) {
+  return !state.auth || (token !== undefined && token !== renderGeneration);
+}
+
+function abortPageRequests() {
+  pageRequestController.abort();
+  pageRequestController = new AbortController();
+}
+
+function loginScreenVisible() {
+  return Boolean(app?.querySelector?.(':scope > .login-screen'));
+}
+
+function restoreLoginIfNeeded() {
+  if (loginDomRepairing || state.auth || !document.body.classList.contains('is-login')) return;
+  if (loginScreenVisible()) return;
+  loginDomRepairing = true;
+  window.queueMicrotask(() => {
+    loginDomRepairing = false;
+    if (!state.auth && document.body.classList.contains('is-login') && !loginScreenVisible()) {
+      renderLogin();
+    }
+  });
+}
+
 function themeColor(name, fallback) {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
@@ -617,12 +666,13 @@ function themeColor(name, fallback) {
 
 async function api(path, options = {}) {
   const { skipAuthRedirect = false, timeoutMs = 0, signal, ...fetchOptions } = options;
-  const controller = timeoutMs > 0 && !signal ? new AbortController() : null;
+  const pageSignal = !signal && !skipAuthRedirect && state.auth ? pageRequestController.signal : null;
+  const controller = timeoutMs > 0 && !signal && !pageSignal ? new AbortController() : null;
   const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
     const response = await fetch(path, {
       ...fetchOptions,
-      signal: signal || controller?.signal,
+      signal: signal || pageSignal || controller?.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(fetchOptions.headers || {})
@@ -632,6 +682,7 @@ async function api(path, options = {}) {
     if (response.status === 401 && !skipAuthRedirect) {
       rememberLoginReturnView();
       state.auth = null;
+      abortPageRequests();
       renderLogin();
       const error = new Error(payload.error || 'Sesi login habis');
       error.status = response.status;
@@ -1009,7 +1060,7 @@ function canView(view) {
 }
 
 function firstAvailableView() {
-  return ['dashboard', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'genieAcs', 'monitoringSite', 'monitoringMembers', 'monitoringCustomers', 'monitoringBilling', 'monitoringServices', 'externalIncomes', 'expenses', 'reportsDaily', 'reportsMonthlyBilling', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsTransactions', 'reportsFinanceRecap', 'reportsInventoryStock', 'waGateway', 'paymentGateway', 'inventory', 'networkAssets', 'users', 'settings'].find(canView) || 'dashboard';
+  return ['dashboard', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'genieAcs', 'monitoringSite', 'monitoringMembers', 'monitoringCustomers', 'monitoringBilling', 'monitoringServices', 'externalIncomes', 'expenses', 'reportsDaily', 'reportsMonthlyBilling', 'reportsStatistics', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsTransactions', 'reportsFinanceRecap', 'reportsInventoryStock', 'waGateway', 'paymentGateway', 'inventory', 'networkAssets', 'users', 'settings'].find(canView) || 'dashboard';
 }
 
 function normalizeView(view) {
@@ -1180,6 +1231,7 @@ function configureShell() {
     window.clearInterval(notificationsTimer);
     hideNotifications();
     hideTopWaStatus();
+    restoreLoginIfNeeded();
   }
 
   if (currentUserName) {
@@ -1229,6 +1281,7 @@ function setView(view) {
   const requestedView = normalizeView(view);
   const nextView = canView(requestedView) ? requestedView : firstAvailableView();
   if (nextView !== state.view) {
+    abortPageRequests();
     state.search = '';
     state.activityPage = 1;
     state.monitoringCustomerPage = 1;
@@ -1274,6 +1327,25 @@ function setView(view) {
   setMenuOpen(false);
   configureShell();
   render();
+}
+
+async function copyTextToClipboard(text = '') {
+  const value = String(text || '');
+  if (!value) throw new Error('Tidak ada teks untuk disalin');
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Browser tidak mengizinkan copy otomatis');
 }
 
 function formData(form) {
@@ -2228,6 +2300,9 @@ async function refreshLoginVerification() {
 }
 
 function renderLogin() {
+  nextRenderGeneration();
+  abortPageRequests();
+  clearRealtimeTimers();
   configureShell();
   applyBranding();
   const branding = currentBranding();
@@ -2235,7 +2310,7 @@ function renderLogin() {
   viewTitle.textContent = 'Login';
   app.innerHTML = `
     <section class="login-screen">
-      <div class="login-card">
+      <div class="login-card login-card-compact">
         <div class="login-brand">
           <img src="${escapeHtml(branding.logoUrl)}" alt="Logo ${escapeHtml(branding.businessName)}">
           <div>
@@ -2243,7 +2318,7 @@ function renderLogin() {
             <span>${escapeHtml(branding.appSubtitle)}</span>
           </div>
         </div>
-        <div class="login-content-grid">
+        <div class="login-content-grid login-content-compact">
           <form id="loginForm" class="login-form">
             <label class="field">
               <span>Username</span>
@@ -2268,24 +2343,10 @@ function renderLogin() {
             <button class="button" type="submit">Masuk</button>
             <p class="login-note">Akses aplikasi dibatasi sesuai role user.</p>
           </form>
-          <section class="login-public-info" aria-label="Informasi layanan">
-            <article>
-              <strong>Produk Layanan</strong>
-              <p>${escapeHtml(branding.businessName)} adalah portal billing dan layanan pelanggan dari FAKEHOTSPOT.NET untuk pembayaran tagihan internet bulanan, pembelian voucher hotspot, dan pengecekan status layanan. Informasi layanan utama tersedia di <a href="https://www.fakehotspot.net" target="_blank" rel="noopener">www.fakehotspot.net</a>.</p>
-            </article>
-            <article>
-              <strong>Cara Pembelian</strong>
-              <p>Pelanggan dapat membeli voucher hotspot melalui halaman Voucher, memilih paket, mengisi nomor Whatsapp aktif, lalu membayar menggunakan QRIS. Untuk pelanggan bulanan, pembayaran dilakukan melalui link invoice yang dikirim sistem atau admin.</p>
-            </article>
-            <article>
-              <strong>Syarat & Ketentuan</strong>
-              <p>Pelanggan wajib mengisi data yang benar, membayar sesuai paket yang dipilih, dan mengikuti kebijakan layanan. Voucher atau status pembayaran diproses otomatis setelah pembayaran berhasil diverifikasi oleh payment gateway.</p>
-            </article>
-            <article>
-              <strong>Kontak Customer Service</strong>
-              <p>Untuk bantuan pembayaran, aktivasi, atau gangguan layanan hubungi <a href="https://wa.me/6283878122381" target="_blank" rel="noopener">083878122381</a>.</p>
-            </article>
-          </section>
+          <a class="login-info-link" href="/public-info.html" target="_blank" rel="noopener">
+            <span>Informasi Layanan & Pembelian</span>
+            <small>Produk, cara transaksi, S&K, dan kontak CS</small>
+          </a>
         </div>
       </div>
     </section>
@@ -2385,6 +2446,7 @@ function renderActivation(licenseStatus = {}) {
 }
 
 async function renderDashboard(options = {}) {
+  const renderToken = options.renderToken;
   const personalDashboardRole = ['collector', 'reseller_voucher'].includes(state.auth?.role || '');
   app.innerHTML = personalDashboardRole
     ? '<div class="stack"><section class="section"><div class="empty">Memuat dashboard personal...</div></section></div>'
@@ -2414,6 +2476,7 @@ async function renderDashboard(options = {}) {
     period: state.period
   };
   const payload = await api(`/api/dashboard?${queryString(params)}`);
+  if (renderIsStale(renderToken)) return;
   const { summary = {}, members = {}, radiusSummary = {}, settings } = payload;
   updateBranding({ settings });
   const canViewFinance = Boolean(payload.canViewFinance);
@@ -2896,6 +2959,152 @@ function financeDailyRowsTable(rows = [], emptyText = 'Belum ada data harian.') 
       </table>
     </div>
   `;
+}
+
+function statisticsNetTone(value = 0) {
+  const number = Number(value || 0);
+  if (number > 0) return 'positive';
+  if (number < 0) return 'negative';
+  return '';
+}
+
+function statisticsNetText(value = 0) {
+  const number = Number(value || 0);
+  return `${number > 0 ? '+' : ''}${displayNumber(number)}`;
+}
+
+function statisticsActivityChart(rows = []) {
+  const chartRows = Array.isArray(rows) ? rows : [];
+  const maxValue = Math.max(1, ...chartRows.map((row) => Math.max(
+    Number(row.newInstallCount || 0),
+    Number(row.removedCount || 0),
+    Number(row.voucherBuyerCount || 0)
+  )));
+  const barHeight = (value = 0) => {
+    const number = Number(value || 0);
+    if (number <= 0) return 0;
+    return Math.max(4, Math.round((number / maxValue) * 100));
+  };
+  return `
+    <div class="statistics-chart">
+      ${chartRows.map((row) => {
+        const period = row.period || String(row.date || '').slice(0, 7);
+        const label = row.period ? periodShortLabel(row.period) : String(row.date || '').slice(-2);
+        const title = row.period ? periodLabel(row.period) : dateText(row.date);
+        const newHeight = barHeight(row.newInstallCount);
+        const removedHeight = barHeight(row.removedCount);
+        const voucherHeight = barHeight(row.voucherBuyerCount);
+        return `
+          <div class="statistics-chart-day" title="${escapeHtml(title)}: pasang ${displayNumber(row.newInstallCount || 0)}, cabut ${displayNumber(row.removedCount || 0)}, voucher ${displayNumber(row.voucherBuyerCount || 0)}" data-period="${escapeHtml(period)}">
+            <div class="statistics-bars">
+              <span class="install" style="height:${newHeight}%"></span>
+              <span class="removed" style="height:${removedHeight}%"></span>
+              <span class="voucher" style="height:${voucherHeight}%"></span>
+            </div>
+            <small>${escapeHtml(label)}</small>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function statisticsDailyRowsTable(rows = []) {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Tanggal</th>
+            <th>Pasang Baru</th>
+            <th>Cabut</th>
+            <th>Selisih</th>
+            <th>Pembeli Voucher</th>
+            <th>Voucher</th>
+            <th class="amount">Omzet Voucher</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.length ? rows.map((row) => `
+            <tr>
+              <td><strong>${escapeHtml(dateText(row.date))}</strong></td>
+              <td>${displayNumber(row.newInstallCount || 0)}</td>
+              <td>${displayNumber(row.removedCount || 0)}</td>
+              <td><span class="badge ${statisticsNetTone(row.netGrowth)}">${escapeHtml(statisticsNetText(row.netGrowth || 0))}</span></td>
+              <td>${displayNumber(row.voucherBuyerCount || 0)}</td>
+              <td>${displayNumber(row.voucherCount || 0)}</td>
+              <td class="amount positive">${rupiah(row.voucherAmount || 0)}</td>
+            </tr>
+          `).join('') : '<tr><td colspan="7">Belum ada data statistik bulan ini.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function renderReportsStatistics() {
+  app.innerHTML = '<div class="empty">Memuat statistik...</div>';
+  const period = state.reportStatisticsPeriod || state.period || todayInput().slice(0, 7);
+  const payload = await api(`/api/reports/statistics?${queryString({ period })}`);
+  const summary = payload.summary || {};
+  const rows = Array.isArray(payload.dailyRows) ? payload.dailyRows : [];
+  const monthlyRows = Array.isArray(payload.monthlyRows) ? payload.monthlyRows : [];
+  state.reportStatisticsPeriod = payload.period || period;
+  state.period = state.reportStatisticsPeriod;
+  const netGrowth = Number(summary.netGrowth || 0);
+  const firstMonth = monthlyRows[0]?.period || state.reportStatisticsPeriod;
+  const lastMonth = monthlyRows[monthlyRows.length - 1]?.period || state.reportStatisticsPeriod;
+
+  app.innerHTML = `
+    <div class="stack">
+      <div class="toolbar">
+        <div class="filters">
+          <input class="control" id="reportStatisticsPeriod" type="month" value="${escapeHtml(state.reportStatisticsPeriod)}">
+        </div>
+      </div>
+
+      <section class="statistics-hero">
+        <div class="statistics-balance ${statisticsNetTone(netGrowth)}">
+          <span>Selisih Bulan Ini</span>
+          <strong>${escapeHtml(statisticsNetText(netGrowth))}</strong>
+          <small>${escapeHtml(periodLabel(state.reportStatisticsPeriod))}</small>
+        </div>
+        <div class="statistics-card-grid">
+          ${metric('Pasang Baru', displayNumber(summary.newInstallCount || 0), 'User PPP-DHCP baru', 'positive')}
+          ${metric('Cabut', displayNumber(summary.removedCount || 0), 'User PPP-DHCP dihapus', Number(summary.removedCount || 0) ? 'negative' : '')}
+          ${metric('Pembeli Voucher', displayNumber(summary.voucherBuyerCount || 0), 'Transaksi voucher paid')}
+          ${metric('Voucher Terjual', displayNumber(summary.voucherCount || 0), rupiah(summary.voucherAmount || 0), 'positive')}
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Tren 12 Bulan</h2>
+          <span>${escapeHtml(`${periodShortLabel(firstMonth)} - ${periodShortLabel(lastMonth)}`)}</span>
+        </div>
+        <div class="statistics-legend">
+          <span class="install">Pasang baru</span>
+          <span class="removed">Cabut</span>
+          <span class="voucher">Pembeli voucher</span>
+        </div>
+        ${statisticsActivityChart(monthlyRows)}
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Rincian Harian</h2>
+          <span>${displayNumber(rows.length)} hari</span>
+        </div>
+        ${statisticsDailyRowsTable(rows)}
+      </section>
+    </div>
+  `;
+
+  document.getElementById('reportStatisticsPeriod')?.addEventListener('change', (event) => {
+    state.reportStatisticsPeriod = event.target.value || todayInput().slice(0, 7);
+    state.period = state.reportStatisticsPeriod;
+    renderReportsStatistics();
+  });
 }
 
 async function renderReportsMonthlyBilling() {
@@ -4449,7 +4658,7 @@ function fallbackDateParts(value) {
 
 function formatDateDisplayFromParts(parts) {
   if (!parts) return '';
-  return `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}/${parts.year}`;
+  return `${String(parts.day).padStart(2, '0')}-${String(parts.month).padStart(2, '0')}-${parts.year}`;
 }
 
 function formatDateIsoFromParts(parts) {
@@ -7413,6 +7622,11 @@ function radiusUserStatusPayload(user = {}, nextStatus = 'active') {
     isolatedByUsername: nextStatus === 'isolated' ? (state.auth?.username || '') : '',
     isolatedByRole: nextStatus === 'isolated' ? (state.auth?.role || '') : '',
     terminatedAt: nextStatus === 'terminated' ? todayInput() : '',
+    terminationSource: nextStatus === 'terminated' ? 'manual' : '',
+    terminationReason: nextStatus === 'terminated' ? 'manual-admin' : '',
+    terminatedByName: nextStatus === 'terminated' ? (state.auth?.name || state.auth?.username || 'Admin') : '',
+    terminatedByUsername: nextStatus === 'terminated' ? (state.auth?.username || '') : '',
+    terminatedByRole: nextStatus === 'terminated' ? (state.auth?.role || '') : '',
     note: user.note || ''
   };
 }
@@ -8073,6 +8287,162 @@ async function renderRadiusHotspot(options = {}) {
   }
 }
 
+function defaultIsolirPublicUrl() {
+  try {
+    const current = new URL(window.location.href);
+    if (current.port === '8891') {
+      current.port = '8892';
+      current.pathname = '/isolir';
+      current.search = '';
+      current.hash = '';
+      return current.toString();
+    }
+    if (/^billing(?:-dev)?\./i.test(current.hostname)) {
+      current.hostname = current.hostname.replace(/^billing(?:-dev)?\./i, 'isolir.');
+      current.pathname = '/isolir';
+      current.search = '';
+      current.hash = '';
+      return current.toString();
+    }
+    current.pathname = '/isolir';
+    current.search = '';
+    current.hash = '';
+    return current.toString();
+  } catch {
+    return 'https://isolir.example.net/isolir';
+  }
+}
+
+function defaultBillingServerIp() {
+  try {
+    const host = window.location.hostname || '';
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return host;
+  } catch {
+    // Field sengaja dibiarkan manual jika host bukan IP.
+  }
+  return '';
+}
+
+function hostFromUrl(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return 'isolir.example.net';
+  try {
+    return new URL(text.includes('://') ? text : `https://${text}`).hostname || text;
+  } catch {
+    return text.replace(/^https?:\/\//i, '').split('/')[0] || text;
+  }
+}
+
+function routerOsQuoted(value = '') {
+  return `"${String(value || '').replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+}
+
+function buildIsolirRouterOsScript(options = {}) {
+  const sourceSubnet = String(options.sourceSubnet || '172.30.0.0/16').trim();
+  const billingServerIp = String(options.billingServerIp || 'ISI_IP_SERVER_BILLING').trim();
+  const isolirHost = hostFromUrl(options.isolirUrl || defaultIsolirPublicUrl());
+  const proxyPort = String(options.proxyPort || '8080').trim();
+  const wanList = String(options.wanList || 'WAN-NAT').trim();
+  const comment = String(options.comment || 'Generated by Billing').trim();
+  const proxyComment = `${comment} - Isolir WebProxy`;
+  return [
+    '# FAKE.NET Billing - redirect pelanggan isolir ke web isolir bawaan billing',
+    '# sourceSubnet = subnet/pool user isolir',
+    '# billingServerIp = IP mesin billing yang menjalankan subweb isolir, meskipun beda mesin dengan router',
+    '',
+    '/ip proxy set enabled=yes port=' + proxyPort + ' anonymous=no cache-administrator=admin@fake.net',
+    '/ip proxy access add dst-port=' + proxyPort + ' action=allow comment=' + routerOsQuoted(proxyComment),
+    '/ip proxy access add dst-host=' + isolirHost + ' action=allow comment=' + routerOsQuoted(proxyComment),
+    '/ip proxy access add src-address=' + sourceSubnet + ' dst-host=!' + isolirHost + ' action=redirect action-data=' + isolirHost + ' comment=' + routerOsQuoted(proxyComment),
+    '',
+    '/ip firewall filter add chain=input action=accept protocol=tcp src-address=' + sourceSubnet + ' dst-port=' + proxyPort + ' comment=' + routerOsQuoted(comment + ' - allow webproxy local'),
+    '/ip firewall filter add chain=input action=drop protocol=tcp in-interface-list=' + wanList + ' dst-port=' + proxyPort + ' comment=' + routerOsQuoted(comment + ' - block webproxy public'),
+    '',
+    '/ip firewall nat add chain=dstnat action=redirect to-ports=' + proxyPort + ' protocol=tcp src-address=' + sourceSubnet + ' dst-address=!' + billingServerIp + ' dst-port=80,443 comment=' + routerOsQuoted(proxyComment),
+    '/ip firewall nat add chain=dstnat action=redirect to-ports=53 protocol=udp src-address=' + sourceSubnet + ' dst-port=53,5353 comment=' + routerOsQuoted(comment + ' - redirect DNS isolir'),
+    '/ip firewall nat add chain=dstnat action=redirect to-ports=53 protocol=tcp src-address=' + sourceSubnet + ' dst-port=53,5353 comment=' + routerOsQuoted(comment + ' - redirect DNS isolir'),
+    '',
+    '/ip firewall filter add chain=forward action=drop protocol=tcp src-address=' + sourceSubnet + ' dst-address=!' + billingServerIp + ' comment=' + routerOsQuoted(proxyComment),
+    '/ip firewall filter add chain=forward action=drop protocol=udp src-address=' + sourceSubnet + ' dst-address=!' + billingServerIp + ' dst-port=!53,5353 comment=' + routerOsQuoted(proxyComment)
+  ].join('\n');
+}
+
+function openRadiusIsolirGuideModal() {
+  const defaults = {
+    sourceSubnet: '172.30.0.0/16',
+    billingServerIp: defaultBillingServerIp(),
+    isolirUrl: defaultIsolirPublicUrl(),
+    proxyPort: '8080',
+    wanList: 'WAN-NAT',
+    comment: 'Generated by Billing'
+  };
+  openModal('Panduan Redirect Isolir MikroTik', `
+    <div class="stack routeros-guide">
+      <div class="notice">
+        <strong>Redirect ke web isolir bawaan billing</strong>
+        <span>Script ini mengikuti pola rule MikroTik 192.168.255.2: web-proxy 8080, NAT redirect HTTP/HTTPS, dan filter forward untuk mematikan internet user isolir.</span>
+      </div>
+      <div class="form-grid routeros-guide-grid">
+        <label class="field">
+          <span>Subnet pelanggan isolir</span>
+          <input name="sourceSubnet" value="${escapeHtml(defaults.sourceSubnet)}">
+        </label>
+        <label class="field">
+          <span>IP Server Billing/Web Isolir</span>
+          <input name="billingServerIp" value="${escapeHtml(defaults.billingServerIp)}" placeholder="Contoh 172.16.125.246">
+        </label>
+        <label class="field">
+          <span>URL web isolir</span>
+          <input name="isolirUrl" value="${escapeHtml(defaults.isolirUrl)}">
+        </label>
+        <label class="field">
+          <span>Port web proxy MikroTik</span>
+          <input name="proxyPort" inputmode="numeric" value="${escapeHtml(defaults.proxyPort)}">
+        </label>
+        <label class="field">
+          <span>Interface list WAN</span>
+          <input name="wanList" value="${escapeHtml(defaults.wanList)}">
+        </label>
+        <label class="field">
+          <span>Comment rule</span>
+          <input name="comment" value="${escapeHtml(defaults.comment)}">
+        </label>
+      </div>
+      <div class="routeros-guide-steps">
+        <div><strong>1. Sesuaikan subnet isolir.</strong><span>Subnet ini harus sama dengan pool/IP yang diterima user saat status isolir.</span></div>
+        <div><strong>2. Isi IP server billing.</strong><span>Ini IP mesin yang menjalankan subweb isolir billing, bukan IP router.</span></div>
+        <div><strong>3. Paste script di terminal MikroTik.</strong><span>Jika masih bisa bypass, pindahkan rule redirect/drop ke atas rule accept umum.</span></div>
+      </div>
+      <div class="routeros-script-head">
+        <strong>Script RouterOS</strong>
+        <button class="ghost-button compact" type="button" id="copyIsolirRouterOsScript">Salin Script</button>
+      </div>
+      <textarea class="routeros-script-output" id="isolirRouterOsScript" readonly spellcheck="false">${escapeHtml(buildIsolirRouterOsScript(defaults))}</textarea>
+      <p class="muted">Catatan: kalau web isolir memakai subdomain Cloudflare/NAT, tetap isi IP server billing sesuai IP yang bisa dijangkau dari router/site tersebut.</p>
+    </div>
+  `, async () => {});
+
+  const form = modal.querySelector('.modal-frame');
+  const output = modalBody.querySelector('#isolirRouterOsScript');
+  const fields = [...modalBody.querySelectorAll('.routeros-guide-grid input')];
+  const updateScript = () => {
+    if (!output) return;
+    output.value = buildIsolirRouterOsScript(Object.fromEntries(fields.map((input) => [input.name, input.value])));
+  };
+  fields.forEach((input) => input.addEventListener('input', updateScript));
+  modalBody.querySelector('#copyIsolirRouterOsScript')?.addEventListener('click', async () => {
+    try {
+      await copyTextToClipboard(output?.value || '');
+      setToast('Script MikroTik disalin');
+    } catch (error) {
+      setToast(error.message || 'Gagal menyalin script');
+    }
+  });
+  if (form) {
+    form.onsubmit = (event) => event.preventDefault();
+  }
+}
+
 async function renderRadiusSettings(options = {}) {
   app.innerHTML = '<div class="empty">Memuat Radius Settings...</div>';
   const writeBilling = can('billing-settings:manage');
@@ -8127,6 +8497,7 @@ async function renderRadiusSettings(options = {}) {
               <textarea name="isolationNote">${escapeHtml(radius.isolationNote || '')}</textarea>
             </label>
             <div class="modal-actions field full">
+              <button class="ghost-button" id="openIsolirRouterGuide" type="button">Panduan Redirect Isolir</button>
               <button class="ghost-button" id="syncFreeradius" type="button">Sinkron FreeRADIUS</button>
               <button class="button" type="submit">Simpan Radius</button>
             </div>
@@ -8148,7 +8519,7 @@ async function renderRadiusSettings(options = {}) {
             </label>
             <label class="field">
               <span>Generate invoice sebelum tempo</span>
-              <input name="fixedInvoiceAdvanceDays" type="number" min="7" max="31" value="${escapeHtml(billing.fixedInvoiceAdvanceDays || 7)}">
+              <input name="fixedInvoiceAdvanceDays" type="number" min="0" max="31" step="1" value="${escapeHtml(billing.fixedInvoiceAdvanceDays ?? 7)}">
             </label>
             <label class="field">
               <span>Grace suspend setelah tempo</span>
@@ -8195,6 +8566,7 @@ async function renderRadiusSettings(options = {}) {
     </div>
   `;
 
+  document.getElementById('openIsolirRouterGuide')?.addEventListener('click', () => openRadiusIsolirGuideModal());
   document.getElementById('refreshRadiusSettings')?.addEventListener('click', () => renderRadiusSettings({ refresh: true }));
   document.getElementById('radiusSettingsForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -11334,7 +11706,7 @@ async function renderBillingSettings() {
           </label>
           <label class="field">
             <span>Generate invoice sebelum tempo</span>
-            <input name="fixedInvoiceAdvanceDays" type="number" min="7" max="31" value="${escapeHtml(settings.fixedInvoiceAdvanceDays || 7)}">
+            <input name="fixedInvoiceAdvanceDays" type="number" min="0" max="31" step="1" value="${escapeHtml(settings.fixedInvoiceAdvanceDays ?? 7)}">
           </label>
           <label class="field">
             <span>Grace suspend setelah tempo</span>
@@ -12804,30 +13176,33 @@ async function render(options = {}) {
     return;
   }
 
+  const renderToken = nextRenderGeneration();
+  const renderOptions = { ...options, renderToken };
   try {
     if (!['monitoringCustomers', 'monitoringServices'].includes(state.view)) {
       clearRealtimeTimers();
     }
     state.search = state.view === 'dashboard' || state.view === 'users' || state.view === 'settings' ? '' : state.search;
     updatePeriodPicker();
-    if (state.view === 'dashboard') await renderDashboard(options);
-    else if (state.view === 'radiusPppDhcp') await renderRadiusPppDhcp(options);
-    else if (state.view === 'radiusHotspot') await renderRadiusHotspot(options);
-    else if (state.view === 'radiusSettings') await renderRadiusSettings(options);
-    else if (state.view === 'genieAcs') await renderGenieAcs(options);
+    if (state.view === 'dashboard') await renderDashboard(renderOptions);
+    else if (state.view === 'radiusPppDhcp') await renderRadiusPppDhcp(renderOptions);
+    else if (state.view === 'radiusHotspot') await renderRadiusHotspot(renderOptions);
+    else if (state.view === 'radiusSettings') await renderRadiusSettings(renderOptions);
+    else if (state.view === 'genieAcs') await renderGenieAcs(renderOptions);
     else if (state.view === 'monitoringSite') await renderMonitoringSite();
-    else if (state.view === 'monitoringMembers') await renderMonitoringMembers(options);
-    else if (state.view === 'monitoringCustomers') await renderMonitoringCustomers(options);
+    else if (state.view === 'monitoringMembers') await renderMonitoringMembers(renderOptions);
+    else if (state.view === 'monitoringCustomers') await renderMonitoringCustomers(renderOptions);
     else if (state.view === 'monitoringBilling') await renderMonitoringBilling();
     else if (state.view === 'monitoringServices') await renderMonitoringServices();
     else if (state.view === 'externalIncomes') await renderExternalIncomes();
     else if (state.view === 'expenses') await renderExpenses();
     else if (state.view === 'billingSettings') await renderBillingSettings();
-    else if (state.view === 'reportsDaily') await renderReportsDaily(options);
+    else if (state.view === 'reportsDaily') await renderReportsDaily(renderOptions);
     else if (state.view === 'reportsMonthlyBilling') await renderReportsMonthlyBilling();
+    else if (state.view === 'reportsStatistics') await renderReportsStatistics();
     else if (state.view === 'reportsVoucherDaily') await renderReportsVoucherDaily();
     else if (state.view === 'reportsVoucherMonthly') await renderReportsVoucherMonthly();
-    else if (state.view === 'reportsTransactions') await renderReportsTransactions(options);
+    else if (state.view === 'reportsTransactions') await renderReportsTransactions(renderOptions);
     else if (state.view === 'reportsFinanceRecap') await renderReportsFinanceRecap();
     else if (state.view === 'reportsInventoryStock') await renderReportsInventoryStock();
     else if (state.view === 'waGateway') await renderWaGateway();
@@ -12836,8 +13211,9 @@ async function render(options = {}) {
     else if (state.view === 'networkAssets') await renderNetworkAssets();
     else if (state.view === 'users') await renderUsers();
     else if (state.view === 'settings') await renderSettings();
-    else app.innerHTML = empty('Halaman tidak tersedia');
+    else if (!renderIsStale(renderToken)) app.innerHTML = empty('Halaman tidak tersedia');
   } catch (error) {
+    if (renderIsStale(renderToken) || error.name === 'AbortError') return;
     app.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
 }
@@ -13024,12 +13400,6 @@ document.addEventListener('keydown', (event) => {
 
 themeToggleButton?.addEventListener('click', toggleTheme);
 
-topWaStatusButton?.addEventListener('click', () => {
-  if (state.auth && canView('waGateway')) {
-    setView('waGateway');
-  }
-});
-
 notificationButton?.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleNotificationPanel();
@@ -13047,9 +13417,14 @@ logoutButton.addEventListener('click', async () => {
   }).catch(() => ({}));
   setMenuOpen(false);
   state.auth = null;
+  abortPageRequests();
+  clearRealtimeTimers();
   window.clearInterval(notificationsTimer);
   hideNotifications();
   hideTopWaStatus();
+  closeDatePickers();
+  setPeriodPickerOpen(false);
+  if (modal?.open) modal.close();
   setToast('Logout berhasil');
   renderLogin();
 });
@@ -13066,6 +13441,12 @@ window.addEventListener('keydown', (event) => {
     closeNotificationPanel();
   }
 });
+
+if (app && 'MutationObserver' in window) {
+  new MutationObserver(() => restoreLoginIfNeeded()).observe(app, {
+    childList: true
+  });
+}
 
 document.addEventListener('click', (event) => {
   if (!notificationMenu || notificationMenu.hidden) return;
