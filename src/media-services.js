@@ -361,7 +361,7 @@ async function tvheadendStatus(cfg) {
     subscriptions,
     connections,
     hasLogin: Boolean(cfg.tvheadendUsername && cfg.tvheadendPassword),
-    error: online ? errors.join(', ') : (errors.join(', ') || 'TVHeadend tidak merespons'),
+    error: online ? errors.join(', ') : (errors.join(', ') || 'Layanan live streaming tidak merespons'),
     checkedAt: new Date().toISOString()
   };
 }
@@ -375,12 +375,12 @@ async function servicesStatus(settings = {}) {
 
   return {
     tvheadend: {
-      name: 'TVHeadend',
+      name: 'Live Streaming',
       url: cfg.tvheadendUrl,
       ...tvheadend
     },
     emby: {
-      name: 'Emby',
+      name: 'Media Library',
       url: cfg.embyUrl,
       ...emby
     },
@@ -403,12 +403,12 @@ async function siteServicesStatus(settings = {}, targets = []) {
       host: target.host,
       location: target.location || '',
       tvheadend: {
-        name: 'TVHeadend',
+        name: 'Live Streaming',
         url: cfg.tvheadendUrl,
         ...tvheadend
       },
       emby: {
-        name: 'Emby',
+        name: 'Media Library',
         url: cfg.embyUrl,
         ...emby
       }

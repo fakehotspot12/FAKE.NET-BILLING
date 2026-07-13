@@ -933,6 +933,89 @@ function publicWifiKuCustomer(customer = {}, radiusUser = {}) {
   };
 }
 
+function wifiKuInvoiceMatchesCustomer(invoice = {}, customer = {}, radiusUser = {}) {
+  const customerKeys = [
+    customer.id,
+    customer.code,
+    customer.accountId,
+    customer.username,
+    radiusUser.customerId,
+    radiusUser.username
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  if (!customerKeys.length) return false;
+  const invoiceKeys = [
+    invoice.customerId,
+    invoice.accountId,
+    invoice.username
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  return invoiceKeys.some((key) => customerKeys.includes(key));
+}
+
+function wifiKuBillingSummary(data = {}, customer = {}, radiusUser = {}, period = currentPeriod()) {
+  const selectedPeriod = normalizePeriod(period);
+  const invoices = (data.invoices || [])
+    .filter((invoice) => invoiceBlocksPeriod(invoice))
+    .filter((invoice) => invoiceCoversPeriod(invoice, selectedPeriod))
+    .filter((invoice) => wifiKuInvoiceMatchesCustomer(invoice, customer, radiusUser))
+    .sort((a, b) => {
+      const priority = (invoice) => {
+        const status = invoiceRuntimeStatus(invoice);
+        if (['pending', 'overdue', 'unpaid'].includes(status)) return 0;
+        if (status === 'paid') return 1;
+        return 2;
+      };
+      return priority(a) - priority(b)
+        || String(b.dueDate || b.createdAt || '').localeCompare(String(a.dueDate || a.createdAt || ''));
+    });
+
+  const periodLabel = periodDisplayText(selectedPeriod);
+  if (!invoices.length) {
+    return {
+      exists: false,
+      invoiceCount: 0,
+      period: periodLabel,
+      status: 'none',
+      statusLabel: 'Tidak ada tagihan',
+      message: `Tidak ada tagihan untuk periode ${periodLabel}.`,
+      canPay: false,
+      checkoutUrl: ''
+    };
+  }
+
+  const invoice = invoices[0];
+  const publicInvoice = publicPaymentGatewayInvoicePayload(data, invoice);
+  const status = publicInvoice.status || invoiceRuntimeStatus(invoice);
+  const paymentGatewayEnabled = data.settings?.paymentGateway?.enabled === true;
+  const canPay = ['pending', 'overdue', 'unpaid'].includes(status)
+    && publicInvoice.canPay !== false
+    && paymentGatewayEnabled
+    && Boolean(publicInvoice.reference);
+  const paymentPath = paymentGatewayPaymentPath(data.settings || {});
+  const checkoutUrl = publicInvoice.reference
+    ? `${paymentPath}?id=${encodeURIComponent(publicInvoice.reference)}`
+    : '';
+  const statusLabel = status === 'paid'
+    ? 'Sudah dibayar'
+    : (status === 'overdue' ? 'Lewat tempo' : 'Belum dibayar');
+
+  return {
+    exists: true,
+    invoiceCount: invoices.length,
+    ...publicInvoice,
+    period: publicInvoice.period || periodLabel,
+    status,
+    statusLabel,
+    paymentGatewayEnabled,
+    canPay,
+    checkoutUrl: canPay ? checkoutUrl : '',
+    message: status === 'paid'
+      ? `Tagihan ${publicInvoice.period || periodLabel} sudah tercatat lunas.`
+      : (canPay
+        ? `Tagihan ${publicInvoice.period || periodLabel} belum dibayar.`
+        : 'Tagihan ditemukan, tetapi pembayaran online belum tersedia. Hubungi admin layanan.')
+  };
+}
+
 function usageRowForUsername(payload = {}, username = '') {
   const key = radiusSessionUsername(username);
   return (payload.rows || []).find((row) => radiusSessionUsername(row.usernameKey || row.username) === key) || {
@@ -997,6 +1080,7 @@ async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPer
     ok: true,
     period: normalizePeriod(period),
     customer: publicWifiKuCustomer(customer, radiusUser),
+    billing: wifiKuBillingSummary(data, customer, radiusUser, period),
     usage,
     device,
     genieAcs: {

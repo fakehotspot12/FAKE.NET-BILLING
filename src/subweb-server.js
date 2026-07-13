@@ -93,12 +93,15 @@ const SUBWEB_CONFIG = {
     paths: new Map([
       ['/', '/wifiku.html'],
       ['/wifiku', '/wifiku.html'],
-      ['/wifiku/', '/wifiku.html']
+      ['/wifiku/', '/wifiku.html'],
+      ['/payment', '/payment-invoice.html'],
+      ['/payment/', '/payment-invoice.html']
     ]),
     files: new Set([
       '/wifiku.html',
       '/wifiku.css',
       '/wifiku.js',
+      ...PAYMENT_FILES,
       ...COMMON_FILES
     ])
   }

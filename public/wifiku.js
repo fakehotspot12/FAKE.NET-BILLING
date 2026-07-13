@@ -72,6 +72,36 @@ function periodText(value = '') {
   return `${MONTHS[month - 1] || String(month).padStart(2, '0')} ${year}`;
 }
 
+function billingBadgeClass(status = '') {
+  const value = String(status || '').toLowerCase();
+  if (value === 'paid') return 'paid';
+  if (value === 'overdue') return 'overdue';
+  if (['pending', 'unpaid'].includes(value)) return 'pending';
+  return 'none';
+}
+
+function renderBillingSummary(billing = {}) {
+  const exists = billing.exists === true;
+  const status = String(billing.status || '').toLowerCase();
+  const title = exists
+    ? (status === 'paid' ? 'Tagihan sudah dibayar' : 'Tagihan belum dibayar')
+    : 'Tidak ada tagihan';
+  byId('billingTitle').textContent = title;
+  byId('billingBadge').textContent = billing.statusLabel || (exists ? 'Belum dibayar' : 'Tidak ada');
+  byId('billingBadge').className = `billing-badge ${billingBadgeClass(status)}`;
+  byId('billingInvoiceNo').textContent = billing.invoiceNo || billing.reference || '-';
+  byId('billingPeriod').textContent = billing.period || periodText(billing.periodRaw || todayPeriod());
+  byId('billingDueDate').textContent = billing.dueDate || '-';
+  byId('billingAmount').textContent = billing.gatewayAmountText || billing.amountText || '-';
+  byId('billingMessage').textContent = billing.message || (exists
+    ? 'Ringkasan tagihan bulan ini tersedia.'
+    : `Tidak ada tagihan untuk periode ${periodText(byId('periodInput').value || todayPeriod())}.`);
+  const payButton = byId('billingPayButton');
+  const checkoutUrl = billing.checkoutUrl || billing.paymentGatewayLink || '';
+  payButton.hidden = !(billing.canPay && checkoutUrl);
+  payButton.dataset.checkoutUrl = billing.canPay ? checkoutUrl : '';
+}
+
 function renderUsageChart(usage = {}, period = todayPeriod()) {
   const chart = byId('usageChart');
   const rows = [
@@ -111,6 +141,7 @@ function renderPortal(payload) {
   byId('wifiDetail').textContent = `2.4G ${clients24} / 5G ${clients5}`;
   byId('ssid24').textContent = device.ssid24 || '-';
   byId('ssid5').textContent = device.ssid5 || '-';
+  renderBillingSummary(payload.billing || {});
   renderUsageChart(usage, payload.period || todayPeriod());
   showPortal();
 }
@@ -202,6 +233,15 @@ byId('logoutButton').addEventListener('click', () => {
   state.token = '';
   localStorage.removeItem(TOKEN_KEY);
   showLogin();
+});
+
+byId('billingPayButton').addEventListener('click', () => {
+  const url = byId('billingPayButton').dataset.checkoutUrl || '';
+  if (!url) {
+    toast('Link pembayaran belum tersedia');
+    return;
+  }
+  window.location.href = url;
 });
 
 const dialog = byId('actionDialog');

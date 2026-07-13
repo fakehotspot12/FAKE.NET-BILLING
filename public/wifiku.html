@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#08204f">
     <title>WifiKu</title>
     <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-20260713-3">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-20260713-4">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -48,6 +48,38 @@
           </div>
           <input id="periodInput" type="month">
         </div>
+
+        <section id="billingSummary" class="panel compact checkout-panel">
+          <div class="checkout-status-row">
+            <div>
+              <span class="muted">Tagihan bulan ini</span>
+              <h2 id="billingTitle">Memuat tagihan...</h2>
+            </div>
+            <span id="billingBadge" class="billing-badge pending">-</span>
+          </div>
+          <div class="checkout-summary-grid">
+            <div>
+              <span>No Invoice</span>
+              <strong id="billingInvoiceNo">-</strong>
+            </div>
+            <div>
+              <span>Periode</span>
+              <strong id="billingPeriod">-</strong>
+            </div>
+            <div>
+              <span>Jatuh Tempo</span>
+              <strong id="billingDueDate">-</strong>
+            </div>
+            <div>
+              <span>Total Bayar</span>
+              <strong id="billingAmount">-</strong>
+            </div>
+          </div>
+          <p id="billingMessage">Ringkasan tagihan akan tampil setelah data pelanggan terbaca.</p>
+          <div class="checkout-actions">
+            <button id="billingPayButton" type="button" hidden>Bayar Tagihan</button>
+          </div>
+        </section>
 
         <section class="grid">
           <article class="card primary">
@@ -114,6 +146,6 @@
     </dialog>
 
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-20260713-3" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-20260713-4" defer></script>
   </body>
 </html>

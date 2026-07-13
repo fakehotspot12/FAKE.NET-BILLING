@@ -2271,11 +2271,15 @@ function renderLogin() {
           <section class="login-public-info" aria-label="Informasi layanan">
             <article>
               <strong>Produk Layanan</strong>
-              <p>${escapeHtml(branding.businessName)} menyediakan layanan internet bulanan PPPoE/Hotspot, voucher hotspot, pembayaran tagihan internet, dan portal pelanggan WifiKu.</p>
+              <p>${escapeHtml(branding.businessName)} adalah portal billing dan layanan pelanggan dari FAKEHOTSPOT.NET untuk pembayaran tagihan internet bulanan, pembelian voucher hotspot, dan pengecekan status layanan. Informasi layanan utama tersedia di <a href="https://www.fakehotspot.net" target="_blank" rel="noopener">www.fakehotspot.net</a>.</p>
+            </article>
+            <article>
+              <strong>Cara Pembelian</strong>
+              <p>Pelanggan dapat membeli voucher hotspot melalui halaman Voucher, memilih paket, mengisi nomor Whatsapp aktif, lalu membayar menggunakan QRIS. Untuk pelanggan bulanan, pembayaran dilakukan melalui link invoice yang dikirim sistem atau admin.</p>
             </article>
             <article>
               <strong>Syarat & Ketentuan</strong>
-              <p>Pelanggan wajib mengisi data yang benar, membayar sesuai paket yang dipilih, dan mengikuti kebijakan layanan. Pembayaran online diproses otomatis oleh sistem billing.</p>
+              <p>Pelanggan wajib mengisi data yang benar, membayar sesuai paket yang dipilih, dan mengikuti kebijakan layanan. Voucher atau status pembayaran diproses otomatis setelah pembayaran berhasil diverifikasi oleh payment gateway.</p>
             </article>
             <article>
               <strong>Kontak Customer Service</strong>
@@ -8333,8 +8337,8 @@ async function renderMonitoringSite() {
                   <div class="muted">${escapeHtml(target.notes || '-')}</div>
                   <div class="muted">Dashboard IF: ${escapeHtml(target.dashboardInterface || target.trafficInterface || 'Auto')}</div>
                   <div class="muted">Layanan: ${[
-                    target.mediaServices?.tvheadendUrl ? 'TVHeadend' : '',
-                    target.mediaServices?.embyUrl ? 'Emby' : ''
+                    target.mediaServices?.tvheadendUrl ? 'Live Streaming' : '',
+                    target.mediaServices?.embyUrl ? 'Media Library' : ''
                   ].filter(Boolean).join(', ') || '-'}</div>
                   <div class="muted">NAS Radius: ${target.radius?.enabled ? (target.radius?.credentialStored ? 'Aktif' : 'Secret belum diisi') : '-'}</div>
                 </td>
@@ -8479,27 +8483,27 @@ function monitoringFormBody(target = {}) {
       </label>
       <div class="field full form-subhead">
         <strong>Layanan site</strong>
-        <span class="muted">Isi layanan manual saat tambah Site, atau edit Site existing untuk memperbarui TVHeadend/Emby.</span>
+        <span class="muted">Isi layanan tambahan saat tambah Site, atau edit Site existing untuk memperbarui sumber layanan yang dipantau.</span>
       </div>
       <label class="field">
-        <span>TVHeadend URL</span>
-        <input name="tvheadendUrl" value="${escapeHtml(media.tvheadendUrl || '')}" placeholder="http://server-tvheadend:9981">
+        <span>Live Streaming URL</span>
+        <input name="tvheadendUrl" value="${escapeHtml(media.tvheadendUrl || '')}" placeholder="http://server-live:9981">
       </label>
       <label class="field">
-        <span>TVHeadend username</span>
+        <span>Live Streaming username</span>
         <input name="tvheadendUsername" value="${escapeHtml(media.tvheadendUsername || '')}" autocomplete="username">
       </label>
       <label class="field">
-        <span>TVHeadend password</span>
+        <span>Live Streaming password</span>
         <input name="tvheadendPassword" type="password" autocomplete="current-password" placeholder="${media.hasTvheadendLogin ? 'Password tersimpan' : ''}">
         ${media.hasTvheadendLogin ? '<input type="hidden" name="keepTvheadendPassword" value="true"><span class="muted">Kosongkan untuk tetap memakai password tersimpan.</span>' : ''}
       </label>
       <label class="field">
-        <span>Emby URL</span>
-        <input name="embyUrl" value="${escapeHtml(media.embyUrl || '')}" placeholder="http://server-emby:8096">
+        <span>Media Library URL</span>
+        <input name="embyUrl" value="${escapeHtml(media.embyUrl || '')}" placeholder="http://server-media:8096">
       </label>
       <label class="field">
-        <span>Emby API key</span>
+        <span>Media Library API key</span>
         <input name="embyApiKey" type="password" autocomplete="off" placeholder="${media.hasEmbyApiKey ? 'API key tersimpan permanen' : ''}">
         ${media.hasEmbyApiKey ? '<input type="hidden" name="keepEmbyApiKey" value="true"><span class="muted">Kosongkan untuk tetap memakai API key tersimpan.</span>' : ''}
       </label>
@@ -10853,7 +10857,7 @@ function shortServiceClient(value = '') {
   if (lower.includes('iptv pro')) return 'IPTV Pro';
   if (lower.includes('tivimate')) return 'TiviMate';
   if (lower.includes('androidtv')) return 'Android TV';
-  if (lower.includes('emby web')) return 'Emby Web';
+  if (lower.includes('emby web')) return 'Media Web';
   if (lower.includes('mozilla/5.0')) return 'Browser/Android';
   return text.length > 42 ? `${text.slice(0, 42)}...` : text;
 }
@@ -10941,7 +10945,7 @@ function embyServiceRows(sites = []) {
         siteLocation: serviceSiteLocation(site),
         userName: session.userName || '-',
         primary: session.userName || '-',
-        secondary: deviceText || 'Emby client',
+        secondary: deviceText || 'Media client',
         detail: mediaTitle,
         host: session.remoteAddress || serviceSiteLocation(site),
         startedAt: session.startedAt,
@@ -11019,7 +11023,7 @@ async function renderMonitoringServices(options = {}) {
   const embyRows = embyServiceRows(selectedSites);
   const allServiceRows = state.monitoringServicesTab === 'emby' ? embyRows : tvRows;
   const filteredRows = filteredServiceRows(allServiceRows);
-  const serviceLabel = state.monitoringServicesTab === 'emby' ? 'Emby' : 'TV';
+  const serviceLabel = state.monitoringServicesTab === 'emby' ? 'Media' : 'Live';
   const total = filteredRows.length;
   const serviceLimit = pagerLimitValue(state.monitoringServicesLimit || CUSTOMER_PAGE_SIZE, CUSTOMER_PAGE_SIZE);
   const effectiveLimit = effectivePagerLimit(serviceLimit, total, CUSTOMER_PAGE_SIZE);
@@ -11040,16 +11044,16 @@ async function renderMonitoringServices(options = {}) {
   app.innerHTML = `
     <div class="stack">
       <section class="metrics">
-        ${metric('Layanan online', `${displayNumber(summary.onlineServices)}/${displayNumber(summary.configuredServices || possibleServices)}`, 'TVHeadend dan Emby')}
-        ${metric('TV online', displayNumber(totalTvOnline), 'Saat ini semua site', totalTvOnline ? 'positive' : '')}
-        ${metric('Emby nonton', displayNumber(totalEmbyWatching), 'Sedang memutar semua site', totalEmbyWatching ? 'positive' : '')}
+        ${metric('Layanan online', `${displayNumber(summary.onlineServices)}/${displayNumber(summary.configuredServices || possibleServices)}`, 'Live streaming dan media library')}
+        ${metric('Stream aktif', displayNumber(totalTvOnline), 'Saat ini semua site', totalTvOnline ? 'positive' : '')}
+        ${metric('Media diputar', displayNumber(totalEmbyWatching), 'Sedang memutar semua site', totalEmbyWatching ? 'positive' : '')}
         ${metric('Site layanan', displayNumber(summary.siteCount || serviceSites.length), 'Target aktif')}
       </section>
 
       ${!summary.configuredServices ? `
         <section class="notice warning">
           <strong>Layanan belum dikonfigurasi</strong>
-          <span>Isi TVHeadend/Emby per site di Monitoring > Site agar Ops bisa membaca layanan yang sedang aktif.</span>
+          <span>Isi layanan tambahan per site di Monitoring > Site agar Ops bisa membaca aktivitas layanan yang sedang berjalan.</span>
         </section>
       ` : ''}
 
@@ -11070,7 +11074,7 @@ async function renderMonitoringServices(options = {}) {
       <section class="section">
         <div class="section-head">
           <h2>Layanan per Site</h2>
-          <span class="muted">TVHeadend dan Emby dihitung dari layanan aktif tiap site.</span>
+          <span class="muted">Status dihitung dari layanan tambahan yang aktif di tiap site.</span>
         </div>
         <div class="site-grid">
           ${serviceSites.length ? serviceSites.map((site) => {
@@ -11088,9 +11092,9 @@ async function renderMonitoringServices(options = {}) {
                   <span class="badge ${siteOnline ? 'active' : (siteConfigured ? 'inactive' : 'pending')}">${escapeHtml(siteConfigured ? `${siteOnline}/${siteConfigured} Online` : 'Belum set')}</span>
                 </div>
                 <div class="site-card-stats">
-                  <span><strong>${displayNumber(tvOnlineCount(tvheadend))}</strong> TV aktif</span>
-                  <span><strong>${displayNumber(embyWatchingCount(emby))}</strong> Emby nonton</span>
-                  <span><strong>${escapeHtml(serviceAuthText(tvheadend))}</strong> TV auth</span>
+                  <span><strong>${displayNumber(tvOnlineCount(tvheadend))}</strong> Live aktif</span>
+                  <span><strong>${displayNumber(embyWatchingCount(emby))}</strong> Media aktif</span>
+                  <span><strong>${escapeHtml(serviceAuthText(tvheadend))}</strong> Live auth</span>
                 </div>
                 <div class="muted">${escapeHtml([tvheadend.error, emby.error].filter(Boolean).join(' · ') || 'Layanan terbaca')}</div>
               </article>
@@ -11102,8 +11106,8 @@ async function renderMonitoringServices(options = {}) {
       <section class="section">
         <div class="section-head">
           <div class="tab-switcher" role="tablist" aria-label="Layanan aktif">
-            ${serviceTabButton('tv', 'TV Aktif', tvRows.length)}
-            ${serviceTabButton('emby', 'Emby Aktif', embyRows.length)}
+            ${serviceTabButton('tv', 'Live Aktif', tvRows.length)}
+            ${serviceTabButton('emby', 'Media Aktif', embyRows.length)}
           </div>
           <span class="muted">Daftar aktif mengikuti filter site dan pencarian.</span>
         </div>
