@@ -3,11 +3,23 @@
   const params = new URLSearchParams(window.location.search);
   const invoiceRef = params.get('id') || params.get('invoice') || params.get('reference') || '';
   let currentInvoice = null;
+  let currentChannels = [];
+  let paymentGatewayEnabled = false;
   const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
   function setText(id, value) {
     const element = $(id);
     if (element) element.textContent = value || '-';
+  }
+
+  function escapeHtml(value = '') {
+    return String(value || '').replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    }[char]));
   }
 
   function notice(message, tone) {
@@ -49,6 +61,44 @@
     return `${parts.day} ${MONTHS[parts.month - 1]} ${parts.year}`;
   }
 
+  function channelLabel(channel = {}) {
+    const parts = [
+      channel.name || channel.code || '',
+      channel.group || '',
+      channel.type ? channel.type.toUpperCase() : ''
+    ].filter(Boolean);
+    return parts.join(' - ');
+  }
+
+  function renderChannels(channels = [], message = '') {
+    currentChannels = channels;
+    const box = $('methodBox');
+    const select = $('paymentMethodSelect');
+    const help = $('paymentMethodHelp');
+    const payButton = $('payButton');
+    if (!box || !select) return;
+    const paid = String(currentInvoice?.status || '').toLowerCase() === 'paid';
+    const onlineAllowed = currentInvoice && !paid && paymentGatewayEnabled;
+    box.hidden = !onlineAllowed;
+    if (payButton && !paid) {
+      payButton.disabled = !onlineAllowed || !channels.length;
+    }
+    if (!onlineAllowed) return;
+    if (!channels.length) {
+      select.innerHTML = '<option value="">Channel pembayaran tidak tersedia</option>';
+      select.disabled = true;
+      if (help) help.textContent = message || 'Channel aktif Tripay belum terbaca atau tidak sesuai nominal invoice.';
+      return;
+    }
+    select.disabled = false;
+    select.innerHTML = channels.map((channel, index) => `
+      <option value="${escapeHtml(channel.code || '')}" ${index === 0 ? 'selected' : ''}>
+        ${escapeHtml(channelLabel(channel))}
+      </option>
+    `).join('');
+    if (help) help.textContent = message || 'Pilih salah satu metode pembayaran aktif dari Tripay.';
+  }
+
   async function api(path, options) {
     const response = await fetch(path, {
       headers: { 'Content-Type': 'application/json' },
@@ -64,6 +114,7 @@
   function render(payload) {
     const invoice = payload.invoice || {};
     currentInvoice = invoice;
+    paymentGatewayEnabled = payload.paymentGatewayEnabled !== false;
     if (payload.businessName) setText('businessName', payload.businessName);
     if (payload.appSubtitle) setText('paymentLabel', payload.appSubtitle);
     if (payload.businessName) document.title = `${payload.businessName} - Pembayaran Invoice`;
@@ -84,9 +135,24 @@
       button.disabled = paid || payload.paymentGatewayEnabled === false;
       button.textContent = paid ? 'Invoice Sudah Dibayar' : 'Bayar Sekarang';
     }
+    renderChannels([], paid ? '' : 'Memuat channel pembayaran...');
     if (paid) notice('Pembayaran invoice ini sudah tercatat lunas.');
     else if (payload.paymentGatewayEnabled === false) notice('Payment Gateway belum aktif. Hubungi admin.', 'error');
     else notice('');
+  }
+
+  async function loadChannels() {
+    if (!currentInvoice || String(currentInvoice.status || '').toLowerCase() === 'paid') {
+      renderChannels([]);
+      return;
+    }
+    try {
+      const amount = currentInvoice.gatewayAmount || currentInvoice.amount || 0;
+      const payload = await api(`/api/public/payment-gateway/channels?kind=monthly-package&amount=${encodeURIComponent(amount)}`);
+      renderChannels(payload.channels || []);
+    } catch (error) {
+      renderChannels([], error.message || 'Channel payment gateway gagal dibaca');
+    }
   }
 
   async function loadInvoice() {
@@ -96,6 +162,7 @@
     }
     const payload = await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(invoiceRef)}`);
     render(payload);
+    await loadChannels();
   }
 
   async function checkout() {
@@ -105,13 +172,17 @@
     const text = $('checkoutText');
     const link = $('checkoutLink');
     try {
+      const method = $('paymentMethodSelect')?.value || '';
+      if (!method) {
+        throw new Error('Pilih metode pembayaran terlebih dahulu');
+      }
       if (button) {
         button.disabled = true;
         button.textContent = 'Membuat checkout...';
       }
       const payload = await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(currentInvoice.reference)}/checkout`, {
         method: 'POST',
-        body: JSON.stringify({})
+        body: JSON.stringify({ method })
       });
       if (payload.paid) {
         notice('Invoice sudah lunas.');
@@ -123,7 +194,8 @@
       if (!url) {
         throw new Error('Payment Gateway belum mengembalikan checkout URL');
       }
-      if (text) text.textContent = `Metode ${checkoutData.method || currentInvoice.paymentMethod || '-'} sudah disiapkan. Lanjutkan pembayaran dari tautan berikut.`;
+      const selectedChannel = currentChannels.find((channel) => channel.code === method);
+      if (text) text.textContent = `Metode ${checkoutData.method || selectedChannel?.name || currentInvoice.paymentMethod || '-'} sudah disiapkan. Lanjutkan pembayaran dari tautan berikut.`;
       if (link) link.href = url;
       if (box) box.hidden = false;
       window.location.href = url;

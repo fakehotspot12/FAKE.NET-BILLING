@@ -10,6 +10,21 @@ body {
   color: #172033;
 }
 
+button,
+select {
+  font: inherit;
+}
+
+select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d8e3ee;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #fff;
+  color: #172033;
+}
+
 .payment-page {
   min-height: 100vh;
   display: grid;
@@ -125,6 +140,33 @@ body {
 
 .amount-box .total strong {
   font-size: 18px;
+}
+
+.method-box {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #d8e3ee;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.method-box label,
+.method-box span,
+.method-box small {
+  display: block;
+}
+
+.method-box span {
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.method-box small {
+  margin-top: 7px;
+  color: #64748b;
+  line-height: 1.35;
 }
 
 .payment-button,

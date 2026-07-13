@@ -7009,6 +7009,82 @@ function paymentGatewayReturnUrl(data = {}, fallbackPath = '/') {
   return `${origin}${fallbackPath.startsWith('/') ? fallbackPath : `/${fallbackPath}`}`;
 }
 
+function tripayChannelPayload(channel = {}, amount = 0) {
+  const minimumAmount = Number(channel.minimum_amount || channel.min_amount || channel.minimumAmount || 0) || 0;
+  const maximumAmount = Number(channel.maximum_amount || channel.max_amount || channel.maximumAmount || 0) || 0;
+  return {
+    code: String(channel.code || '').trim().toUpperCase(),
+    name: String(channel.name || channel.title || channel.code || '').trim(),
+    group: String(channel.group || '').trim(),
+    type: String(channel.type || '').trim(),
+    iconUrl: String(channel.icon_url || channel.iconUrl || '').trim(),
+    active: channel.active !== false,
+    minimumAmount,
+    maximumAmount,
+    available: !amount
+      || ((!minimumAmount || amount >= minimumAmount) && (!maximumAmount || amount <= maximumAmount)),
+    feeMerchant: channel.fee_merchant || channel.feeMerchant || {},
+    feeCustomer: channel.fee_customer || channel.feeCustomer || {},
+    totalFee: channel.total_fee || channel.totalFee || {}
+  };
+}
+
+function isTripayQrisChannel(channel = {}) {
+  const code = String(channel.code || '').trim().toUpperCase();
+  const name = String(channel.name || '').trim().toLowerCase();
+  const group = String(channel.group || '').trim().toLowerCase();
+  return code === 'QRIS' || code === 'QRIS2' || name.includes('qris') || group.includes('qris');
+}
+
+function firstTripayQrisChannel(channels = []) {
+  return (Array.isArray(channels) ? channels : []).find(isTripayQrisChannel) || null;
+}
+
+async function tripayPaymentChannels(data = {}, options = {}) {
+  const settings = data.settings?.paymentGateway || {};
+  const tripay = settings.tripay || {};
+  const apiKey = String(tripay.apiKey || '').trim();
+  if (!apiKey) throw new Error('API Key Tripay belum lengkap');
+  const amount = Math.max(0, Math.round(Number(options.amount || 0) || 0));
+  const response = await fetch(`${tripayApiBase(settings)}/merchant/payment-channel`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json'
+    }
+  });
+  const bodyText = await response.text();
+  let body = {};
+  try {
+    body = bodyText ? JSON.parse(bodyText) : {};
+  } catch {
+    body = { message: bodyText };
+  }
+  if (!response.ok || body.success === false) {
+    throw new Error(body.message || body.error || `Tripay channel HTTP ${response.status}`);
+  }
+  const rows = Array.isArray(body.data) ? body.data : [];
+  return rows
+    .map((channel) => tripayChannelPayload(channel, amount))
+    .filter((channel) => channel.code && channel.active && channel.available);
+}
+
+async function paymentGatewayChannels(data = {}, options = {}) {
+  const settings = data.settings?.paymentGateway || {};
+  if (settings.enabled !== true) throw new Error('Payment Gateway belum aktif');
+  const provider = String(settings.provider || 'tripay').trim().toLowerCase();
+  if (provider === 'tripay') {
+    const channels = await tripayPaymentChannels(data, options);
+    const kind = String(options.kind || '').trim().toLowerCase();
+    if (kind.includes('voucher')) {
+      const qris = firstTripayQrisChannel(channels);
+      return qris ? [qris] : [];
+    }
+    return channels;
+  }
+  return [];
+}
+
 async function createTripayCheckout(data = {}, params = {}) {
   const settings = data.settings?.paymentGateway || {};
   const tripay = settings.tripay || {};
@@ -7023,7 +7099,18 @@ async function createTripayCheckout(data = {}, params = {}) {
   if (!merchantRef || amount <= 0) {
     throw new Error('Reference dan nominal payment gateway wajib tersedia');
   }
-  const method = String(params.method || '').trim().toUpperCase();
+  const kind = String(params.kind || '').trim().toLowerCase();
+  let method = '';
+  if (kind.includes('voucher')) {
+    const channels = await tripayPaymentChannels(data, { amount, kind });
+    method = firstTripayQrisChannel(channels)?.code || '';
+    if (!method) throw new Error('Channel QRIS Tripay untuk voucher belum aktif');
+  } else {
+    method = String(params.method || settings.monthlyPaymentMethod || '').trim().toUpperCase();
+  }
+  if (!method || ['ALL', 'SEMUA'].includes(method)) {
+    throw new Error('Metode pembayaran wajib dipilih');
+  }
   const signature = crypto.createHmac('sha256', privateKey)
     .update(`${merchantCode}${merchantRef}${amount}`)
     .digest('hex');
@@ -7043,7 +7130,7 @@ async function createTripayCheckout(data = {}, params = {}) {
     expired_time: Math.floor(Date.now() / 1000) + (Math.max(5, Number(settings.checkoutTtlMinutes || 60) || 60) * 60),
     signature
   };
-  if (method) payload.method = method;
+  payload.method = method;
   const response = await fetch(`${tripayApiBase(settings)}/transaction/create`, {
     method: 'POST',
     headers: {
@@ -7367,6 +7454,27 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/public/payment-gateway/channels') {
+    const data = await loadStore();
+    const amount = decimalNumber(url.searchParams.get('amount') || 0);
+    const kind = String(url.searchParams.get('kind') || 'monthly-package').trim();
+    try {
+      const channels = await paymentGatewayChannels(data, { amount, kind });
+      sendJson(res, 200, {
+        ok: true,
+        provider: data.settings?.paymentGateway?.provider || 'tripay',
+        channels
+      });
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error.message || 'Channel payment gateway gagal dibaca',
+        channels: []
+      });
+    }
+    return;
+  }
+
   const publicGatewayInvoiceMatch = pathname.match(/^\/api\/public\/payment-gateway\/invoices\/([^/]+)$/);
   if (method === 'GET' && publicGatewayInvoiceMatch) {
     const data = await loadStore();
@@ -7400,10 +7508,12 @@ async function handleApi(req, res, url) {
       return;
     }
     try {
+      const payload = await readBody(req);
       const customer = customerForInvoice(data, invoice);
       const checkout = await createPaymentGatewayCheckout(data, {
         kind: 'monthly-package',
         reference: publicInvoice.reference,
+        method: payload.method || payload.paymentMethod || '',
         amount: publicInvoice.gatewayAmount,
         customerName: publicInvoice.customerName || 'Pelanggan',
         customerEmail: customer.email || '',
