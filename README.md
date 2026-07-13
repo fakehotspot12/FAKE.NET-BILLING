@@ -190,12 +190,19 @@ sudo fakenet-billing-stack update
 Updater akan:
 
 1. Membuat backup pre-update ke `/var/backups/fakenet-billing`.
-2. Mengambil source terbaru via Git jika folder punya `.git`.
-3. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
-4. Menjalankan `npm ci --omit=dev` atau `npm install --omit=dev`.
-5. Restart service stack.
+2. Backup mencakup `data/`, env `/etc/fakenet-billing.env`, env WAHA, metadata source, serta dump PostgreSQL aplikasi dan Radius jika `pg_dump` tersedia.
+3. Mengambil source terbaru via Git jika folder punya `.git`.
+4. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
+5. Menjalankan `npm ci --omit=dev` atau `npm install --omit=dev`.
+6. Restart service stack.
 
-Data aplikasi di `data/` tidak dihapus oleh updater.
+Data aplikasi di `data/` tidak dihapus oleh updater. Untuk install PostgreSQL, file backup berisi:
+
+- `db/fakenet_billing.dump`
+- `db/radius.dump`
+- `etc/fakenet-billing.env`
+- `etc/fakenet-billing-waha.env`
+- `manifest.txt`
 
 Log update:
 
