@@ -1333,13 +1333,19 @@ async function copyTextToClipboard(text = '') {
   const value = String(text || '');
   if (!value) throw new Error('Tidak ada teks untuk disalin');
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Fall back for HTTP/local browsers that block the Clipboard API.
+    }
   }
   const textarea = document.createElement('textarea');
   textarea.value = value;
+  textarea.setAttribute('readonly', 'readonly');
   textarea.style.position = 'fixed';
   textarea.style.left = '-9999px';
+  textarea.style.top = '0';
   document.body.appendChild(textarea);
   textarea.focus();
   textarea.select();
@@ -2413,8 +2419,8 @@ function renderActivation(licenseStatus = {}) {
           <label class="field">
             <span>HWID / Machine Code</span>
             <div class="license-machine-row">
-              <input name="machineCode" value="${escapeHtml(machineCode)}" readonly>
-              <button class="ghost-button" type="button" id="copyMachineCode">Copy</button>
+              <input id="machineCodeInput" name="machineCode" value="${escapeHtml(machineCode)}" readonly title="Klik untuk copy HWID">
+              <button class="ghost-button" type="button" id="copyMachineCode">Copy HWID</button>
             </div>
           </label>
           <label class="field">
@@ -2427,14 +2433,21 @@ function renderActivation(licenseStatus = {}) {
       </div>
     </section>
   `;
-  document.getElementById('copyMachineCode')?.addEventListener('click', async () => {
+  const machineInput = document.getElementById('machineCodeInput');
+  const copyMachineCode = async () => {
     try {
-      await navigator.clipboard?.writeText(machineCode);
+      await copyTextToClipboard(machineInput?.value || machineCode);
+      machineInput?.focus();
+      machineInput?.select();
       setToast('HWID disalin');
     } catch {
-      setToast('Gagal menyalin HWID');
+      machineInput?.focus();
+      machineInput?.select();
+      setToast('HWID terseleksi, tekan Ctrl+C');
     }
-  });
+  };
+  document.getElementById('copyMachineCode')?.addEventListener('click', copyMachineCode);
+  machineInput?.addEventListener('click', copyMachineCode);
   document.getElementById('activationForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;

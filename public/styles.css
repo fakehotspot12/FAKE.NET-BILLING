@@ -2232,7 +2232,8 @@ input[type="checkbox"] {
 
 .license-machine-row .ghost-button {
   justify-content: center;
-  min-width: 74px;
+  min-width: 96px;
+  white-space: nowrap;
   border-color: rgba(148, 163, 184, 0.28);
   color: #e5e7eb;
   background: rgba(15, 23, 42, 0.72);
