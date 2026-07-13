@@ -22,6 +22,14 @@ test('lifetime license has no expiry date', () => {
   assert.equal(generated.payload.expiresAt, '');
 });
 
+test('license generated from displayed HWID validates on the same server', () => {
+  const machineCode = license.machineFingerprint();
+  const generated = license.generateLicense({ licensedTo: 'Test ISP', machineCode, duration: '7d' });
+  const validation = license.validateLicenseKey(generated.key);
+  assert.equal(validation.ok, true);
+  assert.equal(validation.machineCode, machineCode);
+});
+
 test('license is bound to machine code', () => {
   const machineCode = license.machineFingerprint();
   const generated = license.generateLicense({ licensedTo: 'Test ISP', machineCode, duration: '7d' });

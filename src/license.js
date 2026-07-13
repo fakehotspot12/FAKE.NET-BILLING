@@ -121,6 +121,13 @@ function readFirst(paths = []) {
   return '';
 }
 
+function formatMachineCodeFromBody(body = '') {
+  const clean = String(body || '').replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 20);
+  if (!clean) return '';
+  const padded = clean.padEnd(20, '0');
+  return `MC-${padded.slice(0, 5)}-${padded.slice(5, 10)}-${padded.slice(10, 15)}-${padded.slice(15, 20)}`;
+}
+
 function machineFingerprint() {
   const machineId = readFirst(['/etc/machine-id', '/var/lib/dbus/machine-id']);
   const raw = [
@@ -130,7 +137,7 @@ function machineFingerprint() {
     os.arch()
   ].filter(Boolean).join('|');
   const hash = crypto.createHash('sha256').update(raw || os.hostname()).digest('hex').toUpperCase();
-  return `MC-${hash.slice(0, 5)}-${hash.slice(5, 10)}-${hash.slice(10, 15)}-${hash.slice(15, 20)}`;
+  return formatMachineCodeFromBody(hash);
 }
 
 function normalizeMachineCode(value = '') {
@@ -138,10 +145,10 @@ function normalizeMachineCode(value = '') {
   if (!raw) return machineFingerprint();
   const clean = raw.replace(/[^A-Z0-9]/g, '');
   if (clean.startsWith('MC')) {
-    return groupKey(clean);
+    return formatMachineCodeFromBody(clean.slice(2));
   }
   const hash = crypto.createHash('sha256').update(clean).digest('hex').toUpperCase();
-  return `MC-${hash.slice(0, 5)}-${hash.slice(5, 10)}-${hash.slice(10, 15)}-${hash.slice(15, 20)}`;
+  return formatMachineCodeFromBody(hash);
 }
 
 function normalizeDate(value = '') {
