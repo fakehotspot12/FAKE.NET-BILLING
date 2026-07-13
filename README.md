@@ -123,6 +123,28 @@ Default install ke:
 /opt/fakenet-billing
 ```
 
+Yang dikerjakan otomatis oleh `install.sh`:
+
+- Install paket OS yang dibutuhkan: Node.js 18+, npm, PostgreSQL, Redis, FreeRADIUS, Docker, Git, curl, rsync, tar, dan gzip.
+- Jika Node.js bawaan distro terlalu lama, installer mencoba memasang Node.js 20 dari repository NodeSource.
+- Copy source aplikasi ke `/opt/fakenet-billing` tanpa membawa data runtime.
+- Install dependency Node dari `package-lock.json`.
+- Membuat `/etc/fakenet-billing.env` dan `/etc/fakenet-billing-waha.env`.
+- Membuat password random untuk database aplikasi, database Radius, dan WAHA.
+- Membuat database PostgreSQL `fakenet_billing` dan `radius`.
+- Membuat schema FreeRADIUS dasar: `nas`, `radcheck`, `radreply`, `radusergroup`, `radgroupcheck`, `radgroupreply`, dan `radacct`.
+- Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS secara best-effort.
+- Memasang service Billing, Isolir, Voucher, WifiKu, Radius Connector, dan WAHA.
+- Memasang command stack `fakenet-billing-stack`.
+
+Yang tetap perlu diatur setelah install:
+
+- License key aplikasi dari HWID/machine code.
+- Domain/subdomain publik dan HTTPS reverse proxy jika aplikasi dipublish ke internet.
+- Payment gateway merchant key, private key, dan callback domain.
+- Scan Whatsapp API Gateway dari menu aplikasi.
+- Site/NAS, secret Radius, SNMP community, profile PPP-DHCP/Hotspot, dan rule MikroTik.
+
 Env utama:
 
 ```bash

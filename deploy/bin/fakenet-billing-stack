@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ACTION="${1:-status}"
+
 APP_UNITS=(
   fakenet-billing.service
   fakenet-billing-isolir.service
@@ -10,12 +11,52 @@ APP_UNITS=(
   fakenet-billing-radius-connector.service
   fakenet-billing-waha.service
 )
-BASE_UNITS=(
-  redis-server.service
-  postgresql.service
-  freeradius.service
-  docker.service
+
+APP_SERVICES=(
+  fakenet-billing
+  fakenet-billing-isolir
+  fakenet-billing-voucher
+  fakenet-billing-wifiku
+  fakenet-billing-radius-connector
+  fakenet-billing-waha
 )
+
+SYSTEMD_BASE_GROUPS=(
+  "redis-server.service redis.service"
+  "postgresql.service postgresql@15-main.service postgresql@14-main.service postgresql@13-main.service"
+  "freeradius.service radiusd.service"
+  "docker.service"
+)
+
+OPENRC_BASE_SERVICES=(redis postgresql freeradius radiusd docker)
+
+systemd_unit_exists() {
+  systemctl list-unit-files "$1" --no-legend >/dev/null 2>&1
+}
+
+resolve_systemd_group() {
+  local unit
+  for unit in "$@"; do
+    if systemd_unit_exists "$unit"; then
+      printf '%s\n' "$unit"
+      return 0
+    fi
+  done
+  return 1
+}
+
+systemd_base_units() {
+  local group unit
+  for group in "${SYSTEMD_BASE_GROUPS[@]}"; do
+    unit="$(resolve_systemd_group $group || true)"
+    [ -n "$unit" ] && printf '%s\n' "$unit"
+  done
+}
+
+systemd_units() {
+  systemd_base_units
+  printf '%s\n' "${APP_UNITS[@]}"
+}
 
 restart_unit() {
   local unit="$1"
@@ -26,26 +67,74 @@ restart_unit() {
   systemctl is-active --quiet "$unit"
 }
 
-case "$ACTION" in
-  start)
-    systemctl start "${BASE_UNITS[@]}" "${APP_UNITS[@]}"
-    ;;
-  restart)
-    for unit in "${BASE_UNITS[@]}" "${APP_UNITS[@]}"; do
-      restart_unit "$unit"
-    done
-    ;;
-  stop)
-    systemctl stop "${APP_UNITS[@]}" "${BASE_UNITS[@]}"
-    ;;
-  status)
-    systemctl status "${APP_UNITS[@]}" "${BASE_UNITS[@]}" --no-pager
-    ;;
-  update)
-    /usr/local/bin/fakenet-billing-update
-    ;;
-  *)
-    echo "Usage: fakenet-billing-stack {start|restart|stop|status|update}" >&2
-    exit 2
-    ;;
-esac
+openrc_service_exists() {
+  [ -x "/etc/init.d/$1" ]
+}
+
+openrc_services() {
+  local service
+  for service in "${OPENRC_BASE_SERVICES[@]}" "${APP_SERVICES[@]}"; do
+    openrc_service_exists "$service" && printf '%s\n' "$service"
+  done
+}
+
+run_systemd() {
+  mapfile -t units < <(systemd_units)
+  case "$ACTION" in
+    start)
+      systemctl start "${units[@]}"
+      ;;
+    restart)
+      for unit in "${units[@]}"; do
+        restart_unit "$unit"
+      done
+      ;;
+    stop)
+      systemctl stop "${APP_UNITS[@]}" || true
+      ;;
+    status)
+      systemctl status "${units[@]}" --no-pager
+      ;;
+    update)
+      /usr/local/bin/fakenet-billing-update
+      ;;
+    *)
+      echo "Usage: fakenet-billing-stack {start|restart|stop|status|update}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+run_openrc() {
+  mapfile -t services < <(openrc_services)
+  case "$ACTION" in
+    start)
+      for service in "${services[@]}"; do rc-service "$service" start || true; done
+      ;;
+    restart)
+      for service in "${services[@]}"; do rc-service "$service" restart || rc-service "$service" start || true; done
+      ;;
+    stop)
+      for service in "${APP_SERVICES[@]}"; do openrc_service_exists "$service" && rc-service "$service" stop || true; done
+      ;;
+    status)
+      for service in "${services[@]}"; do rc-service "$service" status || true; done
+      ;;
+    update)
+      /usr/local/bin/fakenet-billing-update
+      ;;
+    *)
+      echo "Usage: fakenet-billing-stack {start|restart|stop|status|update}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if command -v systemctl >/dev/null 2>&1; then
+  run_systemd
+elif command -v rc-service >/dev/null 2>&1; then
+  run_openrc
+else
+  echo "Service manager tidak dikenali." >&2
+  exit 1
+fi

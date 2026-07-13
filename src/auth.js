@@ -149,6 +149,7 @@ const ROLE_DEFINITIONS = {
     description: 'Tukang tagihan pembayaran: melihat tagihan, kirim reminder, dan mencatat pembayaran.',
     permissions: [
       'dashboard:read',
+      'reports:daily:read',
       'billing-monitor:read',
       'customers:manage',
       'invoices:manage'

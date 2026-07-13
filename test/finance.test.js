@@ -3877,7 +3877,7 @@ test('auth creates default admin and protects admin role', () => {
   assert.equal(hasPermission(publicUser(data.users[5]), 'xendit:read'), false);
   assert.equal(hasPermission(publicUser(data.users[4]), 'xendit:withdraw'), false);
   assert.equal(hasPermission(publicUser(data.users[5]), 'xendit:withdraw'), false);
-  assert.equal(hasPermission(publicUser(collector), 'reports:daily:read'), false);
+  assert.equal(hasPermission(publicUser(collector), 'reports:daily:read'), true);
   assert.equal(hasPermission(publicUser(collector), 'reports:voucher:read'), false);
   assert.equal(hasPermission(publicUser(collector), 'billing-monitor:read'), true);
   assert.equal(hasPermission(publicUser(collector), 'settings:write'), false);

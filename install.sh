@@ -4,6 +4,23 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/fakenet-billing}"
 SOURCE_DIR="${SOURCE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-18}"
+NODE_SETUP_MAJOR="${NODE_SETUP_MAJOR:-20}"
+
+APP_UNITS=(
+  fakenet-billing.service
+  fakenet-billing-isolir.service
+  fakenet-billing-voucher.service
+  fakenet-billing-wifiku.service
+  fakenet-billing-radius-connector.service
+  fakenet-billing-waha.service
+)
+
+SYSTEMD_BASE_GROUPS=(
+  "redis-server.service redis.service"
+  "postgresql.service postgresql@15-main.service postgresql@14-main.service postgresql@13-main.service"
+  "freeradius.service radiusd.service"
+  "docker.service"
+)
 
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -20,24 +37,70 @@ detect_pm() {
   echo unknown
 }
 
+node_major() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo 0
+    return
+  fi
+  node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0
+}
+
+random_hex() {
+  local bytes="${1:-24}"
+  openssl rand -hex "$bytes" 2>/dev/null || date +%s%N
+}
+
 install_packages() {
+  local pm
   pm="$(detect_pm)"
   case "$pm" in
     apt)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git rsync tar gzip nodejs npm postgresql redis-server freeradius docker.io
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git rsync tar gzip gnupg openssl postgresql postgresql-client redis-server freeradius freeradius-postgresql docker.io
       ;;
     dnf)
-      dnf install -y ca-certificates curl git rsync tar gzip nodejs npm postgresql-server postgresql redis freeradius docker
+      dnf install -y ca-certificates curl git rsync tar gzip openssl postgresql-server postgresql redis freeradius freeradius-postgresql docker
       ;;
     yum)
-      yum install -y ca-certificates curl git rsync tar gzip nodejs npm postgresql-server postgresql redis freeradius docker
+      yum install -y ca-certificates curl git rsync tar gzip openssl postgresql-server postgresql redis freeradius freeradius-postgresql docker
       ;;
     apk)
-      apk add --no-cache ca-certificates curl git rsync tar gzip nodejs npm postgresql postgresql-client redis freeradius docker openrc
+      apk add --no-cache ca-certificates curl git rsync tar gzip openssl nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc
       ;;
     *)
       echo "Package manager tidak dikenali. Install manual: nodejs npm git rsync postgresql redis freeradius docker." >&2
+      ;;
+  esac
+}
+
+install_node_runtime() {
+  if [ "$(node_major)" -ge "$NODE_MIN_MAJOR" ] && command -v npm >/dev/null 2>&1; then
+    return
+  fi
+
+  local pm setup
+  pm="$(detect_pm)"
+  setup="/tmp/fakenet-node-setup.sh"
+  case "$pm" in
+    apt)
+      curl -fsSL "https://deb.nodesource.com/setup_${NODE_SETUP_MAJOR}.x" -o "$setup"
+      bash "$setup"
+      DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+      ;;
+    dnf)
+      curl -fsSL "https://rpm.nodesource.com/setup_${NODE_SETUP_MAJOR}.x" -o "$setup"
+      bash "$setup"
+      dnf install -y nodejs
+      ;;
+    yum)
+      curl -fsSL "https://rpm.nodesource.com/setup_${NODE_SETUP_MAJOR}.x" -o "$setup"
+      bash "$setup"
+      yum install -y nodejs
+      ;;
+    apk)
+      apk add --no-cache nodejs npm
+      ;;
+    *)
       ;;
   esac
 }
@@ -47,7 +110,8 @@ check_node() {
     echo "Node.js belum terpasang" >&2
     exit 1
   fi
-  major="$(node -p "Number(process.versions.node.split('.')[0])")"
+  local major
+  major="$(node_major)"
   if [ "$major" -lt "$NODE_MIN_MAJOR" ]; then
     echo "Node.js minimal v$NODE_MIN_MAJOR. Versi saat ini: $(node -v)" >&2
     echo "Update Node.js dahulu, lalu ulangi install.sh." >&2
@@ -75,41 +139,239 @@ install_node_deps() {
   fi
 }
 
+replace_or_append_env() {
+  local file="$1" key="$2" value="$3"
+  local escaped
+  escaped="$(printf '%s' "$value" | sed 's/[\/&]/\\&/g')"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s/^${key}=.*/${key}=${escaped}/" "$file"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
 install_env() {
+  local app_db_password radius_db_password waha_api_key waha_password
   if [ ! -f /etc/fakenet-billing.env ]; then
     cp "$APP_DIR/deploy/fakenet-billing.env" /etc/fakenet-billing.env
-    if [ -n "${FAKENET_LICENSE_PUBLIC_KEY:-}" ]; then
-      escaped_public_key="$(printf '%s' "$FAKENET_LICENSE_PUBLIC_KEY" | sed ':a;N;$!ba;s/\n/\\n/g')"
-      printf '\nLICENSE_PUBLIC_KEY="%s"\n' "$escaped_public_key" >> /etc/fakenet-billing.env
-    fi
   fi
+
+  app_db_password="$(random_hex 24)"
+  radius_db_password="$(random_hex 24)"
+  if grep -q 'CHANGE_ME_APP_DB_PASSWORD' /etc/fakenet-billing.env; then
+    sed -i "s/CHANGE_ME_APP_DB_PASSWORD/$app_db_password/g" /etc/fakenet-billing.env
+    replace_or_append_env /etc/fakenet-billing.env APP_DATABASE_PASSWORD "$app_db_password"
+  fi
+  if grep -q 'CHANGE_ME_RADIUS_DB_PASSWORD' /etc/fakenet-billing.env; then
+    sed -i "s/CHANGE_ME_RADIUS_DB_PASSWORD/$radius_db_password/g" /etc/fakenet-billing.env
+    replace_or_append_env /etc/fakenet-billing.env RADIUS_DATABASE_PASSWORD "$radius_db_password"
+  fi
+
+  if [ -n "${FAKENET_LICENSE_PUBLIC_KEY:-}" ] && ! grep -q '^LICENSE_PUBLIC_KEY=' /etc/fakenet-billing.env; then
+    local escaped_public_key
+    escaped_public_key="$(printf '%s' "$FAKENET_LICENSE_PUBLIC_KEY" | sed ':a;N;$!ba;s/\n/\\n/g')"
+    printf '\nLICENSE_PUBLIC_KEY="%s"\n' "$escaped_public_key" >> /etc/fakenet-billing.env
+  fi
+
   if [ ! -f /etc/fakenet-billing-waha.env ]; then
     cp "$APP_DIR/deploy/fakenet-billing-waha.env" /etc/fakenet-billing-waha.env
-    waha_api_key="$(openssl rand -hex 32 2>/dev/null || date +%s%N)"
-    waha_password="$(openssl rand -hex 24 2>/dev/null || date +%s%N)"
+  fi
+  waha_api_key="$(random_hex 32)"
+  waha_password="$(random_hex 24)"
+  if grep -q 'CHANGE_ME_LONG_RANDOM_API_KEY' /etc/fakenet-billing-waha.env; then
     sed -i "s/CHANGE_ME_LONG_RANDOM_API_KEY/$waha_api_key/g" /etc/fakenet-billing-waha.env
+  fi
+  if grep -q 'CHANGE_ME_LONG_RANDOM_PASSWORD' /etc/fakenet-billing-waha.env; then
     sed -i "s/CHANGE_ME_LONG_RANDOM_PASSWORD/$waha_password/g" /etc/fakenet-billing-waha.env
   fi
+}
+
+load_billing_env() {
+  set -a
+  # shellcheck disable=SC1091
+  . /etc/fakenet-billing.env
+  set +a
+}
+
+systemd_unit_exists() {
+  systemctl list-unit-files "$1" --no-legend >/dev/null 2>&1
+}
+
+resolve_systemd_group() {
+  local unit
+  for unit in "$@"; do
+    if systemd_unit_exists "$unit"; then
+      printf '%s\n' "$unit"
+      return 0
+    fi
+  done
+  return 1
+}
+
+systemd_base_units() {
+  local group unit
+  for group in "${SYSTEMD_BASE_GROUPS[@]}"; do
+    unit="$(resolve_systemd_group $group || true)"
+    [ -n "$unit" ] && printf '%s\n' "$unit"
+  done
+}
+
+start_systemd_base_units() {
+  local unit
+  mapfile -t units < <(systemd_base_units)
+  for unit in "${units[@]}"; do
+    systemctl enable "$unit" >/dev/null 2>&1 || true
+    systemctl start "$unit" >/dev/null 2>&1 || true
+  done
+}
+
+restart_systemd_unit_group() {
+  local group unit
+  group="$1"
+  unit="$(resolve_systemd_group $group || true)"
+  [ -n "$unit" ] && systemctl restart "$unit" >/dev/null 2>&1 || true
+}
+
+init_postgres_cluster() {
+  if command -v postgresql-setup >/dev/null 2>&1; then
+    postgresql-setup --initdb >/dev/null 2>&1 || true
+  fi
+}
+
+psql_superuser() {
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u postgres -- psql "$@"
+  elif command -v su-exec >/dev/null 2>&1; then
+    su-exec postgres psql "$@"
+  else
+    su postgres -c "psql $*"
+  fi
+}
+
+postgres_exec_file() {
+  local file="$1" database="${2:-postgres}"
+  psql_superuser -X -q -v ON_ERROR_STOP=1 -d "$database" -f "$file"
+}
+
+init_postgres_databases() {
+  if ! command -v psql >/dev/null 2>&1; then
+    echo "psql tidak tersedia, lewati inisialisasi database." >&2
+    return
+  fi
+
+  load_billing_env
+  local app_db app_user app_pass radius_db radius_user radius_pass sql_file
+  app_db="${APP_DATABASE_NAME:-fakenet_billing}"
+  app_user="${APP_DATABASE_USER:-fakenet_billing}"
+  app_pass="${APP_DATABASE_PASSWORD:-}"
+  radius_db="${RADIUS_DATABASE_NAME:-radius}"
+  radius_user="${RADIUS_DATABASE_USER:-radius}"
+  radius_pass="${RADIUS_DATABASE_PASSWORD:-}"
+
+  if [ -z "$app_pass" ] || [ -z "$radius_pass" ]; then
+    echo "Password database belum tersedia di /etc/fakenet-billing.env." >&2
+    return
+  fi
+
+  sql_file="/tmp/fakenet-billing-init-db-$$.sql"
+  cat > "$sql_file" <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$app_user') THEN
+    CREATE ROLE $app_user LOGIN PASSWORD '$app_pass';
+  ELSE
+    ALTER ROLE $app_user LOGIN PASSWORD '$app_pass';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$radius_user') THEN
+    CREATE ROLE $radius_user LOGIN PASSWORD '$radius_pass';
+  ELSE
+    ALTER ROLE $radius_user LOGIN PASSWORD '$radius_pass';
+  END IF;
+END
+\$\$;
+SELECT 'CREATE DATABASE $app_db OWNER $app_user' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$app_db')\gexec
+SELECT 'CREATE DATABASE $radius_db OWNER $radius_user' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$radius_db')\gexec
+GRANT ALL PRIVILEGES ON DATABASE $app_db TO $app_user;
+GRANT ALL PRIVILEGES ON DATABASE $radius_db TO $radius_user;
+SQL
+  postgres_exec_file "$sql_file" postgres
+  rm -f "$sql_file"
+
+  if [ -f "$APP_DIR/deploy/sql/freeradius-postgresql.sql" ]; then
+    postgres_exec_file "$APP_DIR/deploy/sql/freeradius-postgresql.sql" "$radius_db"
+    sql_file="/tmp/fakenet-billing-radius-grant-$$.sql"
+    cat > "$sql_file" <<SQL
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $radius_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $radius_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO $radius_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO $radius_user;
+SQL
+    postgres_exec_file "$sql_file" "$radius_db"
+    rm -f "$sql_file"
+  fi
+}
+
+configure_freeradius_sql() {
+  load_billing_env
+  local sql_mod mods_enabled sites_default sites_inner
+  sql_mod=""
+  for candidate in \
+    /etc/freeradius/3.0/mods-available/sql \
+    /etc/raddb/mods-available/sql \
+    /etc/raddb/mods-config/sql/main/postgresql/queries.conf; do
+    [ -f "$candidate" ] && sql_mod="$candidate" && break
+  done
+  [ -n "$sql_mod" ] || return 0
+
+  cp "$sql_mod" "${sql_mod}.fakenet-billing.bak" 2>/dev/null || true
+  sed -i -E 's/^[[:space:]]*dialect = .*/        dialect = "postgresql"/' "$sql_mod" || true
+  sed -i -E 's/^[[:space:]]*driver = .*/        driver = "rlm_sql_postgresql"/' "$sql_mod" || true
+  sed -i -E 's/^[[:space:]]*server = .*/        server = "127.0.0.1"/' "$sql_mod" || true
+  sed -i -E 's/^[[:space:]]*port = .*/        port = 5432/' "$sql_mod" || true
+  sed -i -E "s/^[[:space:]]*login = .*/        login = \"${RADIUS_DATABASE_USER:-radius}\"/" "$sql_mod" || true
+  sed -i -E "s/^[[:space:]]*password = .*/        password = \"${RADIUS_DATABASE_PASSWORD:-}\"/" "$sql_mod" || true
+  sed -i -E "s/^[[:space:]]*radius_db = .*/        radius_db = \"${RADIUS_DATABASE_NAME:-radius}\"/" "$sql_mod" || true
+  sed -i -E 's/^[[:space:]]*read_clients = .*/        read_clients = yes/' "$sql_mod" || true
+  sed -i -E 's/^[[:space:]]*client_table = .*/        client_table = "nas"/' "$sql_mod" || true
+
+  for mods_enabled in /etc/freeradius/3.0/mods-enabled /etc/raddb/mods-enabled; do
+    if [ -d "$mods_enabled" ]; then
+      ln -sf ../mods-available/sql "$mods_enabled/sql" || true
+    fi
+  done
+
+  for sites_default in /etc/freeradius/3.0/sites-enabled/default /etc/raddb/sites-enabled/default; do
+    [ -f "$sites_default" ] && sed -i -E 's/^[[:space:]]*#?[[:space:]]*-?sql/        sql/' "$sites_default" || true
+  done
+  for sites_inner in /etc/freeradius/3.0/sites-enabled/inner-tunnel /etc/raddb/sites-enabled/inner-tunnel; do
+    [ -f "$sites_inner" ] && sed -i -E 's/^[[:space:]]*#?[[:space:]]*-?sql/        sql/' "$sites_inner" || true
+  done
 }
 
 install_systemd() {
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update
+  local unit name
   for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
     [ -f "$unit" ] || continue
     name="$(basename "$unit")"
-    sed "s#WorkingDirectory=/opt/fakenet-billing#WorkingDirectory=$APP_DIR#g" "$unit" > "/etc/systemd/system/$name"
+    sed \
+      -e "s#WorkingDirectory=/opt/fakenet-billing#WorkingDirectory=$APP_DIR#g" \
+      -e "s#/opt/fakenet-billing-waha#/opt/fakenet-billing-waha#g" \
+      "$unit" > "/etc/systemd/system/$name"
   done
   systemctl daemon-reload
-  systemctl enable redis-server postgresql freeradius docker >/dev/null 2>&1 || true
-  systemctl start redis-server postgresql freeradius docker >/dev/null 2>&1 || true
-  systemctl enable fakenet-billing.service fakenet-billing-isolir.service fakenet-billing-voucher.service fakenet-billing-wifiku.service fakenet-billing-radius-connector.service >/dev/null
-  systemctl restart fakenet-billing.service fakenet-billing-isolir.service fakenet-billing-voucher.service fakenet-billing-wifiku.service fakenet-billing-radius-connector.service
+  init_postgres_cluster
+  start_systemd_base_units
+  init_postgres_databases
+  configure_freeradius_sql
+  restart_systemd_unit_group "freeradius.service radiusd.service"
+  systemctl enable fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
+  systemctl restart "${APP_UNITS[@]}"
 }
 
 write_openrc_service() {
-  service_name="$1"
-  command_args="$2"
+  local service_name="$1" command_args="$2"
   cat > "/etc/init.d/$service_name" <<EOF
 #!/sbin/openrc-run
 name="$service_name"
@@ -128,21 +390,52 @@ depend() {
 }
 EOF
   chmod +x "/etc/init.d/$service_name"
-  rc-update add "$service_name" default
-  rc-service "$service_name" restart || rc-service "$service_name" start
+  rc-update add "$service_name" default >/dev/null 2>&1 || true
+  rc-service "$service_name" restart || rc-service "$service_name" start || true
+}
+
+write_openrc_waha_service() {
+  cat > /etc/init.d/fakenet-billing-waha <<'EOF'
+#!/sbin/openrc-run
+name="fakenet-billing-waha"
+description="WAHA Local WhatsApp Gateway for FAKE.NET Billing"
+supervisor=supervise-daemon
+command="/usr/bin/docker"
+command_args="run --name fakenet-billing-waha --rm --shm-size=1g --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:${WAHA_PORT:-8895}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha"
+pidfile="/run/fakenet-billing-waha.pid"
+output_log="/var/log/fakenet-billing-waha.log"
+error_log="/var/log/fakenet-billing-waha.err"
+start_pre() {
+  mkdir -p /opt/fakenet-billing-waha/sessions
+  /usr/bin/docker rm -f fakenet-billing-waha >/dev/null 2>&1 || true
+}
+stop_post() {
+  /usr/bin/docker stop fakenet-billing-waha >/dev/null 2>&1 || true
+}
+depend() {
+  need docker net
+}
+EOF
+  chmod +x /etc/init.d/fakenet-billing-waha
+  rc-update add fakenet-billing-waha default >/dev/null 2>&1 || true
+  rc-service fakenet-billing-waha restart || rc-service fakenet-billing-waha start || true
 }
 
 install_openrc() {
+  install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update
   mkdir -p /var/log/fakenet-billing
   rc-update add redis default >/dev/null 2>&1 || true
   rc-update add postgresql default >/dev/null 2>&1 || true
-  rc-update add freeradius default >/dev/null 2>&1 || true
+  rc-update add freeradius default >/dev/null 2>&1 || rc-update add radiusd default >/dev/null 2>&1 || true
   rc-update add docker default >/dev/null 2>&1 || true
   rc-service redis start >/dev/null 2>&1 || true
   rc-service postgresql start >/dev/null 2>&1 || true
-  rc-service freeradius start >/dev/null 2>&1 || true
+  rc-service freeradius start >/dev/null 2>&1 || rc-service radiusd start >/dev/null 2>&1 || true
   rc-service docker start >/dev/null 2>&1 || true
+  init_postgres_databases
+  configure_freeradius_sql
+  rc-service freeradius restart >/dev/null 2>&1 || rc-service radiusd restart >/dev/null 2>&1 || true
   write_openrc_service fakenet-billing "src/server.js"
   write_openrc_service fakenet-billing-isolir "src/subweb-server.js"
   sed -i 's#command_args="src/subweb-server.js"#command_args="src/subweb-server.js"\nexport SUBWEB_KIND=isolir#' /etc/init.d/fakenet-billing-isolir
@@ -151,15 +444,18 @@ install_openrc() {
   write_openrc_service fakenet-billing-wifiku "src/subweb-server.js"
   sed -i 's#command_args="src/subweb-server.js"#command_args="src/subweb-server.js"\nexport SUBWEB_KIND=wifiku#' /etc/init.d/fakenet-billing-wifiku
   write_openrc_service fakenet-billing-radius-connector "src/radius-connector-service.js"
+  write_openrc_waha_service
 }
 
 main() {
   need_root
   install_packages
+  install_node_runtime
   check_node
   copy_source
   install_node_deps
   install_env
+  mkdir -p /opt/fakenet-billing-waha/sessions
   if command -v systemctl >/dev/null 2>&1; then
     install_systemd
   elif command -v rc-service >/dev/null 2>&1; then
@@ -172,6 +468,7 @@ main() {
   echo "Isolir: http://SERVER-IP:8892/isolir"
   echo "Voucher: http://SERVER-IP:8893/voucher"
   echo "WifiKu: http://SERVER-IP:8894/wifiku"
+  echo "Service stack: fakenet-billing-stack {start|restart|stop|status|update}"
 }
 
 main "$@"
