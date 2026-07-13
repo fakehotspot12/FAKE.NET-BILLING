@@ -10,9 +10,6 @@ APP_UNITS=(
   fakenet-billing-radius-connector.service
   fakenet-billing-waha.service
 )
-LICENSE_UNITS=(
-  fakenet-billing-license.service
-)
 BASE_UNITS=(
   redis-server.service
   postgresql.service
@@ -44,19 +41,11 @@ case "$ACTION" in
   status)
     systemctl status "${APP_UNITS[@]}" "${BASE_UNITS[@]}" --no-pager
     ;;
-  license-status)
-    systemctl status "${LICENSE_UNITS[@]}" --no-pager
-    ;;
-  license-restart)
-    for unit in "${LICENSE_UNITS[@]}"; do
-      restart_unit "$unit"
-    done
-    ;;
   update)
     /usr/local/bin/fakenet-billing-update
     ;;
   *)
-    echo "Usage: fakenet-billing-stack {start|restart|stop|status|update|license-status|license-restart}" >&2
+    echo "Usage: fakenet-billing-stack {start|restart|stop|status|update}" >&2
     exit 2
     ;;
 esac

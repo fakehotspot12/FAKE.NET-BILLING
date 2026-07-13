@@ -7,7 +7,6 @@
   "scripts": {
     "start": "node src/server.js",
     "subweb": "node src/subweb-server.js",
-    "license-server": "node src/license-server.js",
     "test": "node --test"
   },
   "keywords": [

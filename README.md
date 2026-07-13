@@ -31,7 +31,6 @@ Data runtime tidak disertakan ke repository. Folder `data/` diabaikan oleh Git k
 | Voucher | 8893 | Web beli voucher |
 | WifiKu | 8894 | Portal pelanggan |
 | WAHA lokal | 8895 | Whatsapp API lokal, bind ke 127.0.0.1 |
-| License Generator | 8896 | Khusus VM pengelola lisensi, opsional |
 
 Contoh subdomain:
 
@@ -39,7 +38,6 @@ Contoh subdomain:
 - `isolir.example.net` -> `SERVER:8892`
 - `voucher.example.net` -> `SERVER:8893`
 - `wifiku.example.net` -> `SERVER:8894`
-- `license.example.net` -> `SERVER:8896` khusus internal/dev
 
 ## Kebutuhan Sistem
 
@@ -81,18 +79,6 @@ Env utama:
 /etc/fakenet-billing-waha.env
 ```
 
-Install dengan license generator di VM dev/pengelola lisensi:
-
-```bash
-sudo INSTALL_LICENSE_SERVER=1 bash install.sh
-```
-
-Generator lisensi menggunakan:
-
-```bash
-/etc/fakenet-billing-license.env
-```
-
 ## Service
 
 Systemd:
@@ -103,8 +89,6 @@ fakenet-billing-stack restart
 fakenet-billing-stack stop
 fakenet-billing-stack status
 fakenet-billing-stack update
-fakenet-billing-stack license-status
-fakenet-billing-stack license-restart
 ```
 
 Service utama:
@@ -115,7 +99,6 @@ Service utama:
 - `fakenet-billing-wifiku.service`
 - `fakenet-billing-radius-connector.service`
 - `fakenet-billing-waha.service`
-- `fakenet-billing-license.service` opsional, untuk generator lisensi
 
 ## Update Aman
 
@@ -160,39 +143,14 @@ Durasi lisensi yang tersedia:
 - `1y`
 - `lifetime`
 
-Mode rilis direkomendasikan memakai Ed25519:
-
-- VM generator menyimpan `LICENSE_PRIVATE_KEY`.
-- Mesin pelanggan hanya menyimpan `LICENSE_PUBLIC_KEY`.
-
-Contoh generate key Ed25519:
-
-```bash
-openssl genpkey -algorithm Ed25519 -out license-private.pem
-openssl pkey -in license-private.pem -pubout -out license-public.pem
-```
-
-Isi public key ke `/etc/fakenet-billing.env` mesin pelanggan:
+Mesin pelanggan hanya membutuhkan public key validasi di `/etc/fakenet-billing.env`:
 
 ```bash
 LICENSE_ENFORCE=1
 LICENSE_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 ```
 
-Isi private key ke `/etc/fakenet-billing-license.env` di VM generator:
-
-```bash
-LICENSE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
-LICENSE_ADMIN_TOKEN=token-admin-generator
-```
-
-Web generator:
-
-```bash
-http://SERVER-DEV:8896
-```
-
-Masukkan HWID/machine code dari halaman aktivasi billing, pilih durasi, lalu generate license key.
+Generator license key tidak disertakan dalam repository/install publik. Setelah install, halaman aktivasi menampilkan HWID/machine code. Pelanggan mengirim HWID tersebut ke customer service, lalu memasukkan license key yang diterima ke halaman aktivasi.
 
 ## Backup dan Restore
 

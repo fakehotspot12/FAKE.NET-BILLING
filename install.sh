@@ -3,7 +3,6 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/fakenet-billing}"
 SOURCE_DIR="${SOURCE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-INSTALL_LICENSE_SERVER="${INSTALL_LICENSE_SERVER:-0}"
 NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-18}"
 
 need_root() {
@@ -91,11 +90,6 @@ install_env() {
     sed -i "s/CHANGE_ME_LONG_RANDOM_API_KEY/$waha_api_key/g" /etc/fakenet-billing-waha.env
     sed -i "s/CHANGE_ME_LONG_RANDOM_PASSWORD/$waha_password/g" /etc/fakenet-billing-waha.env
   fi
-  if [ "$INSTALL_LICENSE_SERVER" = "1" ] && [ ! -f /etc/fakenet-billing-license.env ]; then
-    cp "$APP_DIR/deploy/fakenet-billing-license.env" /etc/fakenet-billing-license.env
-    token="$(openssl rand -hex 24 2>/dev/null || date +%s%N)"
-    sed -i "s/change-this-license-admin-token/$token/g" /etc/fakenet-billing-license.env
-  fi
 }
 
 install_systemd() {
@@ -104,9 +98,6 @@ install_systemd() {
   for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
     [ -f "$unit" ] || continue
     name="$(basename "$unit")"
-    if [ "$name" = "fakenet-billing-license.service" ] && [ "$INSTALL_LICENSE_SERVER" != "1" ]; then
-      continue
-    fi
     sed "s#WorkingDirectory=/opt/fakenet-billing#WorkingDirectory=$APP_DIR#g" "$unit" > "/etc/systemd/system/$name"
   done
   systemctl daemon-reload
@@ -114,10 +105,6 @@ install_systemd() {
   systemctl start redis-server postgresql freeradius docker >/dev/null 2>&1 || true
   systemctl enable fakenet-billing.service fakenet-billing-isolir.service fakenet-billing-voucher.service fakenet-billing-wifiku.service fakenet-billing-radius-connector.service >/dev/null
   systemctl restart fakenet-billing.service fakenet-billing-isolir.service fakenet-billing-voucher.service fakenet-billing-wifiku.service fakenet-billing-radius-connector.service
-  if [ "$INSTALL_LICENSE_SERVER" = "1" ]; then
-    systemctl enable fakenet-billing-license.service >/dev/null
-    systemctl restart fakenet-billing-license.service
-  fi
 }
 
 write_openrc_service() {
@@ -136,7 +123,6 @@ pidfile="/run/$service_name.pid"
 output_log="/var/log/$service_name.log"
 error_log="/var/log/$service_name.err"
 [ -f /etc/fakenet-billing.env ] && . /etc/fakenet-billing.env
-[ -f /etc/fakenet-billing-license.env ] && . /etc/fakenet-billing-license.env
 depend() {
   need net
 }
@@ -165,9 +151,6 @@ install_openrc() {
   write_openrc_service fakenet-billing-wifiku "src/subweb-server.js"
   sed -i 's#command_args="src/subweb-server.js"#command_args="src/subweb-server.js"\nexport SUBWEB_KIND=wifiku#' /etc/init.d/fakenet-billing-wifiku
   write_openrc_service fakenet-billing-radius-connector "src/radius-connector-service.js"
-  if [ "$INSTALL_LICENSE_SERVER" = "1" ]; then
-    write_openrc_service fakenet-billing-license "src/license-server.js"
-  fi
 }
 
 main() {
@@ -189,9 +172,6 @@ main() {
   echo "Isolir: http://SERVER-IP:8892/isolir"
   echo "Voucher: http://SERVER-IP:8893/voucher"
   echo "WifiKu: http://SERVER-IP:8894/wifiku"
-  if [ "$INSTALL_LICENSE_SERVER" = "1" ]; then
-    echo "License Generator: http://SERVER-IP:8896"
-  fi
 }
 
 main "$@"
