@@ -108,6 +108,38 @@ test('generates monthly invoices for active customers', () => {
   assert.equal(generateInvoices(data, '2026-06').length, 0);
 });
 
+test('generates invoices only after the active date month', () => {
+  const data = createDefaultStore();
+  data.customers.push(
+    {
+      id: 'cus-active-current',
+      username: 'baru@kampung.net',
+      name: 'Pelanggan Baru',
+      packageName: 'PAKET B SILVER 20 Mb',
+      status: 'active',
+      activeDate: '2026-07-14'
+    },
+    {
+      id: 'cus-active-old',
+      username: 'lama@kampung.net',
+      name: 'Pelanggan Lama',
+      packageName: 'PAKET B SILVER 20 Mb',
+      status: 'active',
+      activeDate: '14/05/2026'
+    }
+  );
+
+  const july = generateInvoices(data, '2026-07');
+  assert.equal(july.length, 1);
+  assert.equal(july[0].customerId, 'cus-active-old');
+  assert.equal(july[0].period, '2026-07');
+  assert.equal(generateInvoices(data, '2026-05').length, 0);
+
+  const august = generateInvoices(data, '2026-08');
+  assert.equal(august.length, 2);
+  assert.deepEqual(august.map((invoice) => invoice.customerId).sort(), ['cus-active-current', 'cus-active-old']);
+});
+
 test('deleting radius user removes linked member but keeps transaction history', () => {
   const data = createDefaultStore();
   const customer = {

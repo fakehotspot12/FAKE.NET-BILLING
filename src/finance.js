@@ -404,6 +404,22 @@ function customerIsActive(customer) {
   return normalizeStatus(customer.status) === 'active';
 }
 
+function periodFromDateText(value = '') {
+  const text = cleanText(value);
+  if (!text) return '';
+  const iso = text.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}`;
+  const local = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (local) return `${local[3]}-${local[2].padStart(2, '0')}`;
+  return '';
+}
+
+function customerBillableInPeriod(customer = {}, period = currentPeriod()) {
+  const activePeriod = periodFromDateText(customer.activeDate || customer.installedAt);
+  if (!activePeriod) return true;
+  return normalizePeriod(period) > activePeriod;
+}
+
 function externalIncomeIsActive(income) {
   return normalizeStatus(income.status) !== 'cancelled';
 }
@@ -590,6 +606,9 @@ function generateInvoices(data, period = currentPeriod()) {
 
   for (const customer of data.customers) {
     if (!customerIsActive(customer)) {
+      continue;
+    }
+    if (!customerBillableInPeriod(customer, selectedPeriod)) {
       continue;
     }
 

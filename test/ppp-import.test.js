@@ -50,7 +50,7 @@ async function radbooxStyleWorkbookBase64() {
     'Ya',
     'Bejo',
     '6472010101010001',
-    '085246713195',
+    '080000000001',
     'bejo@kampung.net',
     'ARAH PULAU ATAS | MAKROMAN ROMBONGAN 6 GANG PLN',
     'PASCABAYAR',
