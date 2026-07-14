@@ -313,7 +313,7 @@ SQL
 
 configure_freeradius_sql() {
   load_billing_env
-  local sql_mod mods_enabled sites_default sites_inner
+  local sql_mod mods_base mods_enabled sites_default sites_inner radius_db_conn
   sql_mod=""
   for candidate in \
     /etc/freeradius/3.0/mods-available/sql \
@@ -330,13 +330,16 @@ configure_freeradius_sql() {
   sed -i -E 's/^[[:space:]]*port = .*/        port = 5432/' "$sql_mod" || true
   sed -i -E "s/^[[:space:]]*login = .*/        login = \"${RADIUS_DATABASE_USER:-radius}\"/" "$sql_mod" || true
   sed -i -E "s/^[[:space:]]*password = .*/        password = \"${RADIUS_DATABASE_PASSWORD:-}\"/" "$sql_mod" || true
-  sed -i -E "s/^[[:space:]]*radius_db = .*/        radius_db = \"${RADIUS_DATABASE_NAME:-radius}\"/" "$sql_mod" || true
+  radius_db_conn="host=127.0.0.1 port=5432 dbname=${RADIUS_DATABASE_NAME:-radius} user=${RADIUS_DATABASE_USER:-radius} password=${RADIUS_DATABASE_PASSWORD:-} sslmode=disable"
+  sed -i -E "s#^[[:space:]]*radius_db = .*#        radius_db = \"$radius_db_conn\"#" "$sql_mod" || true
   sed -i -E 's/^[[:space:]]*read_clients = .*/        read_clients = yes/' "$sql_mod" || true
   sed -i -E 's/^[[:space:]]*client_table = .*/        client_table = "nas"/' "$sql_mod" || true
 
-  for mods_enabled in /etc/freeradius/3.0/mods-enabled /etc/raddb/mods-enabled; do
+  for mods_base in /etc/freeradius/3.0 /etc/raddb; do
+    mods_enabled="$mods_base/mods-enabled"
     if [ -d "$mods_enabled" ]; then
       ln -sf ../mods-available/sql "$mods_enabled/sql" || true
+      [ -f "$mods_base/mods-available/sqlippool" ] && ln -sf ../mods-available/sqlippool "$mods_enabled/sqlippool" || true
     fi
   done
 

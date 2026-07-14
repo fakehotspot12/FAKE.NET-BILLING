@@ -85,9 +85,11 @@ run_systemd() {
       systemctl start "${units[@]}"
       ;;
     restart)
+      failed=0
       for unit in "${units[@]}"; do
-        restart_unit "$unit"
+        restart_unit "$unit" || failed=1
       done
+      return "$failed"
       ;;
     stop)
       systemctl stop "${APP_UNITS[@]}" || true
@@ -112,7 +114,11 @@ run_openrc() {
       for service in "${services[@]}"; do rc-service "$service" start || true; done
       ;;
     restart)
-      for service in "${services[@]}"; do rc-service "$service" restart || rc-service "$service" start || true; done
+      failed=0
+      for service in "${services[@]}"; do
+        rc-service "$service" restart || rc-service "$service" start || failed=1
+      done
+      return "$failed"
       ;;
     stop)
       for service in "${APP_SERVICES[@]}"; do openrc_service_exists "$service" && rc-service "$service" stop || true; done
