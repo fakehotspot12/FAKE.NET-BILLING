@@ -5355,7 +5355,9 @@ td:has(.action-menu),
 .daily-billing-receipt-stack {
   align-items: center;
   background: #fff;
-  gap: 10px;
+  display: grid;
+  gap: 16px;
+  justify-items: center;
 }
 
 @media (max-width: 760px) {
@@ -5378,43 +5380,48 @@ td:has(.action-menu),
 }
 
 .daily-billing-receipt-page {
+  background: #fff;
+  border: 1px dashed #cbd5e1;
+  box-sizing: border-box;
   display: grid;
-  gap: 10px;
+  gap: 8px;
+  max-width: 860px;
+  padding: 12px;
   width: 100%;
 }
 
 .daily-billing-receipt {
   aspect-ratio: 210 / 99;
   box-sizing: border-box;
-  gap: 10px;
+  gap: 8px;
   justify-self: center;
   max-width: 100%;
   overflow: hidden;
-  padding: 16px 20px;
-  width: min(100%, 840px);
+  padding: 14px 18px;
+  width: 100%;
 }
 
 .daily-receipt-top {
   align-items: start;
   border-bottom: 1px solid #0f172a;
   display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  padding-bottom: 8px;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(165px, 210px);
+  padding-bottom: 7px;
 }
 
 .daily-receipt-brand {
   align-items: center;
   display: grid;
-  gap: 10px;
-  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 9px;
+  grid-template-columns: 38px minmax(0, 1fr);
   min-width: 0;
 }
 
 .daily-receipt-brand img {
-  height: 42px;
+  height: 38px;
   object-fit: contain;
-  width: 42px;
+  width: 38px;
 }
 
 .daily-receipt-brand strong,
@@ -5426,8 +5433,9 @@ td:has(.action-menu),
 
 .daily-receipt-brand strong {
   color: #03143b;
-  font-size: 20px;
+  font-size: 17px;
   line-height: 1.05;
+  overflow-wrap: anywhere;
 }
 
 .daily-receipt-brand span,
@@ -5437,29 +5445,33 @@ td:has(.action-menu),
 }
 
 .daily-receipt-number {
-  min-width: 190px;
   text-align: right;
 }
 
 .daily-receipt-number strong {
   color: #03143b;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .daily-receipt-main {
   align-items: stretch;
   display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1fr) minmax(178px, 225px);
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 200px);
   min-height: 0;
 }
 
 .daily-receipt-lines {
   display: grid;
   align-content: start;
-  gap: 7px 16px;
+  gap: 6px 12px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.daily-receipt-lines div:first-child {
+  grid-column: 1 / -1;
 }
 
 .daily-receipt-lines div {
@@ -5472,20 +5484,21 @@ td:has(.action-menu),
 
 .daily-receipt-lines span {
   color: #64748b;
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .daily-receipt-lines strong {
   color: #0f172a;
-  font-size: 11.8px;
-  line-height: 1.2;
+  font-size: 10.8px;
+  line-height: 1.12;
   overflow-wrap: anywhere;
 }
 
 .daily-receipt-side {
-  align-content: space-between;
+  align-content: stretch;
   display: grid;
-  gap: 12px;
+  gap: 10px;
+  grid-template-rows: auto 1fr;
   min-height: 0;
 }
 
@@ -5495,10 +5508,10 @@ td:has(.action-menu),
   border-radius: 8px;
   color: #03143b;
   display: grid;
-  gap: 6px;
+  gap: 5px;
   justify-items: end;
-  min-height: 72px;
-  padding: 10px 12px;
+  min-height: 60px;
+  padding: 9px 10px;
   text-align: right;
 }
 
@@ -5509,19 +5522,21 @@ td:has(.action-menu),
 }
 
 .daily-receipt-amount strong {
-  font-size: 20px;
+  font-size: 17px;
   line-height: 1;
+  overflow-wrap: anywhere;
 }
 
 .daily-receipt-signature {
+  align-self: end;
   border-top: 1px solid #0f172a;
   display: grid;
   gap: 3px;
   justify-self: end;
-  min-height: 34px;
+  min-height: 36px;
   padding-top: 6px;
   text-align: center;
-  width: 150px;
+  width: 138px;
 }
 
 .daily-receipt-signature small {
@@ -7380,11 +7395,13 @@ dialog::backdrop {
   body.printing-daily-billing-receipts .daily-billing-receipt-page {
     break-after: page;
     display: grid;
-    gap: 0;
-    grid-template-rows: repeat(3, 99mm);
+    gap: 2mm;
+    grid-template-rows: repeat(3, 95mm);
     height: 297mm;
     margin: 0;
+    overflow: hidden;
     page-break-after: always;
+    padding: 4mm;
     width: 210mm;
   }
 
@@ -7400,80 +7417,130 @@ dialog::backdrop {
     box-shadow: none;
     box-sizing: border-box;
     display: grid;
-    gap: 3mm;
+    gap: 2.2mm;
     grid-template-rows: auto minmax(0, 1fr) auto;
     height: 95mm;
-    margin: 2mm 4mm;
+    margin: 0;
     max-width: none;
-    padding: 5mm 6mm;
+    overflow: hidden;
+    padding: 4mm 5mm;
     width: 202mm;
   }
 
+  body.printing-daily-billing-receipts .daily-receipt-top {
+    gap: 4mm;
+    grid-template-columns: minmax(0, 1fr) 56mm;
+    padding-bottom: 2mm;
+  }
+
+  body.printing-daily-billing-receipts .daily-receipt-brand {
+    gap: 2.2mm;
+    grid-template-columns: 9mm minmax(0, 1fr);
+  }
+
   body.printing-daily-billing-receipts .daily-receipt-brand img {
-    height: 10mm;
-    width: 10mm;
+    height: 9mm;
+    width: 9mm;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-brand strong {
-    font-size: 15pt;
+    font-size: 13pt;
+    line-height: 1;
+    overflow-wrap: anywhere;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-brand span,
   body.printing-daily-billing-receipts .daily-receipt-number span {
-    font-size: 8pt;
+    font-size: 7.1pt;
+    line-height: 1.1;
+  }
+
+  body.printing-daily-billing-receipts .daily-receipt-number {
+    min-width: 0;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-number strong {
-    font-size: 9.5pt;
+    font-size: 8.4pt;
+    line-height: 1.12;
+    overflow-wrap: anywhere;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-main {
-    gap: 4mm;
-    grid-template-columns: minmax(0, 1fr) 54mm;
+    gap: 3mm;
+    grid-template-columns: minmax(0, 1fr) 51mm;
     min-height: 0;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-lines {
-    gap: 2.1mm 5mm;
+    gap: 1.4mm 4mm;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  body.printing-daily-billing-receipts .daily-receipt-lines div:first-child {
+    grid-column: 1 / -1;
+  }
+
   body.printing-daily-billing-receipts .daily-receipt-lines div {
-    padding-bottom: 1.35mm;
+    min-height: 0;
+    padding-bottom: .95mm;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-lines span {
-    font-size: 7.4pt;
+    font-size: 6.6pt;
+    line-height: 1.05;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-lines strong {
-    font-size: 8.8pt;
-    line-height: 1.15;
+    font-size: 8pt;
+    line-height: 1.08;
+    overflow-wrap: anywhere;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-side {
-    align-content: space-between;
-    gap: 4mm;
+    align-content: stretch;
+    gap: 2.5mm;
+    grid-template-rows: auto 1fr;
+    min-height: 0;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-amount {
+    background: #e8f4ff;
+    border: .3mm solid #b7d8f5;
+    border-radius: 1.4mm;
     min-height: 18mm;
-    padding: 2.7mm 3mm;
+    padding: 2.4mm 2.7mm;
+  }
+
+  body.printing-daily-billing-receipts .daily-receipt-amount span {
+    font-size: 7.1pt;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-amount strong {
-    font-size: 16pt;
+    font-size: 14.2pt;
+    line-height: 1.05;
+    overflow-wrap: anywhere;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-signature {
-    min-height: 16mm;
-    padding-top: 2.5mm;
-    width: 40mm;
+    align-self: end;
+    min-height: 17mm;
+    padding-top: 2mm;
+    width: 42mm;
+  }
+
+  body.printing-daily-billing-receipts .daily-receipt-signature small {
+    font-size: 6.6pt;
+  }
+
+  body.printing-daily-billing-receipts .daily-receipt-signature strong {
+    font-size: 7.4pt;
+    overflow-wrap: anywhere;
   }
 
   body.printing-daily-billing-receipts .daily-receipt-footer {
-    font-size: 7.8pt;
-    padding-top: 1.4mm;
+    font-size: 6.9pt;
+    line-height: 1.1;
+    padding-top: 1mm;
   }
 
   body.printing-daily-billing-receipts.receipt-print-thermal-58 dialog,
