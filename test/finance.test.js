@@ -149,6 +149,65 @@ test('deleting radius user removes linked member but keeps transaction history',
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', addMonthsToPeriod(currentPeriod(), 1)).removed, 0);
 });
 
+test('deleting radius user removes member linked by radius user id without customer id', () => {
+  const data = createDefaultStore();
+  const customer = {
+    id: 'cus-radius-orphan-link',
+    source: 'radius',
+    radiusUserId: 'rad-user-old',
+    username: 'member-lama@ppp.test',
+    name: 'Member Lama',
+    status: 'active',
+    price: 100000
+  };
+  const radiusUser = {
+    id: 'rad-user-old',
+    serviceType: 'pppoe',
+    username: 'ppp-berubah@ppp.test',
+    customerId: '',
+    status: 'active'
+  };
+  data.customers.push(customer);
+  data.radiusUsers.push(radiusUser);
+
+  data.radiusUsers = data.radiusUsers.filter((user) => user.id !== radiusUser.id);
+  const removed = serverInternals.deleteRadiusLinkedMember(data, radiusUser, { name: 'Admin' });
+
+  assert.equal(removed.id, customer.id);
+  assert.equal(data.customers.some((item) => item.id === customer.id), false);
+  assert.equal(data.radiusRemovedRecords.length, 1);
+  assert.equal(data.radiusRemovedRecords[0].radiusUserId, radiusUser.id);
+});
+
+test('orphan radius member cleanup removes stale members and keeps paid history', () => {
+  const data = createDefaultStore();
+  data.customers.push({
+    id: 'cus-orphan-radius',
+    source: 'radius',
+    radiusUserId: 'rad-missing',
+    username: 'orphan@ppp.test',
+    name: 'Orphan Radius',
+    status: 'active',
+    price: 100000
+  });
+  data.invoices.push(
+    { id: 'inv-orphan-pending', customerId: 'cus-orphan-radius', customerName: 'Orphan Radius', period: '2026-07', amount: 100000, status: 'pending', dueDate: '2026-07-10' },
+    { id: 'inv-orphan-paid', customerId: 'cus-orphan-radius', customerName: 'Orphan Radius', period: '2026-06', amount: 100000, status: 'paid', paidAt: '2026-06-09', dueDate: '2026-06-10' }
+  );
+  data.payments.push({ id: 'pay-orphan-paid', invoiceId: 'inv-orphan-paid', customerId: 'cus-orphan-radius', amount: 100000, paidAt: '2026-06-09', method: 'Tunai' });
+
+  const removed = serverInternals.deleteOrphanRadiusMembers(data, { name: 'Admin' });
+
+  assert.equal(removed.length, 1);
+  assert.equal(removed[0].id, 'cus-orphan-radius');
+  assert.equal(data.customers.some((item) => item.id === 'cus-orphan-radius'), false);
+  assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-orphan-pending').status, 'cancelled');
+  assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-orphan-paid').status, 'paid');
+  assert.equal(data.payments.length, 1);
+  assert.equal(data.radiusRemovedRecords.length, 1);
+  assert.equal(data.radiusRemovedRecords[0].customerId, 'cus-orphan-radius');
+});
+
 test('standalone billing automation isolates unpaid overdue and reactivates fully paid member', () => {
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';

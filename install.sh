@@ -353,6 +353,7 @@ configure_freeradius_site_file() {
 
   backup_freeradius_config_file "$site_file"
   sed -i -E 's/^[[:space:]]*#?[[:space:]]*-?sql([[:space:]]*(#.*)?)$/        sql\1/' "$site_file" || true
+  sed -i -E 's/^[[:space:]]*sqlippool([[:space:]]*(#.*)?)$/#        sqlippool\1/' "$site_file" || true
   sed -i -E 's/^[[:space:]]*sql_session_start([[:space:]]*(#.*)?)$/#        sql_session_start\1/' "$site_file" || true
 }
 
@@ -379,7 +380,7 @@ configure_freeradius_sql() {
     mods_enabled="$mods_base/mods-enabled"
     if [ -d "$mods_enabled" ]; then
       ln -sf ../mods-available/sql "$mods_enabled/sql" || true
-      [ -f "$mods_base/mods-available/sqlippool" ] && ln -sf ../mods-available/sqlippool "$mods_enabled/sqlippool" || true
+      [ -L "$mods_enabled/sqlippool" ] && rm -f "$mods_enabled/sqlippool" || true
     fi
   done
 

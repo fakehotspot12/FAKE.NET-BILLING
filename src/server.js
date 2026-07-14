@@ -2521,8 +2521,15 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
 function deleteRadiusLinkedMember(data = {}, radiusUser = {}, actor = {}) {
   const customer = findCustomerForRadiusUser(data, radiusUser);
   if (!customer) return null;
+  const customerKeysForDeletedUser = new Set(customerKeys(customer));
   const stillLinked = (data.radiusUsers || []).some((user) => {
-    return user.id !== radiusUser.id && user.customerId && user.customerId === customer.id;
+    if (user.id === radiusUser.id) return false;
+    const userKeys = [
+      user.customerId,
+      user.id,
+      user.username
+    ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+    return userKeys.some((key) => customerKeysForDeletedUser.has(key));
   });
   if (stillLinked) return null;
   const index = (data.customers || []).findIndex((item) => item.id === customer.id);
@@ -2624,6 +2631,7 @@ function deleteOrphanRadiusMembers(data = {}, actor = {}) {
         invoice.notes = [invoice.notes, `Dibatalkan otomatis karena member orphan dibersihkan oleh ${actorName}.`].filter(Boolean).join(' ');
         invoice.updatedAt = new Date().toISOString();
       }
+      recordRadiusRemovedUser(data, {}, customer, actor);
     }
     addActivity(data, 'customer', `${removed.length} member orphan Radius dibersihkan oleh ${actorName}`, {
       action: 'radius-member-orphan-cleanup',
@@ -10025,9 +10033,6 @@ async function handleApi(req, res, url) {
         if (existing && !resellerHotspotVoucherRowVisible(existing, authContext.user)) {
           throw new Error('Role user tidak memiliki akses ke voucher Hotspot ini');
         }
-        if (method === 'DELETE' && existing?.customerId && !auth.hasPermission(authContext.user, 'customers:manage')) {
-          throw new Error('Role user tidak memiliki akses menghapus member terkait');
-        }
         const next = method === 'POST'
           ? freeradius.addRadiusUser(store, radiusUserPayload(payload, 'pppoe', store), authContext.user)
           : method === 'PUT'
@@ -10035,6 +10040,7 @@ async function handleApi(req, res, url) {
             : freeradius.deleteRadiusUser(store, id);
         let member = null;
         let removedMember = null;
+        let orphanMembers = [];
         let coa = null;
         if (method === 'POST' && payloadEnabled(payload.addToMember)) {
           if (!auth.hasPermission(authContext.user, 'customers:manage')) {
@@ -10045,6 +10051,7 @@ async function handleApi(req, res, url) {
         }
         if (method === 'DELETE') {
           removedMember = deleteRadiusLinkedMember(store, next, authContext.user);
+          orphanMembers = deleteOrphanRadiusMembers(store, authContext.user);
         } else {
           syncRadiusCustomerStatus(store, next);
         }
@@ -10066,13 +10073,14 @@ async function handleApi(req, res, url) {
         if (method !== 'POST') {
           coa = await freeradiusCoa.disconnectUser(store, next);
         }
-        return { user: next, member, removedMember, coa };
+        return { user: next, member, removedMember, orphanMembers, coa };
       });
       sendJson(res, 200, {
         ok: true,
         user: radiusUserRowsLocal(data, 'pppoe').find((row) => row.id === result.user?.id) || result.user,
         member: result.member || null,
         removedMember: result.removedMember || null,
+        orphanMembers: result.orphanMembers || [],
         coa: result.coa || null
       });
     } catch (error) {
@@ -10285,9 +10293,6 @@ async function handleApi(req, res, url) {
         if (!canManageHotspotUser(authContext.user, existing)) {
           throw new Error('Teknisi hanya bisa mengelola user Hotspot Free manual');
         }
-        if (method === 'DELETE' && existing?.customerId && !auth.hasPermission(authContext.user, 'customers:manage')) {
-          throw new Error('Role user tidak memiliki akses menghapus member terkait');
-        }
         const rolePayload = auth.hasPermission(authContext.user, 'radius:write')
           ? payload
           : hotspotFreeUserPayload(payload);
@@ -10301,9 +10306,11 @@ async function handleApi(req, res, url) {
             : freeradius.deleteRadiusUser(store, id);
         let coa = null;
         let removedMember = null;
+        let orphanMembers = [];
         const targetUsername = payload.username || url.searchParams.get('username') || next.username || id;
         if (method === 'DELETE') {
           removedMember = deleteRadiusLinkedMember(store, next, authContext.user);
+          orphanMembers = deleteOrphanRadiusMembers(store, authContext.user);
         } else {
           syncRadiusCustomerStatus(store, next);
         }
@@ -10316,12 +10323,13 @@ async function handleApi(req, res, url) {
         if (method !== 'POST') {
           coa = await freeradiusCoa.disconnectUser(store, next);
         }
-        return { user: next, coa, removedMember };
+        return { user: next, coa, removedMember, orphanMembers };
       });
       sendJson(res, 200, {
         ok: true,
         user: radiusUserRowsLocal(data, 'hotspot').find((row) => row.id === result.user?.id) || result.user,
         removedMember: result.removedMember || null,
+        orphanMembers: result.orphanMembers || [],
         coa: result.coa || null
       });
     } catch (error) {
@@ -12335,6 +12343,7 @@ module.exports = {
     dashboardRadiusServiceSummary,
     dashboardCollectorScope,
     deleteRadiusLinkedMember,
+    deleteOrphanRadiusMembers,
     fulfillHotspotVoucherOrder,
     fulfillPaymentGatewayCallback,
     hotspotFreeUserWritable,
