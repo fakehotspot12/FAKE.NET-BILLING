@@ -3803,17 +3803,22 @@ function openDailyBillingReceiptsModal(transactions = [], report = {}) {
   const receiptRows = transactions.map((item) => dailyReceiptTransaction(item, report));
   const printMode = safeReceiptPrintMode(state.receiptPrintMode || 'a4');
   openModal('Print Kuitansi Tagihan', `
-    <div class="stack compact-stack daily-billing-receipt-stack print-mode-${printMode}">
-      ${chunkItems(receiptRows, 3).map((group) => `
-        <div class="daily-billing-receipt-page">
-          ${group.map(dailyBillingReceiptBody).join('')}
+    <div class="daily-billing-receipt-preview">
+      <div class="daily-billing-receipt-preview-head">
+        <strong>${displayNumber(receiptRows.length)} kuitansi dipilih</strong>
+        ${receiptPrintModeControl('dailyBillingReceiptPrintMode', printMode)}
+        <div class="row-actions daily-billing-receipt-print-actions">
+          <button class="ghost-button compact" data-close-modal type="button">Tutup</button>
+          <button class="button compact" id="printDailyBillingReceipts" type="button">Print Browser</button>
         </div>
-      `).join('')}
-    </div>
-    <div class="modal-actions receipt-actions">
-      ${receiptPrintModeControl('dailyBillingReceiptPrintMode', printMode)}
-      <button class="ghost-button" value="cancel" type="submit">Tutup</button>
-      <button class="button" id="printDailyBillingReceipts" type="button">Print Kuitansi</button>
+      </div>
+      <div class="stack compact-stack daily-billing-receipt-stack print-mode-${printMode}">
+        ${chunkItems(receiptRows, 3).map((group) => `
+          <div class="daily-billing-receipt-page">
+            ${group.map(dailyBillingReceiptBody).join('')}
+          </div>
+        `).join('')}
+      </div>
     </div>
   `, async () => {});
   const modeInput = document.getElementById('dailyBillingReceiptPrintMode');

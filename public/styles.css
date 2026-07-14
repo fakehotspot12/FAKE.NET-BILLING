@@ -5322,9 +5322,59 @@ td:has(.action-menu),
   gap: 8px 14px;
 }
 
+.daily-billing-receipt-preview {
+  background: #fff;
+  color: #111827;
+  display: grid;
+  gap: 14px;
+}
+
+.daily-billing-receipt-preview-head {
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding-bottom: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.daily-billing-receipt-preview-head > strong {
+  color: #111827;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.daily-billing-receipt-print-actions {
+  margin-left: 0;
+}
+
 .daily-billing-receipt-stack {
   align-items: center;
+  background: #fff;
   gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .daily-billing-receipt-preview-head {
+    grid-template-columns: 1fr;
+    position: static;
+  }
+
+  .daily-billing-receipt-preview-head .receipt-print-mode {
+    margin-left: 0;
+  }
+
+  .daily-billing-receipt-print-actions {
+    justify-content: stretch;
+  }
+
+  .daily-billing-receipt-print-actions > button {
+    width: 100%;
+  }
 }
 
 .daily-billing-receipt-page {
@@ -6963,6 +7013,10 @@ dialog::backdrop {
     display: none !important;
   }
 
+  body.printing-daily-billing-receipts > *:not(dialog) {
+    display: none !important;
+  }
+
   body.printing-receipt.receipt-print-thermal-58 > *:not(dialog),
   body.printing-receipt.receipt-print-thermal-80 > *:not(dialog) {
     display: none !important;
@@ -7068,6 +7122,19 @@ dialog::backdrop {
   }
 
   body.printing-hotspot-vouchers .hotspot-voucher-preview > *:not(.hotspot-voucher-print-stack) {
+    display: none !important;
+  }
+
+  body.printing-daily-billing-receipts .daily-billing-receipt-preview {
+    background: #fff !important;
+    display: block !important;
+    gap: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    visibility: visible !important;
+  }
+
+  body.printing-daily-billing-receipts .daily-billing-receipt-preview > *:not(.daily-billing-receipt-stack) {
     display: none !important;
   }
 
@@ -7808,6 +7875,7 @@ dialog::backdrop {
   body.printing-receipt .receipt-actions,
   body.printing-transaction-receipts .receipt-actions,
   body.printing-daily-billing-receipts .receipt-actions,
+  body.printing-daily-billing-receipts .daily-billing-receipt-preview-head,
   body.printing-hotspot-vouchers .receipt-actions,
   body.printing-receipt .modal-head,
   body.printing-transaction-receipts .modal-head,
