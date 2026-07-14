@@ -112,6 +112,7 @@ const state = {
   roles: [],
   view: 'dashboard',
   period: todayInput().slice(0, 7),
+  receiptPrintMode: 'a4',
   invoiceStatus: 'all',
   customerStatus: 'all',
   activityPage: 1,
@@ -3647,6 +3648,78 @@ function chunkItems(items = [], size = 4) {
   return chunks;
 }
 
+function safeReceiptPrintMode(mode = 'a4') {
+  return ['a4', 'thermal-58', 'thermal-80'].includes(mode) ? mode : 'a4';
+}
+
+function receiptPrintModeLabel(mode = 'a4') {
+  if (mode === 'thermal-58') return 'Thermal 58mm';
+  if (mode === 'thermal-80') return 'Thermal 80mm';
+  return 'A4';
+}
+
+function receiptPrintPageSize(mode = 'a4') {
+  if (mode === 'thermal-58') return '58mm auto';
+  if (mode === 'thermal-80') return '80mm auto';
+  return 'A4 portrait';
+}
+
+function receiptPrintModeControl(id = 'receiptPrintMode', selected = state.receiptPrintMode || 'a4') {
+  const safeMode = safeReceiptPrintMode(selected);
+  return `
+    <label class="field inline-field receipt-print-mode">
+      <span>Ukuran</span>
+      <select id="${escapeHtml(id)}">
+        <option value="a4" ${safeMode === 'a4' ? 'selected' : ''}>A4</option>
+        <option value="thermal-80" ${safeMode === 'thermal-80' ? 'selected' : ''}>Thermal 80mm</option>
+        <option value="thermal-58" ${safeMode === 'thermal-58' ? 'selected' : ''}>Thermal 58mm</option>
+      </select>
+    </label>
+    <span class="muted receipt-print-mode-label" data-receipt-print-mode-label>${escapeHtml(receiptPrintModeLabel(safeMode))}</span>
+  `;
+}
+
+function setReceiptPrintMode(mode = 'a4') {
+  const safeMode = safeReceiptPrintMode(mode);
+  state.receiptPrintMode = safeMode;
+  document.querySelectorAll('.receipt-printable, .daily-billing-receipt-stack').forEach((element) => {
+    element.classList.remove('print-mode-a4', 'print-mode-thermal-58', 'print-mode-thermal-80');
+    element.classList.add(`print-mode-${safeMode}`);
+  });
+  document.querySelectorAll('[data-receipt-print-mode-label]').forEach((element) => {
+    element.textContent = receiptPrintModeLabel(safeMode);
+  });
+  return safeMode;
+}
+
+function applyReceiptPrintPageStyle(mode = 'a4') {
+  let style = document.getElementById('receiptPrintPageStyle');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'receiptPrintPageStyle';
+    document.head.appendChild(style);
+  }
+  const width = mode === 'thermal-58' ? '58mm' : (mode === 'thermal-80' ? '80mm' : '210mm');
+  const minHeight = mode === 'a4' ? '297mm' : 'auto';
+  style.textContent = `@media print { @page { size: ${receiptPrintPageSize(mode)}; margin: 0; } html, body { width: ${width} !important; min-height: ${minHeight} !important; } }`;
+}
+
+function clearReceiptPrintPageStyle() {
+  document.getElementById('receiptPrintPageStyle')?.remove();
+}
+
+async function printReceiptWithMode(printClass, mode = 'a4', rootSelector = '.receipt-printable') {
+  const safeMode = setReceiptPrintMode(mode);
+  await waitForImages(document.querySelector(rootSelector));
+  applyReceiptPrintPageStyle(safeMode);
+  document.body.classList.add(printClass, `receipt-print-${safeMode}`);
+  window.print();
+  window.setTimeout(() => {
+    document.body.classList.remove(printClass, 'receipt-print-a4', 'receipt-print-thermal-58', 'receipt-print-thermal-80');
+    clearReceiptPrintPageStyle();
+  }, 500);
+}
+
 function dailyReceiptTransaction(item = {}, report = {}) {
   return {
     ...item,
@@ -3713,8 +3786,9 @@ function dailyBillingReceiptBody(transaction = {}) {
 
 function openDailyBillingReceiptsModal(transactions = [], report = {}) {
   const receiptRows = transactions.map((item) => dailyReceiptTransaction(item, report));
+  const printMode = safeReceiptPrintMode(state.receiptPrintMode || 'a4');
   openModal('Print Kuitansi Tagihan', `
-    <div class="stack compact-stack daily-billing-receipt-stack">
+    <div class="stack compact-stack daily-billing-receipt-stack print-mode-${printMode}">
       ${chunkItems(receiptRows, 3).map((group) => `
         <div class="daily-billing-receipt-page">
           ${group.map(dailyBillingReceiptBody).join('')}
@@ -3722,14 +3796,16 @@ function openDailyBillingReceiptsModal(transactions = [], report = {}) {
       `).join('')}
     </div>
     <div class="modal-actions receipt-actions">
+      ${receiptPrintModeControl('dailyBillingReceiptPrintMode', printMode)}
       <button class="ghost-button" value="cancel" type="submit">Tutup</button>
       <button class="button" id="printDailyBillingReceipts" type="button">Print Kuitansi</button>
     </div>
   `, async () => {});
+  const modeInput = document.getElementById('dailyBillingReceiptPrintMode');
+  modeInput?.addEventListener('change', () => setReceiptPrintMode(modeInput.value));
+  setReceiptPrintMode(modeInput?.value || printMode);
   document.getElementById('printDailyBillingReceipts')?.addEventListener('click', () => {
-    document.body.classList.add('printing-daily-billing-receipts');
-    window.print();
-    window.setTimeout(() => document.body.classList.remove('printing-daily-billing-receipts'), 500);
+    printReceiptWithMode('printing-daily-billing-receipts', modeInput?.value || printMode, '.daily-billing-receipt-stack');
   });
 }
 
@@ -5441,8 +5517,9 @@ function receiptBody(income) {
       `
     : '';
   const cancelled = incomeIsCancelled(income);
+  const printMode = safeReceiptPrintMode(state.receiptPrintMode || 'a4');
   return `
-    <div class="receipt-preview ${cancelled ? 'is-cancelled' : ''}">
+    <div class="receipt-preview receipt-printable print-mode-${printMode} ${cancelled ? 'is-cancelled' : ''}">
       <div class="receipt-head">
         <img src="${escapeHtml(branding.logoUrl)}" alt="${escapeHtml(branding.businessName)}">
         <div>
@@ -5483,6 +5560,7 @@ function receiptBody(income) {
       </div>
     </div>
     <div class="modal-actions receipt-actions">
+      ${receiptPrintModeControl('incomeReceiptPrintMode', printMode)}
       <button class="ghost-button" value="cancel" type="submit">Tutup</button>
       <button class="button" id="printReceipt" type="button">Print Kuitansi</button>
     </div>
@@ -5491,10 +5569,11 @@ function receiptBody(income) {
 
 function openReceiptModal(income) {
   openModal('Pratinjau Kuitansi', receiptBody(income), async () => {});
+  const modeInput = document.getElementById('incomeReceiptPrintMode');
+  modeInput?.addEventListener('change', () => setReceiptPrintMode(modeInput.value));
+  setReceiptPrintMode(modeInput?.value || state.receiptPrintMode || 'a4');
   document.getElementById('printReceipt')?.addEventListener('click', () => {
-    document.body.classList.add('printing-receipt');
-    window.print();
-    window.setTimeout(() => document.body.classList.remove('printing-receipt'), 500);
+    printReceiptWithMode('printing-receipt', modeInput?.value || state.receiptPrintMode || 'a4');
   });
 }
 
@@ -6900,7 +6979,12 @@ function radiusMemberFieldsMarkup(options = {}) {
 function radiusPppUserFormBody(user = null, options = {}) {
   const type = user?.service === 'DHCP' || user?.type === 'DHCP' ? 'DHCP' : 'PPPoE';
   const selectedNas = user ? radiusNasIpForRow(user, options.nas || []) : '';
-  const canAddMember = !user && can('customers:manage');
+  const canAddMember = !user && state.auth?.role !== 'reseller_voucher' && canAny([
+    'customers:manage',
+    'members:contact:write',
+    'radius:write',
+    'radius:ppp-users:write'
+  ]);
   const accountFields = `
     <label class="field">
       <span>Tipe</span>
@@ -7130,6 +7214,9 @@ async function openRadiusPppUserModal(user = null) {
   const options = await loadRadiusOptions('ppp');
   openModal(user ? 'Edit User PPP-DHCP' : 'Tambah User PPP-DHCP', radiusPppUserFormBody(user, options), async (payload, form) => {
     const type = String(payload.type || '').toLowerCase();
+    if (!user && payload.addToMember && form?.dataset.radiusWizardReady !== '1') {
+      throw new Error('Selesaikan wizard sampai Review sebelum menyimpan user dan member');
+    }
     if (type === 'dhcp') {
       delete payload.password;
       payload.username = payload.username || payload.macAddress || payload.memberCode || '';
@@ -7173,6 +7260,7 @@ function bindRadiusPppWizard() {
   const nextButton = modalBody.querySelector('#radiusWizardNext');
   const submitButton = modalBody.querySelector('#radiusWizardSubmit');
   const addToMember = modalBody.querySelector('#radiusAddToMember');
+  const form = modal.querySelector('.modal-frame');
   const stepKeys = ['account', 'member', 'payment', 'review'];
   let step = 0;
   let highestUnlockedStep = 0;
@@ -7256,6 +7344,9 @@ function bindRadiusPppWizard() {
     if (prevButton) prevButton.hidden = step <= 0;
     if (nextButton) nextButton.hidden = step >= steps.length - 1;
     if (submitButton) submitButton.hidden = step < steps.length - 1;
+    if (form) {
+      form.dataset.radiusWizardReady = (!addToMember?.checked || current === 'review') ? '1' : '0';
+    }
     if (current === 'review') syncReview();
   };
   stepButtons.forEach((button) => {
@@ -10020,8 +10111,9 @@ function billingPaymentReceiptBody(invoice = {}) {
   const branding = currentBranding();
   const signerName = invoice.paidByName || state.auth?.name || state.auth?.username || 'Admin';
   const invoiceNo = billingInvoiceNo(invoice) || '-';
+  const printMode = safeReceiptPrintMode(state.receiptPrintMode || 'a4');
   return `
-    <div class="receipt-preview">
+    <div class="receipt-preview receipt-printable print-mode-${printMode}">
       <div class="receipt-head">
         <img src="${escapeHtml(branding.logoUrl)}" alt="${escapeHtml(branding.businessName)}">
         <div>
@@ -10053,6 +10145,7 @@ function billingPaymentReceiptBody(invoice = {}) {
       </div>
     </div>
     <div class="modal-actions receipt-actions">
+      ${receiptPrintModeControl('billingPaymentReceiptPrintMode', printMode)}
       <button class="ghost-button" value="cancel" type="submit">Tutup</button>
       <button class="button" id="printBillingReceipt" type="button">Print/PDF</button>
     </div>
@@ -10061,10 +10154,11 @@ function billingPaymentReceiptBody(invoice = {}) {
 
 function openBillingPaymentReceiptModal(invoice = {}) {
   openModal('Bukti Pembayaran', billingPaymentReceiptBody(invoice), async () => {});
+  const modeInput = document.getElementById('billingPaymentReceiptPrintMode');
+  modeInput?.addEventListener('change', () => setReceiptPrintMode(modeInput.value));
+  setReceiptPrintMode(modeInput?.value || state.receiptPrintMode || 'a4');
   document.getElementById('printBillingReceipt')?.addEventListener('click', () => {
-    document.body.classList.add('printing-receipt');
-    window.print();
-    window.setTimeout(() => document.body.classList.remove('printing-receipt'), 500);
+    printReceiptWithMode('printing-receipt', modeInput?.value || state.receiptPrintMode || 'a4');
   });
 }
 

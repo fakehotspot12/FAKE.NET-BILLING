@@ -2958,6 +2958,13 @@ function radiusSectionAllowedForUser(user = {}, section = '') {
   return true;
 }
 
+function canCreateRadiusLinkedMember(user = {}) {
+  return auth.hasPermission(user, 'customers:manage')
+    || auth.hasPermission(user, 'members:contact:write')
+    || auth.hasPermission(user, 'radius:write')
+    || auth.hasPermission(user, 'radius:ppp-users:write');
+}
+
 function userLockedNasId(user = {}) {
   return String(user.lockedNasId || user.resellerNasId || user.voucherNasId || '').trim();
 }
@@ -10288,7 +10295,7 @@ async function handleApi(req, res, url) {
         let orphanMembers = [];
         let coa = null;
         if (method === 'POST' && payloadEnabled(payload.addToMember)) {
-          if (!auth.hasPermission(authContext.user, 'customers:manage')) {
+          if (!canCreateRadiusLinkedMember(authContext.user)) {
             throw new Error('Role user tidak memiliki akses membuat member');
           }
           member = radiusMemberFromPayload(store, payload, next, authContext.user);

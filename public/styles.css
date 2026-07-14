@@ -5648,7 +5648,241 @@ td:has(.action-menu),
 }
 
 .receipt-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 12px;
+}
+
+.receipt-print-mode {
+  align-items: center;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: auto minmax(116px, 150px);
+  margin-right: auto;
+}
+
+.receipt-print-mode span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.receipt-print-mode select {
+  min-height: 34px;
+}
+
+.receipt-print-mode-label {
+  margin-right: auto;
+  white-space: nowrap;
+}
+
+.receipt-preview.print-mode-thermal-58,
+.receipt-preview.print-mode-thermal-80 {
+  border-radius: 6px;
+  gap: 8px;
+  justify-self: center;
+  max-width: 100%;
+  padding: 10px;
+}
+
+.receipt-preview.print-mode-thermal-58 {
+  width: 58mm;
+}
+
+.receipt-preview.print-mode-thermal-80 {
+  width: 80mm;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-head,
+.receipt-preview.print-mode-thermal-80 .receipt-head {
+  gap: 8px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  padding-bottom: 8px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-head img,
+.receipt-preview.print-mode-thermal-80 .receipt-head img {
+  height: 34px;
+  width: 34px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-head strong,
+.receipt-preview.print-mode-thermal-80 .receipt-head strong {
+  font-size: 15px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-head span,
+.receipt-preview.print-mode-thermal-80 .receipt-head span,
+.receipt-preview.print-mode-thermal-58 .receipt-no,
+.receipt-preview.print-mode-thermal-80 .receipt-no {
+  font-size: 10px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-title,
+.receipt-preview.print-mode-thermal-80 .receipt-title {
+  font-size: 16px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-lines,
+.receipt-preview.print-mode-thermal-80 .receipt-lines {
+  gap: 6px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-lines div,
+.receipt-preview.print-mode-thermal-80 .receipt-lines div {
+  gap: 4px;
+  grid-template-columns: 82px minmax(0, 1fr);
+  padding-bottom: 5px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-lines span,
+.receipt-preview.print-mode-thermal-80 .receipt-lines span,
+.receipt-preview.print-mode-thermal-58 .receipt-lines strong,
+.receipt-preview.print-mode-thermal-80 .receipt-lines strong {
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-item-head,
+.receipt-preview.print-mode-thermal-80 .receipt-item-head {
+  display: none;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-item-row,
+.receipt-preview.print-mode-thermal-80 .receipt-item-row {
+  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 6px 0;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-item-row > span:first-child,
+.receipt-preview.print-mode-thermal-80 .receipt-item-row > span:first-child {
+  grid-column: 1 / -1;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-item-row small,
+.receipt-preview.print-mode-thermal-80 .receipt-item-row small,
+.receipt-preview.print-mode-thermal-58 .receipt-item-row > span:nth-child(2),
+.receipt-preview.print-mode-thermal-80 .receipt-item-row > span:nth-child(2),
+.receipt-preview.print-mode-thermal-58 .receipt-item-row strong,
+.receipt-preview.print-mode-thermal-80 .receipt-item-row strong {
+  font-size: 10px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-total,
+.receipt-preview.print-mode-thermal-80 .receipt-total {
+  border: 1px solid #111827;
+  border-radius: 5px;
+  font-size: 12px;
+  padding: 8px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-sign,
+.receipt-preview.print-mode-thermal-80 .receipt-sign {
+  gap: 0;
+  grid-template-columns: 1fr;
+  min-height: 64px;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-sign > div:first-child,
+.receipt-preview.print-mode-thermal-80 .receipt-sign > div:first-child {
+  display: none;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-sign span,
+.receipt-preview.print-mode-thermal-80 .receipt-sign span {
+  margin-bottom: 38px;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58,
+.daily-billing-receipt-stack.print-mode-thermal-80 {
+  align-items: center;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-billing-receipt-page,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-billing-receipt-page {
+  border: 1px dashed #d1d5db;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1fr;
+  padding: 2mm;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-billing-receipt-page {
+  width: 58mm;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-billing-receipt-page {
+  width: 80mm;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-billing-receipt,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-billing-receipt {
+  aspect-ratio: auto;
+  border-radius: 6px;
+  gap: 8px;
+  padding: 10px;
+  width: 100%;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-top,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-top,
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-main,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-main {
+  grid-template-columns: 1fr;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-brand,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-brand {
+  grid-template-columns: 30px minmax(0, 1fr);
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-brand img,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-brand img {
+  height: 30px;
+  width: 30px;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-brand strong,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-brand strong {
+  font-size: 14px;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-number,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-number,
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-amount,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-amount {
+  justify-items: start;
+  min-width: 0;
+  text-align: left;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-lines,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-lines {
+  grid-template-columns: 1fr;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-lines div,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-lines div {
+  grid-template-columns: 74px minmax(0, 1fr);
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-amount,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-amount {
+  border: 1px solid #111827;
+  min-height: 0;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-amount strong,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-amount strong {
+  font-size: 15px;
+}
+
+.daily-billing-receipt-stack.print-mode-thermal-58 .daily-receipt-signature,
+.daily-billing-receipt-stack.print-mode-thermal-80 .daily-receipt-signature {
+  justify-self: center;
+  width: 42mm;
 }
 
 .daily-summary {
@@ -6729,6 +6963,11 @@ dialog::backdrop {
     display: none !important;
   }
 
+  body.printing-receipt.receipt-print-thermal-58 > *:not(dialog),
+  body.printing-receipt.receipt-print-thermal-80 > *:not(dialog) {
+    display: none !important;
+  }
+
   body.printing-receipt *,
   body.printing-transaction-receipts *,
   body.printing-daily-billing-receipts *,
@@ -6787,6 +7026,38 @@ dialog::backdrop {
     width: 210mm !important;
   }
 
+  body.printing-receipt.receipt-print-thermal-58 dialog,
+  body.printing-receipt.receipt-print-thermal-58 .modal-frame,
+  body.printing-receipt.receipt-print-thermal-58 #modalBody,
+  body.printing-receipt.receipt-print-thermal-80 dialog,
+  body.printing-receipt.receipt-print-thermal-80 .modal-frame,
+  body.printing-receipt.receipt-print-thermal-80 #modalBody {
+    background: #fff !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    display: block !important;
+    height: auto !important;
+    inset: auto !important;
+    margin: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    position: static !important;
+    visibility: visible !important;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 dialog,
+  body.printing-receipt.receipt-print-thermal-58 .modal-frame,
+  body.printing-receipt.receipt-print-thermal-58 #modalBody {
+    width: 58mm !important;
+  }
+
+  body.printing-receipt.receipt-print-thermal-80 dialog,
+  body.printing-receipt.receipt-print-thermal-80 .modal-frame,
+  body.printing-receipt.receipt-print-thermal-80 #modalBody {
+    width: 80mm !important;
+  }
+
   body.printing-hotspot-vouchers .hotspot-voucher-preview {
     background: #fff !important;
     display: block !important;
@@ -6801,6 +7072,8 @@ dialog::backdrop {
   }
 
   body.printing-daily-billing-receipts dialog::backdrop,
+  body.printing-receipt.receipt-print-thermal-58 dialog::backdrop,
+  body.printing-receipt.receipt-print-thermal-80 dialog::backdrop,
   body.printing-hotspot-vouchers dialog::backdrop {
     display: none !important;
   }
@@ -6813,6 +7086,182 @@ dialog::backdrop {
     border: 0;
     border-radius: 0;
     box-shadow: none;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58,
+  body.printing-receipt.receipt-print-thermal-80,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 {
+    background: #fff !important;
+    color-scheme: light;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 {
+    width: 58mm !important;
+  }
+
+  body.printing-receipt.receipt-print-thermal-80,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 {
+    width: 80mm !important;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-preview,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-preview {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    box-sizing: border-box;
+    display: grid;
+    gap: 1.8mm;
+    inset: auto;
+    margin: 0;
+    min-height: auto;
+    padding: 2mm;
+    position: static;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-preview {
+    width: 58mm !important;
+  }
+
+  body.printing-receipt.receipt-print-thermal-80 .receipt-preview {
+    width: 80mm !important;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-head,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-head {
+    border-bottom: .3mm solid #111827;
+    gap: 1.8mm;
+    grid-template-columns: 8.5mm minmax(0, 1fr);
+    padding-bottom: 1.5mm;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-head img,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-head img {
+    height: 8.5mm;
+    width: 8.5mm;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-head strong,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-head strong {
+    font-size: 8.5pt;
+    line-height: 1.08;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-head span,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-head span {
+    font-size: 6pt;
+    line-height: 1.1;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-title,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-title {
+    font-size: 9.8pt;
+    line-height: 1;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-no,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-no {
+    font-size: 6.6pt;
+    line-height: 1.1;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-lines,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-lines {
+    gap: 1mm;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-lines div,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-lines div {
+    gap: 1mm;
+    grid-template-columns: 21mm minmax(0, 1fr);
+    padding-bottom: .8mm;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-lines span,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-lines span,
+  body.printing-receipt.receipt-print-thermal-58 .receipt-lines strong,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-lines strong {
+    font-size: 6.4pt;
+    line-height: 1.12;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-items,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-items {
+    border: 0;
+    border-radius: 0;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-item-head,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-item-head {
+    display: none;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-item-row,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-item-row {
+    border-bottom: .2mm dashed #9ca3af;
+    gap: .8mm;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 1mm 0;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-item-row > span:first-child,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-item-row > span:first-child {
+    grid-column: 1 / -1;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-item-row small,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-item-row small,
+  body.printing-receipt.receipt-print-thermal-58 .receipt-item-row > span:nth-child(2),
+  body.printing-receipt.receipt-print-thermal-80 .receipt-item-row > span:nth-child(2),
+  body.printing-receipt.receipt-print-thermal-58 .receipt-item-row strong,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-item-row strong {
+    font-size: 6.2pt;
+    line-height: 1.12;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-item-row > span:nth-child(2),
+  body.printing-receipt.receipt-print-thermal-80 .receipt-item-row > span:nth-child(2),
+  body.printing-receipt.receipt-print-thermal-58 .receipt-item-row strong,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-item-row strong {
+    text-align: right;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-total,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-total {
+    background: #fff;
+    border: .3mm solid #111827;
+    border-radius: 0;
+    font-size: 8.2pt;
+    gap: 1mm;
+    padding: 1.4mm;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-sign,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-sign {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-height: 17mm;
+    text-align: center;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-sign > div:first-child,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-sign > div:first-child {
+    display: none;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-sign span,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-sign span {
+    font-size: 6.4pt;
+    margin-bottom: 10mm;
+  }
+
+  body.printing-receipt.receipt-print-thermal-58 .receipt-sign strong,
+  body.printing-receipt.receipt-print-thermal-80 .receipt-sign strong {
+    font-size: 7pt;
   }
 
   body.printing-transaction-receipts .transaction-receipt-stack {
@@ -6958,6 +7407,160 @@ dialog::backdrop {
   body.printing-daily-billing-receipts .daily-receipt-footer {
     font-size: 7.8pt;
     padding-top: 1.4mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 dialog,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .modal-frame,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 #modalBody,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-stack {
+    width: 58mm !important;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 dialog,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .modal-frame,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 #modalBody,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-stack {
+    width: 80mm !important;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-stack,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-stack {
+    display: block;
+    padding: 0;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-page,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-page {
+    break-after: auto;
+    display: block;
+    height: auto;
+    page-break-after: auto;
+    width: 100%;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt {
+    border: 0;
+    border-bottom: .25mm dashed #9ca3af;
+    display: grid;
+    gap: 1.7mm;
+    height: auto;
+    margin: 0;
+    padding: 2mm;
+    width: 100%;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-top,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-top {
+    gap: 1.4mm;
+    grid-template-columns: 1fr;
+    padding-bottom: 1.4mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-brand,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-brand {
+    gap: 1.5mm;
+    grid-template-columns: 8mm minmax(0, 1fr);
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-brand img,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-brand img {
+    height: 8mm;
+    width: 8mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-brand strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-brand strong {
+    font-size: 8.4pt;
+    line-height: 1.08;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-brand span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-brand span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-number span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-number span {
+    font-size: 6pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-number,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-number {
+    min-width: 0;
+    text-align: left;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-number strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-number strong {
+    font-size: 6.7pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-main,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-main {
+    gap: 1.7mm;
+    grid-template-columns: 1fr;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-lines,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-lines {
+    gap: 1mm;
+    grid-template-columns: 1fr;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-lines div,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-lines div {
+    gap: 1mm;
+    grid-template-columns: 20mm minmax(0, 1fr);
+    padding-bottom: .8mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-lines span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-lines span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-lines strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-lines strong {
+    font-size: 6.4pt;
+    line-height: 1.12;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-side,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-side {
+    gap: 2mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-amount,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-amount {
+    background: #fff;
+    border: .3mm solid #111827;
+    border-radius: 0;
+    justify-items: stretch;
+    min-height: 0;
+    padding: 1.4mm;
+    text-align: left;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-amount span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-amount span {
+    font-size: 6.2pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-amount strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-amount strong {
+    font-size: 9pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-signature,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-signature {
+    justify-self: center;
+    min-height: 14mm;
+    padding-top: 1.6mm;
+    width: 36mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-signature small,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-signature small,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-signature strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-signature strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-footer,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-footer {
+    font-size: 6.3pt;
   }
 
   body.printing-hotspot-vouchers .hotspot-voucher-print-stack {

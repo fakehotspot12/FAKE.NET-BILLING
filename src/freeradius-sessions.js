@@ -5,6 +5,7 @@ const redisCache = require('./redis-cache');
 
 const SESSION_CACHE_KEY = process.env.RADIUS_SESSION_CACHE_KEY || 'fakenet:radius:sessions:last';
 const SESSION_CACHE_TTL_SECONDS = Math.max(60, Number(process.env.RADIUS_SESSION_CACHE_TTL_SECONDS || 300) || 300);
+const DEFAULT_SESSION_STALE_SECONDS = 30 * 60;
 
 function enabled() {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env.FREERADIUS_SYNC_ENABLED || '').toLowerCase());
@@ -22,6 +23,18 @@ function clampLimit(value, fallback = 1000) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(1, Math.min(5000, Math.trunc(number)));
+}
+
+function sessionStaleSeconds() {
+  const explicitSeconds = Number(process.env.RADIUS_SESSION_STALE_SECONDS);
+  if (Number.isFinite(explicitSeconds)) {
+    return Math.max(0, Math.trunc(explicitSeconds));
+  }
+  const explicitMinutes = Number(process.env.RADIUS_SESSION_STALE_MINUTES);
+  if (Number.isFinite(explicitMinutes)) {
+    return Math.max(0, Math.trunc(explicitMinutes * 60));
+  }
+  return DEFAULT_SESSION_STALE_SECONDS;
 }
 
 function sqlLiteral(value = '') {
@@ -68,6 +81,10 @@ function psqlJson(query) {
 
 function activeSessionsQuery(limit, columns = new Set()) {
   const rowLimit = clampLimit(limit);
+  const staleSeconds = sessionStaleSeconds();
+  const staleFilter = staleSeconds > 0
+    ? `AND COALESCE(radacct.acctupdatetime, radacct.acctstarttime) >= (now() - (${staleSeconds} * interval '1 second'))`
+    : '';
   const inputExpr = octetExpr('r', 'acctinputoctets', 'acctinputgigawords', columns);
   const outputExpr = octetExpr('r', 'acctoutputoctets', 'acctoutputgigawords', columns);
   const previousInputExpr = octetExpr('previous', 'acctinputoctets', 'acctinputgigawords', columns);
@@ -100,6 +117,7 @@ WITH active_ranked AS (
     ) AS active_rank
   FROM radacct
   WHERE radacct.acctstoptime IS NULL
+    ${staleFilter}
 )
 SELECT COALESCE(json_agg(row_to_json(active_sessions)), '[]'::json)::text
 FROM (
@@ -439,6 +457,7 @@ async function activeSessions(options = {}) {
       enabled: true,
       configured: true,
       source: 'freeradius-radacct',
+      staleCutoffSeconds: sessionStaleSeconds(),
       rows: rows.map(normalizeSession)
     };
     await cacheSessions(payload);
