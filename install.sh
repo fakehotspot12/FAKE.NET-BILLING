@@ -332,7 +332,7 @@ configure_freeradius_sql() {
   sed -i -E "s/^[[:space:]]*password = .*/        password = \"${RADIUS_DATABASE_PASSWORD:-}\"/" "$sql_mod" || true
   radius_db_conn="host=127.0.0.1 port=5432 dbname=${RADIUS_DATABASE_NAME:-radius} user=${RADIUS_DATABASE_USER:-radius} password=${RADIUS_DATABASE_PASSWORD:-} sslmode=disable"
   sed -i -E "s#^[[:space:]]*radius_db = .*#        radius_db = \"$radius_db_conn\"#" "$sql_mod" || true
-  sed -i -E 's/^[[:space:]]*read_clients = .*/        read_clients = yes/' "$sql_mod" || true
+  sed -i -E 's/^[[:space:]]*#?[[:space:]]*read_clients = .*/        read_clients = yes/' "$sql_mod" || true
   sed -i -E 's/^[[:space:]]*client_table = .*/        client_table = "nas"/' "$sql_mod" || true
 
   for mods_base in /etc/freeradius/3.0 /etc/raddb; do
@@ -450,8 +450,114 @@ install_openrc() {
   write_openrc_waha_service
 }
 
+confirm_uninstall() {
+  if [ "${FAKENET_UNINSTALL_CONFIRM:-}" = "YES" ] || [ "${1:-}" = "--yes" ]; then
+    return 0
+  fi
+  echo "PERINGATAN: uninstall total akan menghapus aplikasi, service, env, database, log, backup, dan session WAHA."
+  echo "License key lama tetap bisa dipakai lagi jika install ulang di mesin/HWID yang sama."
+  printf 'Ketik HAPUS untuk lanjut: '
+  read -r answer
+  if [ "$answer" != "HAPUS" ]; then
+    echo "Uninstall dibatalkan."
+    exit 1
+  fi
+}
+
+drop_database_if_exists() {
+  local db_name="$1"
+  [ -n "$db_name" ] || return 0
+  if ! command -v psql >/dev/null 2>&1; then
+    return 0
+  fi
+  psql_superuser -X -q -v ON_ERROR_STOP=1 -v db="$db_name" -d postgres <<'SQL' || true
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'db';
+DROP DATABASE IF EXISTS :"db";
+SQL
+}
+
+drop_role_if_exists() {
+  local role_name="$1"
+  [ -n "$role_name" ] || return 0
+  if ! command -v psql >/dev/null 2>&1; then
+    return 0
+  fi
+  psql_superuser -X -q -v ON_ERROR_STOP=1 -v role="$role_name" -d postgres <<'SQL' || true
+DROP ROLE IF EXISTS :"role";
+SQL
+}
+
+uninstall_total() {
+  confirm_uninstall "${1:-}"
+
+  local app_db app_user radius_db radius_user service radius_unit
+  if [ -f /etc/fakenet-billing.env ]; then
+    load_billing_env
+  fi
+  app_db="${APP_DATABASE_NAME:-fakenet_billing}"
+  app_user="${APP_DATABASE_USER:-fakenet_billing}"
+  radius_db="${RADIUS_DATABASE_NAME:-radius}"
+  radius_user="${RADIUS_DATABASE_USER:-radius}"
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
+    systemctl disable fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
+    radius_unit="$(resolve_systemd_group "freeradius.service radiusd.service" || true)"
+    if [ -n "$radius_unit" ]; then
+      systemctl stop "$radius_unit" >/dev/null 2>&1 || true
+      systemctl disable "$radius_unit" >/dev/null 2>&1 || true
+    fi
+    rm -f /etc/systemd/system/fakenet-billing*.service /etc/systemd/system/fakenet-billing-stack.target
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed >/dev/null 2>&1 || true
+  fi
+
+  if command -v rc-service >/dev/null 2>&1; then
+    for service in fakenet-billing fakenet-billing-isolir fakenet-billing-voucher fakenet-billing-wifiku fakenet-billing-radius-connector fakenet-billing-waha; do
+      rc-service "$service" stop >/dev/null 2>&1 || true
+      rc-update del "$service" default >/dev/null 2>&1 || true
+      rm -f "/etc/init.d/$service"
+    done
+    rc-service freeradius stop >/dev/null 2>&1 || rc-service radiusd stop >/dev/null 2>&1 || true
+    rc-update del freeradius default >/dev/null 2>&1 || rc-update del radiusd default >/dev/null 2>&1 || true
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    docker rm -f fakenet-billing-waha >/dev/null 2>&1 || true
+  fi
+
+  drop_database_if_exists "$app_db"
+  drop_database_if_exists "$radius_db"
+  drop_role_if_exists "$app_user"
+  drop_role_if_exists "$radius_user"
+
+  rm -rf \
+    "$APP_DIR" \
+    /opt/fakenet-billing-waha \
+    /etc/fakenet-billing.env \
+    /etc/fakenet-billing-waha.env \
+    /var/log/fakenet-billing \
+    /var/backups/fakenet-billing \
+    /usr/local/bin/fakenet-billing-stack \
+    /usr/local/bin/fakenet-billing-update
+
+  echo "Uninstall total selesai. Paket OS seperti PostgreSQL, Redis, FreeRADIUS, Docker, Node.js tidak dihapus karena bisa dipakai aplikasi lain."
+}
+
 main() {
   need_root
+  case "${1:-install}" in
+    uninstall|--uninstall)
+      uninstall_total "${2:-}"
+      return 0
+      ;;
+    install|"")
+      ;;
+    *)
+      echo "Usage: bash install.sh [install|uninstall] [--yes]" >&2
+      exit 2
+      ;;
+  esac
   install_packages
   install_node_runtime
   check_node

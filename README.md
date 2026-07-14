@@ -82,6 +82,13 @@ Update aplikasi:
 fakenet-billing-stack update
 ```
 
+Uninstall total:
+
+```bash
+cd /root/FAKE.NET-BILLING
+sudo bash install.sh uninstall
+```
+
 Hal yang perlu diatur setelah install:
 
 - Aktivasi license key dari HWID/machine code yang muncul di halaman `http://IP-SERVER:8891`.
@@ -298,6 +305,44 @@ Log update:
 ```bash
 /var/log/fakenet-billing/update.log
 ```
+
+## Uninstall Total
+
+Gunakan uninstall total jika ingin menghapus aplikasi dari mesin yang sama, misalnya sebelum install ulang dari awal. Perintah ini menghapus service aplikasi, source di `/opt/fakenet-billing`, env, database aplikasi, database Radius, session WAHA, log, backup, dan command helper `fakenet-billing-stack`/`fakenet-billing-update`.
+
+```bash
+cd /root/FAKE.NET-BILLING
+sudo bash install.sh uninstall
+```
+
+Untuk proses non-interaktif:
+
+```bash
+sudo FAKENET_UNINSTALL_CONFIRM=YES bash install.sh uninstall
+```
+
+Atau:
+
+```bash
+sudo bash install.sh uninstall --yes
+```
+
+Yang dihapus:
+
+- `/opt/fakenet-billing`
+- `/opt/fakenet-billing-waha`
+- `/etc/fakenet-billing.env`
+- `/etc/fakenet-billing-waha.env`
+- `/var/log/fakenet-billing`
+- `/var/backups/fakenet-billing`
+- Database PostgreSQL `fakenet_billing` dan `radius`
+- Role PostgreSQL aplikasi dan Radius
+- Service `fakenet-billing*`
+- Helper `/usr/local/bin/fakenet-billing-stack` dan `/usr/local/bin/fakenet-billing-update`
+
+Paket OS seperti PostgreSQL, Redis, FreeRADIUS, Docker, Node.js, Git, dan curl tidak dihapus karena bisa dipakai aplikasi lain.
+
+Lisensi tidak terikat pada file install, tetapi pada HWID/machine code. Jika aplikasi dihapus lalu diinstall lagi pada mesin/VM yang sama dan HWID tetap sama, license key lama bisa digunakan kembali. Jika pindah mesin, reinstall OS besar, atau HWID berubah, minta license key baru ke customer service Whatsapp `083878122381`.
 
 ## Lisensi
 
