@@ -3983,7 +3983,7 @@ td {
 }
 
 .genieacs-table {
-  min-width: 1080px;
+  min-width: 1210px;
   table-layout: fixed;
   width: 100%;
 }
@@ -4038,7 +4038,7 @@ td {
 }
 
 .genieacs-table .genie-col-pppoe {
-  width: 140px;
+  width: 270px;
 }
 
 .genieacs-table .genie-col-ip {
@@ -4080,6 +4080,15 @@ td {
 
 .genieacs-primary-cell strong {
   display: block;
+}
+
+.genieacs-primary-cell {
+  white-space: nowrap;
+}
+
+.genieacs-primary-cell strong {
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .genieacs-number-cell {
