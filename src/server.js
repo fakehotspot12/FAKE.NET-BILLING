@@ -22,6 +22,7 @@ const {
   addExternalIncome,
   addManualCustomer,
   currentPeriod,
+  customerBillableInPeriod,
   dueDateForPeriod,
   generateInvoices,
   invoiceBlocksPeriod,
@@ -6117,14 +6118,30 @@ function nextUncoveredPeriods(data = {}, customerId = '', startPeriod = currentP
   return periods;
 }
 
+function manualInvoiceBasePeriod(customer = {}) {
+  const dueDateText = String(customer.nextDue || customer.dueDate || '').trim();
+  if (dueDateText) {
+    return normalizePeriod(dueDateText.slice(0, 7));
+  }
+  const firstInvoiceStatus = String(customer.firstInvoiceStatus || customer.initialInvoiceStatus || 'paid').toLowerCase();
+  if (firstInvoiceStatus === 'unpaid') {
+    return currentPeriod();
+  }
+  let cursor = currentPeriod();
+  let guard = 0;
+  while (!customerBillableInPeriod(customer, cursor) && guard < 120) {
+    cursor = addMonthsToPeriod(cursor, 1);
+    guard += 1;
+  }
+  return cursor;
+}
+
 function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
   const months = clampInteger(subPeriod, 1, 12, 1);
   const billingSettings = data.settings?.billing || {};
   const amount = Number(resolvePrice(data.settings || {}, customer) || customer.amount || 0) * months;
-  const basePeriod = currentPeriod();
   const dueDay = customer.dueDay || billingSettings.postpaidDueDay || data.settings?.defaultDueDay || 10;
-  const baseDueDate = customer.nextDue || customer.dueDate || dueDateForPeriod(basePeriod, dueDay);
-  const baseInvoicePeriod = normalizePeriod(String(baseDueDate || '').slice(0, 7));
+  const baseInvoicePeriod = manualInvoiceBasePeriod(customer);
   const coveredPeriods = nextUncoveredPeriods(data, customer.id, baseInvoicePeriod, months);
   const period = coveredPeriods[0] || baseInvoicePeriod;
   const dueDate = dueDateForPeriod(period, dueDay);
@@ -12603,6 +12620,7 @@ module.exports = {
     importPppUsers,
     isPaymentGatewayWebhookPath,
     localDailyReport,
+    localManualInvoicePreview,
     monthlyBillingDailyRows,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,

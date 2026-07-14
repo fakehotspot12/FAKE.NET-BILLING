@@ -1106,6 +1106,7 @@ module.exports = {
   addExpense,
   addManualCustomer,
   currentPeriod,
+  customerBillableInPeriod,
   dueDateForPeriod,
   generateInvoices,
   nextBillingInvoiceNumber,
