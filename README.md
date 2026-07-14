@@ -23,6 +23,8 @@ bash install.sh
 
 ```bash
 dnf install -y git curl
+# Jika distro masih memakai yum:
+# yum install -y git curl
 cd /root
 git clone https://github.com/fakehotspot12/FAKE.NET-BILLING.git
 cd FAKE.NET-BILLING
