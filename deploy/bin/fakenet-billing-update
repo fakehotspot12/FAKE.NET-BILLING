@@ -172,6 +172,10 @@ if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack || true
 fi
 
+if [ -f "$APP_DIR/install.sh" ]; then
+  APP_DIR="$APP_DIR" bash "$APP_DIR/install.sh" repair || true
+fi
+
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
   if [ -x "$STACK_CMD" ]; then

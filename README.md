@@ -82,6 +82,13 @@ Update aplikasi:
 fakenet-billing-stack update
 ```
 
+Repair konfigurasi service/FreeRADIUS tanpa hapus data:
+
+```bash
+cd /root/FAKE.NET-BILLING
+sudo bash install.sh repair
+```
+
 Uninstall total:
 
 ```bash
@@ -229,7 +236,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Membuat password random untuk database aplikasi, database Radius, dan WAHA.
 - Membuat database PostgreSQL `fakenet_billing` dan `radius`.
 - Membuat schema FreeRADIUS dasar: `nas`, `radcheck`, `radreply`, `radusergroup`, `radgroupcheck`, `radgroupreply`, dan `radacct`.
-- Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS secara best-effort.
+- Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS, termasuk `read_clients = yes` agar Site/NAS dari aplikasi dibaca sebagai client Radius.
 - Memasang service Billing, Isolir, Voucher, WifiKu, Radius Connector, dan WAHA.
 - Memasang command stack `fakenet-billing-stack`.
 
@@ -291,6 +298,7 @@ Updater akan:
 4. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
 5. Menjalankan `npm ci --omit=dev` atau `npm install --omit=dev`.
 6. Restart service stack.
+7. Menjalankan repair ringan untuk menyelaraskan helper command, systemd unit, dan konfigurasi FreeRADIUS tanpa menghapus data.
 
 Data aplikasi di `data/` tidak dihapus oleh updater. Untuk install PostgreSQL, file backup berisi:
 

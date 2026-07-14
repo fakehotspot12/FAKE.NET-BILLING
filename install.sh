@@ -65,7 +65,7 @@ install_packages() {
       yum install -y ca-certificates curl git rsync tar gzip openssl postgresql-server postgresql redis freeradius freeradius-postgresql docker
       ;;
     apk)
-      apk add --no-cache ca-certificates curl git rsync tar gzip openssl nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc
+      apk add --no-cache ca-certificates curl git rsync tar gzip openssl nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc su-exec
       ;;
     *)
       echo "Package manager tidak dikenali. Install manual: nodejs npm git rsync postgresql redis freeradius docker." >&2
@@ -236,6 +236,9 @@ init_postgres_cluster() {
   if command -v postgresql-setup >/dev/null 2>&1; then
     postgresql-setup --initdb >/dev/null 2>&1 || true
   fi
+  if command -v rc-service >/dev/null 2>&1 && [ -x /etc/init.d/postgresql ]; then
+    rc-service postgresql setup >/dev/null 2>&1 || true
+  fi
 }
 
 psql_superuser() {
@@ -311,29 +314,57 @@ SQL
   fi
 }
 
+backup_freeradius_config_file() {
+  local file="$1" root_dir backup_dir
+  [ -f "$file" ] || return 0
+  case "$file" in
+    */mods-enabled/*)
+      root_dir="${file%/mods-enabled/*}"
+      backup_dir="$root_dir/fakenet-backups"
+      mkdir -p "$backup_dir"
+      cp "$file" "$backup_dir/$(basename "$file").fakenet-billing.bak" 2>/dev/null || true
+      ;;
+    *)
+      cp "$file" "${file}.fakenet-billing.bak" 2>/dev/null || true
+      ;;
+  esac
+}
+
+configure_freeradius_sql_file() {
+  local sql_file="$1" radius_db_conn="$2"
+  [ -f "$sql_file" ] || return 0
+  [ -L "$sql_file" ] && return 0
+
+  backup_freeradius_config_file "$sql_file"
+  sed -i -E 's/^[[:space:]]*dialect = .*/        dialect = "postgresql"/' "$sql_file" || true
+  sed -i -E 's/^[[:space:]]*driver = .*/        driver = "rlm_sql_postgresql"/' "$sql_file" || true
+  sed -i -E 's/^[[:space:]]*server = .*/        server = "127.0.0.1"/' "$sql_file" || true
+  sed -i -E 's/^[[:space:]]*port = .*/        port = 5432/' "$sql_file" || true
+  sed -i -E "s/^[[:space:]]*login = .*/        login = \"${RADIUS_DATABASE_USER:-radius}\"/" "$sql_file" || true
+  sed -i -E "s/^[[:space:]]*password = .*/        password = \"${RADIUS_DATABASE_PASSWORD:-}\"/" "$sql_file" || true
+  sed -i -E "s#^[[:space:]]*radius_db = .*#        radius_db = \"$radius_db_conn\"#" "$sql_file" || true
+  sed -i -E 's/^[[:space:]]*#?[[:space:]]*read_clients = .*/        read_clients = yes/' "$sql_file" || true
+  sed -i -E 's/^[[:space:]]*client_table = .*/        client_table = "nas"/' "$sql_file" || true
+}
+
 configure_freeradius_sql() {
   load_billing_env
-  local sql_mod mods_base mods_enabled sites_default sites_inner radius_db_conn
-  sql_mod=""
+  local candidate mods_base mods_enabled sites_default sites_inner radius_db_conn configured
+  radius_db_conn="host=127.0.0.1 port=5432 dbname=${RADIUS_DATABASE_NAME:-radius} user=${RADIUS_DATABASE_USER:-radius} password=${RADIUS_DATABASE_PASSWORD:-} sslmode=disable"
+  configured=0
+
   for candidate in \
     /etc/freeradius/3.0/mods-available/sql \
+    /etc/freeradius/3.0/mods-enabled/sql \
     /etc/raddb/mods-available/sql \
+    /etc/raddb/mods-enabled/sql \
     /etc/raddb/mods-config/sql/main/postgresql/queries.conf; do
-    [ -f "$candidate" ] && sql_mod="$candidate" && break
+    if [ -f "$candidate" ]; then
+      configure_freeradius_sql_file "$candidate" "$radius_db_conn"
+      configured=1
+    fi
   done
-  [ -n "$sql_mod" ] || return 0
-
-  cp "$sql_mod" "${sql_mod}.fakenet-billing.bak" 2>/dev/null || true
-  sed -i -E 's/^[[:space:]]*dialect = .*/        dialect = "postgresql"/' "$sql_mod" || true
-  sed -i -E 's/^[[:space:]]*driver = .*/        driver = "rlm_sql_postgresql"/' "$sql_mod" || true
-  sed -i -E 's/^[[:space:]]*server = .*/        server = "127.0.0.1"/' "$sql_mod" || true
-  sed -i -E 's/^[[:space:]]*port = .*/        port = 5432/' "$sql_mod" || true
-  sed -i -E "s/^[[:space:]]*login = .*/        login = \"${RADIUS_DATABASE_USER:-radius}\"/" "$sql_mod" || true
-  sed -i -E "s/^[[:space:]]*password = .*/        password = \"${RADIUS_DATABASE_PASSWORD:-}\"/" "$sql_mod" || true
-  radius_db_conn="host=127.0.0.1 port=5432 dbname=${RADIUS_DATABASE_NAME:-radius} user=${RADIUS_DATABASE_USER:-radius} password=${RADIUS_DATABASE_PASSWORD:-} sslmode=disable"
-  sed -i -E "s#^[[:space:]]*radius_db = .*#        radius_db = \"$radius_db_conn\"#" "$sql_mod" || true
-  sed -i -E 's/^[[:space:]]*#?[[:space:]]*read_clients = .*/        read_clients = yes/' "$sql_mod" || true
-  sed -i -E 's/^[[:space:]]*client_table = .*/        client_table = "nas"/' "$sql_mod" || true
+  [ "$configured" -eq 1 ] || return 0
 
   for mods_base in /etc/freeradius/3.0 /etc/raddb; do
     mods_enabled="$mods_base/mods-enabled"
@@ -341,6 +372,10 @@ configure_freeradius_sql() {
       ln -sf ../mods-available/sql "$mods_enabled/sql" || true
       [ -f "$mods_base/mods-available/sqlippool" ] && ln -sf ../mods-available/sqlippool "$mods_enabled/sqlippool" || true
     fi
+  done
+
+  for candidate in /etc/freeradius/3.0/mods-enabled/sql /etc/raddb/mods-enabled/sql; do
+    [ -f "$candidate" ] && configure_freeradius_sql_file "$candidate" "$radius_db_conn"
   done
 
   for sites_default in /etc/freeradius/3.0/sites-enabled/default /etc/raddb/sites-enabled/default; do
@@ -450,6 +485,47 @@ install_openrc() {
   write_openrc_waha_service
 }
 
+repair_install() {
+  mkdir -p /var/log/fakenet-billing
+
+  if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
+    install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack
+  fi
+  if [ -f "$APP_DIR/deploy/bin/fakenet-billing-update" ]; then
+    install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 && [ -d "$APP_DIR/deploy/systemd" ]; then
+    local unit name
+    for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
+      [ -f "$unit" ] || continue
+      name="$(basename "$unit")"
+      sed \
+        -e "s#WorkingDirectory=/opt/fakenet-billing#WorkingDirectory=$APP_DIR#g" \
+        -e "s#/opt/fakenet-billing-waha#/opt/fakenet-billing-waha#g" \
+        "$unit" > "/etc/systemd/system/$name"
+    done
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+
+  if [ -f /etc/fakenet-billing.env ]; then
+    configure_freeradius_sql
+    if command -v freeradius >/dev/null 2>&1; then
+      freeradius -XC >/tmp/fakenet-billing-freeradius-check.log 2>&1 || {
+        echo "Peringatan: validasi FreeRADIUS gagal, lihat /tmp/fakenet-billing-freeradius-check.log" >&2
+      }
+    fi
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    restart_systemd_unit_group "freeradius.service radiusd.service"
+  elif command -v rc-service >/dev/null 2>&1; then
+    rc-service freeradius restart >/dev/null 2>&1 || rc-service radiusd restart >/dev/null 2>&1 || true
+  fi
+
+  echo "Repair selesai."
+}
+
 confirm_uninstall() {
   if [ "${FAKENET_UNINSTALL_CONFIRM:-}" = "YES" ] || [ "${1:-}" = "--yes" ]; then
     return 0
@@ -551,10 +627,14 @@ main() {
       uninstall_total "${2:-}"
       return 0
       ;;
+    repair|--repair)
+      repair_install
+      return 0
+      ;;
     install|"")
       ;;
     *)
-      echo "Usage: bash install.sh [install|uninstall] [--yes]" >&2
+      echo "Usage: bash install.sh [install|repair|uninstall] [--yes]" >&2
       exit 2
       ;;
   esac
