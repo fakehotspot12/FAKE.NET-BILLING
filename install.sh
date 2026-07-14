@@ -347,6 +347,15 @@ configure_freeradius_sql_file() {
   sed -i -E 's/^[[:space:]]*client_table = .*/        client_table = "nas"/' "$sql_file" || true
 }
 
+configure_freeradius_site_file() {
+  local site_file="$1"
+  [ -f "$site_file" ] || return 0
+
+  backup_freeradius_config_file "$site_file"
+  sed -i -E 's/^[[:space:]]*#?[[:space:]]*-?sql([[:space:]]*(#.*)?)$/        sql\1/' "$site_file" || true
+  sed -i -E 's/^[[:space:]]*sql_session_start([[:space:]]*(#.*)?)$/#        sql_session_start\1/' "$site_file" || true
+}
+
 configure_freeradius_sql() {
   load_billing_env
   local candidate mods_base mods_enabled sites_default sites_inner radius_db_conn configured
@@ -379,10 +388,10 @@ configure_freeradius_sql() {
   done
 
   for sites_default in /etc/freeradius/3.0/sites-enabled/default /etc/raddb/sites-enabled/default; do
-    [ -f "$sites_default" ] && sed -i -E 's/^[[:space:]]*#?[[:space:]]*-?sql/        sql/' "$sites_default" || true
+    configure_freeradius_site_file "$sites_default"
   done
   for sites_inner in /etc/freeradius/3.0/sites-enabled/inner-tunnel /etc/raddb/sites-enabled/inner-tunnel; do
-    [ -f "$sites_inner" ] && sed -i -E 's/^[[:space:]]*#?[[:space:]]*-?sql/        sql/' "$sites_inner" || true
+    configure_freeradius_site_file "$sites_inner"
   done
 }
 

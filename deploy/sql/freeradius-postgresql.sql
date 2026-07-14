@@ -100,3 +100,14 @@ create unique index if not exists radacct_acctuniqueid_idx on radacct (acctuniqu
 create index if not exists radacct_username_idx on radacct (username);
 create index if not exists radacct_active_idx on radacct (acctstoptime) where acctstoptime is null;
 create index if not exists radacct_start_idx on radacct (acctstarttime);
+
+create table if not exists radpostauth (
+  id bigserial primary key,
+  username varchar(64) not null default '',
+  pass varchar(128) not null default '',
+  reply varchar(32) not null default '',
+  authdate timestamptz not null default now()
+);
+
+create index if not exists radpostauth_username_idx on radpostauth (username);
+create index if not exists radpostauth_authdate_idx on radpostauth (authdate);
