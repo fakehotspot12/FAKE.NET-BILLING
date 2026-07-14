@@ -434,11 +434,6 @@ button {
   mask: var(--icon-payment) center / contain no-repeat;
 }
 
-.notification-item-icon.update::before {
-  -webkit-mask: var(--icon-settings) center / contain no-repeat;
-  mask: var(--icon-settings) center / contain no-repeat;
-}
-
 .notification-item strong {
   display: block;
   margin-bottom: 3px;

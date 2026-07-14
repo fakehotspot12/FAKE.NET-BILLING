@@ -806,13 +806,6 @@ function notificationBasePayload(loading = false) {
       count: 0,
       events: [],
       loading
-    },
-    systemUpdate: {
-      visible: can('settings:write'),
-      count: 0,
-      currentCommit: '',
-      remoteCommit: '',
-      loading
     }
   };
 }
@@ -961,22 +954,6 @@ function notificationItems(notifications = {}) {
   const billing = notifications.billing || {};
   const inventory = notifications.inventory || {};
   const asset = notifications.asset || {};
-  const systemUpdate = notifications.systemUpdate || {};
-  if (systemUpdate.visible) {
-    const count = Number(systemUpdate.count || 0);
-    items.push({
-      type: 'update',
-      count,
-      title: systemUpdate.loading ? 'Memuat status update' : (count > 0 ? 'Update aplikasi tersedia' : 'Aplikasi sudah terbaru'),
-      description: systemUpdate.loading
-        ? 'Mengecek versi GitHub terbaru...'
-        : (count > 0
-          ? (systemUpdate.message || `Versi baru tersedia ${systemUpdate.currentCommit || '-'} -> ${systemUpdate.remoteCommit || '-'}.`)
-          : (systemUpdate.error || 'Tidak ada update baru sesuai GitHub.')),
-      tone: count > 0 ? 'warning' : 'safe',
-      action: 'settings'
-    });
-  }
   if (billing.visible) {
     const count = Number(billing.count || 0);
     items.push({
@@ -1127,11 +1104,6 @@ function openNotificationTarget(action) {
   if (action === 'paymentGateway') {
     state.search = '';
     setView('paymentGateway');
-    return;
-  }
-  if (action === 'settings') {
-    state.search = '';
-    setView('settings');
   }
 }
 

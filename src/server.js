@@ -6899,14 +6899,6 @@ async function notificationSummary(data = {}, user = {}) {
       count: 0,
       message: '',
       events: []
-    },
-    systemUpdate: {
-      visible: auth.hasPermission(user, 'settings:write'),
-      count: 0,
-      message: '',
-      currentCommit: '',
-      remoteCommit: '',
-      error: ''
     }
   };
 
@@ -6981,22 +6973,6 @@ async function notificationSummary(data = {}, user = {}) {
         paidAtText: dateTimeDisplayText(row.paidAt || row.paymentAt || row.updatedAt || row.createdAt || '')
       };
     });
-  }
-
-  if (notifications.systemUpdate.visible) {
-    const status = await appUpdateStatus().catch((error) => ({
-      updateAvailable: false,
-      currentCommitShort: '',
-      remoteCommitShort: '',
-      error: error.message || 'Status update tidak bisa dicek'
-    }));
-    notifications.systemUpdate.count = status.updateAvailable ? 1 : 0;
-    notifications.systemUpdate.currentCommit = status.currentCommitShort || '';
-    notifications.systemUpdate.remoteCommit = status.remoteCommitShort || '';
-    notifications.systemUpdate.error = status.error || '';
-    notifications.systemUpdate.message = status.updateAvailable
-      ? `Update tersedia ${status.currentCommitShort || '-'} -> ${status.remoteCommitShort || '-'}`
-      : (status.error ? 'Status update belum bisa dicek' : 'Aplikasi sudah terbaru');
   }
 
   return notifications;
