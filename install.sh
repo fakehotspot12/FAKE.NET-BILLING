@@ -305,6 +305,19 @@ restart_systemd_unit_group() {
   [ -n "$unit" ] && systemctl restart "$unit" >/dev/null 2>&1 || true
 }
 
+validate_freeradius_config() {
+  local cmd=""
+  if command -v freeradius >/dev/null 2>&1; then
+    cmd="freeradius"
+  elif command -v radiusd >/dev/null 2>&1; then
+    cmd="radiusd"
+  fi
+  [ -n "$cmd" ] || return 0
+  "$cmd" -XC >/tmp/fakenet-billing-freeradius-check.log 2>&1 || {
+    echo "Peringatan: validasi FreeRADIUS gagal, lihat /tmp/fakenet-billing-freeradius-check.log" >&2
+  }
+}
+
 init_postgres_cluster() {
   if command -v postgresql-setup >/dev/null 2>&1; then
     postgresql-setup --initdb >/dev/null 2>&1 || true
@@ -594,11 +607,7 @@ repair_install() {
 
   if [ -f /etc/fakenet-billing.env ]; then
     configure_freeradius_sql
-    if command -v freeradius >/dev/null 2>&1; then
-      freeradius -XC >/tmp/fakenet-billing-freeradius-check.log 2>&1 || {
-        echo "Peringatan: validasi FreeRADIUS gagal, lihat /tmp/fakenet-billing-freeradius-check.log" >&2
-      }
-    fi
+    validate_freeradius_config
   fi
 
   if command -v systemctl >/dev/null 2>&1; then
