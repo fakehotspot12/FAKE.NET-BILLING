@@ -60,6 +60,23 @@ function normalizeServiceType(value) {
   return ['pppoe', 'hotspot'].includes(type) ? type : 'pppoe';
 }
 
+function normalizeStaticIp(value) {
+  const raw = text(value);
+  if (!raw) return '';
+  const octets = raw.split('.');
+  const invalidMessage = 'IP static tidak valid. Gunakan IPv4 host yang bisa dipakai, bukan network/broadcast seperti .0 atau .255. Kosongkan untuk IP dinamis.';
+  if (octets.length !== 4) throw new Error(invalidMessage);
+  const numbers = octets.map((part) => {
+    if (!/^\d{1,3}$/.test(part)) throw new Error(invalidMessage);
+    const number = Number(part);
+    if (!Number.isInteger(number) || number < 0 || number > 255) throw new Error(invalidMessage);
+    return number;
+  });
+  const [first, , , last] = numbers;
+  if (first === 0 || first >= 224 || last === 0 || last === 255) throw new Error(invalidMessage);
+  return numbers.join('.');
+}
+
 function normalizeStatus(value) {
   const status = text(value).toLowerCase();
   if (['isolir', 'suspend', 'suspended'].includes(status)) return 'isolated';
@@ -374,7 +391,7 @@ function addRadiusUser(data, input, actor) {
     profileId: text(input.profileId),
     nasId: text(input.nasId),
     customerId: text(input.customerId),
-    staticIp: text(input.staticIp),
+    staticIp: normalizeStaticIp(input.staticIp),
     callerId: text(input.callerId),
     status,
     isolatedAt: text(input.isolatedAt || input.isolationDate),
@@ -428,7 +445,7 @@ function updateRadiusUser(data, id, input, actor) {
   if (Object.prototype.hasOwnProperty.call(input, 'customerId')) {
     item.customerId = text(input.customerId);
   }
-  item.staticIp = text(input.staticIp);
+  item.staticIp = normalizeStaticIp(input.staticIp);
   item.callerId = text(input.callerId);
   const previousStatus = item.status;
   item.status = normalizeStatus(input.status);

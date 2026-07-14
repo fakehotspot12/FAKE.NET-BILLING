@@ -48,3 +48,37 @@ test('hotspot radius users always use username as password', () => {
     row.username === 'legacy001' && row.attribute === 'Cleartext-Password'
   ))?.value, 'legacy001');
 });
+
+test('ppp static IP must be a usable host address', () => {
+  const data = createDefaultStore();
+
+  const dynamic = freeradius.addRadiusUser(data, {
+    username: 'dynamic-user',
+    password: 'secret',
+    serviceType: 'pppoe',
+    staticIp: ''
+  }, { username: 'admin', name: 'Admin' });
+  assert.equal(dynamic.staticIp, '');
+
+  const valid = freeradius.addRadiusUser(data, {
+    username: 'valid-user',
+    password: 'secret',
+    serviceType: 'pppoe',
+    staticIp: '172.16.7.254'
+  }, { username: 'admin', name: 'Admin' });
+  assert.equal(valid.staticIp, '172.16.7.254');
+
+  assert.throws(() => freeradius.addRadiusUser(data, {
+    username: 'broadcast-user',
+    password: 'secret',
+    serviceType: 'pppoe',
+    staticIp: '172.16.7.255'
+  }, { username: 'admin', name: 'Admin' }), /IP static tidak valid/);
+
+  assert.throws(() => freeradius.updateRadiusUser(data, valid.id, {
+    username: 'valid-user',
+    password: 'secret',
+    serviceType: 'pppoe',
+    staticIp: '172.16.7.0'
+  }, { username: 'admin', name: 'Admin' }), /IP static tidak valid/);
+});
