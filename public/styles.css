@@ -4181,15 +4181,25 @@ dialog:has(.hotspot-voucher-preview) #modalBody {
 .hotspot-voucher-preview-head {
   align-items: center;
   background: #fff;
+  border-bottom: 1px solid #e5e7eb;
   color: #111827;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 12px;
   justify-content: space-between;
-  padding-bottom: 4px;
+  padding: 0 8px 10px;
   position: sticky;
   top: 0;
   z-index: 2;
+}
+
+.hotspot-voucher-preview-head > strong {
+  color: #111827;
+  flex: 1 1 180px;
+  font-size: 14px;
+  line-height: 1.2;
+  min-width: 0;
+  padding-left: 2px;
 }
 
 .hotspot-voucher-print-mode {
@@ -4197,7 +4207,7 @@ dialog:has(.hotspot-voucher-preview) #modalBody {
   display: grid;
   gap: 4px;
   grid-template-columns: auto minmax(120px, 170px);
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .hotspot-voucher-print-mode span {
@@ -5332,11 +5342,12 @@ td:has(.action-menu),
 .daily-billing-receipt-preview-head {
   align-items: center;
   background: #fff;
+  border-bottom: 1px solid #e5e7eb;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 12px;
   justify-content: space-between;
-  padding-bottom: 4px;
+  padding: 0 8px 10px;
   position: sticky;
   top: 0;
   z-index: 2;
@@ -5344,8 +5355,11 @@ td:has(.action-menu),
 
 .daily-billing-receipt-preview-head > strong {
   color: #111827;
+  flex: 1 1 180px;
   font-size: 14px;
   line-height: 1.2;
+  min-width: 0;
+  padding-left: 2px;
 }
 
 .daily-billing-receipt-print-actions {
@@ -5353,7 +5367,7 @@ td:has(.action-menu),
 }
 
 .daily-billing-receipt-print-mode {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .daily-billing-receipt-print-mode select {
@@ -5371,6 +5385,26 @@ td:has(.action-menu),
 }
 
 @media (max-width: 760px) {
+  .hotspot-voucher-preview-head {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: 1fr;
+    position: static;
+  }
+
+  .hotspot-voucher-preview-head .hotspot-voucher-print-mode {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .hotspot-voucher-print-actions {
+    justify-content: stretch;
+  }
+
+  .hotspot-voucher-print-actions > button {
+    width: 100%;
+  }
+
   .daily-billing-receipt-preview-head {
     align-items: stretch;
     display: grid;
