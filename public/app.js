@@ -806,6 +806,13 @@ function notificationBasePayload(loading = false) {
       count: 0,
       events: [],
       loading
+    },
+    systemUpdate: {
+      visible: can('settings:write'),
+      count: 0,
+      currentCommit: '',
+      remoteCommit: '',
+      loading
     }
   };
 }
@@ -954,6 +961,22 @@ function notificationItems(notifications = {}) {
   const billing = notifications.billing || {};
   const inventory = notifications.inventory || {};
   const asset = notifications.asset || {};
+  const systemUpdate = notifications.systemUpdate || {};
+  if (systemUpdate.visible) {
+    const count = Number(systemUpdate.count || 0);
+    items.push({
+      type: 'update',
+      count,
+      title: systemUpdate.loading ? 'Memuat status update' : (count > 0 ? 'Update aplikasi tersedia' : 'Aplikasi sudah terbaru'),
+      description: systemUpdate.loading
+        ? 'Mengecek versi GitHub terbaru...'
+        : (count > 0
+          ? (systemUpdate.message || `Versi baru tersedia ${systemUpdate.currentCommit || '-'} -> ${systemUpdate.remoteCommit || '-'}.`)
+          : (systemUpdate.error || 'Tidak ada update baru sesuai GitHub.')),
+      tone: count > 0 ? 'warning' : 'safe',
+      action: 'settings'
+    });
+  }
   if (billing.visible) {
     const count = Number(billing.count || 0);
     items.push({
@@ -1104,6 +1127,11 @@ function openNotificationTarget(action) {
   if (action === 'paymentGateway') {
     state.search = '';
     setView('paymentGateway');
+    return;
+  }
+  if (action === 'settings') {
+    state.search = '';
+    setView('settings');
   }
 }
 
@@ -13079,18 +13107,41 @@ async function renderPaymentGateway() {
   }, renderPaymentGateway, 10);
 }
 
-async function renderSettings() {
+async function renderSettings(options = {}) {
   app.innerHTML = '<div class="empty">Memuat pengaturan...</div>';
   const { settings } = await api('/api/settings');
   let updateStatus = { updaterInstalled: false, log: '' };
   try {
-    updateStatus = await api('/api/system/update/status');
+    updateStatus = await api(`/api/system/update/status${options.refreshUpdateStatus ? '?refresh=1' : ''}`);
   } catch {
     updateStatus = { updaterInstalled: false, log: '' };
   }
   updateBranding({ settings });
   let pendingLogoUrl = null;
   const branding = currentBranding();
+  const updateInfo = updateStatus.update || {};
+  const updateAvailable = Boolean(updateInfo.updateAvailable);
+  const updateNoticeClass = !updateStatus.updaterInstalled || updateInfo.error ? 'warning' : updateAvailable ? 'warning' : 'positive';
+  const updateTitle = !updateStatus.updaterInstalled
+    ? 'Updater belum terpasang'
+    : updateAvailable
+      ? 'Update tersedia'
+      : updateInfo.error
+        ? 'Status update belum bisa dicek'
+        : 'Aplikasi sudah terbaru';
+  const updateDescription = !updateStatus.updaterInstalled
+    ? 'Jalankan install.sh agar command updater terpasang di server.'
+    : updateAvailable
+      ? 'Klik Update Aplikasi untuk mengambil versi terbaru tanpa menghapus data.'
+      : updateInfo.error
+        ? updateInfo.error
+        : 'Commit lokal sudah sama dengan branch GitHub.';
+  const updateMeta = [
+    updateInfo.currentCommitShort ? `Terpasang: ${updateInfo.currentCommitShort}` : '',
+    updateInfo.remoteCommitShort ? `GitHub: ${updateInfo.remoteCommitShort}` : '',
+    updateInfo.branch ? `Branch: ${updateInfo.branch}` : '',
+    updateInfo.dirty ? 'Ada perubahan lokal, updater akan menyimpannya dulu sebelum pull.' : ''
+  ].filter(Boolean).join(' | ');
   const collectorBonusTiers = Array.isArray(settings.collectorDailyBonusTiers) && settings.collectorDailyBonusTiers.length
     ? settings.collectorDailyBonusTiers
     : [
@@ -13196,9 +13247,10 @@ async function renderSettings() {
         <div class="form-grid">
           <div class="field full">
             <span>Status updater</span>
-            <div class="notice ${updateStatus.updaterInstalled ? 'positive' : 'warning'}">
-              <strong>${updateStatus.updaterInstalled ? 'Updater siap' : 'Updater belum terpasang'}</strong>
-              <span>${updateStatus.updaterInstalled ? 'Klik update untuk mengambil versi terbaru tanpa menghapus data aplikasi.' : 'Jalankan install.sh agar command updater terpasang di server.'}</span>
+            <div class="notice ${updateNoticeClass}">
+              <strong>${escapeHtml(updateTitle)}</strong>
+              <span>${escapeHtml(updateDescription)}</span>
+              ${updateMeta ? `<span>${escapeHtml(updateMeta)}</span>` : ''}
             </div>
           </div>
           <label class="field full">
@@ -13311,7 +13363,7 @@ async function renderSettings() {
   });
 
   document.getElementById('refreshAppUpdateStatus')?.addEventListener('click', () => {
-    renderSettings();
+    renderSettings({ refreshUpdateStatus: true });
   });
 
   document.getElementById('runAppUpdateButton')?.addEventListener('click', async (event) => {

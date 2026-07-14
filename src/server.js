@@ -1,15 +1,18 @@
 'use strict';
 
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const fsSync = require('fs');
 const fs = require('fs/promises');
 const http = require('http');
 const path = require('path');
+const { promisify } = require('util');
 const { URL } = require('url');
 const ExcelJS = require('exceljs');
 const QRCode = require('qrcode');
 const packageInfo = require('../package.json');
+
+const execFileAsync = promisify(execFile);
 
 const {
   addActivity,
@@ -53,6 +56,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const APP_MODE = String(process.env.APP_MODE || 'standalone').toLowerCase();
 const BILLING_SOURCE = String(process.env.BILLING_SOURCE || (APP_MODE === 'standalone' ? 'local' : 'radboox')).toLowerCase();
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const APP_ROOT = path.join(__dirname, '..');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || '20260713.3');
 const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-10');
@@ -71,6 +75,8 @@ const WA_GATEWAY_HTTP_TIMEOUT_MS = Math.max(5_000, Number(process.env.WA_GATEWAY
 const WAHA_ENV_FILE = process.env.WAHA_ENV_FILE || '/etc/fakenet-billing-waha.env';
 const APP_UPDATE_COMMAND = process.env.FAKENET_UPDATE_COMMAND || '/usr/local/bin/fakenet-billing-update';
 const APP_UPDATE_LOG = process.env.FAKENET_UPDATE_LOG || '/var/log/fakenet-billing/update.log';
+const APP_UPDATE_REMOTE_TIMEOUT_MS = Math.max(2000, Number(process.env.FAKENET_UPDATE_REMOTE_TIMEOUT_MS || 5000) || 5000);
+const APP_UPDATE_STATUS_TTL_MS = Math.max(60_000, Number(process.env.FAKENET_UPDATE_STATUS_TTL_MS || 300_000) || 300_000);
 const WA_GATEWAY_PROVIDERS = {
   waha: { label: 'Whatsapp Gateway', baseUrl: 'http://127.0.0.1:8895', autoBaseUrl: false }
 };
@@ -131,6 +137,75 @@ function sendNoContent(res) {
   res.end();
 }
 
+let updateStatusCache = {
+  expiresAt: 0,
+  value: null
+};
+
+async function gitOutput(args = [], options = {}) {
+  const { stdout } = await execFileAsync('git', args, {
+    cwd: APP_ROOT,
+    timeout: options.timeout || APP_UPDATE_REMOTE_TIMEOUT_MS,
+    maxBuffer: 1024 * 1024,
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: '0'
+    }
+  });
+  return String(stdout || '').trim();
+}
+
+function redactGitRemoteUrl(value = '') {
+  return String(value || '').replace(/:\/\/([^/@\s]+)@/g, '://***@');
+}
+
+async function appUpdateStatus(options = {}) {
+  const now = Date.now();
+  if (!options.force && updateStatusCache.value && updateStatusCache.expiresAt > now) {
+    return updateStatusCache.value;
+  }
+
+  const status = {
+    sourceMode: fsSync.existsSync(path.join(APP_ROOT, '.git')) ? 'git' : 'archive',
+    updaterInstalled: fsSync.existsSync(APP_UPDATE_COMMAND),
+    currentCommit: '',
+    currentCommitShort: '',
+    remoteCommit: '',
+    remoteCommitShort: '',
+    branch: '',
+    remoteUrl: '',
+    dirty: false,
+    updateAvailable: false,
+    checkedAt: new Date().toISOString(),
+    error: ''
+  };
+
+  if (status.sourceMode !== 'git') {
+    status.error = 'Source aplikasi bukan Git checkout';
+    updateStatusCache = { value: status, expiresAt: now + APP_UPDATE_STATUS_TTL_MS };
+    return status;
+  }
+
+  try {
+    status.currentCommit = await gitOutput(['rev-parse', 'HEAD']);
+    status.currentCommitShort = status.currentCommit.slice(0, 7);
+    status.branch = await gitOutput(['branch', '--show-current']).catch(() => '');
+    status.remoteUrl = redactGitRemoteUrl(await gitOutput(['remote', 'get-url', 'origin']).catch(() => ''));
+    const dirtyOutput = await gitOutput(['status', '--short', '--untracked-files=no']).catch(() => '');
+    status.dirty = Boolean(dirtyOutput.trim());
+    const branch = status.branch || 'main';
+    const remoteLine = await gitOutput(['ls-remote', 'origin', `refs/heads/${branch}`], { timeout: APP_UPDATE_REMOTE_TIMEOUT_MS });
+    status.remoteCommit = String(remoteLine || '').split(/\s+/)[0] || '';
+    status.remoteCommitShort = status.remoteCommit.slice(0, 7);
+    status.updateAvailable = Boolean(status.currentCommit && status.remoteCommit && status.currentCommit !== status.remoteCommit);
+  } catch (error) {
+    status.error = error.message || 'Status update tidak bisa dicek';
+  }
+
+  updateStatusCache = { value: status, expiresAt: now + APP_UPDATE_STATUS_TTL_MS };
+  return status;
+}
+
 async function updateLogTail(limitBytes = 12_000) {
   try {
     const stat = await fs.stat(APP_UPDATE_LOG);
@@ -157,7 +232,7 @@ function startUpdateProcess() {
     stdio: 'ignore',
     env: {
       ...process.env,
-      APP_DIR: path.join(__dirname, '..')
+      APP_DIR: APP_ROOT
     }
   });
   child.unref();
@@ -6824,6 +6899,14 @@ async function notificationSummary(data = {}, user = {}) {
       count: 0,
       message: '',
       events: []
+    },
+    systemUpdate: {
+      visible: auth.hasPermission(user, 'settings:write'),
+      count: 0,
+      message: '',
+      currentCommit: '',
+      remoteCommit: '',
+      error: ''
     }
   };
 
@@ -6898,6 +6981,22 @@ async function notificationSummary(data = {}, user = {}) {
         paidAtText: dateTimeDisplayText(row.paidAt || row.paymentAt || row.updatedAt || row.createdAt || '')
       };
     });
+  }
+
+  if (notifications.systemUpdate.visible) {
+    const status = await appUpdateStatus().catch((error) => ({
+      updateAvailable: false,
+      currentCommitShort: '',
+      remoteCommitShort: '',
+      error: error.message || 'Status update tidak bisa dicek'
+    }));
+    notifications.systemUpdate.count = status.updateAvailable ? 1 : 0;
+    notifications.systemUpdate.currentCommit = status.currentCommitShort || '';
+    notifications.systemUpdate.remoteCommit = status.remoteCommitShort || '';
+    notifications.systemUpdate.error = status.error || '';
+    notifications.systemUpdate.message = status.updateAvailable
+      ? `Update tersedia ${status.currentCommitShort || '-'} -> ${status.remoteCommitShort || '-'}`
+      : (status.error ? 'Status update belum bisa dicek' : 'Aplikasi sudah terbaru');
   }
 
   return notifications;
@@ -11917,11 +12016,15 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/system/update/status') {
     const authContext = await requirePermission(req, res, 'settings:write');
     if (!authContext) return;
-    const log = await updateLogTail();
+    const [log, update] = await Promise.all([
+      updateLogTail(),
+      appUpdateStatus({ force: url.searchParams.get('refresh') === '1' })
+    ]);
     sendJson(res, 200, {
       ok: true,
       system: publicSystemInfo(),
       updaterInstalled: fsSync.existsSync(APP_UPDATE_COMMAND),
+      update,
       log
     });
     return;

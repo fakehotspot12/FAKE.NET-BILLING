@@ -132,6 +132,11 @@ if [ -d "$APP_DIR/.git" ]; then
   if [ -n "$BRANCH" ]; then
     git -C "$APP_DIR" checkout "$BRANCH"
   fi
+  dirty_status="$(git -C "$APP_DIR" status --short --untracked-files=no 2>/dev/null || true)"
+  if [ -n "$dirty_status" ]; then
+    echo "Worktree memiliki perubahan lokal tracked file; simpan sementara ke git stash"
+    git -C "$APP_DIR" stash push -m "fakenet-billing-pre-update-$(date +%Y%m%d%H%M%S)" -- . || true
+  fi
   git -C "$APP_DIR" pull --ff-only
 elif [ -n "$ARCHIVE_URL" ]; then
   echo "Update via archive $ARCHIVE_URL"
@@ -158,6 +163,13 @@ if command -v npm >/dev/null 2>&1; then
   else
     npm install --omit=dev
   fi
+fi
+
+if [ -f "$APP_DIR/deploy/bin/fakenet-billing-update" ]; then
+  install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update || true
+fi
+if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
+  install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack || true
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
