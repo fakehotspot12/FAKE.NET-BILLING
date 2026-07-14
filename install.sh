@@ -318,8 +318,8 @@ backup_freeradius_config_file() {
   local file="$1" root_dir backup_dir
   [ -f "$file" ] || return 0
   case "$file" in
-    */mods-enabled/*)
-      root_dir="${file%/mods-enabled/*}"
+    */mods-enabled/*|*/sites-enabled/*)
+      root_dir="${file%/*-enabled/*}"
       backup_dir="$root_dir/fakenet-backups"
       mkdir -p "$backup_dir"
       cp "$file" "$backup_dir/$(basename "$file").fakenet-billing.bak" 2>/dev/null || true
