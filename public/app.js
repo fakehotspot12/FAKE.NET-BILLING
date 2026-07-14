@@ -226,6 +226,7 @@ const state = {
     loginVerificationEnabled: true
   },
   notifications: null,
+  paymentNotifications: [],
   loginVerification: null,
   search: ''
 };
@@ -241,12 +242,16 @@ let dashboardRouterNasCharts = {};
 let notificationsTimer = null;
 let notificationsLoading = false;
 let lastNotificationsFetchAt = 0;
+const paymentNotificationTimers = new Map();
 let topWaStatusTimer = null;
 let topWaStatusLoading = false;
 let renderGeneration = 0;
 let pageRequestController = new AbortController();
 let loginDomRepairing = false;
 const NOTIFICATION_CACHE_PREFIX = 'fakenetOpsNotifications';
+const PAYMENT_NOTIFICATION_SEEN_PREFIX = 'fakenetBillingPaymentNotificationsSeen';
+const PAYMENT_NOTIFICATION_TTL_MS = 3000;
+const PAYMENT_NOTIFICATION_SEEN_LIMIT = 100;
 
 const money = new Intl.NumberFormat('id-ID', {
   style: 'currency',
@@ -769,6 +774,11 @@ function notificationCacheKey() {
   return `${NOTIFICATION_CACHE_PREFIX}:${user.id || user.username || 'user'}:${user.role || 'role'}`;
 }
 
+function paymentNotificationSeenKey() {
+  const user = state.auth || {};
+  return `${PAYMENT_NOTIFICATION_SEEN_PREFIX}:${user.id || user.username || 'user'}:${user.role || 'role'}`;
+}
+
 function notificationBasePayload(loading = false) {
   return {
     inventory: {
@@ -790,6 +800,12 @@ function notificationBasePayload(loading = false) {
       count: 0,
       amount: 0,
       loading
+    },
+    onlinePayments: {
+      visible: can('payment-gateway:manage'),
+      count: 0,
+      events: [],
+      loading
     }
   };
 }
@@ -800,23 +816,141 @@ function readCachedNotifications() {
     const raw = window.localStorage.getItem(notificationCacheKey());
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    return parsed && typeof parsed === 'object' ? notificationCachePayload(parsed) : null;
   } catch {
     return null;
   }
 }
 
+function readSeenPaymentNotificationIds() {
+  if (!state.auth) return new Set();
+  try {
+    const raw = window.localStorage.getItem(paymentNotificationSeenKey());
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeSeenPaymentNotificationIds(ids = new Set()) {
+  if (!state.auth) return;
+  try {
+    const values = Array.from(ids).slice(-PAYMENT_NOTIFICATION_SEEN_LIMIT);
+    window.localStorage.setItem(paymentNotificationSeenKey(), JSON.stringify(values));
+  } catch {
+    // Dedupe notifikasi pembayaran tetap best effort.
+  }
+}
+
+function notificationCachePayload(notifications = {}) {
+  const next = { ...notifications };
+  if (next.onlinePayments) {
+    next.onlinePayments = {
+      ...next.onlinePayments,
+      count: 0,
+      message: '',
+      events: []
+    };
+  }
+  return next;
+}
+
 function writeCachedNotifications(notifications = {}) {
   if (!state.auth) return;
   try {
-    window.localStorage.setItem(notificationCacheKey(), JSON.stringify(notifications));
+    window.localStorage.setItem(notificationCacheKey(), JSON.stringify(notificationCachePayload(notifications)));
   } catch {
     // Browser storage can be disabled; live API data still works.
   }
 }
 
+function prunePaymentNotifications() {
+  const now = Date.now();
+  state.paymentNotifications = (state.paymentNotifications || []).filter((item) => item.expiresAt > now);
+}
+
+function clearPaymentNotifications() {
+  paymentNotificationTimers.forEach((timer) => window.clearTimeout(timer));
+  paymentNotificationTimers.clear();
+  state.paymentNotifications = [];
+}
+
+function closePaymentNotification(id) {
+  state.paymentNotifications = (state.paymentNotifications || []).filter((item) => item.id !== id);
+  const timer = paymentNotificationTimers.get(id);
+  if (timer) window.clearTimeout(timer);
+  paymentNotificationTimers.delete(id);
+  setNotificationMenu(state.notifications || notificationBasePayload());
+}
+
+function showBrowserPaymentNotification(item = {}) {
+  if (!('Notification' in window)) return;
+  const notify = () => {
+    if (window.Notification.permission !== 'granted') return;
+    try {
+      const browserNotification = new window.Notification(item.title || 'Pembayaran online masuk', {
+        body: item.description || 'Pembayaran online berhasil.',
+        tag: `fakenet-payment-${item.id || Date.now()}`
+      });
+      window.setTimeout(() => browserNotification.close(), PAYMENT_NOTIFICATION_TTL_MS);
+    } catch {
+      // Browser notification can be unavailable on insecure origins; bell notification still appears.
+    }
+  };
+  if (window.Notification.permission === 'granted') {
+    notify();
+    return;
+  }
+  if (window.Notification.permission === 'default') {
+    window.Notification.requestPermission()
+      .then((permission) => {
+        if (permission === 'granted') notify();
+      })
+      .catch(() => {});
+  }
+}
+
+function ensureBrowserNotificationPermission() {
+  if (!('Notification' in window)) return;
+  if (window.Notification.permission !== 'default') return;
+  window.Notification.requestPermission().catch(() => {});
+}
+
+function ingestPaymentNotifications(notifications = {}) {
+  const onlinePayments = notifications.onlinePayments || {};
+  if (!onlinePayments.visible || !Array.isArray(onlinePayments.events)) return;
+  const seen = readSeenPaymentNotificationIds();
+  let changed = false;
+  onlinePayments.events.forEach((event) => {
+    const id = String(event.id || `${event.type || 'payment'}:${event.reference || ''}:${event.paidAt || ''}`).trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    changed = true;
+    const item = {
+      id,
+      type: 'payment',
+      count: 1,
+      title: event.title || 'Pembayaran online masuk',
+      description: event.description || [event.customerName, event.amountText].filter(Boolean).join(' - ') || 'Pembayaran online berhasil.',
+      tone: 'warning',
+      action: 'paymentGateway',
+      expiresAt: Date.now() + PAYMENT_NOTIFICATION_TTL_MS
+    };
+    state.paymentNotifications.push(item);
+    showBrowserPaymentNotification(item);
+    const timer = window.setTimeout(() => closePaymentNotification(id), PAYMENT_NOTIFICATION_TTL_MS);
+    paymentNotificationTimers.set(id, timer);
+  });
+  if (changed) writeSeenPaymentNotificationIds(seen);
+}
+
 function notificationItems(notifications = {}) {
+  prunePaymentNotifications();
   const items = [];
+  for (const payment of state.paymentNotifications || []) {
+    items.push(payment);
+  }
   const billing = notifications.billing || {};
   const inventory = notifications.inventory || {};
   const asset = notifications.asset || {};
@@ -915,13 +1049,16 @@ function setNotificationMenu(notifications = {}) {
 }
 
 function applyNotifications(payload = {}) {
-  const notifications = payload.notifications || payload || {};
+  const rawNotifications = payload.notifications || payload || {};
+  ingestPaymentNotifications(rawNotifications);
+  const notifications = notificationCachePayload(rawNotifications);
   state.notifications = notifications;
   writeCachedNotifications(notifications);
   setNotificationMenu(notifications);
 }
 
 function hideNotifications() {
+  clearPaymentNotifications();
   state.notifications = null;
   if (notificationMenu) notificationMenu.hidden = true;
   closeNotificationPanel();
@@ -936,6 +1073,7 @@ function toggleNotificationPanel() {
   if (!notificationPanel || !notificationButton) return;
   const nextOpen = notificationPanel.hidden;
   if (nextOpen) {
+    ensureBrowserNotificationPermission();
     renderNotificationPanel(state.notifications || {});
   }
   notificationPanel.hidden = !nextOpen;
@@ -961,6 +1099,11 @@ function openNotificationTarget(action) {
     state.monitoringBillingSite = 'all';
     state.monitoringBillingPage = 1;
     setView('monitoringBilling');
+    return;
+  }
+  if (action === 'paymentGateway') {
+    state.search = '';
+    setView('paymentGateway');
   }
 }
 
@@ -994,6 +1137,7 @@ function startNotificationsTimer() {
   }
   const cached = readCachedNotifications();
   const initialNotifications = cached || notificationBasePayload(true);
+  clearPaymentNotifications();
   state.notifications = initialNotifications;
   setNotificationMenu(initialNotifications);
   refreshNotifications({ force: true });
@@ -8982,7 +9126,7 @@ function openGenieWifiModal(row = {}) {
         data-ssid="${escapeHtml(network.ssid || '')}"
         data-password="${escapeHtml(network.password || '')}"
         data-password-parameter="${escapeHtml(network.passwordParameter || '')}"
-        data-password-enabled="${network.password ? 'true' : 'false'}"
+        data-password-enabled="${network.securityEnabled || network.password ? 'true' : 'false'}"
         ${network.ssidParameter === firstNetwork.ssidParameter ? 'selected' : ''}>
         ${escapeHtml(genieWifiOptionLabel(network))}
       </option>
@@ -9009,7 +9153,7 @@ function openGenieWifiModal(row = {}) {
       <input name="password" id="genieWifiPasswordInput" type="password" minlength="8" maxlength="63" value="${escapeHtml(firstNetwork.password || '')}" autocomplete="new-password">
     </label>
     <label class="field checkbox-field">
-      <input name="usePassword" id="genieWifiUsePassword" type="checkbox" value="true" ${firstNetwork.password ? 'checked' : ''}>
+      <input name="usePassword" id="genieWifiUsePassword" type="checkbox" value="true" ${firstNetwork.securityEnabled || firstNetwork.password ? 'checked' : ''}>
       <span>Gunakan WPA/WPA2 password</span>
     </label>
     <label class="field checkbox-field">
@@ -9158,7 +9302,7 @@ async function renderGenieAcs(options = {}) {
 
       <div class="toolbar">
         <div class="filters">
-          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari username, serial, device" autocomplete="off">
+          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari PPPoE, IP, NAS, serial, device" autocomplete="off">
           <select class="control" id="genieAcsStatusFilter">
             <option value="all" ${state.genieAcsStatus === 'all' ? 'selected' : ''}>Semua Status</option>
             <option value="online" ${state.genieAcsStatus === 'online' ? 'selected' : ''}>Online</option>
@@ -9191,10 +9335,11 @@ async function renderGenieAcs(options = {}) {
                 <th class="select-cell"><input type="checkbox" id="genieAcsSelectAll" aria-label="Pilih semua device" ${writeAllowed ? '' : 'disabled'}></th>
                 <th>No</th>
                 <th>Status</th>
-                <th>Tag</th>
                 <th>PPPoE</th>
+                <th>IP Address</th>
+                <th>NAS</th>
                 <th>Type Modem</th>
-                <th>Serial Number</th>
+                <th>SN</th>
                 <th>Redaman</th>
                 <th>Total Active</th>
                 <th>Aksi</th>
@@ -9207,17 +9352,15 @@ async function renderGenieAcs(options = {}) {
                   <td>${displayNumber(startNo + index)}</td>
                   <td>${genieStatusBadge(row)}</td>
                   <td>
-                    <span class="tag-list-text">${escapeHtml(genieTagText(row))}</span>
-                  </td>
-                  <td>
                     <strong>${escapeHtml(row.username || '-')}</strong>
                   </td>
+                  <td>${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}</td>
+                  <td>${escapeHtml(row.nasName || row.nasIpAddress || '-')}</td>
                   <td>${escapeHtml(row.productClass || '-')}</td>
                   <td><code>${escapeHtml(row.serialNumber || '-')}</code></td>
                   <td><strong>${escapeHtml(row.rxPowerText || '-')}</strong></td>
                   <td>
                     <strong>${displayNumber(row.wifiClientsTotal || 0)}</strong>
-                    <div class="muted">2.4G ${displayNumber(row.wifiClients24 || 0)} / 5G ${displayNumber(row.wifiClients5 || 0)}</div>
                   </td>
                   <td>
                     ${writeAllowed ? `<div class="row-actions genieacs-actions">
@@ -9226,7 +9369,7 @@ async function renderGenieAcs(options = {}) {
                     </div>` : '-'}
                   </td>
                 </tr>
-              `).join('') : '<tr><td colspan="10" class="empty">Belum ada device sesuai filter.</td></tr>'}
+              `).join('') : '<tr><td colspan="11" class="empty">Belum ada device sesuai filter.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -9360,7 +9503,7 @@ function monitoringCustomerRows(sites = [], type = 'pppoe') {
       interfaceName: user.interfaceName || user.username || '-',
       customerName: user.customerName || '',
       profile: user.profile || '',
-      ipAddress: user.ipAddress || user.framedIpAddress || '',
+      ipAddress: user.framedIpAddress || user.ipAddress || user.staticIp || '',
       framedIpAddress: user.framedIpAddress || '',
       staticIp: user.staticIp || '',
       macAddress: user.macAddress || user.callingStationId || '',
@@ -9457,7 +9600,7 @@ async function renderMonitoringCustomers(options = {}) {
       <section class="section">
         <div class="section-head">
           <h2>Pelanggan per Site</h2>
-          <span class="muted">Daftar aktif dan IP pelanggan diprioritaskan dari SNMP router, FreeRADIUS hanya fallback.</span>
+          <span class="muted">IP pelanggan diprioritaskan dari session FreeRADIUS, data SNMP tetap dipakai sebagai pendukung site/interface.</span>
         </div>
         <div class="site-grid">
           ${sites.length ? sites.map((site) => `

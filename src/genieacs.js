@@ -77,6 +77,15 @@ function cleanText(value = '') {
   return String(value || '').trim();
 }
 
+function validIpv4(value = '') {
+  const parts = cleanText(value).split('.');
+  return parts.length === 4 && parts.every((part) => {
+    if (!/^\d+$/.test(part)) return false;
+    const number = Number(part);
+    return number >= 0 && number <= 255;
+  });
+}
+
 function normalizeSettings(settings = {}) {
   const raw = settings.genieAcs && typeof settings.genieAcs === 'object' ? settings.genieAcs : settings;
   const baseUrl = cleanText(process.env.GENIEACS_BASE_URL || raw.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
@@ -205,6 +214,55 @@ function firstParameter(device = {}, paths = []) {
   return { path: '', value: '' };
 }
 
+function firstIpParameter(device = {}, paths = []) {
+  let fallback = { path: '', value: '' };
+  for (const path of paths) {
+    const value = getPathValue(device, path);
+    if (!value) continue;
+    if (!fallback.value) fallback = { path, value };
+    if (validIpv4(value)) return { path, value };
+  }
+  return fallback;
+}
+
+function pppIpParameterCandidates(usernameParameter = '') {
+  const parameter = cleanText(usernameParameter);
+  const candidates = [];
+  if (parameter.endsWith('.Username')) {
+    const base = parameter.replace(/\.Username$/, '');
+    candidates.push(
+      `${base}.ExternalIPAddress`,
+      `${base}.X_HW_ExternalIPAddress`,
+      `${base}.X_ZTE-COM_ExternalIPAddress`,
+      `${base}.X_FH_ExternalIPAddress`,
+      `${base}.IPAddress`,
+      `${base}.IPCP.LocalIPAddress`
+    );
+    const connectionBase = base.replace(/\.WANPPPConnection\.\d+$/, '');
+    if (connectionBase !== base) {
+      candidates.push(
+        `${connectionBase}.WANIPConnection.1.ExternalIPAddress`,
+        `${connectionBase}.WANIPConnection.1.X_HW_ExternalIPAddress`,
+        `${connectionBase}.WANIPConnection.1.X_ZTE-COM_ExternalIPAddress`,
+        `${connectionBase}.WANIPConnection.1.IPAddress`
+      );
+    }
+  }
+  candidates.push(
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress',
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.ExternalIPAddress',
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ExternalIPAddress',
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.ExternalIPAddress',
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.4.WANPPPConnection.1.ExternalIPAddress',
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress',
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANIPConnection.1.ExternalIPAddress',
+    'Device.PPP.Interface.1.IPCP.LocalIPAddress',
+    'Device.IP.Interface.1.IPv4Address.1.IPAddress',
+    'Device.IP.Interface.2.IPv4Address.1.IPAddress'
+  );
+  return [...new Set(candidates)];
+}
+
 function normalizeRxPower(value = '', parameter = '') {
   const text = cleanText(value);
   if (!text) return '';
@@ -299,6 +357,16 @@ function normalizeWifiNetworks(device = {}) {
       ? truthyWifiValue(enable.value)
       : (status.exists ? truthyWifiValue(status.value) : true);
     const password = firstExistingParameter(device, wifiPasswordParameterCandidates(index));
+    const securityValues = [
+      getPathState(device, `${base}.BeaconType`).value,
+      getPathState(device, `${base}.BasicAuthenticationMode`).value,
+      getPathState(device, `${base}.WPAAuthenticationMode`).value,
+      getPathState(device, `${base}.WPAEncryptionModes`).value,
+      getPathState(device, `${base}.IEEE11iAuthenticationMode`).value,
+      getPathState(device, `${base}.IEEE11iEncryptionModes`).value
+    ].filter(Boolean);
+    const securityText = securityValues.join(' / ');
+    const securityEnabled = Boolean(password.value) || /wpa|11i|psk/i.test(securityText);
     const clients = firstParameter(device, wifiClientCountCandidates(index));
     const band = wifiBandForIndex(index, ssid.value);
     return {
@@ -311,6 +379,8 @@ function normalizeWifiNetworks(device = {}) {
       password: password.value,
       passwordParameter: password.path,
       passwordWritable: password.writable,
+      securityText,
+      securityEnabled,
       clients: normalizeCount(clients.value),
       clientsParameter: clients.path,
       status: status.value || (enabled ? 'Up' : 'Disabled'),
@@ -327,6 +397,7 @@ function safeTags(value = []) {
 function normalizeDevice(device = {}, settings = {}) {
   const cfg = normalizeSettings(settings);
   const username = firstParameter(device, cfg.usernameParameters);
+  const pppIpAddress = firstIpParameter(device, pppIpParameterCandidates(username.path));
   const rxPower = firstParameter(device, cfg.rxPowerParameters);
   const ssid24 = firstParameter(device, cfg.wifiSsidParameters);
   const ssid5 = firstParameter(device, cfg.wifi5gSsidParameters);
@@ -363,6 +434,8 @@ function normalizeDevice(device = {}, settings = {}) {
     manufacturer,
     username: username.value,
     usernameParameter: username.path,
+    ipAddress: pppIpAddress.value,
+    ipAddressParameter: pppIpAddress.path,
     rxPower: rxPower.value,
     rxPowerValue: rxPowerNumber(rxPower.value, rxPower.path),
     rxPowerText: normalizeRxPower(rxPower.value, rxPower.path),
@@ -397,7 +470,17 @@ function searchQuery(search = '') {
       { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username._value': matcher },
       { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.Username._value': matcher },
       { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.Username._value': matcher },
-      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.4.WANPPPConnection.1.Username._value': matcher }
+      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.4.WANPPPConnection.1.Username._value': matcher },
+      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress._value': matcher },
+      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.ExternalIPAddress._value': matcher },
+      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ExternalIPAddress._value': matcher },
+      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.ExternalIPAddress._value': matcher },
+      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.4.WANPPPConnection.1.ExternalIPAddress._value': matcher },
+      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress._value': matcher },
+      { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANIPConnection.1.ExternalIPAddress._value': matcher },
+      { 'Device.PPP.Interface.1.IPCP.LocalIPAddress._value': matcher },
+      { 'Device.IP.Interface.1.IPv4Address.1.IPAddress._value': matcher },
+      { 'Device.IP.Interface.2.IPv4Address.1.IPAddress._value': matcher }
     ]
   };
 }

@@ -429,6 +429,11 @@ button {
   mask: var(--icon-asset) center / contain no-repeat;
 }
 
+.notification-item-icon.payment::before {
+  -webkit-mask: var(--icon-payment) center / contain no-repeat;
+  mask: var(--icon-payment) center / contain no-repeat;
+}
+
 .notification-item strong {
   display: block;
   margin-bottom: 3px;

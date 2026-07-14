@@ -1099,15 +1099,34 @@ async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPer
   };
 }
 
+function resolveGenieAcsNas(data = {}, row = {}, radiusUser = {}) {
+  const direct = radiusFindNas(data, radiusUser.nasId || radiusUser.nasName || radiusUser.nas || row.nasId || row.nasName || row.nasIpAddress);
+  if (direct) return direct;
+
+  const tags = Array.isArray(row.tags)
+    ? row.tags.map((tag) => String(tag || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const entries = freeradius.radiusNasEntries(data, { includeUnconfigured: true });
+  if (tags.length) {
+    const tagged = entries.find((nas) => {
+      return [nas.id, nas.name, nas.address, nas.site].some((value) => tags.includes(String(value || '').trim().toLowerCase()));
+    });
+    if (tagged) return tagged;
+  }
+
+  const activeSiteNas = entries.filter((nas) => nas.active !== false && nas.source === 'site');
+  return activeSiteNas.length === 1 ? activeSiteNas[0] : {};
+}
+
 async function enrichGenieAcsRowsWithLocalData(data = {}, rows = [], period = currentPeriod()) {
+  void period;
   const customers = radiusCustomerDirectory(data);
   const usersByUsername = radiusUserByUsername(data);
-  const usernames = rows.map((row) => row.username).filter(Boolean);
-  const usagePayload = await freeradiusSessions.monthlyUsageByUsernames(usernames, period);
   return rows.map((row) => {
     const radiusUser = usersByUsername.get(radiusSessionUsername(row.username)) || {};
     const customer = customers.get(radiusUser.customerId) || findCustomerForRadiusUser(data, radiusUser) || {};
-    const usage = usageRowForUsername(usagePayload, row.username);
+    const nas = resolveGenieAcsNas(data, row, radiusUser);
+    const acsIpAddress = row.ipAddress || row.pppoeIpAddress || '';
     return {
       ...row,
       customerId: customer.id || '',
@@ -1116,13 +1135,20 @@ async function enrichGenieAcsRowsWithLocalData(data = {}, rows = [], period = cu
       address: customer.address || '',
       radiusStatus: radiusUser.status || customer.status || '',
       packageName: customer.packageName || '',
+      nasName: nas.name || radiusUser.nasName || row.nasName || '',
+      nasIpAddress: nas.address || row.nasIpAddress || '',
+      ipAddress: acsIpAddress,
+      framedIpAddress: acsIpAddress,
+      staticIp: radiusUser.staticIp || '',
+      sessionOnline: false,
+      sessionSource: 'genieacs',
       usage: {
-        inputOctets: usage.inputOctets || 0,
-        outputOctets: usage.outputOctets || 0,
-        totalOctets: usage.totalOctets || 0,
-        upload: usage.upload || '0 B',
-        download: usage.download || '0 B',
-        totalUsageText: usage.totalUsageText || '0 B'
+        inputOctets: 0,
+        outputOctets: 0,
+        totalOctets: 0,
+        upload: '0 B',
+        download: '0 B',
+        totalUsageText: '0 B'
       }
     };
   });
@@ -3168,14 +3194,15 @@ function monitoringCustomerRowKey(row = {}, fallbackType = '') {
 
 function enrichMonitoringCustomerRow(row = {}, radiusRow = null, fallbackType = '') {
   const type = row.type || fallbackType || radiusRow?.type || '';
+  const radiusIpAddress = radiusRow?.framedIpAddress || radiusRow?.ipAddress || '';
   return {
     ...(radiusRow || {}),
     ...row,
     type,
     customerName: row.customerName || radiusRow?.customerName || '',
     profile: row.profile || radiusRow?.profile || '',
-    ipAddress: row.ipAddress || radiusRow?.ipAddress || '',
-    framedIpAddress: row.framedIpAddress || radiusRow?.framedIpAddress || '',
+    ipAddress: radiusIpAddress || row.ipAddress || row.staticIp || '',
+    framedIpAddress: radiusRow?.framedIpAddress || row.framedIpAddress || '',
     staticIp: row.staticIp || radiusRow?.staticIp || '',
     macAddress: row.macAddress || radiusRow?.macAddress || '',
     nasIpAddress: row.nasIpAddress || radiusRow?.nasIpAddress || '',
@@ -3293,8 +3320,8 @@ function applyRadiusSessionsToMonitoringCustomers(data = {}, payload = {}, sessi
       ...previousSummary,
       ...summary,
       siteCount: sites.length,
-      customerMode: 'snmp-list-and-radius-fallback',
-      onlineMeaning: 'snmp-active-interfaces-with-radius-fallback',
+      customerMode: 'snmp-list-and-radius-ip-priority',
+      onlineMeaning: 'snmp-active-interfaces-with-radius-session-ip',
       generatedAt: new Date().toISOString(),
       sourceMode: 'mikrotik-snmp+freeradius-radacct',
       sessionSource: sessionPayload.source || 'freeradius-radacct',
@@ -6791,6 +6818,12 @@ async function notificationSummary(data = {}, user = {}) {
       amount: 0,
       message: '',
       error: ''
+    },
+    onlinePayments: {
+      visible: auth.hasPermission(user, 'payment-gateway:manage'),
+      count: 0,
+      message: '',
+      events: []
     }
   };
 
@@ -6828,6 +6861,43 @@ async function notificationSummary(data = {}, user = {}) {
     notifications.billing.message = notifications.billing.count
       ? `${notifications.billing.count} pelanggan belum bayar`
       : 'Tagihan aman';
+  }
+
+  if (notifications.onlinePayments.visible) {
+    const cutoff = Date.now() - (10 * 60 * 1000);
+    const rows = (data.paymentGatewayTransactions || [])
+      .filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()))
+      .filter((row) => {
+        const timestamp = Date.parse(row.paidAt || row.paymentAt || row.updatedAt || row.createdAt || '');
+        return Number.isFinite(timestamp) && timestamp >= cutoff;
+      })
+      .sort((a, b) => Date.parse(b.paidAt || b.paymentAt || b.updatedAt || b.createdAt || '') - Date.parse(a.paidAt || a.paymentAt || a.updatedAt || a.createdAt || ''))
+      .slice(0, 10);
+    notifications.onlinePayments.count = rows.length;
+    notifications.onlinePayments.message = rows.length
+      ? `${rows.length} pembayaran online terbaru`
+      : '';
+    notifications.onlinePayments.events = rows.map((row) => {
+      const kind = paymentGatewayTransactionKind(row);
+      const reference = row.invoiceNo || row.reference || row.externalId || row.id || '';
+      const customerName = row.customerName || row.username || row.paidByName || '';
+      const amount = Number(row.amount || row.baseAmount || 0);
+      return {
+        id: row.id || `${kind}:${reference}:${row.paidAt || row.paymentAt || row.updatedAt || ''}`,
+        type: kind,
+        title: `${paymentGatewayTransactionKindLabel(kind)} dibayar`,
+        description: [
+          customerName || reference || 'Pembayaran online',
+          formatCurrencyText(amount)
+        ].filter(Boolean).join(' - '),
+        amount,
+        amountText: formatCurrencyText(amount),
+        reference,
+        customerName,
+        paidAt: row.paidAt || row.paymentAt || row.updatedAt || row.createdAt || '',
+        paidAtText: dateTimeDisplayText(row.paidAt || row.paymentAt || row.updatedAt || row.createdAt || '')
+      };
+    });
   }
 
   return notifications;
@@ -9011,9 +9081,10 @@ async function handleApi(req, res, url) {
         search,
         status
       });
+      const rows = await enrichGenieAcsRowsWithLocalData(authContext.data, payload.rows || [], currentPeriod());
       sendJson(res, 200, {
         ...payload,
-        rows: payload.rows || [],
+        rows,
         settings: genieAcs.normalizeSettings(authContext.data.settings || {})
       });
     } catch (error) {
