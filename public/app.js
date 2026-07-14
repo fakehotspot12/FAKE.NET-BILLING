@@ -9330,6 +9330,19 @@ async function renderGenieAcs(options = {}) {
         </div>
         <div class="table-wrap genieacs-table-wrap">
           <table class="genieacs-table">
+            <colgroup>
+              <col class="genie-col-select">
+              <col class="genie-col-no">
+              <col class="genie-col-status">
+              <col class="genie-col-pppoe">
+              <col class="genie-col-ip">
+              <col class="genie-col-nas">
+              <col class="genie-col-type">
+              <col class="genie-col-sn">
+              <col class="genie-col-redaman">
+              <col class="genie-col-active">
+              <col class="genie-col-action">
+            </colgroup>
             <thead>
               <tr>
                 <th class="select-cell"><input type="checkbox" id="genieAcsSelectAll" aria-label="Pilih semua device" ${writeAllowed ? '' : 'disabled'}></th>
@@ -9351,15 +9364,15 @@ async function renderGenieAcs(options = {}) {
                   <td class="select-cell"><input type="checkbox" data-genieacs-select="${index}" aria-label="Pilih device ${escapeHtml(row.serialNumber || row.id || '')}" ${writeAllowed ? '' : 'disabled'}></td>
                   <td>${displayNumber(startNo + index)}</td>
                   <td>${genieStatusBadge(row)}</td>
-                  <td>
+                  <td class="genieacs-primary-cell" title="${escapeHtml(row.username || '-')}">
                     <strong>${escapeHtml(row.username || '-')}</strong>
                   </td>
-                  <td>${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}</td>
-                  <td>${escapeHtml(row.nasName || row.nasIpAddress || '-')}</td>
-                  <td>${escapeHtml(row.productClass || '-')}</td>
-                  <td><code>${escapeHtml(row.serialNumber || '-')}</code></td>
-                  <td><strong>${escapeHtml(row.rxPowerText || '-')}</strong></td>
-                  <td>
+                  <td class="genieacs-nowrap" title="${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}">${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}</td>
+                  <td class="genieacs-truncate" title="${escapeHtml(row.nasName || row.nasIpAddress || '-')}">${escapeHtml(row.nasName || row.nasIpAddress || '-')}</td>
+                  <td class="genieacs-truncate" title="${escapeHtml(row.productClass || '-')}">${escapeHtml(row.productClass || '-')}</td>
+                  <td class="genieacs-sn-cell" title="${escapeHtml(row.serialNumber || '-')}"><code>${escapeHtml(row.serialNumber || '-')}</code></td>
+                  <td class="genieacs-nowrap"><strong>${escapeHtml(row.rxPowerText || '-')}</strong></td>
+                  <td class="genieacs-number-cell">
                     <strong>${displayNumber(row.wifiClientsTotal || 0)}</strong>
                   </td>
                   <td>

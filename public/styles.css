@@ -3983,7 +3983,13 @@ td {
 }
 
 .genieacs-table {
-  table-layout: auto;
+  min-width: 1080px;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.genieacs-table-wrap {
+  width: 100%;
 }
 
 .genieacs-summary {
@@ -4001,11 +4007,83 @@ td {
 
 .genieacs-table th,
 .genieacs-table td {
+  max-width: none;
+  overflow-wrap: normal;
+  padding: 9px 10px;
   vertical-align: middle;
 }
 
+.genieacs-table th {
+  white-space: nowrap;
+}
+
 .genieacs-table code {
+  display: block;
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genieacs-table .genie-col-select {
+  width: 34px;
+}
+
+.genieacs-table .genie-col-no {
+  width: 50px;
+}
+
+.genieacs-table .genie-col-status {
+  width: 92px;
+}
+
+.genieacs-table .genie-col-pppoe {
+  width: 140px;
+}
+
+.genieacs-table .genie-col-ip {
+  width: 122px;
+}
+
+.genieacs-table .genie-col-nas {
+  width: 140px;
+}
+
+.genieacs-table .genie-col-type {
+  width: 118px;
+}
+
+.genieacs-table .genie-col-sn {
+  width: 150px;
+}
+
+.genieacs-table .genie-col-redaman {
+  width: 92px;
+}
+
+.genieacs-table .genie-col-active {
+  width: 98px;
+}
+
+.genieacs-table .genie-col-action {
+  width: 124px;
+}
+
+.genieacs-primary-cell strong,
+.genieacs-truncate,
+.genieacs-sn-cell,
+.genieacs-nowrap {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.genieacs-primary-cell strong {
+  display: block;
+}
+
+.genieacs-number-cell {
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -4023,6 +4101,8 @@ td {
   display: inline-flex;
   flex-wrap: nowrap;
   gap: 5px;
+  justify-content: flex-end;
+  width: 100%;
 }
 
 .genieacs-actions .ghost-button,
