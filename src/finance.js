@@ -65,11 +65,14 @@ function clampDay(day) {
   if (!Number.isFinite(parsed)) {
     return 10;
   }
-  return Math.max(1, Math.min(28, Math.round(parsed)));
+  return Math.max(1, Math.min(31, Math.round(parsed)));
 }
 
 function dueDateForPeriod(period, day) {
-  return `${period}-${String(clampDay(day)).padStart(2, '0')}`;
+  const safePeriod = normalizePeriod(period);
+  const [year, month] = safePeriod.split('-').map((item) => Number(item));
+  const daysInMonth = new Date(Date.UTC(year || 1970, month || 1, 0)).getUTCDate();
+  return `${safePeriod}-${String(Math.min(clampDay(day), daysInMonth)).padStart(2, '0')}`;
 }
 
 function addMonthsToPeriod(period = currentPeriod(), offset = 0) {

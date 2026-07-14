@@ -2203,6 +2203,29 @@ function normalizeImportDate(value = '') {
   return raw;
 }
 
+function periodFromDateInput(value = '') {
+  const normalized = normalizeImportDate(value);
+  const match = String(normalized || '').match(/^(\d{4})-(\d{2})(?:-\d{2})?/);
+  return match ? `${match[1]}-${match[2]}` : '';
+}
+
+function dayFromDateInput(value = '', fallback = 10) {
+  const normalized = normalizeImportDate(value);
+  const match = String(normalized || '').match(/^\d{4}-\d{2}-(\d{2})$/);
+  const parsed = match ? Number(match[1]) : Number(fallback);
+  if (!Number.isFinite(parsed)) return 10;
+  return Math.max(1, Math.min(31, Math.round(parsed)));
+}
+
+function anchoredDueDateFromActiveDate(activeDate = '', invoiceStatus = 'paid', fallbackDay = 10) {
+  const activePeriod = periodFromDateInput(activeDate);
+  if (!activePeriod) return '';
+  const dueDay = dayFromDateInput(activeDate, fallbackDay);
+  const status = String(invoiceStatus || 'paid').trim().toLowerCase();
+  const invoicePeriod = status === 'unpaid' ? activePeriod : addMonthsToPeriod(activePeriod, 1);
+  return dueDateForPeriod(invoicePeriod, dueDay);
+}
+
 function normalizeImportPaymentType(value = '') {
   const normalized = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
   if (['prepaid', 'prabayar', 'pra'].includes(normalized)) return 'prepaid';
@@ -2654,8 +2677,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
   if (!phone) {
     throw new Error('Nomor telepon/WhatsApp member wajib diisi');
   }
-  const activeDate = String(payload.memberActiveDate || payload.activeDate || localTodayIso()).trim();
-  const nextDue = String(payload.memberNextDue || payload.nextDue || payload.dueDate || '').trim();
+  const activeDate = normalizeImportDate(payload.memberActiveDate || payload.activeDate || localTodayIso());
   const memberName = String(payload.memberName || payload.customerName || '').trim();
   if (!memberName) {
     throw new Error('Nama Member wajib diisi');
@@ -2666,6 +2688,10 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
   const locationAccuracy = String(payload.memberLocationAccuracy || payload.locationAccuracy || '').trim();
   const locationUrl = latitude && longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}` : '';
   const invoiceStatus = String(payload.memberInvoiceStatus || payload.invoiceStatus || 'paid').trim().toLowerCase() === 'unpaid' ? 'unpaid' : 'paid';
+  const fallbackDueDay = payload.memberDueDay || data.settings?.billing?.postpaidDueDay || data.settings?.defaultDueDay || 10;
+  const dueDay = dayFromDateInput(activeDate, fallbackDueDay);
+  const explicitNextDue = normalizeImportDate(payload.memberNextDue || payload.nextDue || payload.dueDate || '');
+  const nextDue = explicitNextDue || anchoredDueDateFromActiveDate(activeDate, invoiceStatus, dueDay);
   const customer = addManualCustomer(data, {
     username,
     name: memberName,
@@ -2680,7 +2706,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     packageName: payload.memberPackageName || profile.name || payload.profile || '',
     price: payload.memberPrice || profile.price || 0,
     status: payload.memberStatus || (invoiceStatus === 'unpaid' ? 'pending' : 'active'),
-    dueDay: payload.memberDueDay || data.settings?.defaultDueDay || 10
+    dueDay
   });
 
   Object.assign(customer, {
@@ -2726,6 +2752,9 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   const phone = normalizeLocalPhone(payload.memberPhone || payload.phone || customer.whatsapp || customer.phone || '');
   const activeDate = normalizeImportDate(payload.memberActiveDate || payload.activeDate || customer.activeDate || '');
   const invoiceStatus = String(payload.memberInvoiceStatus || payload.invoiceStatus || customer.firstInvoiceStatus || 'paid').trim().toLowerCase() === 'unpaid' ? 'unpaid' : 'paid';
+  const fallbackDueDay = payload.memberDueDay || customer.dueDay || data.settings?.billing?.postpaidDueDay || data.settings?.defaultDueDay || 10;
+  const dueDay = activeDate ? dayFromDateInput(activeDate, fallbackDueDay) : dayFromDateInput(customer.activeDate, fallbackDueDay);
+  const explicitNextDue = normalizeImportDate(payload.memberNextDue || payload.nextDue || payload.dueDate || '');
   if (memberName) {
     customer.name = memberName;
     customer.customerName = memberName;
@@ -2743,6 +2772,7 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   customer.billingPeriod = normalizeImportBillingPeriod(payload.memberBillingPeriod || customer.billingPeriod || 'fixed');
   customer.ppn = String(payload.memberPpn || payload.ppn || customer.ppn || '').trim();
   customer.discount = String(payload.memberDiscount || payload.discount || customer.discount || '').trim();
+  customer.dueDay = dueDay;
   customer.firstInvoiceStatus = invoiceStatus;
   customer.initialInvoiceStatus = invoiceStatus;
   customer.radiusUserId = radiusUser.id || customer.radiusUserId || '';
@@ -2751,6 +2781,14 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   customer.site = nas.site || customer.site || '';
   customer.siteName = nas.site || nas.name || customer.siteName || '';
   if (activeDate) customer.activeDate = activeDate;
+  if (explicitNextDue) {
+    customer.nextDue = explicitNextDue;
+    customer.dueDate = explicitNextDue;
+  } else if (!customer.nextDue && !customer.dueDate && customer.activeDate) {
+    const anchoredDue = anchoredDueDateFromActiveDate(customer.activeDate, invoiceStatus, dueDay);
+    customer.nextDue = anchoredDue;
+    customer.dueDate = anchoredDue;
+  }
   if (!customer.code && !customer.accountId) {
     const memberCode = String(payload.memberCode || payload.accountId || generateMemberCode(data)).trim();
     customer.code = memberCode;
@@ -6121,13 +6159,17 @@ function nextUncoveredPeriods(data = {}, customerId = '', startPeriod = currentP
 function manualInvoiceBasePeriod(customer = {}) {
   const dueDateText = String(customer.nextDue || customer.dueDate || '').trim();
   if (dueDateText) {
-    return normalizePeriod(dueDateText.slice(0, 7));
+    return normalizePeriod(periodFromDateInput(dueDateText) || dueDateText.slice(0, 7));
   }
+  const activePeriod = periodFromDateInput(customer.activeDate || customer.installedAt || '');
   const firstInvoiceStatus = String(customer.firstInvoiceStatus || customer.initialInvoiceStatus || 'paid').toLowerCase();
   if (firstInvoiceStatus === 'unpaid') {
-    return currentPeriod();
+    return activePeriod || currentPeriod();
   }
   let cursor = currentPeriod();
+  if (activePeriod && normalizePeriod(cursor) < activePeriod) {
+    cursor = activePeriod;
+  }
   let guard = 0;
   while (!customerBillableInPeriod(customer, cursor) && guard < 120) {
     cursor = addMonthsToPeriod(cursor, 1);
@@ -6140,7 +6182,7 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
   const months = clampInteger(subPeriod, 1, 12, 1);
   const billingSettings = data.settings?.billing || {};
   const amount = Number(resolvePrice(data.settings || {}, customer) || customer.amount || 0) * months;
-  const dueDay = customer.dueDay || billingSettings.postpaidDueDay || data.settings?.defaultDueDay || 10;
+  const dueDay = customer.dueDay || dayFromDateInput(customer.activeDate || customer.installedAt || '', billingSettings.postpaidDueDay || data.settings?.defaultDueDay || 10);
   const baseInvoicePeriod = manualInvoiceBasePeriod(customer);
   const coveredPeriods = nextUncoveredPeriods(data, customer.id, baseInvoicePeriod, months);
   const period = coveredPeriods[0] || baseInvoicePeriod;
@@ -6163,6 +6205,60 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
     total: formatCurrencyText(amount),
     totalAmount: amount
   };
+}
+
+function createLocalManualInvoice(data = {}, customer = {}, subPeriod = 1, actor = {}, options = {}) {
+  const preview = localManualInvoicePreview(data, customer, subPeriod);
+  const conflicts = (preview.coveredPeriods || []).filter((period) => {
+    return customerInvoiceCoverage(data, customer.id).has(period);
+  });
+  if (conflicts.length) {
+    throw new Error(`Periode ${conflicts.map(periodDisplayText).join(', ')} untuk ${customer.name || customer.username} sudah memiliki invoice aktif. Refresh preview invoice terlebih dulu.`);
+  }
+  const now = new Date().toISOString();
+  const numbering = nextBillingInvoiceNo(data, preview.period);
+  const invoiceNo = numbering.invoiceNo;
+  const coveredPeriods = preview.coveredPeriods || [preview.period];
+  const invoice = {
+    id: createId('inv'),
+    source: options.source || 'manual',
+    externalId: invoiceNo,
+    invoiceNo,
+    invoiceSeq: numbering.invoiceSeq,
+    customerId: customer.id,
+    customerName: customer.name || customer.customerName || customer.username || '',
+    username: customer.username || '',
+    packageName: customer.packageName || preview.item || '',
+    period: preview.period,
+    coveredPeriods,
+    subPeriodMonths: preview.subPeriodMonths || Number(subPeriod) || 1,
+    coverageStartPeriod: coveredPeriods[0] || preview.period,
+    coverageEndPeriod: coveredPeriods[coveredPeriods.length - 1] || preview.period,
+    amount: Number(preview.totalAmount || 0),
+    dueDate: preview.dueDate,
+    status: Number(preview.totalAmount || 0) > 0 ? 'pending' : 'cancelled',
+    paidAt: '',
+    paymentMethod: '',
+    notes: options.notes || `Invoice manual ${preview.subscribe}`,
+    createdByName: actor.name || actor.username || '',
+    createdAt: now,
+    updatedAt: now
+  };
+  data.invoices.push(invoice);
+  const queued = options.queueWa === false ? null : queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+  if (queued) {
+    invoice.invoiceIssuedSentAt = now;
+  }
+  addActivity(data, 'invoice', `${options.activityLabel || 'Invoice manual'} ${invoice.invoiceNo} periode ${preview.coveredPeriodText || preview.period} dibuat oleh ${actor.name || actor.username || 'Sistem'}`, {
+    action: options.activityAction || 'manual-invoice',
+    invoiceId: invoice.id,
+    invoiceNo: invoice.invoiceNo,
+    coveredPeriods: invoice.coveredPeriods,
+    memberId: customer.id || '',
+    memberName: customer.name || customer.username || '',
+    waQueued: Boolean(queued)
+  });
+  return { invoice, preview, queued };
 }
 
 function normalizeWaPhone(phone = '') {
@@ -10308,6 +10404,8 @@ async function handleApi(req, res, url) {
             ? freeradius.updateRadiusUser(store, id, radiusUserPayload(payload, 'pppoe', store), authContext.user)
             : freeradius.deleteRadiusUser(store, id);
         let member = null;
+        let invoice = null;
+        let waQueued = null;
         let removedMember = null;
         let orphanMembers = [];
         let coa = null;
@@ -10317,6 +10415,16 @@ async function handleApi(req, res, url) {
           }
           member = radiusMemberFromPayload(store, payload, next, authContext.user);
           next.customerId = member.id;
+          if (String(member.firstInvoiceStatus || member.initialInvoiceStatus || '').toLowerCase() === 'unpaid') {
+            const created = createLocalManualInvoice(store, member, 1, authContext.user, {
+              source: 'initial-unpaid',
+              notes: 'Invoice awal pemasangan',
+              activityLabel: 'Invoice awal',
+              activityAction: 'initial-unpaid-invoice'
+            });
+            invoice = created.invoice;
+            waQueued = created.queued;
+          }
         }
         if (method === 'DELETE') {
           removedMember = deleteRadiusLinkedMember(store, next, authContext.user);
@@ -10342,12 +10450,14 @@ async function handleApi(req, res, url) {
         if (method !== 'POST') {
           coa = await freeradiusCoa.disconnectUser(store, next);
         }
-        return { user: next, member, removedMember, orphanMembers, coa };
+        return { user: next, member, invoice, waQueued, removedMember, orphanMembers, coa };
       });
       sendJson(res, 200, {
         ok: true,
         user: radiusUserRowsLocal(data, 'pppoe').find((row) => row.id === result.user?.id) || result.user,
         member: result.member || null,
+        invoice: result.invoice || null,
+        waQueued: result.waQueued || null,
         removedMember: result.removedMember || null,
         orphanMembers: result.orphanMembers || [],
         coa: result.coa || null
@@ -11568,52 +11678,7 @@ async function handleApi(req, res, url) {
           if (!customer) {
             throw new Error('Member tidak ditemukan');
           }
-          const preview = localManualInvoicePreview(data, customer, subPeriod);
-          const conflicts = (preview.coveredPeriods || []).filter((period) => {
-            return customerInvoiceCoverage(data, customer.id).has(period);
-          });
-          if (conflicts.length) {
-            throw new Error(`Periode ${conflicts.map(periodDisplayText).join(', ')} untuk ${customer.name || customer.username} sudah memiliki invoice aktif. Refresh preview invoice terlebih dulu.`);
-          }
-          const now = new Date().toISOString();
-          const numbering = nextBillingInvoiceNo(data, preview.period);
-          const invoiceNo = numbering.invoiceNo;
-          const coveredPeriods = preview.coveredPeriods || [preview.period];
-          const invoice = {
-            id: createId('inv'),
-            source: 'manual',
-            externalId: invoiceNo,
-            invoiceNo,
-            invoiceSeq: numbering.invoiceSeq,
-            customerId: customer.id,
-            customerName: customer.name || customer.customerName || customer.username || '',
-            username: customer.username || '',
-            packageName: customer.packageName || preview.item || '',
-            period: preview.period,
-            coveredPeriods,
-            subPeriodMonths: preview.subPeriodMonths || Number(subPeriod) || 1,
-            coverageStartPeriod: coveredPeriods[0] || preview.period,
-            coverageEndPeriod: coveredPeriods[coveredPeriods.length - 1] || preview.period,
-            amount: Number(preview.totalAmount || 0),
-            dueDate: preview.dueDate,
-            status: Number(preview.totalAmount || 0) > 0 ? 'pending' : 'cancelled',
-            paidAt: '',
-            paymentMethod: '',
-            notes: `Invoice manual ${preview.subscribe}`,
-            createdByName: authContext.user.name || authContext.user.username,
-            createdAt: now,
-            updatedAt: now
-          };
-          data.invoices.push(invoice);
-          addActivity(data, 'invoice', `Invoice manual ${invoice.invoiceNo} periode ${preview.coveredPeriodText || preview.period} dibuat oleh ${authContext.user.name || authContext.user.username}`, {
-            action: 'manual-invoice',
-            invoiceId: invoice.id,
-            invoiceNo: invoice.invoiceNo,
-            coveredPeriods: invoice.coveredPeriods,
-            memberId,
-            memberName: customer.name || customer.username || ''
-          });
-          return invoice;
+          return createLocalManualInvoice(data, customer, subPeriod, authContext.user).invoice;
         });
         sendJson(res, 200, {
           ok: true,

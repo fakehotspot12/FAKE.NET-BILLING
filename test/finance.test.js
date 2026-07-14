@@ -9,6 +9,7 @@ const {
   addExternalIncome,
   addMonthsToPeriod,
   currentPeriod,
+  dueDateForPeriod,
   generateInvoices,
   invoiceRuntimeStatus,
   deleteExpense,
@@ -145,6 +146,7 @@ test('local manual invoice skips active month when first invoice was paid', () =
   data.settings.billing = { postpaidDueDay: 10 };
   const activePeriod = currentPeriod();
   const nextPeriod = addMonthsToPeriod(activePeriod, 1);
+  const dueDay = 20;
   const customer = {
     id: 'cus-manual-paid',
     username: 'rahul',
@@ -152,7 +154,7 @@ test('local manual invoice skips active month when first invoice was paid', () =
     packageName: 'Paket 10 Mbps',
     amount: 150000,
     status: 'active',
-    activeDate: `${activePeriod}-15`,
+    activeDate: `${activePeriod}-${String(dueDay).padStart(2, '0')}`,
     firstInvoiceStatus: 'paid'
   };
   data.customers.push(customer);
@@ -160,7 +162,7 @@ test('local manual invoice skips active month when first invoice was paid', () =
   const preview = serverInternals.localManualInvoicePreview(data, customer, 1);
 
   assert.equal(preview.period, nextPeriod);
-  assert.equal(preview.dueDate, `${nextPeriod}-10`);
+  assert.equal(preview.dueDate, dueDateForPeriod(nextPeriod, dueDay));
   assert.deepEqual(preview.coveredPeriods, [nextPeriod]);
 });
 
@@ -168,6 +170,7 @@ test('local manual invoice allows active month when first invoice is unpaid', ()
   const data = createDefaultStore();
   data.settings.billing = { postpaidDueDay: 10 };
   const activePeriod = currentPeriod();
+  const dueDay = 20;
   const customer = {
     id: 'cus-manual-unpaid',
     username: 'dayat',
@@ -175,7 +178,7 @@ test('local manual invoice allows active month when first invoice is unpaid', ()
     packageName: 'Paket 10 Mbps',
     amount: 150000,
     status: 'active',
-    activeDate: `${activePeriod}-15`,
+    activeDate: `${activePeriod}-${String(dueDay).padStart(2, '0')}`,
     firstInvoiceStatus: 'unpaid'
   };
   data.customers.push(customer);
@@ -183,8 +186,14 @@ test('local manual invoice allows active month when first invoice is unpaid', ()
   const preview = serverInternals.localManualInvoicePreview(data, customer, 1);
 
   assert.equal(preview.period, activePeriod);
-  assert.equal(preview.dueDate, `${activePeriod}-10`);
+  assert.equal(preview.dueDate, dueDateForPeriod(activePeriod, dueDay));
   assert.deepEqual(preview.coveredPeriods, [activePeriod]);
+});
+
+test('invoice due day supports end-of-month anchors', () => {
+  assert.equal(dueDateForPeriod('2026-01', 31), '2026-01-31');
+  assert.equal(dueDateForPeriod('2026-02', 31), '2026-02-28');
+  assert.equal(dueDateForPeriod('2028-02', 31), '2028-02-29');
 });
 
 test('deleting radius user removes linked member but keeps transaction history', () => {
