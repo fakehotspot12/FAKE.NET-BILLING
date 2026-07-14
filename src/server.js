@@ -1717,6 +1717,9 @@ function radiusSessionRowsLocal(data = {}, serviceType = 'pppoe', sessions = [])
       const profile = user ? (profiles.get(user.profileId) || {}) : {};
       const nas = (user && nasMap.get(user.nasId)) || nasAddressMap.get(String(session.nasIpAddress || '').toLowerCase()) || {};
       const customer = user ? (customers.get(user.customerId) || {}) : {};
+      const suppressedDuplicateCount = Number(session.suppressedDuplicateCount || 0);
+      const duplicateNote = suppressedDuplicateCount > 0 ? `${suppressedDuplicateCount} duplicate session disembunyikan` : '';
+      const usageNote = [session.usageNote || '', duplicateNote].filter(Boolean).join(' · ');
       return {
         id: session.id || session.uniqueId || `${session.username}-${session.startedAt}`,
         username: session.username,
@@ -1750,8 +1753,10 @@ function radiusSessionRowsLocal(data = {}, serviceType = 'pppoe', sessions = [])
         download: session.download || '',
         usageText: session.usageText || '',
         totalUsageText: session.totalUsageText || session.usageText || '',
-        usageNote: session.usageNote || '',
+        usageNote,
         usageSource: session.usageSource || '',
+        duplicateCount: Number(session.duplicateCount || 1),
+        suppressedDuplicateCount,
         service: user?.accessType || (serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE'),
         type: user?.accessType || (serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE'),
         server: nas.name || session.nasIpAddress || 'all',

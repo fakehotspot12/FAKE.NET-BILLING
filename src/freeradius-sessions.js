@@ -74,6 +74,33 @@ function activeSessionsQuery(limit, columns = new Set()) {
   const previousOutputExpr = octetExpr('previous', 'acctoutputoctets', 'acctoutputgigawords', columns);
   const activeTotalExpr = `(${inputExpr} + ${outputExpr})`;
   return `
+WITH active_ranked AS (
+  SELECT
+    radacct.*,
+    COUNT(*) OVER (
+      PARTITION BY
+        lower(COALESCE(radacct.username, '')),
+        COALESCE(radacct.nasipaddress::text, ''),
+        COALESCE(NULLIF(radacct.framedipaddress::text, ''), '__no_ip__'),
+        COALESCE(NULLIF(radacct.callingstationid, ''), '__no_calling__'),
+        COALESCE(NULLIF(radacct.calledstationid, ''), '__no_called__'),
+        COALESCE(NULLIF(radacct.servicetype, ''), '__no_service__'),
+        COALESCE(NULLIF(radacct.framedprotocol, ''), '__no_protocol__')
+    ) AS duplicate_count,
+    ROW_NUMBER() OVER (
+      PARTITION BY
+        lower(COALESCE(radacct.username, '')),
+        COALESCE(radacct.nasipaddress::text, ''),
+        COALESCE(NULLIF(radacct.framedipaddress::text, ''), '__no_ip__'),
+        COALESCE(NULLIF(radacct.callingstationid, ''), '__no_calling__'),
+        COALESCE(NULLIF(radacct.calledstationid, ''), '__no_called__'),
+        COALESCE(NULLIF(radacct.servicetype, ''), '__no_service__'),
+        COALESCE(NULLIF(radacct.framedprotocol, ''), '__no_protocol__')
+      ORDER BY COALESCE(radacct.acctupdatetime, radacct.acctstarttime) DESC, radacct.acctstarttime DESC, radacct.radacctid DESC
+    ) AS active_rank
+  FROM radacct
+  WHERE radacct.acctstoptime IS NULL
+)
 SELECT COALESCE(json_agg(row_to_json(active_sessions)), '[]'::json)::text
 FROM (
   SELECT
@@ -100,8 +127,10 @@ FROM (
     r.servicetype,
     r.framedprotocol,
     r.framedipaddress::text AS framedipaddress,
-    r.framedipv6address::text AS framedipv6address
-  FROM radacct r
+    r.framedipv6address::text AS framedipv6address,
+    COALESCE(r.duplicate_count, 1)::bigint AS duplicate_count,
+    GREATEST(COALESCE(r.duplicate_count, 1) - 1, 0)::bigint AS suppressed_duplicate_count
+  FROM active_ranked r
   LEFT JOIN LATERAL (
     SELECT
       ${previousInputExpr} AS input_octets,
@@ -115,7 +144,7 @@ FROM (
     ORDER BY previous.acctstoptime DESC
     LIMIT 1
   ) last_usage ON true
-  WHERE r.acctstoptime IS NULL
+  WHERE r.active_rank = 1
   ORDER BY r.acctstarttime DESC
   LIMIT ${rowLimit}
 ) active_sessions`;
@@ -315,6 +344,8 @@ function normalizeSession(row = {}) {
     framedProtocol: cleanText(row.framedprotocol),
     framedIpAddress: cleanInet(row.framedipaddress),
     framedIpv6Address: cleanInet(row.framedipv6address),
+    duplicateCount: numberValue(row.duplicate_count),
+    suppressedDuplicateCount: numberValue(row.suppressed_duplicate_count),
     status: 'online'
   };
 }

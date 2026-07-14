@@ -30,15 +30,18 @@ async function poll(reason = 'interval') {
       limit: LIMIT,
       allowCache: false
     });
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const suppressedDuplicates = rows.reduce((sum, row) => sum + Number(row.suppressedDuplicateCount || 0), 0);
     await heartbeat({
       ok: result.ok === true,
       reason,
       source: result.source || '',
-      rows: Array.isArray(result.rows) ? result.rows.length : 0,
+      rows: rows.length,
+      suppressedDuplicates,
       error: result.error || ''
     });
     if (result.ok) {
-      console.log(`Radius connector OK ${result.rows.length} session dari ${result.source}`);
+      console.log(`Radius connector OK ${rows.length} session dari ${result.source}${suppressedDuplicates ? `, ${suppressedDuplicates} duplicate disembunyikan` : ''}`);
     } else {
       console.error(`Radius connector gagal: ${result.error || 'FreeRADIUS tidak terbaca'}`);
     }
