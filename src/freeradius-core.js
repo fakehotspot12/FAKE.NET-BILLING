@@ -414,6 +414,7 @@ function addRadiusUser(data, input, actor) {
     paymentStatus,
     paidAt: paymentStatus === 'paid' ? (text(input.paidAt) || now) : '',
     amount: paymentStatus === 'free' ? 0 : Math.max(0, Math.round(numberValue(input.amount || input.price))),
+    activeDate: text(input.activeDate),
     note: text(input.note),
     createdAt: now,
     updatedAt: now,
@@ -504,6 +505,7 @@ function updateRadiusUser(data, id, input, actor) {
     item.paidAt = '';
   }
   item.amount = item.paymentStatus === 'free' ? 0 : Math.max(0, Math.round(numberValue(input.amount || input.price, item.amount || 0)));
+  item.activeDate = text(input.activeDate || item.activeDate);
   item.note = text(input.note);
   item.updatedAt = new Date().toISOString();
   item.updatedBy = actor?.name || actor?.username || 'Sistem';

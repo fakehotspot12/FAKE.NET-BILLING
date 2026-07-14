@@ -9,6 +9,7 @@ const path = require('path');
 const { promisify } = require('util');
 const { URL } = require('url');
 const ExcelJS = require('exceljs');
+const JSZip = require('jszip');
 const QRCode = require('qrcode');
 const packageInfo = require('../package.json');
 
@@ -1906,6 +1907,7 @@ function radiusUserPayload(payload = {}, serviceType = 'pppoe', data = {}) {
     paymentStatus,
     paidAt: payload.paidAt || '',
     amount: paymentStatus === 'free' ? 0 : (payload.amount || payload.price || ''),
+    activeDate: payload.memberActiveDate || payload.activeDate || '',
     note: payload.note || payload.notes || ''
   };
 }
@@ -1947,19 +1949,38 @@ function radiusProfilePayload(payload = {}, serviceType = 'pppoe') {
 }
 
 const PPP_IMPORT_COLUMNS = [
+  'no',
+  'type_user',
   'username',
   'password',
   'type',
   'profile',
   'nas',
+  'ip_address',
   'static_ip',
+  'service_name',
   'mac_address',
   'status',
+  'add_on_billing',
   'add_to_member',
+  'full_name',
   'member_name',
   'member_code',
+  'no_ktp_sim',
+  'ktp',
   'whatsapp',
+  'no_whatsapp',
+  'email',
   'address',
+  'payment_type',
+  'billing_period',
+  'create_invoice',
+  'invoice_status',
+  'active_date',
+  'ppn',
+  'ppn_%',
+  'discount_%',
+  'discount',
   'price',
   'note'
 ];
@@ -2042,8 +2063,16 @@ async function pppImportTemplateBuffer() {
         add_to_member: 'yes',
         member_name: 'Nama Pelanggan PPP',
         member_code: '',
+        ktp: '',
         whatsapp: '085246713195',
+        email: 'pelanggan@example.net',
         address: 'Alamat pelanggan PPP',
+        payment_type: 'postpaid',
+        billing_period: 'fixed',
+        invoice_status: 'paid',
+        active_date: localTodayIso(),
+        ppn: '',
+        discount: '',
         price: '150000',
         note: 'Contoh PPPoE: username dan password wajib'
       },
@@ -2059,8 +2088,16 @@ async function pppImportTemplateBuffer() {
         add_to_member: 'yes',
         member_name: 'Nama Pelanggan DHCP',
         member_code: '',
+        ktp: '',
         whatsapp: '085246713196',
+        email: 'pelanggan-dhcp@example.net',
         address: 'Alamat pelanggan DHCP',
+        payment_type: 'postpaid',
+        billing_period: 'fixed',
+        invoice_status: 'paid',
+        active_date: localTodayIso(),
+        ppn: '',
+        discount: '',
         price: '150000',
         note: 'Contoh DHCP: MAC address wajib, username boleh kosong'
       }
@@ -2077,8 +2114,16 @@ async function pppImportTemplateBuffer() {
       { kolom: 'add_to_member', wajib: 'Tidak', contoh: 'yes', keterangan: 'Isi yes jika user juga dibuatkan data member.' },
       { kolom: 'member_name', wajib: 'Jika add_to_member yes', contoh: 'Budi', keterangan: 'Nama pelanggan/member.' },
       { kolom: 'member_code', wajib: 'Tidak', contoh: '000001', keterangan: 'Boleh kosong, aplikasi akan pakai ID otomatis saat add member.' },
+      { kolom: 'ktp', wajib: 'Tidak', contoh: '6472xxxxxxxxxxxx', keterangan: 'Nomor identitas pelanggan jika tersedia.' },
       { kolom: 'whatsapp', wajib: 'Jika add_to_member yes', contoh: '085246713195', keterangan: 'Kolom diformat teks supaya angka 0 depan tidak hilang di Excel.' },
+      { kolom: 'email', wajib: 'Tidak', contoh: 'budi@example.net', keterangan: 'Email pelanggan jika tersedia.' },
       { kolom: 'address', wajib: 'Tidak', contoh: 'Jl. Contoh No. 1', keterangan: 'Alamat pelanggan.' },
+      { kolom: 'payment_type', wajib: 'Tidak', contoh: 'postpaid / prepaid', keterangan: 'Bisa juga memakai PASCABAYAR / PRABAYAR dari format Radboox.' },
+      { kolom: 'billing_period', wajib: 'Tidak', contoh: 'fixed / cycle / renewal', keterangan: 'Bisa juga memakai Fixed Date / Billing Cycle / Renewal.' },
+      { kolom: 'invoice_status', wajib: 'Tidak', contoh: 'paid / unpaid', keterangan: 'Jika unpaid, user awal tersimpan pending sampai pembayaran pertama dicatat.' },
+      { kolom: 'active_date', wajib: 'Tidak', contoh: localTodayIso(), keterangan: 'Tanggal aktif/pasang. Jika pelanggan dipasang bulan kemarin, isi tanggal aktif aslinya.' },
+      { kolom: 'ppn', wajib: 'Tidak', contoh: '11', keterangan: 'PPN persen jika dipakai.' },
+      { kolom: 'discount', wajib: 'Tidak', contoh: '0', keterangan: 'Diskon persen jika dipakai.' },
       { kolom: 'price', wajib: 'Tidak', contoh: '150000', keterangan: 'Harga manual jika diperlukan, biasanya ikut profile.' },
       { kolom: 'note', wajib: 'Tidak', contoh: 'Catatan opsional', keterangan: 'Catatan internal.' }
     ]
@@ -2107,8 +2152,16 @@ function pppExportRows(data = {}) {
         add_to_member: user.customerId ? 'yes' : 'no',
         member_name: customer.name || '',
         member_code: customer.code || customer.username || '',
+        ktp: customer.ktp || customer.idCard || '',
         whatsapp: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
+        email: customer.email || '',
         address: customer.address || '',
+        payment_type: customer.paymentType || '',
+        billing_period: customer.billingPeriod || '',
+        invoice_status: customer.firstInvoiceStatus || customer.initialInvoiceStatus || '',
+        active_date: customer.activeDate || user.activeDate || '',
+        ppn: customer.ppn || '',
+        discount: customer.discount || '',
         price: profile.price || customer.price || '',
         note: user.note || ''
       };
@@ -2118,10 +2171,14 @@ function pppExportRows(data = {}) {
 function normalizeImportRow(row = {}) {
   const normalized = {};
   for (const [key, value] of Object.entries(row || {})) {
-    const cleanKey = String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const cleanKey = normalizeImportKey(key);
     normalized[cleanKey] = value;
   }
   return normalized;
+}
+
+function normalizeImportKey(key = '') {
+  return String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
 function normalizePppImportAccessType(value = '') {
@@ -2132,34 +2189,164 @@ function normalizePppImportAccessType(value = '') {
   throw new Error('Type wajib PPPoE atau DHCP');
 }
 
+function normalizeImportDate(value = '') {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const iso = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+  const local = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (local) return `${local[3]}-${local[2].padStart(2, '0')}-${local[1].padStart(2, '0')}`;
+  const serial = Number(raw);
+  if (Number.isFinite(serial) && serial >= 20_000 && serial <= 80_000) {
+    const date = new Date(Math.round((serial - 25569) * 86400 * 1000));
+    if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+  }
+  const parsed = Date.parse(raw);
+  if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+  return raw;
+}
+
+function normalizeImportPaymentType(value = '') {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (['prepaid', 'prabayar', 'pra'].includes(normalized)) return 'prepaid';
+  if (['postpaid', 'pascabayar', 'pasca'].includes(normalized)) return 'postpaid';
+  return value ? String(value).trim().toLowerCase() : 'postpaid';
+}
+
+function normalizeImportBillingPeriod(value = '') {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (['fixed', 'fixeddate', 'tanggalfixed', 'tetap'].includes(normalized)) return 'fixed';
+  if (['cycle', 'billingcycle', 'siklus'].includes(normalized)) return 'cycle';
+  if (['renewal', 'renew'].includes(normalized)) return 'renewal';
+  return value ? String(value).trim().toLowerCase() : 'fixed';
+}
+
+function decodeXmlText(value = '') {
+  return String(value || '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function stripXmlTags(value = '') {
+  return String(value || '').replace(/<[^>]*>/g, '');
+}
+
+function xlsxColumnName(ref = '') {
+  return String(ref || '').match(/[A-Z]+/)?.[0] || '';
+}
+
+function xlsxColumnIndex(column = '') {
+  return [...String(column || '')].reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0);
+}
+
+function xlsxSharedStrings(sharedXml = '') {
+  const strings = [];
+  for (const match of String(sharedXml || '').matchAll(/<si[\s\S]*?<\/si>/g)) {
+    const text = [...match[0].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)]
+      .map((part) => decodeXmlText(part[1]))
+      .join('');
+    strings.push(text);
+  }
+  return strings;
+}
+
+function xlsxRowsFromSheetXml(sheetXml = '', sharedStrings = []) {
+  const rows = [];
+  for (const rowMatch of String(sheetXml || '').matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
+    const rowNumber = Number(rowMatch[1]);
+    const cells = [];
+    for (const cellMatch of rowMatch[2].matchAll(/<c[^>]*r="([A-Z]+\d+)"([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const ref = cellMatch[1];
+      const attrs = cellMatch[2] || '';
+      const body = cellMatch[3] || '';
+      const type = attrs.match(/t="([^"]+)"/)?.[1] || '';
+      let value = body.match(/<v>([\s\S]*?)<\/v>/)?.[1] || '';
+      if (type === 's') {
+        value = sharedStrings[Number(value)] || '';
+      } else if (type === 'inlineStr') {
+        value = stripXmlTags(body);
+      }
+      cells[xlsxColumnIndex(xlsxColumnName(ref))] = decodeXmlText(value);
+    }
+    rows.push({ rowNumber, cells });
+  }
+  return rows;
+}
+
+function importHeaderScore(headers = []) {
+  const keys = new Set(headers.map(normalizeImportKey).filter(Boolean));
+  let score = 0;
+  if (keys.has('username')) score += 2;
+  if (keys.has('password')) score += 1;
+  if (keys.has('profile')) score += 1;
+  if (keys.has('nas') || keys.has('router')) score += 1;
+  if (keys.has('type') || keys.has('type_user')) score += 1;
+  if (keys.has('active_date') || keys.has('full_name') || keys.has('add_on_billing')) score += 1;
+  return score;
+}
+
+function detectImportHeader(rows = []) {
+  let best = null;
+  for (const row of rows.slice(0, 20)) {
+    const headers = row.cells || [];
+    const score = importHeaderScore(headers);
+    if (!best || score > best.score) {
+      best = { rowNumber: row.rowNumber, headers, score };
+    }
+  }
+  if (!best || best.score < 4) {
+    throw new Error('Header import PPP-DHCP tidak ditemukan. Pastikan ada kolom Username, Profile, NAS, dan Type.');
+  }
+  return best;
+}
+
+function detectImportDataStartRow(rows = [], headerRowNumber = 1) {
+  const marker = rows.find((row) => {
+    if (row.rowNumber <= headerRowNumber || row.rowNumber > headerRowNumber + 20) return false;
+    const text = (row.cells || []).join(' ').toLowerCase();
+    return text.includes('diatas adalah contoh') || text.includes('silahkan tambah') || text.includes('silakan tambah');
+  });
+  return marker ? marker.rowNumber + 1 : headerRowNumber + 1;
+}
+
+async function readWorkbookRowsFromXlsxBuffer(buffer) {
+  const zip = await JSZip.loadAsync(buffer);
+  const sharedStrings = xlsxSharedStrings(await zip.file('xl/sharedStrings.xml')?.async('string') || '');
+  const sheetFile = zip.file('xl/worksheets/sheet1.xml');
+  if (!sheetFile) throw new Error('Sheet import tidak ditemukan');
+  const rows = xlsxRowsFromSheetXml(await sheetFile.async('string'), sharedStrings);
+  const header = detectImportHeader(rows);
+  const dataStartRow = detectImportDataStartRow(rows, header.rowNumber);
+  const result = [];
+  for (const row of rows) {
+    if (row.rowNumber < dataStartRow || result.length >= MAX_IMPORT_XLSX_ROWS) continue;
+    const item = {};
+    let hasValue = false;
+    header.headers.forEach((columnHeader, columnNumber) => {
+      if (!columnHeader) return;
+      const value = row.cells[columnNumber] || '';
+      item[columnHeader] = value;
+      if (String(value || '').trim()) hasValue = true;
+    });
+    if (hasValue) {
+      const normalized = normalizeImportRow(item);
+      normalized.__row_number = row.rowNumber;
+      result.push(normalized);
+    }
+  }
+  return result;
+}
+
 async function readWorkbookRowsFromBase64(contentBase64 = '') {
   const clean = String(contentBase64 || '').replace(/^data:.*?;base64,/, '');
   const buffer = Buffer.from(clean, 'base64');
   if (!buffer.length) throw new Error('File import kosong');
   if (buffer.length > MAX_IMPORT_XLSX_BYTES) throw new Error('File import terlalu besar, maksimal 2MB');
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
-  const worksheet = workbook.worksheets[0];
-  if (!worksheet) throw new Error('Sheet import tidak ditemukan');
-  const headerRow = worksheet.getRow(1);
-  const headers = [];
-  headerRow.eachCell({ includeEmpty: false }, (cell, columnNumber) => {
-    headers[columnNumber] = String(excelCellText(cell.value) || '').trim();
-  });
-  const rows = [];
-  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber === 1 || rows.length >= MAX_IMPORT_XLSX_ROWS) return;
-    const item = {};
-    let hasValue = false;
-    headers.forEach((header, columnNumber) => {
-      if (!header) return;
-      const value = excelCellText(row.getCell(columnNumber).value);
-      item[header] = value;
-      if (String(value || '').trim()) hasValue = true;
-    });
-    if (hasValue) rows.push(normalizeImportRow(item));
-  });
-  return rows;
+  return readWorkbookRowsFromXlsxBuffer(buffer);
 }
 
 function importPppUsers(data = {}, rows = [], actor = {}) {
@@ -2169,15 +2356,17 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
   rows.forEach((row, index) => {
     let username = String(row.username || '').trim();
     try {
-      const accessType = normalizePppImportAccessType(row.type || 'PPPoE');
+      const accessType = normalizePppImportAccessType(row.type || row.type_user || 'PPPoE');
       const isDhcp = accessType.toLowerCase() === 'dhcp';
       const password = String(row.password ?? '').trim();
       const profileName = String(row.profile || row.profile_name || '').trim();
-      const nasName = String(row.nas || row.router || '').trim();
+      const nasName = String(row.nas || row.router || row.nas_name || '').trim();
       const macAddress = String(row.mac_address || row.mac || '').trim();
-      const addToMember = row.add_to_member || row.member || '';
-      const memberName = String(row.member_name || row.name || username || '').trim();
-      const memberPhone = normalizeLocalPhone(row.whatsapp || row.phone || '');
+      const addToMember = row.add_to_member || row.add_on_billing || row.member || '';
+      const memberName = String(row.member_name || row.full_name || row.name || username || '').trim();
+      const memberPhone = normalizeLocalPhone(row.whatsapp || row.no_whatsapp || row.phone || row.no_hp || row.telepon || '');
+      const activeDate = normalizeImportDate(row.active_date || row.tanggal_aktif || row.installed_at || row.install_date || '');
+      const invoiceStatus = String(row.invoice_status || row.status_invoice || '').trim();
 
       if (isDhcp && !username) {
         username = macAddress;
@@ -2203,11 +2392,13 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
       if (!radiusFindNas(data, nasName)) {
         throw new Error(`NAS "${nasName}" tidak ditemukan`);
       }
+      const existing = (data.radiusUsers || []).find((user) => user.serviceType === 'pppoe' && String(user.username || '').toLowerCase() === username.toLowerCase());
+      const existingMember = existing ? findCustomerForRadiusUser(data, existing) : null;
       if (payloadEnabled(addToMember)) {
-        if (!memberName) {
+        if (!memberName && !existingMember?.name) {
           throw new Error('Nama member wajib diisi jika add_to_member yes');
         }
-        if (!memberPhone) {
+        if (!memberPhone && !normalizeLocalPhone(existingMember?.whatsapp || existingMember?.phone || '')) {
           throw new Error('WhatsApp wajib diisi jika add_to_member yes');
         }
       }
@@ -2226,21 +2417,35 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
         memberName: memberName || username,
         memberCode: row.member_code || row.code || username,
         memberPhone,
+        memberKtp: row.ktp || row.no_ktp_sim || row.no_ktp || row.id_card || '',
+        memberEmail: row.email || '',
         memberAddress: row.address || '',
-        memberPrice: row.price || ''
+        memberPaymentType: normalizeImportPaymentType(row.payment_type || row.tipe_pembayaran || ''),
+        memberBillingPeriod: normalizeImportBillingPeriod(row.billing_period || row.periode_billing || ''),
+        memberInvoiceStatus: invoiceStatus,
+        memberActiveDate: activeDate,
+        activeDate,
+        memberPpn: row.ppn || row.ppn_ || row.vat || '',
+        memberDiscount: row.discount || row.discount_ || row.diskon || '',
+        memberPrice: row.price || row.harga || ''
       };
-      const existing = (data.radiusUsers || []).find((user) => user.serviceType === 'pppoe' && String(user.username || '').toLowerCase() === username.toLowerCase());
       const next = existing
         ? freeradius.updateRadiusUser(data, existing.id, radiusUserPayload(payload, 'pppoe', data), actor)
         : freeradius.addRadiusUser(data, radiusUserPayload(payload, 'pppoe', data), actor);
-      if (!existing && payloadEnabled(payload.addToMember)) {
-        const member = radiusMemberFromPayload(data, payload, next, actor);
-        next.customerId = member.id;
+      if (payloadEnabled(payload.addToMember)) {
+        const currentMember = findCustomerForRadiusUser(data, next);
+        if (currentMember) {
+          updateRadiusMemberFromImport(currentMember, payload, next, data, actor);
+          next.customerId = currentMember.id;
+        } else {
+          const member = radiusMemberFromPayload(data, payload, next, actor);
+          next.customerId = member.id;
+        }
       }
       if (existing) updated.push(next);
       else created.push(next);
     } catch (error) {
-      errors.push({ row: index + 2, username, error: error.message || 'Gagal import user' });
+      errors.push({ row: row.__row_number || index + 2, username, error: error.message || 'Gagal import user' });
     }
   });
   return { created, updated, errors };
@@ -2419,7 +2624,7 @@ function syncRadiusCustomerStatus(data = {}, radiusUser = {}) {
 }
 
 function payloadEnabled(value) {
-  return value === true || ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
+  return value === true || ['1', 'true', 'yes', 'y', 'ya', 'iya', 'on', 'aktif', 'active'].includes(String(value || '').toLowerCase());
 }
 
 function generateMemberCode(data = {}) {
@@ -2515,6 +2720,51 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     radiusUserId: radiusUser.id || '',
     username
   });
+  return customer;
+}
+
+function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = {}, data = {}, actor = {}) {
+  const profile = radiusFindProfile(data, payload.profileId || payload.profile || radiusUser.profileId, 'pppoe') || {};
+  const nas = radiusFindNas(data, payload.nasId || payload.nas || radiusUser.nasId) || {};
+  const memberName = String(payload.memberName || payload.customerName || '').trim();
+  const phone = normalizeLocalPhone(payload.memberPhone || payload.phone || customer.whatsapp || customer.phone || '');
+  const activeDate = normalizeImportDate(payload.memberActiveDate || payload.activeDate || customer.activeDate || '');
+  const invoiceStatus = String(payload.memberInvoiceStatus || payload.invoiceStatus || customer.firstInvoiceStatus || 'paid').trim().toLowerCase() === 'unpaid' ? 'unpaid' : 'paid';
+  if (memberName) {
+    customer.name = memberName;
+    customer.customerName = memberName;
+  }
+  if (phone) {
+    customer.phone = phone;
+    customer.whatsapp = phone;
+  }
+  customer.email = String(payload.memberEmail || payload.email || customer.email || '').trim();
+  customer.ktp = String(payload.memberKtp || payload.ktp || payload.idCard || customer.ktp || customer.idCard || '').trim();
+  customer.address = String(payload.memberAddress || payload.address || customer.address || '').trim();
+  customer.packageName = payload.memberPackageName || profile.name || payload.profile || customer.packageName || '';
+  customer.price = payload.memberPrice || profile.price || customer.price || 0;
+  customer.paymentType = normalizeImportPaymentType(payload.memberPaymentType || customer.paymentType || 'postpaid');
+  customer.billingPeriod = normalizeImportBillingPeriod(payload.memberBillingPeriod || customer.billingPeriod || 'fixed');
+  customer.ppn = String(payload.memberPpn || payload.ppn || customer.ppn || '').trim();
+  customer.discount = String(payload.memberDiscount || payload.discount || customer.discount || '').trim();
+  customer.firstInvoiceStatus = invoiceStatus;
+  customer.initialInvoiceStatus = invoiceStatus;
+  customer.radiusUserId = radiusUser.id || customer.radiusUserId || '';
+  customer.username = radiusUser.username || customer.username || '';
+  customer.nas = nas.name || customer.nas || '';
+  customer.site = nas.site || customer.site || '';
+  customer.siteName = nas.site || nas.name || customer.siteName || '';
+  if (activeDate) customer.activeDate = activeDate;
+  if (!customer.code && !customer.accountId) {
+    const memberCode = String(payload.memberCode || payload.accountId || generateMemberCode(data)).trim();
+    customer.code = memberCode;
+    customer.accountId = memberCode;
+  }
+  if (customer.status === 'pending' && invoiceStatus === 'paid') {
+    customer.status = 'active';
+  }
+  customer.updatedAt = new Date().toISOString();
+  customer.updatedBy = actor.name || actor.username || 'Sistem';
   return customer;
 }
 
@@ -12348,6 +12598,7 @@ module.exports = {
     fulfillPaymentGatewayCallback,
     hotspotFreeUserWritable,
     invoiceGenerationDue,
+    importPppUsers,
     isPaymentGatewayWebhookPath,
     localDailyReport,
     monthlyBillingDailyRows,
@@ -12355,6 +12606,7 @@ module.exports = {
     paymentGatewayReportPayload,
     publicPaymentGatewayInvoicePayload,
     reportStatisticsPayload,
+    readWorkbookRowsFromBase64,
     verifyPaymentGatewayCallback,
     filterVoucherReportOrders,
     radiusPayloadLocal,
