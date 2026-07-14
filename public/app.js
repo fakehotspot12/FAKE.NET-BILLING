@@ -3806,8 +3806,16 @@ function openDailyBillingReceiptsModal(transactions = [], report = {}) {
     <div class="daily-billing-receipt-preview">
       <div class="daily-billing-receipt-preview-head">
         <strong>${displayNumber(receiptRows.length)} kuitansi dipilih</strong>
-        ${receiptPrintModeControl('dailyBillingReceiptPrintMode', printMode)}
-        <div class="row-actions daily-billing-receipt-print-actions">
+        <label class="field inline-field hotspot-voucher-print-mode daily-billing-receipt-print-mode">
+          <span>Ukuran</span>
+          <select id="dailyBillingReceiptPrintMode">
+            <option value="a4" ${printMode === 'a4' ? 'selected' : ''}>A4</option>
+            <option value="thermal-80" ${printMode === 'thermal-80' ? 'selected' : ''}>Thermal 80mm</option>
+            <option value="thermal-58" ${printMode === 'thermal-58' ? 'selected' : ''}>Thermal 58mm</option>
+          </select>
+        </label>
+        <span class="muted" id="dailyBillingReceiptPrintModeLabel" data-receipt-print-mode-label>${escapeHtml(receiptPrintModeLabel(printMode))}</span>
+        <div class="row-actions hotspot-voucher-print-actions daily-billing-receipt-print-actions">
           <button class="ghost-button compact" data-close-modal type="button">Tutup</button>
           <button class="button compact" id="printDailyBillingReceipts" type="button">Print Browser</button>
         </div>

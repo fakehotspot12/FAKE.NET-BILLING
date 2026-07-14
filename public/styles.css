@@ -5332,11 +5332,11 @@ td:has(.action-menu),
 .daily-billing-receipt-preview-head {
   align-items: center;
   background: #fff;
-  border-bottom: 1px solid #e5e7eb;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  padding-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  padding-bottom: 4px;
   position: sticky;
   top: 0;
   z-index: 2;
@@ -5352,6 +5352,16 @@ td:has(.action-menu),
   margin-left: 0;
 }
 
+.daily-billing-receipt-print-mode {
+  margin-left: auto;
+}
+
+.daily-billing-receipt-print-mode select {
+  background: #fff;
+  border: 1px solid #d1d5db;
+  color: #111827;
+}
+
 .daily-billing-receipt-stack {
   align-items: center;
   background: #fff;
@@ -5362,12 +5372,16 @@ td:has(.action-menu),
 
 @media (max-width: 760px) {
   .daily-billing-receipt-preview-head {
+    align-items: stretch;
+    display: grid;
     grid-template-columns: 1fr;
     position: static;
   }
 
-  .daily-billing-receipt-preview-head .receipt-print-mode {
+  .daily-billing-receipt-preview-head .receipt-print-mode,
+  .daily-billing-receipt-preview-head .daily-billing-receipt-print-mode {
     margin-left: 0;
+    margin-right: 0;
   }
 
   .daily-billing-receipt-print-actions {
