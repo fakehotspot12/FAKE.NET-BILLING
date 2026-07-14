@@ -212,6 +212,8 @@ Minimal setara Ubuntu 22.04:
 - CentOS/RHEL/Rocky/Alma/Fedora dengan `dnf`/`yum`
 - Alpine Linux dengan `apk` dan OpenRC
 
+Pada RHEL-family, installer akan mencoba mengaktifkan repository pendukung seperti EPEL dan CRB/PowerTools agar paket FreeRADIUS PostgreSQL tersedia. Installer juga menyesuaikan nama service otomatis, misalnya `redis-server`/`redis` dan `freeradius`/`radiusd`, sehingga stack tetap bisa start di distro yang berbeda.
+
 ## Install
 
 Jalankan dari folder project:
@@ -239,6 +241,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS, termasuk `read_clients = yes` agar Site/NAS dari aplikasi dibaca sebagai client Radius.
 - Memasang service Billing, Isolir, Voucher, WifiKu, Radius Connector, dan WAHA.
 - Memasang command stack `fakenet-billing-stack`.
+- Menyesuaikan unit systemd atau OpenRC sesuai distro yang dipakai.
 
 Yang tetap perlu diatur setelah install:
 

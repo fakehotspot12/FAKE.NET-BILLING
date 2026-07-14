@@ -37,6 +37,16 @@ detect_pm() {
   echo unknown
 }
 
+detect_os_id() {
+  if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s\n' "${ID:-unknown}"
+    return
+  fi
+  echo unknown
+}
+
 node_major() {
   if ! command -v node >/dev/null 2>&1; then
     echo 0
@@ -50,6 +60,30 @@ random_hex() {
   openssl rand -hex "$bytes" 2>/dev/null || date +%s%N
 }
 
+configure_rhel_repositories() {
+  local pm="$1"
+  "$pm" install -y ca-certificates curl >/dev/null 2>&1 || true
+  case "$pm" in
+    dnf)
+      "$pm" install -y dnf-plugins-core epel-release >/dev/null 2>&1 || true
+      dnf config-manager --set-enabled crb >/dev/null 2>&1 || dnf config-manager --set-enabled powertools >/dev/null 2>&1 || true
+      ;;
+    yum)
+      "$pm" install -y yum-utils epel-release >/dev/null 2>&1 || true
+      yum-config-manager --enable crb >/dev/null 2>&1 || yum-config-manager --enable powertools >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+install_rhel_packages() {
+  local pm="$1"
+  configure_rhel_repositories "$pm"
+  "$pm" install -y ca-certificates curl git rsync tar gzip openssl postgresql-server postgresql redis freeradius freeradius-postgresql
+  if ! command -v docker >/dev/null 2>&1; then
+    "$pm" install -y docker || "$pm" install -y moby-engine || "$pm" install -y docker-ce || true
+  fi
+}
+
 install_packages() {
   local pm
   pm="$(detect_pm)"
@@ -59,18 +93,33 @@ install_packages() {
       DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git rsync tar gzip gnupg openssl postgresql postgresql-client redis-server freeradius freeradius-postgresql docker.io
       ;;
     dnf)
-      dnf install -y ca-certificates curl git rsync tar gzip openssl postgresql-server postgresql redis freeradius freeradius-postgresql docker
+      install_rhel_packages dnf
       ;;
     yum)
-      yum install -y ca-certificates curl git rsync tar gzip openssl postgresql-server postgresql redis freeradius freeradius-postgresql docker
+      install_rhel_packages yum
       ;;
     apk)
-      apk add --no-cache ca-certificates curl git rsync tar gzip openssl nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc su-exec
+      apk add --no-cache bash ca-certificates curl git rsync tar gzip openssl nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc su-exec
       ;;
     *)
       echo "Package manager tidak dikenali. Install manual: nodejs npm git rsync postgresql redis freeradius docker." >&2
       ;;
   esac
+}
+
+ensure_required_commands() {
+  local missing=() cmd
+  for cmd in git rsync tar gzip openssl psql pg_dump node npm docker; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  if ! command -v freeradius >/dev/null 2>&1 && ! command -v radiusd >/dev/null 2>&1; then
+    missing+=("freeradius/radiusd")
+  fi
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Komponen berikut belum tersedia: ${missing[*]}" >&2
+    echo "Periksa repository OS/EPEL/CRB atau install paket terkait, lalu ulangi install.sh." >&2
+    exit 1
+  fi
 }
 
 install_node_runtime() {
@@ -223,6 +272,30 @@ start_systemd_base_units() {
     systemctl enable "$unit" >/dev/null 2>&1 || true
     systemctl start "$unit" >/dev/null 2>&1 || true
   done
+}
+
+rewrite_systemd_unit_dependencies() {
+  local file="$1" redis_unit postgres_unit radius_unit docker_unit
+  redis_unit="$(resolve_systemd_group redis-server.service redis.service || true)"
+  postgres_unit="$(resolve_systemd_group postgresql.service postgresql@15-main.service postgresql@14-main.service postgresql@13-main.service || true)"
+  radius_unit="$(resolve_systemd_group freeradius.service radiusd.service || true)"
+  docker_unit="$(resolve_systemd_group docker.service || true)"
+
+  [ -n "$redis_unit" ] && sed -i "s/redis-server.service/$redis_unit/g" "$file"
+  [ -n "$postgres_unit" ] && sed -i "s/postgresql.service/$postgres_unit/g" "$file"
+  [ -n "$radius_unit" ] && sed -i "s/freeradius.service/$radius_unit/g" "$file"
+  [ -n "$docker_unit" ] && sed -i "s/docker.service/$docker_unit/g" "$file"
+}
+
+install_systemd_unit_file() {
+  local unit="$1" name
+  [ -f "$unit" ] || return 0
+  name="$(basename "$unit")"
+  sed \
+    -e "s#WorkingDirectory=/opt/fakenet-billing#WorkingDirectory=$APP_DIR#g" \
+    -e "s#/opt/fakenet-billing-waha#/opt/fakenet-billing-waha#g" \
+    "$unit" > "/etc/systemd/system/$name"
+  rewrite_systemd_unit_dependencies "/etc/systemd/system/$name"
 }
 
 restart_systemd_unit_group() {
@@ -399,14 +472,9 @@ configure_freeradius_sql() {
 install_systemd() {
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update
-  local unit name
+  local unit
   for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
-    [ -f "$unit" ] || continue
-    name="$(basename "$unit")"
-    sed \
-      -e "s#WorkingDirectory=/opt/fakenet-billing#WorkingDirectory=$APP_DIR#g" \
-      -e "s#/opt/fakenet-billing-waha#/opt/fakenet-billing-waha#g" \
-      "$unit" > "/etc/systemd/system/$name"
+    install_systemd_unit_file "$unit"
   done
   systemctl daemon-reload
   init_postgres_cluster
@@ -419,7 +487,7 @@ install_systemd() {
 }
 
 write_openrc_service() {
-  local service_name="$1" command_args="$2"
+  local service_name="$1" command_args="$2" subweb_kind="${3:-}"
   cat > "/etc/init.d/$service_name" <<EOF
 #!/sbin/openrc-run
 name="$service_name"
@@ -433,6 +501,10 @@ pidfile="/run/$service_name.pid"
 output_log="/var/log/$service_name.log"
 error_log="/var/log/$service_name.err"
 [ -f /etc/fakenet-billing.env ] && . /etc/fakenet-billing.env
+export NODE_ENV="\${NODE_ENV:-production}"
+if [ -n "$subweb_kind" ]; then
+  export SUBWEB_KIND="$subweb_kind"
+fi
 depend() {
   need net
 }
@@ -443,13 +515,15 @@ EOF
 }
 
 write_openrc_waha_service() {
-  cat > /etc/init.d/fakenet-billing-waha <<'EOF'
+  cat > /etc/init.d/fakenet-billing-waha <<EOF
 #!/sbin/openrc-run
 name="fakenet-billing-waha"
 description="WAHA Local WhatsApp Gateway for FAKE.NET Billing"
 supervisor=supervise-daemon
 command="/usr/bin/docker"
-command_args="run --name fakenet-billing-waha --rm --shm-size=1g --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:${WAHA_PORT:-8895}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha"
+[ -f /etc/fakenet-billing-waha.env ] && . /etc/fakenet-billing-waha.env
+WAHA_PORT="\${WAHA_PORT:-8895}"
+command_args="run --name fakenet-billing-waha --rm --shm-size=1g --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:\${WAHA_PORT}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha"
 pidfile="/run/fakenet-billing-waha.pid"
 output_log="/var/log/fakenet-billing-waha.log"
 error_log="/var/log/fakenet-billing-waha.err"
@@ -473,6 +547,7 @@ install_openrc() {
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update
   mkdir -p /var/log/fakenet-billing
+  init_postgres_cluster
   rc-update add redis default >/dev/null 2>&1 || true
   rc-update add postgresql default >/dev/null 2>&1 || true
   rc-update add freeradius default >/dev/null 2>&1 || rc-update add radiusd default >/dev/null 2>&1 || true
@@ -485,12 +560,9 @@ install_openrc() {
   configure_freeradius_sql
   rc-service freeradius restart >/dev/null 2>&1 || rc-service radiusd restart >/dev/null 2>&1 || true
   write_openrc_service fakenet-billing "src/server.js"
-  write_openrc_service fakenet-billing-isolir "src/subweb-server.js"
-  sed -i 's#command_args="src/subweb-server.js"#command_args="src/subweb-server.js"\nexport SUBWEB_KIND=isolir#' /etc/init.d/fakenet-billing-isolir
-  write_openrc_service fakenet-billing-voucher "src/subweb-server.js"
-  sed -i 's#command_args="src/subweb-server.js"#command_args="src/subweb-server.js"\nexport SUBWEB_KIND=voucher#' /etc/init.d/fakenet-billing-voucher
-  write_openrc_service fakenet-billing-wifiku "src/subweb-server.js"
-  sed -i 's#command_args="src/subweb-server.js"#command_args="src/subweb-server.js"\nexport SUBWEB_KIND=wifiku#' /etc/init.d/fakenet-billing-wifiku
+  write_openrc_service fakenet-billing-isolir "src/subweb-server.js" "isolir"
+  write_openrc_service fakenet-billing-voucher "src/subweb-server.js" "voucher"
+  write_openrc_service fakenet-billing-wifiku "src/subweb-server.js" "wifiku"
   write_openrc_service fakenet-billing-radius-connector "src/radius-connector-service.js"
   write_openrc_waha_service
 }
@@ -506,16 +578,18 @@ repair_install() {
   fi
 
   if command -v systemctl >/dev/null 2>&1 && [ -d "$APP_DIR/deploy/systemd" ]; then
-    local unit name
+    local unit
     for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
-      [ -f "$unit" ] || continue
-      name="$(basename "$unit")"
-      sed \
-        -e "s#WorkingDirectory=/opt/fakenet-billing#WorkingDirectory=$APP_DIR#g" \
-        -e "s#/opt/fakenet-billing-waha#/opt/fakenet-billing-waha#g" \
-        "$unit" > "/etc/systemd/system/$name"
+      install_systemd_unit_file "$unit"
     done
     systemctl daemon-reload >/dev/null 2>&1 || true
+  elif command -v rc-service >/dev/null 2>&1; then
+    write_openrc_service fakenet-billing "src/server.js"
+    write_openrc_service fakenet-billing-isolir "src/subweb-server.js" "isolir"
+    write_openrc_service fakenet-billing-voucher "src/subweb-server.js" "voucher"
+    write_openrc_service fakenet-billing-wifiku "src/subweb-server.js" "wifiku"
+    write_openrc_service fakenet-billing-radius-connector "src/radius-connector-service.js"
+    write_openrc_waha_service
   fi
 
   if [ -f /etc/fakenet-billing.env ]; then
@@ -651,6 +725,7 @@ main() {
   install_packages
   install_node_runtime
   check_node
+  ensure_required_commands
   copy_source
   install_node_deps
   install_env
