@@ -46,6 +46,7 @@ const LAST_VIEW_STORAGE_KEY = 'fakenetBillingLastView';
 const LEGACY_LAST_VIEW_STORAGE_KEY = 'fakenetOpsLastView';
 const LOGIN_RETURN_VIEW_STORAGE_KEY = 'fakenetBillingReturnView';
 const THEME_STORAGE_KEY = 'fakenetBillingTheme';
+const MONITORING_BILLING_PERIOD_STORAGE_KEY = 'fakenetBillingMonitoringBillingPeriod';
 
 const titles = {
   dashboard: 'Dashboard',
@@ -107,6 +108,19 @@ const viewPermissions = {
   settings: 'settings:write'
 };
 
+function storedMonitoringBillingPeriod() {
+  const stored = storageValue(MONITORING_BILLING_PERIOD_STORAGE_KEY);
+  return /^\d{4}-\d{2}$/.test(stored) ? stored : todayInput().slice(0, 7);
+}
+
+function saveMonitoringBillingPeriod(period) {
+  try {
+    window.localStorage.setItem(MONITORING_BILLING_PERIOD_STORAGE_KEY, normalizedPeriod(period));
+  } catch {
+    // Ignore browsers with blocked storage.
+  }
+}
+
 const state = {
   auth: null,
   roles: [],
@@ -136,6 +150,7 @@ const state = {
   monitoringBillingStatus: 'all',
   monitoringBillingCustomerStatus: 'all',
   monitoringBillingSite: 'all',
+  monitoringBillingPeriod: storedMonitoringBillingPeriod(),
   radiusPppTab: 'users',
   radiusPppPage: 1,
   radiusPppLimit: RADIUS_PAGE_SIZE,
@@ -10338,8 +10353,8 @@ function openManualInvoiceModal() {
         modal.close();
         const invoicePeriod = result.invoice?.period || result.invoice?.coverageStartPeriod || wizard.preview?.period || '';
         if (invoicePeriod) {
-          state.period = normalizedPeriod(invoicePeriod);
-          updatePeriodPicker();
+          state.monitoringBillingPeriod = normalizedPeriod(invoicePeriod);
+          saveMonitoringBillingPeriod(state.monitoringBillingPeriod);
         }
         state.monitoringBillingStatus = 'all';
         state.monitoringBillingCustomerStatus = 'all';
@@ -11150,11 +11165,14 @@ function billingPaidMetric(summary = {}) {
 async function renderMonitoringBilling(options = {}) {
   clearRealtimeTimers();
   app.innerHTML = '<div class="empty">Memuat tagihan pelanggan...</div>';
+  const billingPeriod = normalizedPeriod(state.monitoringBillingPeriod || state.period || todayInput().slice(0, 7));
+  state.monitoringBillingPeriod = billingPeriod;
+  saveMonitoringBillingPeriod(billingPeriod);
   const params = queryString({
     status: state.monitoringBillingStatus,
     customerStatus: state.monitoringBillingCustomerStatus,
     site: state.monitoringBillingSite,
-    period: state.period,
+    period: billingPeriod,
     search: state.search,
     page: state.monitoringBillingPage,
     limit: state.monitoringBillingLimit,
@@ -11234,14 +11252,15 @@ async function renderMonitoringBilling(options = {}) {
       `}
 
       <section class="metrics">
-        ${metric('Sudah Bayar', billingPaidMetric(summary), `Periode ${periodLabel(state.period)}`, 'positive')}
-        ${metric('Belum Bayar', billingCountAmountMetric(summary.unpaid, summary.unpaidAmount), `Periode ${periodLabel(state.period)}`, 'warning-card')}
+        ${metric('Sudah Bayar', billingPaidMetric(summary), `Periode ${periodLabel(billingPeriod)}`, 'positive')}
+        ${metric('Belum Bayar', billingCountAmountMetric(summary.unpaid, summary.unpaidAmount), `Periode ${periodLabel(billingPeriod)}`, 'warning-card')}
         ${metric('Lewat Tempo', billingCountAmountMetric(summary.overdue, summary.overdueAmount), 'Perlu ditagih', 'negative')}
         ${metric('Hasil Filter', billingFilteredMetric(summary), filterLabel)}
       </section>
 
       <div class="toolbar">
         <div class="filters">
+          <input class="control" id="billingPeriodFilter" type="month" value="${escapeHtml(billingPeriod)}" aria-label="Filter bulan tagihan">
           <select class="control" id="billingSiteFilter" aria-label="Filter site">
             <option value="all" ${state.monitoringBillingSite === 'all' ? 'selected' : ''}>Semua site</option>
             ${sites.map((site) => `<option value="${escapeHtml(site.id)}" ${state.monitoringBillingSite === site.id ? 'selected' : ''}>${escapeHtml(site.name)}</option>`).join('')}
@@ -11316,6 +11335,12 @@ async function renderMonitoringBilling(options = {}) {
     </div>
   `;
 
+  document.getElementById('billingPeriodFilter')?.addEventListener('change', (event) => {
+    state.monitoringBillingPeriod = normalizedPeriod(event.target.value || todayInput().slice(0, 7));
+    saveMonitoringBillingPeriod(state.monitoringBillingPeriod);
+    state.monitoringBillingPage = 1;
+    renderMonitoringBilling();
+  });
   document.getElementById('billingStatusFilter')?.addEventListener('change', (event) => {
     state.monitoringBillingStatus = event.target.value;
     state.monitoringBillingPage = 1;
