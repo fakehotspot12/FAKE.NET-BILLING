@@ -2573,7 +2573,7 @@ function renderActivation(licenseStatus = {}) {
         </div>
         <div class="notice warning">
           <strong>Aplikasi belum diaktivasi</strong>
-          <span>Salin HWID dari server ini, buat license key di generator admin, lalu paste license key di halaman ini.</span>
+          <span>Salin HWID dari server ini, kirim ke CS, lalu paste license key yang diterima di halaman ini.</span>
         </div>
         <form id="activationForm" class="login-form">
           <label class="field">
@@ -2589,7 +2589,7 @@ function renderActivation(licenseStatus = {}) {
           </label>
           <button class="button" type="submit">Aktivasi Aplikasi</button>
         </form>
-        <p class="login-note">Untuk mendapatkan license key, kirim HWID ke CS Whatsapp 083878122381. Port 8896 adalah generator khusus admin lisensi.</p>
+        <p class="login-note">Untuk mendapatkan license key, kirim HWID ke CS Whatsapp 083878122381.</p>
       </div>
     </section>
   `;

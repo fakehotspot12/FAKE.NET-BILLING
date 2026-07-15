@@ -379,8 +379,6 @@ LICENSE_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 
 Generator license key tidak disertakan dalam repository/install publik. Setelah install, halaman aktivasi di port aplikasi billing (`8891`) menampilkan HWID/machine code. Pelanggan mengirim HWID tersebut ke customer service Whatsapp `083878122381`, lalu memasukkan license key yang diterima ke halaman aktivasi billing.
 
-Port `8896` hanya untuk generator lisensi milik admin/pengelola lisensi, bukan halaman aktivasi pelanggan. Field token admin di generator bukan tempat menempel license key aplikasi.
-
 ## Backup dan Restore
 
 Dari aplikasi:
