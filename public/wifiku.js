@@ -12,6 +12,16 @@ const state = {
 
 const byId = (id) => document.getElementById(id);
 
+function escapeHtml(value = '') {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[char]));
+}
+
 function todayPeriod() {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -93,6 +103,27 @@ function periodText(value = '') {
   return `${MONTHS[month - 1] || String(month).padStart(2, '0')} ${year}`;
 }
 
+function wifiBandKey(value = '') {
+  const text = String(value || '').toLowerCase().replace(/\s+/g, '');
+  return text.includes('5') ? '5g' : '2.4g';
+}
+
+function wifiBandLabel(value = '') {
+  return wifiBandKey(value) === '5g' ? '5G' : '2.4G';
+}
+
+function wifiNetworkForBand(device = {}, band = '2.4g') {
+  const key = wifiBandKey(band);
+  const networks = Array.isArray(device.wifiNetworks) ? device.wifiNetworks : [];
+  return networks.find((item) => wifiBandKey(item.band) === key)
+    || {
+      band: key === '5g' ? '5G' : '2.4G',
+      ssid: key === '5g' ? device.ssid5 : device.ssid24,
+      ssidParameter: key === '5g' ? device.ssid5Parameter : device.ssid24Parameter,
+      passwordParameter: ''
+    };
+}
+
 function billingBadgeClass(status = '') {
   const value = String(status || '').toLowerCase();
   if (value === 'paid') return 'paid';
@@ -139,6 +170,12 @@ function renderPortal(payload) {
   byId('wifiDetail').textContent = `2.4G ${clients24} / 5G ${clients5}`;
   byId('ssid24').textContent = device.ssid24 || '-';
   byId('ssid5').textContent = device.ssid5 || '-';
+  document.querySelectorAll('[data-ssid-band]').forEach((button) => {
+    const network = wifiNetworkForBand(device, button.dataset.ssidBand);
+    const available = Boolean(device.id && network.ssidParameter);
+    button.disabled = !available;
+    button.title = available ? '' : 'SSID belum ditemukan di GenieACS';
+  });
   renderBillingSummary(payload.billing || {});
   showPortal();
 }
@@ -272,30 +309,36 @@ function openAction(title, body, handler) {
 document.querySelectorAll('[data-ssid-band]').forEach((button) => {
   button.addEventListener('click', () => {
     const band = button.dataset.ssidBand;
-    openAction(`Ubah SSID ${band === '5g' ? '5G' : '2.4G'}`, `
+    const device = state.portal?.device || {};
+    const network = wifiNetworkForBand(device, band);
+    if (!device.id || !network.ssidParameter) {
+      toast('SSID belum ditemukan di GenieACS');
+      return;
+    }
+    const label = wifiBandLabel(band);
+    openAction(`Ubah SSID & Password ${label}`, `
       <label>
-        <span>Nama WiFi baru</span>
-        <input name="ssid" maxlength="32" required>
+        <span>Nama WiFi ${label}</span>
+        <input name="ssid" maxlength="32" value="${escapeHtml(network.ssid || '')}" required>
       </label>
+      <label>
+        <span>Password baru ${label}</span>
+        <input name="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Kosongkan jika tidak diubah">
+      </label>
+      <p class="muted">Password hanya diubah jika field password diisi.</p>
     `, async (form) => {
-      await api('/api/public/wifiku/wifi-ssid', {
+      const payload = {
+        band,
+        ssid: form.get('ssid'),
+        ssidParameter: network.ssidParameter,
+        passwordParameter: network.passwordParameter || ''
+      };
+      const password = String(form.get('password') || '').trim();
+      if (password) payload.password = password;
+      await api('/api/public/wifiku/wifi', {
         method: 'POST',
-        body: JSON.stringify({ band, ssid: form.get('ssid') })
+        body: JSON.stringify(payload)
       });
-    });
-  });
-});
-
-byId('passwordButton').addEventListener('click', () => {
-  openAction('Ganti Password WiFi', `
-    <label>
-      <span>Password baru</span>
-      <input name="password" minlength="8" required>
-    </label>
-  `, async (form) => {
-    await api('/api/public/wifiku/wifi-password', {
-      method: 'POST',
-      body: JSON.stringify({ password: form.get('password') })
     });
   });
 });

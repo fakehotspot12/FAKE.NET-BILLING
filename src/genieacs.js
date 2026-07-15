@@ -628,6 +628,13 @@ function wifiBaseFromSsidParameter(path = '') {
   return assertWifiParameter(path, ['.SSID']).replace(/\.SSID$/, '');
 }
 
+function wifiBaseFromPasswordParameter(path = '') {
+  return assertWifiParameter(path, [
+    '.PreSharedKey.1.KeyPassphrase',
+    '.KeyPassphrase'
+  ]).replace(/(\.PreSharedKey\.1\.KeyPassphrase|\.KeyPassphrase)$/, '');
+}
+
 async function setWifiCredentials(settings = {}, deviceId = '', payload = {}) {
   const cleanSsid = cleanText(payload.ssid);
   if (cleanSsid.length < 1 || cleanSsid.length > 32) {
@@ -649,6 +656,9 @@ async function setWifiCredentials(settings = {}, deviceId = '', payload = {}) {
       '.PreSharedKey.1.KeyPassphrase',
       '.KeyPassphrase'
     ]);
+    if (wifiBaseFromPasswordParameter(passwordParameter) !== base) {
+      throw new Error('Parameter password WiFi tidak sesuai dengan SSID yang dipilih');
+    }
     values.push(
       [`${base}.BeaconType`, 'WPAand11i', 'xsd:string'],
       [`${base}.WPAAuthenticationMode`, 'PSKAuthentication', 'xsd:string'],
@@ -661,6 +671,44 @@ async function setWifiCredentials(settings = {}, deviceId = '', payload = {}) {
     values.push(
       [`${base}.BeaconType`, 'Basic', 'xsd:string'],
       [`${base}.BasicAuthenticationMode`, 'OpenSystem', 'xsd:string']
+    );
+  }
+  return task(settings, deviceId, {
+    name: 'setParameterValues',
+    parameterValues: values
+  });
+}
+
+async function setWifiSsidAndOptionalPassword(settings = {}, deviceId = '', payload = {}) {
+  const cleanSsid = cleanText(payload.ssid);
+  if (cleanSsid.length < 1 || cleanSsid.length > 32) {
+    throw new Error('Nama WiFi/SSID wajib 1-32 karakter');
+  }
+  const ssidParameter = assertWifiParameter(payload.ssidParameter || payload.parameter, ['.SSID']);
+  const base = wifiBaseFromSsidParameter(ssidParameter);
+  const values = [
+    [`${base}.Enable`, true, 'xsd:boolean'],
+    [ssidParameter, cleanSsid, 'xsd:string']
+  ];
+  const cleanPassword = cleanText(payload.password);
+  if (cleanPassword) {
+    if (cleanPassword.length < 8 || cleanPassword.length > 63) {
+      throw new Error('Password WPA/WPA2 wajib 8-63 karakter');
+    }
+    const passwordParameter = assertWifiParameter(payload.passwordParameter, [
+      '.PreSharedKey.1.KeyPassphrase',
+      '.KeyPassphrase'
+    ]);
+    if (wifiBaseFromPasswordParameter(passwordParameter) !== base) {
+      throw new Error('Parameter password WiFi tidak sesuai dengan SSID yang dipilih');
+    }
+    values.push(
+      [`${base}.BeaconType`, 'WPAand11i', 'xsd:string'],
+      [`${base}.WPAAuthenticationMode`, 'PSKAuthentication', 'xsd:string'],
+      [`${base}.WPAEncryptionModes`, 'TKIPEncryption', 'xsd:string'],
+      [`${base}.IEEE11iAuthenticationMode`, 'PSKAuthentication', 'xsd:string'],
+      [`${base}.IEEE11iEncryptionModes`, 'AESEncryption', 'xsd:string'],
+      [passwordParameter, cleanPassword, 'xsd:string']
     );
   }
   return task(settings, deviceId, {
@@ -688,6 +736,7 @@ module.exports = {
   reboot,
   refreshDevice,
   setWifiCredentials,
+  setWifiSsidAndOptionalPassword,
   setWifiPassword,
   setWifiSsid
 };

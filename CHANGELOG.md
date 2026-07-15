@@ -7,6 +7,17 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.22] - 2026-07-16
+
+### Added
+
+- Portal WifiKu sekarang mengganti SSID dan password per band 2.4G atau 5G dari tombol `Ubah` masing-masing.
+
+### Changed
+
+- Field password WifiKu dibuat opsional; jika dikosongkan, sistem hanya mengubah SSID dan tidak menyentuh password lama.
+- Perintah WifiKu divalidasi memakai parameter WiFi yang benar-benar terbaca dari device pelanggan di GenieACS.
+
 ## [1.0.21] - 2026-07-15
 
 ### Fixed

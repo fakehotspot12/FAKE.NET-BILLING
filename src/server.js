@@ -8795,6 +8795,42 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'POST' && pathname === '/api/public/wifiku/wifi') {
+    const authContext = await requireWifiKuSession(req, res);
+    if (!authContext) return;
+    const payload = await readBody(req);
+    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    if (!portal.device?.id) {
+      sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
+      return;
+    }
+    const networks = Array.isArray(portal.device.wifiNetworks) ? portal.device.wifiNetworks : [];
+    const cleanValue = (value) => String(value || '').trim();
+    const requestedBand = cleanValue(payload.band).toLowerCase().replace(/\s+/g, '');
+    const requestedSsidParameter = cleanValue(payload.ssidParameter || payload.parameter);
+    const selectedNetwork = networks.find((item) => item.ssidParameter && item.ssidParameter === requestedSsidParameter)
+      || networks.find((item) => {
+        const band = cleanValue(item.band).toLowerCase().replace(/\s+/g, '');
+        return requestedBand && band === requestedBand;
+      });
+    if (!selectedNetwork?.ssidParameter) {
+      sendJson(res, 400, { ok: false, error: 'SSID WiFi pelanggan belum ditemukan di GenieACS' });
+      return;
+    }
+    try {
+      await genieAcs.setWifiSsidAndOptionalPassword(authContext.data.settings || {}, portal.device.id, {
+        ssid: payload.ssid,
+        ssidParameter: selectedNetwork.ssidParameter,
+        password: payload.password,
+        passwordParameter: selectedNetwork.passwordParameter
+      });
+      sendJson(res, 200, { ok: true, message: 'Perintah ubah SSID dan password WiFi dikirim' });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message || 'Ubah SSID dan password WiFi gagal' });
+    }
+    return;
+  }
+
   if (method === 'POST' && pathname === '/api/public/wifiku/wifi-password') {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
