@@ -1868,14 +1868,66 @@ input[type="checkbox"] {
   font-size: 11px;
 }
 
+.metric-card.positive,
+.metric-card.finance-earning {
+  border-color: #9fd4b3;
+  background: #eef9f1;
+}
+
 .metric-card.warning-card {
   border-color: #e2c15e;
   background: #fff9e8;
 }
 
-.metric-card.negative {
+.metric-card.negative,
+.metric-card.finance-expense,
+.metric-card.billing-overdue {
   border-color: #efb1aa;
   background: #fff0ee;
+}
+
+.metric-card.billing-unpaid {
+  border-color: #e2c15e;
+  background: #fff9e8;
+}
+
+.metric-card.billing-paid {
+  border-color: #9fcff0;
+  background: #eef8ff;
+}
+
+.metric-card.billing-invoice {
+  border-color: #bdb4f5;
+  background: #f4f1ff;
+}
+
+.metric-card.finance-earning strong,
+.metric-card.positive strong {
+  color: #16723a;
+}
+
+.metric-card.finance-expense strong,
+.metric-card.negative strong,
+.metric-card.billing-overdue strong {
+  color: #b9322a;
+}
+
+.metric-card.billing-unpaid strong {
+  color: #8a6100;
+}
+
+.metric-card.billing-paid strong {
+  color: #11669d;
+}
+
+.metric-card.billing-invoice strong {
+  color: #5642b6;
+}
+
+[data-theme="dark"] .metric-card.positive,
+[data-theme="dark"] .metric-card.finance-earning {
+  border-color: rgba(34, 197, 94, 0.36);
+  background: rgba(34, 197, 94, 0.11);
 }
 
 [data-theme="dark"] .metric-card.warning-card {
@@ -1883,9 +1935,49 @@ input[type="checkbox"] {
   background: rgba(250, 204, 21, 0.09);
 }
 
-[data-theme="dark"] .metric-card.negative {
+[data-theme="dark"] .metric-card.negative,
+[data-theme="dark"] .metric-card.finance-expense,
+[data-theme="dark"] .metric-card.billing-overdue {
   border-color: rgba(239, 68, 68, 0.34);
   background: rgba(239, 68, 68, 0.09);
+}
+
+[data-theme="dark"] .metric-card.billing-unpaid {
+  border-color: rgba(250, 204, 21, 0.34);
+  background: rgba(250, 204, 21, 0.09);
+}
+
+[data-theme="dark"] .metric-card.billing-paid {
+  border-color: rgba(56, 189, 248, 0.34);
+  background: rgba(56, 189, 248, 0.09);
+}
+
+[data-theme="dark"] .metric-card.billing-invoice {
+  border-color: rgba(167, 139, 250, 0.36);
+  background: rgba(167, 139, 250, 0.1);
+}
+
+[data-theme="dark"] .metric-card.finance-earning strong,
+[data-theme="dark"] .metric-card.positive strong {
+  color: #86efac;
+}
+
+[data-theme="dark"] .metric-card.finance-expense strong,
+[data-theme="dark"] .metric-card.negative strong,
+[data-theme="dark"] .metric-card.billing-overdue strong {
+  color: #fca5a5;
+}
+
+[data-theme="dark"] .metric-card.billing-unpaid strong {
+  color: #fde68a;
+}
+
+[data-theme="dark"] .metric-card.billing-paid strong {
+  color: #7dd3fc;
+}
+
+[data-theme="dark"] .metric-card.billing-invoice strong {
+  color: #c4b5fd;
 }
 
 .dashboard-mini-card {
@@ -1920,14 +2012,35 @@ input[type="checkbox"] {
   line-height: 1.2;
 }
 
-.dashboard-mini-card.positive {
+.dashboard-mini-card.positive,
+.dashboard-mini-card.finance-profit {
   border-color: #b4d9ac;
   background: #f2fbef;
 }
 
-.dashboard-mini-card.negative {
+.dashboard-mini-card.negative,
+.dashboard-mini-card.finance-loss {
   border-color: #efb1aa;
   background: #fff0ee;
+}
+
+.dashboard-mini-card.finance-transaction {
+  border-color: #bdb4f5;
+  background: #f4f1ff;
+}
+
+.dashboard-mini-card.finance-profit strong,
+.dashboard-mini-card.positive strong {
+  color: #16723a;
+}
+
+.dashboard-mini-card.finance-loss strong,
+.dashboard-mini-card.negative strong {
+  color: #b9322a;
+}
+
+.dashboard-mini-card.finance-transaction strong {
+  color: #5642b6;
 }
 
 [data-theme="dark"] .dashboard-mini-card.positive {
@@ -1935,9 +2048,34 @@ input[type="checkbox"] {
   background: rgba(56, 189, 248, 0.08);
 }
 
-[data-theme="dark"] .dashboard-mini-card.negative {
+[data-theme="dark"] .dashboard-mini-card.finance-profit {
+  border-color: rgba(34, 197, 94, 0.36);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+[data-theme="dark"] .dashboard-mini-card.negative,
+[data-theme="dark"] .dashboard-mini-card.finance-loss {
   border-color: rgba(239, 68, 68, 0.34);
   background: rgba(239, 68, 68, 0.09);
+}
+
+[data-theme="dark"] .dashboard-mini-card.finance-transaction {
+  border-color: rgba(167, 139, 250, 0.36);
+  background: rgba(167, 139, 250, 0.1);
+}
+
+[data-theme="dark"] .dashboard-mini-card.finance-profit strong,
+[data-theme="dark"] .dashboard-mini-card.positive strong {
+  color: #86efac;
+}
+
+[data-theme="dark"] .dashboard-mini-card.finance-loss strong,
+[data-theme="dark"] .dashboard-mini-card.negative strong {
+  color: #fca5a5;
+}
+
+[data-theme="dark"] .dashboard-mini-card.finance-transaction strong {
+  color: #c4b5fd;
 }
 
 .xendit-toolbar {

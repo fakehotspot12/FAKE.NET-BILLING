@@ -79,6 +79,7 @@ const APP_UPDATE_COMMAND = process.env.FAKENET_UPDATE_COMMAND || '/usr/local/bin
 const APP_UPDATE_LOG = process.env.FAKENET_UPDATE_LOG || '/var/log/fakenet-billing/update.log';
 const APP_UPDATE_REMOTE_TIMEOUT_MS = Math.max(2000, Number(process.env.FAKENET_UPDATE_REMOTE_TIMEOUT_MS || 5000) || 5000);
 const APP_UPDATE_STATUS_TTL_MS = Math.max(60_000, Number(process.env.FAKENET_UPDATE_STATUS_TTL_MS || 300_000) || 300_000);
+const CHANGELOG_PATH = path.join(APP_ROOT, 'CHANGELOG.md');
 const WA_GATEWAY_PROVIDERS = {
   waha: { label: 'Whatsapp Gateway', baseUrl: 'http://127.0.0.1:8895', autoBaseUrl: false }
 };
@@ -144,6 +145,25 @@ let updateStatusCache = {
   value: null
 };
 
+function appChangelogSummary(version = APP_VERSION) {
+  try {
+    const raw = fsSync.readFileSync(CHANGELOG_PATH, 'utf8');
+    const normalizedVersion = String(version || '').trim();
+    const headingPattern = normalizedVersion
+      ? new RegExp(`^## \\[${normalizedVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\][^\\n]*`, 'm')
+      : /^## \[[^\]]+\][^\n]*/m;
+    const match = raw.match(headingPattern);
+    if (!match || match.index === undefined) return raw.trim();
+    const start = match.index;
+    const after = raw.slice(start + match[0].length);
+    const nextMatch = after.match(/\n## \[/);
+    const sectionBody = nextMatch ? after.slice(0, nextMatch.index) : after;
+    return `${match[0]}\n${sectionBody}`.trim();
+  } catch {
+    return '';
+  }
+}
+
 async function gitOutput(args = [], options = {}) {
   const { stdout } = await execFileAsync('git', args, {
     cwd: APP_ROOT,
@@ -174,6 +194,8 @@ async function appUpdateStatus(options = {}) {
     currentCommitShort: '',
     remoteCommit: '',
     remoteCommitShort: '',
+    currentVersion: APP_VERSION,
+    remoteVersion: APP_VERSION,
     branch: '',
     remoteUrl: '',
     dirty: false,
@@ -200,6 +222,19 @@ async function appUpdateStatus(options = {}) {
     status.remoteCommit = String(remoteLine || '').split(/\s+/)[0] || '';
     status.remoteCommitShort = status.remoteCommit.slice(0, 7);
     status.updateAvailable = Boolean(status.currentCommit && status.remoteCommit && status.currentCommit !== status.remoteCommit);
+    const remoteTrackingCommit = await gitOutput(['rev-parse', `origin/${branch}`], { timeout: 3000 }).catch(() => '');
+    if (!status.updateAvailable) {
+      status.remoteVersion = APP_VERSION;
+    } else if (remoteTrackingCommit && remoteTrackingCommit === status.remoteCommit) {
+      const remotePackageRaw = await gitOutput(['show', `origin/${branch}:package.json`], { timeout: 3000 }).catch(() => '');
+      try {
+        status.remoteVersion = String(JSON.parse(remotePackageRaw).version || status.remoteVersion);
+      } catch {
+        status.remoteVersion = 'versi terbaru tersedia';
+      }
+    } else {
+      status.remoteVersion = 'versi terbaru tersedia';
+    }
   } catch (error) {
     status.error = error.message || 'Status update tidak bisa dicek';
   }
@@ -12371,7 +12406,8 @@ async function handleApi(req, res, url) {
       system: publicSystemInfo(),
       updaterInstalled: fsSync.existsSync(APP_UPDATE_COMMAND),
       update,
-      log
+      log,
+      changelog: appChangelogSummary(APP_VERSION)
     });
     return;
   }

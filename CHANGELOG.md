@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.2] - 2026-07-15
+
+### Changed
+
+- Mewarnai ulang metric dashboard keuangan dan billing agar `Monthly Earning`, `Monthly Paid`, `Monthly Transaction`, dan `Monthly Invoice` lebih mudah dibedakan.
+- Mengubah panel `Pengaturan > Update Aplikasi` agar menampilkan versi dot release, bukan hash commit Git.
+- Mengganti tampilan log update teknis dengan ringkasan changelog versi aplikasi.
+
 ## [1.0.1] - 2026-07-15
 
 ### Added

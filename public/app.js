@@ -224,8 +224,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.1',
-      buildVersion: '1.0.1',
+      version: '1.0.2',
+      buildVersion: '1.0.2',
       releaseDate: '2026-07-15'
     }
   },
@@ -236,8 +236,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.1',
-    buildVersion: '1.0.1',
+    appVersion: '1.0.2',
+    buildVersion: '1.0.2',
     releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
@@ -1593,11 +1593,11 @@ function dashboardFinanceOverview(summary = {}) {
   const monthlyExpense = Number(summary.expenseTotal || 0);
   return `
     <section class="dashboard-finance-grid">
-      ${metric('Monthly Earning', rupiah(monthlyEarning), 'Billing + pemasukan lain', 'positive')}
-      ${metric('Monthly Expense', rupiah(monthlyExpense), 'Pengeluaran bulan ini', 'negative')}
+      ${metric('Monthly Earning', rupiah(monthlyEarning), 'Billing + pemasukan lain', 'finance-earning')}
+      ${metric('Monthly Expense', rupiah(monthlyExpense), 'Pengeluaran bulan ini', 'finance-expense')}
       <div class="dashboard-finance-mini-grid">
-        ${dashboardMiniMetric('Monthly Profit', rupiah(summary.netCash || 0), '', Number(summary.netCash || 0) >= 0 ? 'positive' : 'negative')}
-        ${dashboardMiniMetric('Monthly Transaction', displayNumber(summary.monthlyTransactionCount || summary.paidCount || 0))}
+        ${dashboardMiniMetric('Monthly Profit', rupiah(summary.netCash || 0), '', Number(summary.netCash || 0) >= 0 ? 'finance-profit' : 'finance-loss')}
+        ${dashboardMiniMetric('Monthly Transaction', displayNumber(summary.monthlyTransactionCount || summary.paidCount || 0), '', 'finance-transaction')}
       </div>
     </section>
   `;
@@ -1644,10 +1644,10 @@ function dashboardBillingOverview(summary = {}) {
   const billing = summary.billingSummary || {};
   return `
     <section class="dashboard-billing-grid">
-      ${metric('Total Unpaid', displayNumber(billing.totalUnpaidCount || 0), rupiah(billing.totalUnpaidAmount || 0), 'warning-card')}
-      ${metric('Total Overdue', displayNumber(billing.overdueCount || 0), rupiah(billing.overdueAmount || 0), 'negative')}
-      ${metric('Monthly Paid', displayNumber(billing.monthlyPaidCount || 0), rupiah(billing.monthlyPaidAmount || 0), 'positive')}
-      ${metric('Monthly Invoice', displayNumber(billing.monthlyInvoiceCount || 0), rupiah(billing.monthlyInvoiceAmount || 0))}
+      ${metric('Total Unpaid', displayNumber(billing.totalUnpaidCount || 0), rupiah(billing.totalUnpaidAmount || 0), 'billing-unpaid')}
+      ${metric('Total Overdue', displayNumber(billing.overdueCount || 0), rupiah(billing.overdueAmount || 0), 'billing-overdue')}
+      ${metric('Monthly Paid', displayNumber(billing.monthlyPaidCount || 0), rupiah(billing.monthlyPaidAmount || 0), 'billing-paid')}
+      ${metric('Monthly Invoice', displayNumber(billing.monthlyInvoiceCount || 0), rupiah(billing.monthlyInvoiceAmount || 0), 'billing-invoice')}
     </section>
   `;
 }
@@ -2366,8 +2366,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.1',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.1',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.2',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.2',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13271,6 +13271,14 @@ async function renderSettings(options = {}) {
   const branding = currentBranding();
   const updateInfo = updateStatus.update || {};
   const updateAvailable = Boolean(updateInfo.updateAvailable);
+  const versionLabel = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    return /^\d/.test(raw) ? `v${raw}` : raw;
+  };
+  const installedVersion = updateInfo.currentVersion || updateInfo.localVersion || branding.appVersion;
+  const githubVersion = updateInfo.remoteVersion || (updateAvailable ? 'versi terbaru tersedia' : installedVersion);
+  const changelogText = updateStatus.changelog || 'Belum ada changelog rilis.';
   const updateNoticeClass = !updateStatus.updaterInstalled || updateInfo.error ? 'warning' : updateAvailable ? 'warning' : 'positive';
   const updateTitle = !updateStatus.updaterInstalled
     ? 'Updater belum terpasang'
@@ -13282,13 +13290,13 @@ async function renderSettings(options = {}) {
   const updateDescription = !updateStatus.updaterInstalled
     ? 'Jalankan install.sh agar command updater terpasang di server.'
     : updateAvailable
-      ? 'Klik Update Aplikasi untuk mengambil versi terbaru tanpa menghapus data.'
+      ? 'Versi GitHub terbaru tersedia. Klik Update Aplikasi untuk memperbarui tanpa menghapus data.'
       : updateInfo.error
         ? updateInfo.error
-        : 'Commit lokal sudah sama dengan branch GitHub.';
+        : 'Versi lokal sudah sama dengan versi GitHub.';
   const updateMeta = [
-    updateInfo.currentCommitShort ? `Terpasang: ${updateInfo.currentCommitShort}` : '',
-    updateInfo.remoteCommitShort ? `GitHub: ${updateInfo.remoteCommitShort}` : '',
+    installedVersion ? `Terpasang: ${versionLabel(installedVersion)}` : '',
+    githubVersion ? `GitHub: ${versionLabel(githubVersion)}` : '',
     updateInfo.branch ? `Branch: ${updateInfo.branch}` : '',
     updateInfo.dirty ? 'Ada perubahan lokal, updater akan menyimpannya dulu sebelum pull.' : ''
   ].filter(Boolean).join(' | ');
@@ -13404,8 +13412,8 @@ async function renderSettings(options = {}) {
             </div>
           </div>
           <label class="field full">
-            <span>Log update terakhir</span>
-            <textarea rows="6" readonly>${escapeHtml(updateStatus.log || 'Belum ada log update.')}</textarea>
+            <span>Changelog versi ${escapeHtml(versionLabel(installedVersion || branding.appVersion))}</span>
+            <textarea rows="8" readonly>${escapeHtml(changelogText)}</textarea>
           </label>
           <div class="modal-actions field full">
             <button class="button" id="runAppUpdateButton" type="button" ${updateStatus.updaterInstalled ? '' : 'disabled'}>Update Aplikasi</button>
