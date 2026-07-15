@@ -1990,6 +1990,16 @@ function radiusUserPayload(payload = {}, serviceType = 'pppoe', data = {}) {
   };
 }
 
+function requireRadiusUserProfile(data = {}, payload = {}, serviceType = 'pppoe', label = 'Radius') {
+  const value = String(payload.profileId || payload.profile || '').trim();
+  if (!value || value.toLowerCase() === 'none') {
+    throw new Error(`Profile ${label} wajib dipilih, tidak boleh None`);
+  }
+  if (!radiusFindProfile(data, value, serviceType)) {
+    throw new Error(`Profile ${label} "${value}" tidak ditemukan`);
+  }
+}
+
 function normalizeRadiusUserPaymentStatus(value = '') {
   const status = String(value || '').trim().toLowerCase();
   if (status === 'free') return 'free';
@@ -10529,6 +10539,9 @@ async function handleApi(req, res, url) {
         if (existing && !resellerHotspotVoucherRowVisible(existing, authContext.user)) {
           throw new Error('Role user tidak memiliki akses ke voucher Hotspot ini');
         }
+        if (method === 'POST') {
+          requireRadiusUserProfile(store, payload, 'pppoe', 'PPP-DHCP');
+        }
         const next = method === 'POST'
           ? freeradius.addRadiusUser(store, radiusUserPayload(payload, 'pppoe', store), authContext.user)
           : method === 'PUT'
@@ -10809,6 +10822,9 @@ async function handleApi(req, res, url) {
         const lockedPayload = method === 'DELETE'
           ? rolePayload
           : applyResellerVoucherNasLock(store, rolePayload, authContext.user);
+        if (method === 'POST') {
+          requireRadiusUserProfile(store, lockedPayload, 'hotspot', 'Hotspot');
+        }
         const next = method === 'POST'
           ? freeradius.addRadiusUser(store, radiusUserPayload(lockedPayload, 'hotspot', store), authContext.user)
           : method === 'PUT'
@@ -12827,6 +12843,7 @@ module.exports = {
     reportStatisticsPayload,
     radiusMemberFromPayload,
     readWorkbookRowsFromBase64,
+    requireRadiusUserProfile,
     verifyPaymentGatewayCallback,
     filterVoucherReportOrders,
     radiusPayloadLocal,

@@ -224,8 +224,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.14',
-      buildVersion: '1.0.14',
+      version: '1.0.15',
+      buildVersion: '1.0.15',
       releaseDate: '2026-07-15'
     }
   },
@@ -236,8 +236,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.14',
-    buildVersion: '1.0.14',
+    appVersion: '1.0.15',
+    buildVersion: '1.0.15',
     releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
@@ -2366,8 +2366,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.14',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.14',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.15',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.15',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -6120,6 +6120,22 @@ function radiusOptionTags(options = [], selected = '', emptyLabel = 'Semua') {
   ].join('');
 }
 
+function bindRequiredRadiusProfileWarning(selector, label = 'Radius') {
+  const select = modalBody.querySelector(selector);
+  if (!select) return () => true;
+  const warn = () => {
+    if (!String(select.value || '').trim()) {
+      setToast(`Profile ${label} wajib dipilih, tidak boleh None`);
+      return false;
+    }
+    return true;
+  };
+  select.addEventListener('change', () => {
+    if (!String(select.value || '').trim()) warn();
+  });
+  return warn;
+}
+
 function radiusProfileOptions(rows = []) {
   return rows
     .filter((row) => row && row.name)
@@ -7033,7 +7049,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
     </label>
     <label class="field">
       <span>Profile</span>
-      <select name="profile">${radiusOptionTags(options.profiles || [], user?.profile || '', 'None')}</select>
+      <select name="profile" id="radiusPppProfile" ${user ? '' : 'required'}>${radiusOptionTags(options.profiles || [], user?.profile || '', 'None')}</select>
     </label>
     <label class="field">
       <span>NAS</span>
@@ -7113,7 +7129,7 @@ function radiusHotspotUserFormBody(user = null, options = {}) {
       </label>
       <label class="field">
         <span>Profile</span>
-        <select name="profile" id="radiusHotspotProfile">${radiusOptionTags(options.profiles || [], selectedProfile, 'None')}</select>
+        <select name="profile" id="radiusHotspotProfile" ${user ? '' : 'required'}>${radiusOptionTags(options.profiles || [], selectedProfile, 'None')}</select>
       </label>
       ${lockedNas ? lockedNasReadonlyField('nasId', lockedNas, 'NAS') : `
         <label class="field">
@@ -7240,6 +7256,9 @@ async function openRadiusPppUserModal(user = null) {
   const options = await loadRadiusOptions('ppp');
   openModal(user ? 'Edit User PPP-DHCP' : 'Tambah User PPP-DHCP', radiusPppUserFormBody(user, options), async (payload, form) => {
     const type = String(payload.type || '').toLowerCase();
+    if (!user && !String(payload.profile || payload.profileId || '').trim()) {
+      throw new Error('Profile PPP-DHCP wajib dipilih, tidak boleh None');
+    }
     if (!user && payload.addToMember && form?.dataset.radiusWizardReady !== '1') {
       throw new Error('Selesaikan wizard sampai Review sebelum menyimpan user dan member');
     }
@@ -7270,6 +7289,7 @@ async function openRadiusPppUserModal(user = null) {
       : (payload.addToMember && memberCode ? `User PPP-DHCP ditambahkan. ID Member ${memberCode}` : 'User PPP-DHCP ditambahkan'));
     renderRadiusPppDhcp({ refresh: true });
   });
+  bindRequiredRadiusProfileWarning('#radiusPppProfile', 'PPP-DHCP');
   bindRadiusPppTypeFields();
   if (!user) {
     bindRadiusMemberFields(options);
@@ -7353,9 +7373,14 @@ function bindRadiusPppWizard() {
     const current = activeSteps()[step] || 'account';
     if (current === 'account') {
       const type = String(modalBody.querySelector('#radiusPppType')?.value || '').toLowerCase();
+      const profile = modalBody.querySelector('#radiusPppProfile')?.value.trim() || '';
       const username = modalBody.querySelector('input[name="username"]')?.value.trim() || '';
       const password = modalBody.querySelector('input[name="password"]')?.value.trim() || '';
       const mac = modalBody.querySelector('input[name="macAddress"]')?.value.trim() || '';
+      if (!profile) {
+        setToast('Profile PPP-DHCP wajib dipilih, tidak boleh None');
+        return false;
+      }
       if (type === 'dhcp' && !mac) {
         setToast('MAC Address wajib diisi untuk DHCP');
         return false;
@@ -7752,6 +7777,9 @@ function bindRadiusProfileModeFields() {
 async function openRadiusHotspotUserModal(user = null) {
   const options = await loadRadiusOptions('hotspot');
   openModal(user ? 'Edit User Hotspot' : 'Tambah User Hotspot', radiusHotspotUserFormBody(user, options), async (payload) => {
+    if (!user && !String(payload.profile || payload.profileId || '').trim()) {
+      throw new Error('Profile Hotspot wajib dipilih, tidak boleh None');
+    }
     await api(user ? `/api/radius/hotspot/users/${encodeURIComponent(user.id)}` : '/api/radius/hotspot/users', {
       method: user ? 'PUT' : 'POST',
       body: JSON.stringify(payload)
@@ -7759,6 +7787,7 @@ async function openRadiusHotspotUserModal(user = null) {
     setToast(user ? 'User Hotspot diperbarui' : 'User Hotspot ditambahkan');
     renderRadiusHotspot({ refresh: true });
   });
+  bindRequiredRadiusProfileWarning('#radiusHotspotProfile', 'Hotspot');
   bindRadiusHotspotPaymentFields(options);
 }
 

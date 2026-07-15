@@ -385,6 +385,39 @@ test('PPP member price follows selected profile instead of stale form payload', 
   assert.equal(data.customers[0].price, 150000);
 });
 
+test('manual radius user create requires a selected profile', () => {
+  const data = createDefaultStore();
+  data.radiusProfiles.push(
+    {
+      id: 'prof-ppp-10m',
+      name: '10 Mbps',
+      serviceType: 'pppoe',
+      price: 150000
+    },
+    {
+      id: 'prof-hotspot-3k',
+      name: 'Voucher 3K',
+      serviceType: 'hotspot',
+      price: 3000
+    }
+  );
+
+  assert.throws(
+    () => serverInternals.requireRadiusUserProfile(data, {}, 'pppoe', 'PPP-DHCP'),
+    /wajib dipilih/
+  );
+  assert.throws(
+    () => serverInternals.requireRadiusUserProfile(data, { profile: 'None' }, 'pppoe', 'PPP-DHCP'),
+    /wajib dipilih/
+  );
+  assert.doesNotThrow(
+    () => serverInternals.requireRadiusUserProfile(data, { profile: '10 Mbps' }, 'pppoe', 'PPP-DHCP')
+  );
+  assert.doesNotThrow(
+    () => serverInternals.requireRadiusUserProfile(data, { profileId: 'prof-hotspot-3k' }, 'hotspot', 'Hotspot')
+  );
+});
+
 test('deleting radius user removes member linked by radius user id without customer id', () => {
   const data = createDefaultStore();
   const customer = {
