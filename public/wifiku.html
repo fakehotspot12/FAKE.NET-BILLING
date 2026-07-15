@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#08204f">
     <title>WifiKu</title>
     <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-1.0.23">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-1.0.24">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -107,14 +107,14 @@
               <h2>WiFi</h2>
             </div>
           </div>
-          <div class="wifi-row">
+          <div class="wifi-row" data-wifi-row="2.4g">
             <div>
               <span>SSID 2.4G</span>
               <strong id="ssid24">-</strong>
             </div>
             <button type="button" data-ssid-band="2.4g">Ubah</button>
           </div>
-          <div class="wifi-row">
+          <div class="wifi-row" data-wifi-row="5g">
             <div>
               <span>SSID 5G</span>
               <strong id="ssid5">-</strong>
@@ -140,6 +140,6 @@
     </dialog>
 
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-1.0.23" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-1.0.24" defer></script>
   </body>
 </html>

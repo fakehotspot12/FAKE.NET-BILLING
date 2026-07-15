@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.24] - 2026-07-16
+
+### Changed
+
+- Portal WifiKu sekarang menyembunyikan baris SSID 5G jika modem pelanggan hanya memiliki WiFi 2.4G.
+- Ringkasan client WiFi di WifiKu tidak lagi menampilkan `5G 0` jika parameter SSID 5G tidak ditemukan di GenieACS.
+
 ## [1.0.23] - 2026-07-16
 
 ### Added

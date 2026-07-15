@@ -124,6 +124,11 @@ function wifiNetworkForBand(device = {}, band = '2.4g') {
     };
 }
 
+function wifiNetworkAvailable(device = {}, band = '2.4g') {
+  const network = wifiNetworkForBand(device, band);
+  return Boolean(device.id && network.ssidParameter && network.ssid);
+}
+
 function billingBadgeClass(status = '') {
   const value = String(status || '').toLowerCase();
   if (value === 'paid') return 'paid';
@@ -166,13 +171,20 @@ function renderPortal(payload) {
   byId('deviceStatus').textContent = device.id ? (device.online ? 'Online' : 'Offline') : (payload.genieAcs?.error || 'Device belum ditemukan');
   const clients24 = Number(device.wifiClients24 || 0);
   const clients5 = Number(device.wifiClients5 || 0);
+  const hasWifi24 = wifiNetworkAvailable(device, '2.4g');
+  const hasWifi5 = wifiNetworkAvailable(device, '5g');
   byId('wifiTotal').textContent = `${clients24 + clients5} user`;
-  byId('wifiDetail').textContent = `2.4G ${clients24} / 5G ${clients5}`;
+  byId('wifiDetail').textContent = hasWifi5 ? `2.4G ${clients24} / 5G ${clients5}` : `2.4G ${clients24}`;
   byId('ssid24').textContent = device.ssid24 || '-';
   byId('ssid5').textContent = device.ssid5 || '-';
+  document.querySelectorAll('[data-wifi-row]').forEach((row) => {
+    const band = row.dataset.wifiRow || '';
+    const available = band === '5g' ? hasWifi5 : hasWifi24;
+    row.hidden = !available;
+  });
   document.querySelectorAll('[data-ssid-band]').forEach((button) => {
     const network = wifiNetworkForBand(device, button.dataset.ssidBand);
-    const available = Boolean(device.id && network.ssidParameter);
+    const available = wifiNetworkAvailable(device, button.dataset.ssidBand);
     button.disabled = !available;
     button.title = available ? '' : 'SSID belum ditemukan di GenieACS';
   });
