@@ -319,6 +319,42 @@ Log update:
 /var/log/fakenet-billing/update.log
 ```
 
+### Jika Update Dari Web Tidak Berjalan
+
+Pada versi lama, halaman `Pengaturan > Update Aplikasi` bisa masih menampilkan format seperti:
+
+```text
+Update tersedia
+Klik Update Aplikasi untuk mengambil versi terbaru tanpa menghapus data.
+Terpasang: 374268b | GitHub: ef02779 | Branch: main
+```
+
+Tombol update web tetap bisa dipakai selama proses updater tidak terkunci. Jika setelah klik update versi tidak berubah, jalankan perbaikan sekali dari terminal server:
+
+```bash
+sudo rm -f /tmp/fakenet-billing-update.lock
+sudo fakenet-billing-stack update
+```
+
+Setelah server berhasil naik ke versi baru, updater sudah otomatis membersihkan lock basi dan update berikutnya bisa dilakukan dari web.
+
+Untuk audit cepat:
+
+```bash
+cd /opt/fakenet-billing
+git rev-parse --short HEAD
+node -p "require('./package.json').version"
+sudo systemctl status fakenet-billing --no-pager
+sudo tail -100 /var/log/fakenet-billing/update.log
+```
+
+Jika `fakenet-billing-stack update` masih gagal, cek poin berikut:
+
+- Server harus bisa akses repository Git yang digunakan saat install.
+- Folder `/opt/fakenet-billing` harus berupa Git checkout jika update memakai Git.
+- Jangan edit file source tracked langsung di server client. Data aplikasi tetap aman karena berada di `data/` atau database dan tidak ikut ditimpa updater.
+- Jika ada perubahan tracked lokal, updater akan mencoba menyimpannya ke Git stash sebelum `pull`.
+
 ## Uninstall Total
 
 Gunakan uninstall total jika ingin menghapus aplikasi dari mesin yang sama, misalnya sebelum install ulang dari awal. Perintah ini menghapus service aplikasi, source di `/opt/fakenet-billing`, env, database aplikasi, database Radius, session WAHA, log, backup, dan command helper `fakenet-billing-stack`/`fakenet-billing-update`.
