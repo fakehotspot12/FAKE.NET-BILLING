@@ -68,6 +68,10 @@ function clampDay(day) {
   return Math.max(1, Math.min(31, Math.round(parsed)));
 }
 
+function billingDueDay(settings = {}) {
+  return clampDay(settings?.billing?.postpaidDueDay || 10);
+}
+
 function dueDateForPeriod(period, day) {
   const safePeriod = normalizePeriod(period);
   const [year, month] = safePeriod.split('-').map((item) => Number(item));
@@ -636,7 +640,7 @@ function generateInvoices(data, period = currentPeriod()) {
       coveredPeriods: [selectedPeriod],
       subPeriodMonths: 1,
       amount,
-      dueDate: dueDateForPeriod(selectedPeriod, customer.dueDay || data.settings?.billing?.postpaidDueDay || data.settings.defaultDueDay),
+      dueDate: dueDateForPeriod(selectedPeriod, customer.dueDay || billingDueDay(data.settings)),
       status: amount > 0 ? 'pending' : 'cancelled',
       paidAt: '',
       paymentMethod: '',
@@ -690,7 +694,7 @@ function upsertCustomers(data, incomingCustomers) {
       packageName: cleanText(incoming.packageName),
       price: toNumber(incoming.price),
       status: normalizeStatus(incoming.status || 'active'),
-      dueDay: clampDay(incoming.dueDay || data.settings.defaultDueDay),
+      dueDay: clampDay(incoming.dueDay || billingDueDay(data.settings)),
       lastSyncedAt: new Date().toISOString()
     };
 
@@ -771,7 +775,7 @@ function upsertInvoices(data, incomingInvoices) {
       packageName: cleanText(incoming.packageName || (customer && customer.packageName)),
       period,
       amount: toNumber(incoming.amount || (customer && resolvePrice(data.settings, customer))),
-      dueDate: incoming.dueDate || dueDateForPeriod(period, (customer && customer.dueDay) || data.settings.defaultDueDay),
+      dueDate: incoming.dueDate || dueDateForPeriod(period, (customer && customer.dueDay) || billingDueDay(data.settings)),
       status,
       paidAt: incoming.paidAt || '',
       paymentMethod: cleanText(incoming.paymentMethod),
@@ -884,7 +888,7 @@ function addManualCustomer(data, payload) {
     packageName: cleanText(payload.packageName),
     price: toNumber(payload.price),
     status: normalizeStatus(payload.status || 'active'),
-    dueDay: clampDay(payload.dueDay || data.settings.defaultDueDay),
+    dueDay: clampDay(payload.dueDay || billingDueDay(data.settings)),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     lastSyncedAt: ''

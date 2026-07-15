@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.5] - 2026-07-15
+
+### Changed
+
+- Menghapus field `Tanggal tempo default` dari halaman `Pengaturan` agar tidak duplikat dengan `Radius > Setting > Billing Setting`.
+- Menjadikan `postpaidDueDay` di `Billing Setting` sebagai acuan jatuh tempo billing.
+
 ## [1.0.4] - 2026-07-15
 
 ### Changed

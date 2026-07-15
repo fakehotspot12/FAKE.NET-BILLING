@@ -2726,7 +2726,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
   const locationAccuracy = String(payload.memberLocationAccuracy || payload.locationAccuracy || '').trim();
   const locationUrl = latitude && longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}` : '';
   const invoiceStatus = String(payload.memberInvoiceStatus || payload.invoiceStatus || 'paid').trim().toLowerCase() === 'unpaid' ? 'unpaid' : 'paid';
-  const fallbackDueDay = payload.memberDueDay || data.settings?.billing?.postpaidDueDay || data.settings?.defaultDueDay || 10;
+  const fallbackDueDay = payload.memberDueDay || data.settings?.billing?.postpaidDueDay || 10;
   const dueDay = dayFromDateInput(activeDate, fallbackDueDay);
   const explicitNextDue = normalizeImportDate(payload.memberNextDue || payload.nextDue || payload.dueDate || '');
   const nextDue = explicitNextDue || anchoredDueDateFromActiveDate(activeDate, invoiceStatus, dueDay);
@@ -2790,7 +2790,7 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   const phone = normalizeLocalPhone(payload.memberPhone || payload.phone || customer.whatsapp || customer.phone || '');
   const activeDate = normalizeImportDate(payload.memberActiveDate || payload.activeDate || customer.activeDate || '');
   const invoiceStatus = String(payload.memberInvoiceStatus || payload.invoiceStatus || customer.firstInvoiceStatus || 'paid').trim().toLowerCase() === 'unpaid' ? 'unpaid' : 'paid';
-  const fallbackDueDay = payload.memberDueDay || customer.dueDay || data.settings?.billing?.postpaidDueDay || data.settings?.defaultDueDay || 10;
+  const fallbackDueDay = payload.memberDueDay || customer.dueDay || data.settings?.billing?.postpaidDueDay || 10;
   const dueDay = activeDate ? dayFromDateInput(activeDate, fallbackDueDay) : dayFromDateInput(customer.activeDate, fallbackDueDay);
   const explicitNextDue = normalizeImportDate(payload.memberNextDue || payload.nextDue || payload.dueDate || '');
   if (memberName) {
@@ -6240,7 +6240,7 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
   const months = clampInteger(subPeriod, 1, 12, 1);
   const billingSettings = data.settings?.billing || {};
   const amount = Number(resolvePrice(data.settings || {}, customer) || customer.amount || 0) * months;
-  const dueDay = customer.dueDay || dayFromDateInput(customer.activeDate || customer.installedAt || '', billingSettings.postpaidDueDay || data.settings?.defaultDueDay || 10);
+  const dueDay = customer.dueDay || dayFromDateInput(customer.activeDate || customer.installedAt || '', billingSettings.postpaidDueDay || 10);
   const baseInvoicePeriod = manualInvoiceBasePeriod(customer);
   const coveredPeriods = nextUncoveredPeriods(data, customer.id, baseInvoicePeriod, months);
   const period = coveredPeriods[0] || baseInvoicePeriod;
@@ -12529,9 +12529,6 @@ async function handleApi(req, res, url) {
       store.settings.collectorDailyBonusAmount = 0;
       if (typeof payload.logoUrl === 'string') {
         store.settings.logoUrl = sanitizeLogoUrl(payload.logoUrl);
-      }
-      if (payload.defaultDueDay) {
-        store.settings.defaultDueDay = Math.max(1, Math.min(28, Number(payload.defaultDueDay) || 10));
       }
       if (payload.packagePrices && typeof payload.packagePrices === 'object') {
         const nextPrices = {};

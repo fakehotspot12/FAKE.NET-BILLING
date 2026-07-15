@@ -224,8 +224,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.4',
-      buildVersion: '1.0.4',
+      version: '1.0.5',
+      buildVersion: '1.0.5',
       releaseDate: '2026-07-15'
     }
   },
@@ -236,8 +236,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.4',
-    buildVersion: '1.0.4',
+    appVersion: '1.0.5',
+    buildVersion: '1.0.5',
     releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
@@ -2366,8 +2366,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.4',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.4',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.5',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.5',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13361,10 +13361,6 @@ async function renderSettings(options = {}) {
             <span>Upload logo</span>
             <input id="logoUploadInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
           </label>
-          <label class="field">
-            <span>Tanggal tempo default</span>
-            <input name="defaultDueDay" type="number" min="1" max="28" value="${escapeHtml(settings.defaultDueDay || 10)}">
-          </label>
           <div class="field logo-preview-field">
             <span>Preview logo</span>
             <div class="logo-preview">
@@ -13467,8 +13463,7 @@ async function renderSettings(options = {}) {
       collectorDailyBonusEnabled: form.collectorDailyBonusEnabled.checked,
       security: {
         loginVerificationEnabled: form.loginVerificationEnabled.checked
-      },
-      defaultDueDay: form.defaultDueDay.value
+      }
     };
     if (pendingLogoUrl !== null) {
       body.logoUrl = pendingLogoUrl;
