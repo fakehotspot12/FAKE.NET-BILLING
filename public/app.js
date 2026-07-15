@@ -6890,13 +6890,6 @@ function bindRadiusPager(kind, setPage, renderer, setLimit = null) {
 function bindPasswordPeek() {
 }
 
-function radiusSyncStatus(sync = {}) {
-  if (!sync.enabled) return { label: 'Off', sub: 'Set FREERADIUS_SYNC_ENABLED=1', tone: 'warning-card' };
-  if (!sync.configured) return { label: 'Belum DB', sub: 'FREERADIUS_DATABASE_URL belum diisi', tone: 'negative' };
-  if (sync.lastSyncOk) return { label: 'Sinkron', sub: sync.lastSyncAt ? dateTimeText(sync.lastSyncAt) : 'Siap', tone: 'positive' };
-  return { label: 'Perlu cek', sub: sync.lastError || 'Belum pernah sinkron', tone: 'warning-card' };
-}
-
 function radiusNasIpForRow(row = {}, nasOptions = []) {
   const match = nasOptions.find((option) => [option.label, option.value, option.ip].includes(row.nas || row.site));
   return match ? match.ip : '';
@@ -8789,20 +8782,12 @@ async function renderRadiusSettings(options = {}) {
     writeBilling ? api('/api/billing/settings') : Promise.resolve({ settings: {} })
   ]);
   const sync = payload.sync || {};
-  const syncStatus = radiusSyncStatus(sync);
   const radius = payload.radius || {};
   const writeSettings = can('settings:write');
   const billing = billingPayload.settings || {};
-  const previewCounts = sync.previewCounts || sync.rowCounts || {};
 
   app.innerHTML = `
     <div class="stack">
-      <section class="metrics">
-        ${metric('SQL Writer', syncStatus.label, syncStatus.sub, syncStatus.tone)}
-        ${metric('radcheck', displayNumber(previewCounts.radcheck || 0), 'Password dan check item')}
-        ${metric('radreply', displayNumber(previewCounts.radreply || 0), 'IP static/isolir')}
-        ${metric('radgroupreply', displayNumber(previewCounts.radgroupreply || 0), 'Profile MikroTik')}
-      </section>
       ${payload.ok === false ? `<div class="notice warning">${escapeHtml(payload.error || 'Setting Radius belum bisa dibaca')}</div>` : ''}
       ${sync.lastError ? `<div class="notice warning">${escapeHtml(sync.lastError)}</div>` : ''}
       ${writeSettings ? `
