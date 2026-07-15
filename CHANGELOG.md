@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.14] - 2026-07-15
+
+### Fixed
+
+- Info `Pengaturan > Update Aplikasi` sekarang menampilkan 3 changelog rilis terbaru dari versi remote terbaru saat update tersedia.
+
 ## [1.0.13] - 2026-07-15
 
 ### Fixed

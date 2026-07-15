@@ -268,6 +268,29 @@ test('invoice due day supports end-of-month anchors', () => {
   assert.equal(dueDateForPeriod('2028-02', 31), '2028-02-29');
 });
 
+test('changelog summary returns three newest release sections', () => {
+  const summary = serverInternals.changelogSummaryFromText(`# Changelog
+
+## [1.0.4] - 2026-07-15
+- Empat
+
+## [1.0.3] - 2026-07-15
+- Tiga
+
+## [1.0.2] - 2026-07-15
+- Dua
+
+## [1.0.1] - 2026-07-15
+- Satu
+`, 3);
+
+  assert.match(summary, /\[1\.0\.4\]/);
+  assert.match(summary, /\[1\.0\.3\]/);
+  assert.match(summary, /\[1\.0\.2\]/);
+  assert.doesNotMatch(summary, /\[1\.0\.1\]/);
+  assert.ok(summary.indexOf('[1.0.4]') < summary.indexOf('[1.0.3]'));
+});
+
 test('deleting radius user removes linked member but keeps transaction history', () => {
   const data = createDefaultStore();
   const customer = {

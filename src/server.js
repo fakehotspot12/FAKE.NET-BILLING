@@ -147,18 +147,23 @@ let updateStatusCache = {
   value: null
 };
 
+function changelogSummaryFromText(raw = '', limit = 3) {
+  const source = String(raw || '').trim();
+  if (!source) return '';
+  const sectionMatches = [...source.matchAll(/^## \[[^\]]+\][^\n]*/gm)];
+  const sectionLimit = Math.max(1, Math.min(10, Number(limit) || 3));
+  if (!sectionMatches.length) return source;
+  return sectionMatches.slice(0, sectionLimit).map((match, index) => {
+    const start = match.index || 0;
+    const next = sectionMatches[index + 1];
+    const end = next && next.index !== undefined ? next.index : source.length;
+    return source.slice(start, end).trim();
+  }).join('\n\n');
+}
+
 function appChangelogSummary(limit = 3) {
   try {
-    const raw = fsSync.readFileSync(CHANGELOG_PATH, 'utf8');
-    const sectionMatches = [...raw.matchAll(/^## \[[^\]]+\][^\n]*/gm)];
-    const sectionLimit = Math.max(1, Math.min(10, Number(limit) || 3));
-    if (!sectionMatches.length) return raw.trim();
-    return sectionMatches.slice(0, sectionLimit).map((match, index) => {
-      const start = match.index || 0;
-      const next = sectionMatches[index + 1];
-      const end = next && next.index !== undefined ? next.index : raw.length;
-      return raw.slice(start, end).trim();
-    }).join('\n\n');
+    return changelogSummaryFromText(fsSync.readFileSync(CHANGELOG_PATH, 'utf8'), limit);
   } catch {
     return '';
   }
@@ -198,6 +203,7 @@ async function appUpdateStatus(options = {}) {
     remoteVersion: APP_VERSION,
     branch: '',
     remoteUrl: '',
+    remoteChangelog: '',
     dirty: false,
     updateAvailable: false,
     checkedAt: new Date().toISOString(),
@@ -239,6 +245,8 @@ async function appUpdateStatus(options = {}) {
       } catch {
         status.remoteVersion = '';
       }
+      const remoteChangelogRaw = await gitOutput(['show', `origin/${branch}:CHANGELOG.md`], { timeout: 3000 }).catch(() => '');
+      status.remoteChangelog = changelogSummaryFromText(remoteChangelogRaw, 3);
     }
   } catch (error) {
     status.error = error.message || 'Status update tidak bisa dicek';
@@ -12472,7 +12480,7 @@ async function handleApi(req, res, url) {
       updaterInstalled: fsSync.existsSync(APP_UPDATE_COMMAND),
       update,
       log,
-      changelog: appChangelogSummary(3)
+      changelog: update.remoteChangelog || appChangelogSummary(3)
     });
     return;
   }
@@ -12796,6 +12804,7 @@ if (require.main === module) {
 module.exports = {
   __test: {
     applyHotspotVoucherExpirations,
+    changelogSummaryFromText,
     collectorReportPayments,
     createLocalManualInvoice,
     createHotspotVoucherOrder,
