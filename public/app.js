@@ -6990,7 +6990,7 @@ function radiusMemberFieldsMarkup() {
         <div><span>Harga Profile</span><strong data-radius-review="price">-</strong></div>
         <div><span>PPN</span><strong data-radius-review="ppn">-</strong></div>
         <div><span>Diskon</span><strong data-radius-review="discount">-</strong></div>
-        <div><span>Total Tagihan Awal</span><strong data-radius-review="total">-</strong></div>
+        <div><span>Total Tagihan Perbulan</span><strong data-radius-review="total">-</strong></div>
         <div><span>Active Date</span><strong data-radius-review="activeDate">-</strong></div>
         <div><span>Status Invoice</span><strong data-radius-review="invoiceStatus">-</strong></div>
       </div>

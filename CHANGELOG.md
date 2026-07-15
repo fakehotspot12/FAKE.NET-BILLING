@@ -17,7 +17,7 @@ Format versi memakai pola `major.minor.patch`:
 
 ### Fixed
 
-- Wizard tambah member PPP-DHCP menampilkan preview Harga Profile, PPN, Diskon, dan Total Tagihan Awal sebelum simpan.
+- Wizard tambah member PPP-DHCP menampilkan preview Harga Profile, PPN, Diskon, dan Total Tagihan Perbulan sebelum simpan.
 - Invoice otomatis dan invoice manual sekarang menghitung total tagihan dari harga profile setelah diskon dan PPN member.
 
 ## [1.0.12] - 2026-07-15
