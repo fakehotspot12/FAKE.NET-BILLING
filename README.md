@@ -146,6 +146,48 @@ Data lokasi pelanggan dapat disimpan dari izin lokasi browser atau ditandai manu
 
 Monitoring member PPP-DHCP memuat status pelanggan, status pembayaran, NAS, kontak, alamat, invoice, serta data pendukung untuk pekerjaan lapangan. Portal WifiKu dapat digunakan pelanggan untuk melihat pemakaian bulanan, redaman, dan aksi perangkat jika integrasi GenieACS aktif.
 
+## Metode Pembayaran Member
+
+Billing member mengikuti pola umum ISP seperti Radboox, yaitu kombinasi `Payment Type` dan `Billing Period`. Pilihan periode billing dibatasi berdasarkan tipe pembayaran agar skema tagihan tidak rancu.
+
+| Payment Type | Billing Period yang tersedia | Fungsi |
+| --- | --- | --- |
+| Postpaid | Fixed Date | Pelanggan memakai layanan lebih dulu, lalu ditagih pada tanggal tetap milik member. Cocok untuk pelanggan bulanan dengan tanggal jatuh tempo mengikuti tanggal aktif/pasang. |
+| Postpaid | Billing Cycle | Pelanggan memakai layanan lebih dulu, lalu ditagih mengikuti tanggal cycle global dari Billing Setting. Cocok jika semua pelanggan ingin disatukan ke satu tanggal jatuh tempo, misalnya tanggal 10 atau 15. |
+| Prepaid | Fixed Date | Pelanggan membayar lebih dulu untuk periode tanggal tetap. Jika invoice awal belum paid, layanan tidak dianggap aman secara billing sampai pembayaran dicatat. |
+| Prepaid | Renewal | Pelanggan membayar lebih dulu dan masa aktif diperpanjang dari masa aktif/expired terakhir. Cocok untuk skema prabayar yang diperpanjang berdasarkan pembayaran berikutnya. |
+
+Kombinasi yang tidak sesuai tidak digunakan. `Postpaid + Renewal` dan `Prepaid + Billing Cycle` akan dinormalisasi ke `Fixed Date` agar data tetap aman dan invoice tidak dibuat dengan aturan yang salah.
+
+### Billing Cycle dan Prorata
+
+Untuk `Postpaid + Billing Cycle`, tanggal jatuh tempo mengikuti pengaturan `Due date postpaid` di menu `Radius > Setting > Billing Setting`. Jika pelanggan baru aktif sebelum atau sesudah tanggal cycle, invoice pertama dihitung prorata dari `Active Date` sampai tanggal jatuh tempo cycle pertama. Setelah invoice pertama, tagihan berikutnya kembali normal full bulanan.
+
+Contoh:
+
+```text
+Harga paket       : Rp150.000
+Active Date       : 20/07/2026
+Billing Cycle     : tanggal 15
+Jatuh tempo awal  : 15/08/2026
+Jumlah hari       : 27 hari
+Tagihan awal      : Rp150.000 x 27 / 30 = Rp135.000
+```
+
+Invoice berikutnya setelah periode prorata akan memakai nominal full `Rp150.000` per bulan, kecuali ada VAT/PPN atau diskon pada data member. Jika VAT/PPN dan diskon diisi, aplikasi menghitungnya dari subtotal tagihan periode tersebut, termasuk subtotal prorata.
+
+### Billing Setting
+
+Field tanggal di Billing Setting berfungsi sebagai berikut:
+
+- `Due date postpaid`: tanggal jatuh tempo global untuk `Postpaid + Billing Cycle`.
+- `Generate invoice sebelum tempo`: jumlah hari sebelum jatuh tempo saat invoice otomatis mulai dibuat. Nilai `1` berarti H-1, nilai `0` berarti tepat hari jatuh tempo.
+- `Reminder sebelum tempo`: jumlah hari sebelum jatuh tempo untuk mengirim pengingat Whatsapp. Nilai `0` berarti reminder otomatis dimatikan.
+- `Grace suspend setelah tempo`: masa tenggang setelah jatuh tempo sebelum pelanggan diisolir otomatis. Nilai `0` berarti auto isolir karena telat bayar dimatikan.
+- `Jam isolir otomatis`: jam eksekusi isolir otomatis setelah masa tenggang terpenuhi.
+
+Invoice otomatis dibuat per pelanggan sesuai tanggal jatuh temponya masing-masing. Untuk pelanggan prorata Billing Cycle, invoice pertama tidak dibuat sebelum `Active Date`, meskipun window generate invoice sudah masuk H-minus jatuh tempo.
+
 ## Voucher Hotspot
 
 Voucher Hotspot dirancang untuk operasional jual voucher harian/mingguan/bulanan tanpa input manual berulang. Admin atau reseller dapat membuat voucher satuan maupun batch dari profile Hotspot yang sudah memiliki harga, validity, quota, shared user, NAS, dan expired mode.
