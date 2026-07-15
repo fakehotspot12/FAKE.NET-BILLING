@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.10] - 2026-07-15
+
+### Fixed
+
+- `Check for Update` sekarang membaca versi rilis terbaru dari remote sehingga tidak lagi menampilkan placeholder `versi terbaru tersedia`.
+- Footer versi/copyright memakai versi terbaru dan format tanggal rilis yang konsisten.
+
 ## [1.0.9] - 2026-07-15
 
 ### Added

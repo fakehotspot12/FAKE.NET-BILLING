@@ -220,18 +220,23 @@ async function appUpdateStatus(options = {}) {
     status.remoteCommit = String(remoteLine || '').split(/\s+/)[0] || '';
     status.remoteCommitShort = status.remoteCommit.slice(0, 7);
     status.updateAvailable = Boolean(status.currentCommit && status.remoteCommit && status.currentCommit !== status.remoteCommit);
-    const remoteTrackingCommit = await gitOutput(['rev-parse', `origin/${branch}`], { timeout: 3000 }).catch(() => '');
+    let remoteTrackingCommit = await gitOutput(['rev-parse', `origin/${branch}`], { timeout: 3000 }).catch(() => '');
     if (!status.updateAvailable) {
       status.remoteVersion = APP_VERSION;
-    } else if (remoteTrackingCommit && remoteTrackingCommit === status.remoteCommit) {
+    } else {
+      status.remoteVersion = '';
+      if (status.remoteCommit && remoteTrackingCommit !== status.remoteCommit) {
+        await gitOutput(['fetch', '--quiet', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeout: 15000 }).catch(() => '');
+        remoteTrackingCommit = await gitOutput(['rev-parse', `origin/${branch}`], { timeout: 3000 }).catch(() => '');
+      }
+    }
+    if (status.updateAvailable && remoteTrackingCommit && remoteTrackingCommit === status.remoteCommit) {
       const remotePackageRaw = await gitOutput(['show', `origin/${branch}:package.json`], { timeout: 3000 }).catch(() => '');
       try {
         status.remoteVersion = String(JSON.parse(remotePackageRaw).version || status.remoteVersion);
       } catch {
-        status.remoteVersion = 'versi terbaru tersedia';
+        status.remoteVersion = '';
       }
-    } else {
-      status.remoteVersion = 'versi terbaru tersedia';
     }
   } catch (error) {
     status.error = error.message || 'Status update tidak bisa dicek';

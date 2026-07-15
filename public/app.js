@@ -224,8 +224,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.9',
-      buildVersion: '1.0.9',
+      version: '1.0.10',
+      buildVersion: '1.0.10',
       releaseDate: '2026-07-15'
     }
   },
@@ -236,8 +236,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.9',
-    buildVersion: '1.0.9',
+    appVersion: '1.0.10',
+    buildVersion: '1.0.10',
     releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
@@ -2366,8 +2366,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.9',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.9',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.10',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.10',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13277,7 +13277,7 @@ async function renderSettings(options = {}) {
     return /^\d/.test(raw) ? `v${raw}` : raw;
   };
   const installedVersion = updateInfo.currentVersion || updateInfo.localVersion || branding.appVersion;
-  const latestVersion = updateInfo.remoteVersion || (updateAvailable ? 'versi terbaru tersedia' : installedVersion);
+  const latestVersion = updateInfo.remoteVersion || (updateAvailable ? '' : installedVersion);
   const changelogText = updateStatus.changelog || 'Belum ada changelog rilis.';
   const updateNoticeClass = !updateStatus.updaterInstalled || updateInfo.error ? 'warning' : updateAvailable ? 'warning' : 'positive';
   const updateTitle = !updateStatus.updaterInstalled
@@ -13419,7 +13419,7 @@ async function renderSettings(options = {}) {
 
       <section class="release-footnote" aria-label="Informasi rilis aplikasi">
         <strong>Copyright ${escapeHtml(branding.copyrightYear)} - ${escapeHtml(branding.copyrightName)}</strong>
-        <span>Versi ${escapeHtml(branding.appVersion)} · ${escapeHtml(branding.releaseDate)}</span>
+        <span>Versi ${escapeHtml(branding.appVersion)} · ${escapeHtml(dateText(branding.releaseDate))}</span>
       </section>
     </div>
   `;
