@@ -224,8 +224,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.7',
-      buildVersion: '1.0.7',
+      version: '1.0.8',
+      buildVersion: '1.0.8',
       releaseDate: '2026-07-15'
     }
   },
@@ -236,8 +236,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.7',
-    buildVersion: '1.0.7',
+    appVersion: '1.0.8',
+    buildVersion: '1.0.8',
     releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
@@ -2366,8 +2366,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.7',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.7',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.8',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.8',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13407,12 +13407,12 @@ async function renderSettings(options = {}) {
             </div>
           </div>
           <label class="field full">
-            <span>Changelog versi ${escapeHtml(versionLabel(installedVersion || branding.appVersion))}</span>
+            <span>Changelog 3 perubahan terakhir</span>
             <textarea rows="8" readonly>${escapeHtml(changelogText)}</textarea>
           </label>
           <div class="modal-actions field full">
             <button class="button" id="runAppUpdateButton" type="button" ${updateStatus.updaterInstalled ? '' : 'disabled'}>Update Aplikasi</button>
-            <button class="ghost-button" id="refreshAppUpdateStatus" type="button">Refresh Status</button>
+            <button class="ghost-button" id="refreshAppUpdateStatus" type="button">Check for Update</button>
           </div>
         </div>
       </section>

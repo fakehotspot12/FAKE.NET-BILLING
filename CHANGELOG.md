@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.8] - 2026-07-15
+
+### Changed
+
+- Menampilkan 3 perubahan/rilis terakhir pada panel `Pengaturan > Update Aplikasi`.
+- Mengganti tombol `Refresh Status` menjadi `Check for Update`.
+
 ## [1.0.7] - 2026-07-15
 
 ### Changed

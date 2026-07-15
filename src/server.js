@@ -145,20 +145,18 @@ let updateStatusCache = {
   value: null
 };
 
-function appChangelogSummary(version = APP_VERSION) {
+function appChangelogSummary(limit = 3) {
   try {
     const raw = fsSync.readFileSync(CHANGELOG_PATH, 'utf8');
-    const normalizedVersion = String(version || '').trim();
-    const headingPattern = normalizedVersion
-      ? new RegExp(`^## \\[${normalizedVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\][^\\n]*`, 'm')
-      : /^## \[[^\]]+\][^\n]*/m;
-    const match = raw.match(headingPattern);
-    if (!match || match.index === undefined) return raw.trim();
-    const start = match.index;
-    const after = raw.slice(start + match[0].length);
-    const nextMatch = after.match(/\n## \[/);
-    const sectionBody = nextMatch ? after.slice(0, nextMatch.index) : after;
-    return `${match[0]}\n${sectionBody}`.trim();
+    const sectionMatches = [...raw.matchAll(/^## \[[^\]]+\][^\n]*/gm)];
+    const sectionLimit = Math.max(1, Math.min(10, Number(limit) || 3));
+    if (!sectionMatches.length) return raw.trim();
+    return sectionMatches.slice(0, sectionLimit).map((match, index) => {
+      const start = match.index || 0;
+      const next = sectionMatches[index + 1];
+      const end = next && next.index !== undefined ? next.index : raw.length;
+      return raw.slice(start, end).trim();
+    }).join('\n\n');
   } catch {
     return '';
   }
@@ -12407,7 +12405,7 @@ async function handleApi(req, res, url) {
       updaterInstalled: fsSync.existsSync(APP_UPDATE_COMMAND),
       update,
       log,
-      changelog: appChangelogSummary(APP_VERSION)
+      changelog: appChangelogSummary(3)
     });
     return;
   }
