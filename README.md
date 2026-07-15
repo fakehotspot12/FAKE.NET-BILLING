@@ -100,8 +100,7 @@ sudo bash install.sh uninstall
 
 Hal yang perlu diatur setelah install:
 
-- Aktivasi license key dari HWID/machine code yang muncul di halaman `http://IP-SERVER:8891`.
-- Jika belum punya license key, kirim HWID ke CS Whatsapp `083878122381`.
+- Aktivasi aplikasi melalui halaman aktivasi jika diminta.
 - Ubah password admin.
 - Isi data usaha, logo, dan subdomain publik jika dipakai.
 - Tambahkan Site/NAS, secret Radius, SNMP community, dan profile layanan.
@@ -124,7 +123,6 @@ Hal yang perlu diatur setelah install:
   - WifiKu untuk pelanggan melihat usage bulanan, redaman, ganti SSID/password, dan reboot ONU jika GenieACS aktif.
 - Manajemen aset, inventaris, stok, mutasi stok, notifikasi stok/aset bermasalah.
 - Role user: admin, owner, finance, teknisi, NOC, collector, reseller voucher, viewer.
-- Aktivasi lisensi berbasis HWID/machine code.
 - Backup/restore dan update aplikasi dari menu Pengaturan.
 
 ## Member PPP-DHCP
@@ -247,7 +245,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 
 Yang tetap perlu diatur setelah install:
 
-- License key aplikasi dari HWID/machine code.
+- Aktivasi aplikasi jika diminta oleh penyedia.
 - Domain/subdomain publik dan HTTPS reverse proxy jika aplikasi dipublish ke internet.
 - Payment gateway merchant key, private key, dan callback domain.
 - Scan Whatsapp API Gateway dari menu aplikasi.
@@ -391,30 +389,6 @@ Yang dihapus:
 
 Paket OS seperti PostgreSQL, Redis, FreeRADIUS, Docker, Node.js, Git, dan curl tidak dihapus karena bisa dipakai aplikasi lain.
 
-Lisensi tidak terikat pada file install, tetapi pada HWID/machine code. Jika aplikasi dihapus lalu diinstall lagi pada mesin/VM yang sama dan HWID tetap sama, license key lama bisa digunakan kembali. Jika pindah mesin, reinstall OS besar, atau HWID berubah, minta license key baru ke customer service Whatsapp `083878122381`.
-
-## Lisensi
-
-Aktivasi aplikasi memakai HWID/machine code dari mesin install. Saat `LICENSE_ENFORCE=1`, aplikasi wajib diaktivasi sebelum login.
-
-Durasi lisensi yang tersedia:
-
-- `7d`
-- `30d`
-- `90d`
-- `180d`
-- `1y`
-- `lifetime`
-
-Mesin pelanggan hanya membutuhkan public key validasi di `/etc/fakenet-billing.env`:
-
-```bash
-LICENSE_ENFORCE=1
-LICENSE_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
-```
-
-Generator license key tidak disertakan dalam repository/install publik. Setelah install, halaman aktivasi di port aplikasi billing (`8891`) menampilkan HWID/machine code. Pelanggan mengirim HWID tersebut ke customer service Whatsapp `083878122381`, lalu memasukkan license key yang diterima ke halaman aktivasi billing.
-
 ## Backup dan Restore
 
 Dari aplikasi:
@@ -430,7 +404,7 @@ Halaman login memuat informasi publik yang dibutuhkan untuk review payment gatew
 
 - Produk layanan yang dijual.
 - Ringkasan syarat dan ketentuan.
-- Kontak customer service: `083878122381`.
+- Kontak customer service sesuai data usaha.
 
 Untuk Tripay, callback/webhook default:
 
@@ -446,7 +420,7 @@ Sebelum upload ke GitHub:
 
 - Pastikan `data/store.json` tidak ikut commit.
 - Pastikan `/etc/*.env` tidak ikut commit.
-- Pastikan private key lisensi tidak ada di repository.
+- Pastikan private key dan kredensial produksi tidak ada di repository.
 - Gunakan `.env.example` dan file `deploy/*.env` sebagai template saja.
 
 Default user untuk install baru dibuat otomatis jika data masih kosong:
