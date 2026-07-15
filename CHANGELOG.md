@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.4] - 2026-07-15
+
+### Changed
+
+- Menyederhanakan informasi update aplikasi dengan menghapus label `Kanal` dari tampilan status update.
+
 ## [1.0.3] - 2026-07-15
 
 ### Changed
