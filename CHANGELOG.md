@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.27] - 2026-07-16
+
+### Fixed
+
+- Monitoring GenieACS sekarang memprioritaskan `VirtualParameters.RXPower` agar redaman hasil normalisasi ACS dipakai lebih dulu.
+- Raw redaman positif dari modem XPON/CT/CMCC seperti `60` dinormalisasi menjadi dBm negatif, sehingga tidak tampil sebagai `+60 dBm`.
+
 ## [1.0.26] - 2026-07-16
 
 ### Changed

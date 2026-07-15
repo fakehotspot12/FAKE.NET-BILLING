@@ -14,6 +14,7 @@ const DEFAULT_USERNAME_PARAMETERS = [
 ];
 
 const DEFAULT_RX_POWER_PARAMETERS = [
+  'VirtualParameters.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
@@ -268,11 +269,9 @@ function normalizeRxPower(value = '', parameter = '') {
   if (!text) return '';
   const number = Number(text);
   if (Number.isFinite(number)) {
-    if (/ZTE/i.test(parameter) && number > 0) {
-      return `${(-number / 10).toLocaleString('id-ID', { maximumFractionDigits: 2 })} dBm`;
-    }
-    if (number < -100 || number > 100) return `${(number / 100).toLocaleString('id-ID', { maximumFractionDigits: 2 })} dBm`;
-    return `${number.toLocaleString('id-ID', { maximumFractionDigits: 2 })} dBm`;
+    const normalized = rxPowerNumber(text, parameter);
+    if (normalized === null) return '';
+    return `${normalized.toLocaleString('id-ID', { maximumFractionDigits: 2 })} dBm`;
   }
   return text;
 }
@@ -282,9 +281,18 @@ function rxPowerNumber(value = '', parameter = '') {
   if (!text) return null;
   const number = Number(text.replace(',', '.').replace(/[^\d.-]/g, ''));
   if (!Number.isFinite(number)) return null;
+  if ([0, -255, 255, 65535, 32767].includes(number)) return null;
   if (/ZTE/i.test(parameter) && number > 0) return -number / 10;
+  if (number > 0 && isRawPositiveRxParameter(parameter)) {
+    const normalized = 30 + (Math.log10(number * Math.pow(10, -7)) * 10);
+    return Number.isFinite(normalized) ? Math.ceil(normalized * 100) / 100 : null;
+  }
   if (number < -100 || number > 100) return number / 100;
   return number;
+}
+
+function isRawPositiveRxParameter(parameter = '') {
+  return /(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical).*RXPower|RXPower.*(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical)/i.test(parameter);
 }
 
 function rxPowerSummaryText(value) {

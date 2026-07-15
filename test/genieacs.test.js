@@ -124,3 +124,64 @@ test('uses built-in GenieACS parameters and normalizes ZTE RX power', () => {
   assert.equal(device.wifiNetworks.length, 3);
   assert.equal(device.wifiNetworks.find((item) => item.ssid === 'ZTE-HOTSPOT').enabled, false);
 });
+
+test('prefers GenieACS virtual RX power over positive XPON raw value', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'dkb-reshna',
+    _deviceId: {
+      _Manufacturer: 'XPON',
+      _ProductClass: 'DKB-180',
+      _SerialNumber: 'ELWGC61891E9'
+    },
+    VirtualParameters: {
+      RXPower: { _value: '-22.21' }
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          WANConnectionDevice: {
+            1: {
+              WANPPPConnection: {
+                1: { Username: { _value: 'rt10.reshna@km' } }
+              }
+            }
+          },
+          X_CMCC_EponInterfaceConfig: {
+            RXPower: { _value: '60' }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.username, 'rt10.reshna@km');
+  assert.equal(device.rxPower, '-22.21');
+  assert.equal(device.rxPowerValue, -22.21);
+  assert.equal(device.rxPowerText, '-22,21 dBm');
+  assert.equal(device.rxPowerParameter, 'VirtualParameters.RXPower');
+});
+
+test('normalizes positive CMCC/CT XPON raw RX power when virtual value is absent', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'dkb-raw',
+    _deviceId: {
+      _Manufacturer: 'XPON',
+      _ProductClass: 'DKB-180',
+      _SerialNumber: 'RAW60'
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          X_CMCC_EponInterfaceConfig: {
+            RXPower: { _value: '60' }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.rxPower, '60');
+  assert.equal(device.rxPowerValue, -22.21);
+  assert.equal(device.rxPowerText, '-22,21 dBm');
+  assert.equal(device.rxPowerParameter, 'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower');
+});
