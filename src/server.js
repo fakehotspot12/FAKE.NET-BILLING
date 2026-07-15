@@ -22,7 +22,7 @@ const {
   addExternalIncome,
   addManualCustomer,
   billingDueDayForCustomer,
-  billingAmountBreakdown,
+  billingAmountBreakdownForPeriods,
   currentPeriod,
   customerBillableInPeriod,
   dueDateForPeriod,
@@ -37,6 +37,7 @@ const {
   normalizePaymentType,
   normalizePeriod,
   paymentIsActive,
+  postpaidCycleProrationInfo,
   resolvePrice,
   summarize,
   toNumber,
@@ -4646,6 +4647,8 @@ function invoiceGenerationDue(settings = {}, period = currentPeriod(), today = l
 }
 
 function customerInvoiceGenerationDue(settings = {}, customer = {}, period = currentPeriod(), today = localTodayIso()) {
+  const proration = postpaidCycleProrationInfo({ billing: settings }, customer, period);
+  if (proration && today < proration.startDate) return false;
   const dueDate = dueDateForPeriod(period, billingDueDayForCustomer({ billing: settings }, customer));
   const advanceDays = clampInteger(settings.fixedInvoiceAdvanceDays ?? 7, 0, 31, 7);
   const advanceStart = addDaysIso(dueDate, -advanceDays);
@@ -6324,7 +6327,6 @@ function manualInvoiceBasePeriod(customer = {}) {
 function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
   const months = clampInteger(subPeriod, 1, 12, 1);
   const billingSettings = data.settings?.billing || {};
-  const billingAmount = billingAmountBreakdown(data.settings || {}, customer, months);
   const dueDay = billingDueDayForCustomer(data.settings || {}, {
     ...customer,
     dueDay: customer.dueDay || dayFromDateInput(customer.activeDate || customer.installedAt || '', billingSettings.postpaidDueDay || 10)
@@ -6333,6 +6335,7 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
   const coveredPeriods = nextUncoveredPeriods(data, customer.id, baseInvoicePeriod, months);
   const period = coveredPeriods[0] || baseInvoicePeriod;
   const dueDate = dueDateForPeriod(period, dueDay);
+  const billingAmount = billingAmountBreakdownForPeriods(data.settings || {}, customer, coveredPeriods.length ? coveredPeriods : [period]);
   return {
     fullName: customer.name || customer.customerName || customer.username || '',
     dueDate,
@@ -6359,7 +6362,9 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
     discountRate: billingAmount.discountRate,
     discountAmount: billingAmount.discountAmount,
     total: formatCurrencyText(billingAmount.totalAmount),
-    totalAmount: billingAmount.totalAmount
+    totalAmount: billingAmount.totalAmount,
+    prorated: Boolean(billingAmount.proration),
+    proration: billingAmount.proration || null
   };
 }
 
@@ -6403,6 +6408,8 @@ function createLocalManualInvoice(data = {}, customer = {}, subPeriod = 1, actor
     total: Number(preview.totalAmount || 0),
     totalAmount: Number(preview.totalAmount || 0),
     amount: Number(preview.totalAmount || 0),
+    prorated: Boolean(preview.prorated),
+    proration: preview.proration || null,
     dueDate: preview.dueDate,
     status: Number(preview.totalAmount || 0) > 0 ? 'pending' : 'cancelled',
     paidAt: '',

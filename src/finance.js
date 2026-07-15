@@ -107,6 +107,38 @@ function billingDueDayForCustomer(settings = {}, customer = {}) {
   return clampDay(customer.dueDay || billingDueDay(settings));
 }
 
+function firstPostpaidCycleDueDate(settings = {}, customer = {}) {
+  const mode = billingMode(customer);
+  if (mode.paymentType !== 'postpaid' || mode.billingPeriod !== 'cycle') return '';
+  const activeDate = isoDateFromText(customer.activeDate || customer.installedAt || customer.createdAt || '');
+  if (!activeDate) return '';
+  const activePeriod = periodFromDateText(activeDate);
+  const dueDay = billingDueDay(settings);
+  const dueThisPeriod = dueDateForPeriod(activePeriod, dueDay);
+  return activeDate <= dueThisPeriod
+    ? dueThisPeriod
+    : dueDateForPeriod(addMonthsToPeriod(activePeriod, 1), dueDay);
+}
+
+function postpaidCycleProrationInfo(settings = {}, customer = {}, period = currentPeriod()) {
+  const activeDate = isoDateFromText(customer.activeDate || customer.installedAt || customer.createdAt || '');
+  const firstDueDate = firstPostpaidCycleDueDate(settings, customer);
+  if (!activeDate || !firstDueDate) return null;
+  const selectedPeriod = normalizePeriod(period);
+  const firstPeriod = periodFromDateText(firstDueDate);
+  if (selectedPeriod !== firstPeriod) return null;
+  const usedDays = Math.min(30, inclusiveDaysBetween(activeDate, firstDueDate));
+  if (usedDays <= 0 || usedDays >= 30) return null;
+  return {
+    type: 'postpaid-cycle-first',
+    startDate: activeDate,
+    endDate: firstDueDate,
+    usedDays,
+    baseDays: 30,
+    ratio: usedDays / 30
+  };
+}
+
 function dueDateForPeriod(period, day) {
   const safePeriod = normalizePeriod(period);
   const [year, month] = safePeriod.split('-').map((item) => Number(item));
@@ -456,6 +488,33 @@ function periodFromDateText(value = '') {
   return '';
 }
 
+function isoDateFromText(value = '') {
+  const text = cleanText(value);
+  if (!text) return '';
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+  }
+  const local = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (local) {
+    return `${local[3]}-${local[2].padStart(2, '0')}-${local[1].padStart(2, '0')}`;
+  }
+  return '';
+}
+
+function dateToUtcMs(dateIso = '') {
+  const [year, month, day] = String(dateIso || '').split('-').map(Number);
+  if (!year || !month || !day) return NaN;
+  return Date.UTC(year, month - 1, day);
+}
+
+function inclusiveDaysBetween(startIso = '', endIso = '') {
+  const startMs = dateToUtcMs(startIso);
+  const endMs = dateToUtcMs(endIso);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 0;
+  return Math.floor((endMs - startMs) / 86_400_000) + 1;
+}
+
 function customerBillableInPeriod(customer = {}, period = currentPeriod()) {
   const activePeriod = periodFromDateText(customer.activeDate || customer.installedAt);
   if (!activePeriod) return true;
@@ -502,10 +561,10 @@ function percentValue(value) {
   return Math.max(0, Math.min(100, toNumber(value)));
 }
 
-function billingAmountBreakdown(settings = {}, customer = {}, months = 1) {
+function billingAmountBreakdown(settings = {}, customer = {}, months = 1, options = {}) {
   const quantity = Math.max(1, Math.round(toNumber(months) || 1));
   const unitPrice = Math.max(0, Math.round(resolvePrice(settings, customer)));
-  const subtotal = unitPrice * quantity;
+  const subtotal = Math.max(0, Math.round(hasOwn(options, 'subtotal') ? toNumber(options.subtotal) : unitPrice * quantity));
   const discountRate = percentValue(customer.discount ?? customer.discountRate);
   const discountAmount = Math.round((subtotal * discountRate) / 100);
   const taxableAmount = Math.max(0, subtotal - discountAmount);
@@ -528,8 +587,26 @@ function billingAmountBreakdown(settings = {}, customer = {}, months = 1) {
     taxAmount: ppnAmount,
     total,
     totalAmount: total,
-    amount: total
+    amount: total,
+    proration: options.proration || null
   };
+}
+
+function billingAmountBreakdownForPeriods(settings = {}, customer = {}, periods = []) {
+  const selectedPeriods = Array.isArray(periods) && periods.length ? periods.map(normalizePeriod) : [currentPeriod()];
+  const unitPrice = Math.max(0, Math.round(resolvePrice(settings, customer)));
+  const prorations = [];
+  const subtotal = selectedPeriods.reduce((total, period) => {
+    const proration = postpaidCycleProrationInfo(settings, customer, period);
+    if (!proration) return total + unitPrice;
+    const proratedAmount = Math.round(unitPrice * proration.ratio);
+    prorations.push({ ...proration, period, amount: proratedAmount, fullAmount: unitPrice });
+    return total + proratedAmount;
+  }, 0);
+  return billingAmountBreakdown(settings, customer, selectedPeriods.length, {
+    subtotal,
+    proration: prorations[0] || null
+  });
 }
 
 function addActivity(data, type, message, meta = {}) {
@@ -690,7 +767,8 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
     if (!customerIsActive(customer)) {
       continue;
     }
-    if (!customerBillableInPeriod(customer, selectedPeriod)) {
+    const proration = postpaidCycleProrationInfo(data.settings, customer, selectedPeriod);
+    if (!customerBillableInPeriod(customer, selectedPeriod) && !proration) {
       continue;
     }
 
@@ -704,7 +782,7 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       continue;
     }
 
-    const billingAmount = billingAmountBreakdown(data.settings, customer, 1);
+    const billingAmount = billingAmountBreakdownForPeriods(data.settings, customer, [selectedPeriod]);
     const amount = billingAmount.totalAmount;
     const numbering = nextBillingInvoiceNumber(data, selectedPeriod);
     const invoice = {
@@ -737,7 +815,11 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       status: amount > 0 ? 'pending' : 'cancelled',
       paidAt: '',
       paymentMethod: '',
-      notes: amount > 0 ? '' : 'Tarif paket belum diatur',
+      prorated: Boolean(billingAmount.proration),
+      proration: billingAmount.proration || null,
+      notes: amount > 0
+        ? (billingAmount.proration ? `Prorata ${billingAmount.proration.usedDays}/${billingAmount.proration.baseDays} hari` : '')
+        : 'Tarif paket belum diatur',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1206,6 +1288,7 @@ module.exports = {
   addExpense,
   addManualCustomer,
   billingAmountBreakdown,
+  billingAmountBreakdownForPeriods,
   currentPeriod,
   customerBillableInPeriod,
   dueDateForPeriod,
@@ -1219,6 +1302,7 @@ module.exports = {
   markInvoiceUnpaid,
   normalizeBillingPeriodForType,
   normalizePaymentType,
+  postpaidCycleProrationInfo,
   paymentIsActive,
   normalizePeriod,
   normalizeStatus,

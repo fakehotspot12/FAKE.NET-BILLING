@@ -145,6 +145,55 @@ test('postpaid billing cycle uses billing setting due date while fixed uses memb
   assert.equal(cycle.dueDate, '2026-08-10');
 });
 
+test('first postpaid billing cycle invoice is prorated from active date to cycle due date', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 15;
+  data.customers.push(
+    {
+      id: 'cus-cycle-after',
+      username: 'cycle-after@kampung.net',
+      name: 'Cycle After',
+      packageName: 'Paket Cycle',
+      status: 'active',
+      price: 150000,
+      paymentType: 'postpaid',
+      billingPeriod: 'cycle',
+      activeDate: '2026-07-20',
+      dueDay: 20
+    },
+    {
+      id: 'cus-cycle-before',
+      username: 'cycle-before@kampung.net',
+      name: 'Cycle Before',
+      packageName: 'Paket Cycle',
+      status: 'active',
+      price: 150000,
+      paymentType: 'postpaid',
+      billingPeriod: 'cycle',
+      activeDate: '2026-07-10',
+      dueDay: 10
+    }
+  );
+
+  const july = generateInvoices(data, '2026-07');
+  assert.equal(july.length, 1);
+  assert.equal(july[0].customerId, 'cus-cycle-before');
+  assert.equal(july[0].dueDate, '2026-07-15');
+  assert.equal(july[0].amount, 30000);
+  assert.equal(july[0].prorated, true);
+  assert.equal(july[0].proration.usedDays, 6);
+
+  const august = generateInvoices(data, '2026-08');
+  const firstAfterCycle = august.find((invoice) => invoice.customerId === 'cus-cycle-after');
+  const nextBeforeCycle = august.find((invoice) => invoice.customerId === 'cus-cycle-before');
+  assert.equal(firstAfterCycle.dueDate, '2026-08-15');
+  assert.equal(firstAfterCycle.amount, 135000);
+  assert.equal(firstAfterCycle.prorated, true);
+  assert.equal(firstAfterCycle.proration.usedDays, 27);
+  assert.equal(nextBeforeCycle.amount, 150000);
+  assert.equal(nextBeforeCycle.prorated, false);
+});
+
 test('generates invoices only after the active date month', () => {
   const data = createDefaultStore();
   data.customers.push(
@@ -848,6 +897,16 @@ test('standalone automation generates fixed-date invoices only inside each membe
   assert.equal(serverInternals.customerInvoiceGenerationDue(settings, fixedCustomer, '2026-08', '2026-08-13'), true);
   assert.equal(serverInternals.customerInvoiceGenerationDue(settings, cycleCustomer, '2026-08', '2026-08-02'), false);
   assert.equal(serverInternals.customerInvoiceGenerationDue(settings, cycleCustomer, '2026-08', '2026-08-03'), true);
+  assert.equal(serverInternals.customerInvoiceGenerationDue(settings, {
+    paymentType: 'postpaid',
+    billingPeriod: 'cycle',
+    activeDate: '2026-08-05'
+  }, '2026-08', '2026-08-03'), false);
+  assert.equal(serverInternals.customerInvoiceGenerationDue(settings, {
+    paymentType: 'postpaid',
+    billingPeriod: 'cycle',
+    activeDate: '2026-08-05'
+  }, '2026-08', '2026-08-05'), true);
 });
 
 test('expired hotspot voucher remove-record keeps terminated record', () => {
