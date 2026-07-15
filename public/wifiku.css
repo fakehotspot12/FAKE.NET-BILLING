@@ -221,15 +221,7 @@ small {
   padding: 10px 12px;
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   box-shadow: 0 10px 28px rgba(12, 32, 62, .06);
-}
-
-.portal-toolbar strong {
-  display: block;
-  max-width: 680px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 18px;
+  justify-content: flex-end;
 }
 
 .toolbar input {

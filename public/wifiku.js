@@ -165,7 +165,6 @@ function renderPortal(payload) {
   const usage = payload.usage || {};
   const device = payload.device || {};
   const memberName = customer.name || customer.username || '-';
-  byId('customerName').textContent = memberName;
   byId('memberId').textContent = customer.memberId || customer.id || '-';
   byId('memberName').textContent = memberName;
   byId('memberPackage').textContent = customer.packageName || '-';

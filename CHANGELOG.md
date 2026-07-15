@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.26] - 2026-07-16
+
+### Changed
+
+- Toolbar portal WifiKu sekarang hanya menampilkan filter bulan karena identitas member sudah dipindahkan ke panel Informasi Member.
+
 ## [1.0.25] - 2026-07-16
 
 ### Added
