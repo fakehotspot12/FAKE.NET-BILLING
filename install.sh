@@ -429,6 +429,26 @@ configure_freeradius_sql_file() {
   sed -i -E "s/^[[:space:]]*login = .*/        login = \"${RADIUS_DATABASE_USER:-radius}\"/" "$sql_file" || true
   sed -i -E "s/^[[:space:]]*password = .*/        password = \"${RADIUS_DATABASE_PASSWORD:-}\"/" "$sql_file" || true
   sed -i -E "s#^[[:space:]]*radius_db = .*#        radius_db = \"$radius_db_conn\"#" "$sql_file" || true
+  if printf '%s\n' "$sql_file" | grep -Eq '/mods-config/sql/main/.*/queries\.conf$|/queries\.conf$'; then
+    local tmp_sql_file
+    tmp_sql_file="$(mktemp)"
+    awk '
+      /^[[:space:]]*sql_user_name[[:space:]]*=/ {
+        if (!done) {
+          print "        sql_user_name = \"%{User-Name}\""
+          done = 1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!done) print "        sql_user_name = \"%{User-Name}\""
+      }
+    ' "$sql_file" > "$tmp_sql_file" && cat "$tmp_sql_file" > "$sql_file"
+    rm -f "$tmp_sql_file"
+  else
+    sed -i -E '/^[[:space:]]*sql_user_name[[:space:]]*=/d' "$sql_file" || true
+  fi
   sed -i -E 's/^[[:space:]]*#?[[:space:]]*read_clients = .*/        read_clients = yes/' "$sql_file" || true
   sed -i -E 's/^[[:space:]]*client_table = .*/        client_table = "nas"/' "$sql_file" || true
 }
@@ -438,6 +458,9 @@ configure_freeradius_site_file() {
   [ -f "$site_file" ] || return 0
 
   backup_freeradius_config_file "$site_file"
+  # ISP usernames commonly use local suffixes such as user@site.
+  # FreeRADIUS' default filter_username rejects realms without a dot before SQL auth.
+  sed -i -E '/^[[:space:]]*filter_username[[:space:]]*$/s//        # filter_username disabled by fakenet-billing: allow local PPP-Hotspot suffix usernames/' "$site_file" || true
   sed -i -E 's/^[[:space:]]*#?[[:space:]]*-?sql([[:space:]]*(#.*)?)$/        sql\1/' "$site_file" || true
   sed -i -E 's/^[[:space:]]*sqlippool([[:space:]]*(#.*)?)$/#        sqlippool\1/' "$site_file" || true
   sed -i -E 's/^[[:space:]]*sql_session_start([[:space:]]*(#.*)?)$/#        sql_session_start\1/' "$site_file" || true
@@ -452,6 +475,7 @@ configure_freeradius_sql() {
   for candidate in \
     /etc/freeradius/3.0/mods-available/sql \
     /etc/freeradius/3.0/mods-enabled/sql \
+    /etc/freeradius/3.0/mods-config/sql/main/postgresql/queries.conf \
     /etc/raddb/mods-available/sql \
     /etc/raddb/mods-enabled/sql \
     /etc/raddb/mods-config/sql/main/postgresql/queries.conf; do
