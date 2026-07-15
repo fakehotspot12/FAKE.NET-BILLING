@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.21] - 2026-07-15
+
+### Fixed
+
+- `Check for Update` tidak lagi memakai changelog lokal lama ketika update tersedia tetapi changelog remote gagal dibaca.
+- Jika versi remote sama tetapi commit remote lebih baru, panel update menampilkan ringkasan revisi remote sebagai fallback.
+- Menambahkan test agar fallback update tidak kembali menampilkan riwayat lama ketika banyak perubahan dilakukan tanpa bump versi.
+
 ## [1.0.20] - 2026-07-15
 
 ### Fixed

@@ -386,6 +386,21 @@ def5678 Add billing docs
   assert.doesNotMatch(summary, /def5678/);
 });
 
+test('update fallback summary avoids stale changelog when update exists', () => {
+  const summary = serverInternals.updateAvailableFallbackSummary({
+    updateAvailable: true,
+    currentVersion: '1.0.20',
+    remoteVersion: '1.0.20',
+    currentCommitShort: 'abc1234',
+    remoteCommitShort: 'def5678'
+  });
+
+  assert.match(summary, /Revisi remote tersedia/);
+  assert.match(summary, /abc1234/);
+  assert.match(summary, /def5678/);
+  assert.match(summary, /belum bisa dibaca atau belum diperbarui/);
+});
+
 test('deleting radius user removes linked member but keeps transaction history', () => {
   const data = createDefaultStore();
   const customer = {

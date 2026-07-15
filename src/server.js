@@ -179,6 +179,22 @@ function commitLogSummaryFromText(raw = '', limit = 8) {
   ].join('\n');
 }
 
+function updateAvailableFallbackSummary(update = {}) {
+  if (!update.updateAvailable) return '';
+  const current = update.currentVersion ? `v${update.currentVersion}` : 'versi lokal';
+  const remote = update.remoteVersion ? `v${update.remoteVersion}` : 'rilis remote';
+  const currentRevision = update.currentCommitShort || '';
+  const remoteRevision = update.remoteCommitShort || '';
+  return [
+    '## Revisi remote tersedia',
+    '',
+    `- Terpasang: ${current}${currentRevision ? ` (${currentRevision})` : ''}`,
+    `- Remote: ${remote}${remoteRevision ? ` (${remoteRevision})` : ''}`,
+    '- Changelog rilis remote belum bisa dibaca atau belum diperbarui, tetapi revisi kode remote lebih baru.',
+    '- Klik `Update Aplikasi` untuk memperbarui tanpa menghapus data.'
+  ].join('\n');
+}
+
 function appChangelogSummary(limit = 3) {
   try {
     return changelogSummaryFromText(fsSync.readFileSync(CHANGELOG_PATH, 'utf8'), limit);
@@ -12573,7 +12589,7 @@ async function handleApi(req, res, url) {
       updaterInstalled: fsSync.existsSync(APP_UPDATE_COMMAND),
       update,
       log,
-      changelog: update.remoteChangelog || appChangelogSummary(3)
+      changelog: update.remoteChangelog || update.remoteCommitLog || updateAvailableFallbackSummary(update) || appChangelogSummary(3)
     });
     return;
   }
@@ -12931,6 +12947,7 @@ module.exports = {
     sanitizeBillingSettings,
     stampHotspotVoucherValidityFromFirstOnline,
     syncRadiusCustomerStatus,
-    standaloneBillingAutomation
+    standaloneBillingAutomation,
+    updateAvailableFallbackSummary
   }
 };
