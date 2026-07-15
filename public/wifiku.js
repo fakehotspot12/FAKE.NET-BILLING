@@ -164,7 +164,11 @@ function renderPortal(payload) {
   const customer = payload.customer || {};
   const usage = payload.usage || {};
   const device = payload.device || {};
-  byId('customerName').textContent = customer.name || customer.username || '-';
+  const memberName = customer.name || customer.username || '-';
+  byId('customerName').textContent = memberName;
+  byId('memberId').textContent = customer.memberId || customer.id || '-';
+  byId('memberName').textContent = memberName;
+  byId('memberPackage').textContent = customer.packageName || '-';
   byId('usageTotal').textContent = usage.totalUsageText || '0 B';
   byId('usageDetail').textContent = `U ${usage.upload || '0 B'} / D ${usage.download || '0 B'}`;
   byId('rxPower').textContent = device.rxPowerText || '-';

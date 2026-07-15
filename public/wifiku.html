@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#08204f">
     <title>WifiKu</title>
     <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-1.0.24">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-1.0.25">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -49,6 +49,21 @@
           </div>
           <input id="periodInput" type="month">
         </div>
+
+        <section class="panel compact member-info-panel">
+          <div>
+            <span>ID Member</span>
+            <strong id="memberId">-</strong>
+          </div>
+          <div>
+            <span>Nama</span>
+            <strong id="memberName">-</strong>
+          </div>
+          <div>
+            <span>Paket</span>
+            <strong id="memberPackage">-</strong>
+          </div>
+        </section>
 
         <section id="billingSummary" class="panel compact checkout-panel">
           <div class="checkout-status-row">
@@ -140,6 +155,6 @@
     </dialog>
 
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-1.0.24" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-1.0.25" defer></script>
   </body>
 </html>

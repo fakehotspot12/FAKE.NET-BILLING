@@ -1127,7 +1127,18 @@ function radiusUserForCustomer(data = {}, customer = {}) {
   }) || null;
 }
 
-function publicWifiKuCustomer(customer = {}, radiusUser = {}) {
+function wifiKuPackageName(data = {}, customer = {}, radiusUser = {}) {
+  const profile = radiusFindProfile(data, radiusUser.profileId || radiusUser.profile || customer.profileId || customer.packageName, radiusUser.serviceType || 'pppoe')
+    || radiusFindProfile(data, radiusUser.profileId || radiusUser.profile || customer.profileId || customer.packageName, '');
+  return customer.packageName
+    || customer.package
+    || profile?.name
+    || radiusUser.profileName
+    || radiusUser.profile
+    || '';
+}
+
+function publicWifiKuCustomer(data = {}, customer = {}, radiusUser = {}) {
   return {
     id: customer.id,
     memberId: customer.code || customer.accountId || customer.id || '',
@@ -1136,7 +1147,7 @@ function publicWifiKuCustomer(customer = {}, radiusUser = {}) {
     phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
     address: customer.address || '',
     status: customer.status || radiusUser.status || '',
-    packageName: customer.packageName || '',
+    packageName: wifiKuPackageName(data, customer, radiusUser),
     dueDate: customer.dueDate || customer.nextDue || ''
   };
 }
@@ -1287,7 +1298,7 @@ async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPer
   return {
     ok: true,
     period: normalizePeriod(period),
-    customer: publicWifiKuCustomer(customer, radiusUser),
+    customer: publicWifiKuCustomer(data, customer, radiusUser),
     billing: wifiKuBillingSummary(data, customer, radiusUser, period),
     usage,
     device,

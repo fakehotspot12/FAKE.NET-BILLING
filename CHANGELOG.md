@@ -7,6 +7,16 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.25] - 2026-07-16
+
+### Added
+
+- Portal WifiKu menampilkan ringkasan informasi member berisi ID Member, Nama, dan Paket di atas ringkasan tagihan.
+
+### Changed
+
+- Nama paket WifiKu sekarang memakai fallback dari profile Radius pelanggan jika data member belum menyimpan nama paket.
+
 ## [1.0.24] - 2026-07-16
 
 ### Changed

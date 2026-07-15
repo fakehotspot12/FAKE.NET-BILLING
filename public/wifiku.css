@@ -176,6 +176,7 @@ small {
 }
 
 .portal-toolbar,
+.member-info-panel,
 .checkout-panel {
   grid-column: 1;
 }
@@ -233,6 +234,40 @@ small {
 
 .toolbar input {
   max-width: 180px;
+}
+
+.member-info-panel {
+  display: grid;
+  grid-template-columns: minmax(120px, .8fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+  gap: 10px;
+  border-color: color-mix(in srgb, var(--primary) 14%, var(--line));
+}
+
+.member-info-panel > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfd;
+}
+
+.member-info-panel span,
+.member-info-panel strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-info-panel span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.member-info-panel strong {
+  margin-top: 4px;
+  font-size: 14px;
 }
 
 .checkout-panel {
@@ -487,6 +522,7 @@ dialog::backdrop {
   }
 
   .portal-toolbar,
+  .member-info-panel,
   .checkout-panel,
   .stats-grid,
   .wifi-panel {
@@ -517,6 +553,10 @@ dialog::backdrop {
 
   .checkout-summary-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .member-info-panel {
+    grid-template-columns: 1fr;
   }
 
   .checkout-summary-grid > div {
