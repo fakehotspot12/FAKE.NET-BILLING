@@ -262,6 +262,34 @@ test('dashboard PPP-DHCP PSB counts linked members for selected period only', ()
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', addMonthsToPeriod(period, 1)).psb, 0);
 });
 
+test('PPP member price follows selected profile instead of stale form payload', () => {
+  const data = createDefaultStore();
+  data.radiusProfiles.push({
+    id: 'prof-10m',
+    name: '10 Mbps',
+    serviceType: 'pppoe',
+    price: 150000
+  });
+  const radiusUser = {
+    id: 'rad-rahul',
+    username: 'rahul',
+    profileId: 'prof-10m',
+    serviceType: 'pppoe'
+  };
+
+  const member = serverInternals.radiusMemberFromPayload(data, {
+    addToMember: true,
+    memberName: 'Rahul',
+    memberPhone: '085200000001',
+    memberActiveDate: '2026-07-15',
+    memberInvoiceStatus: 'paid',
+    memberPrice: 300
+  }, radiusUser, { name: 'Admin', username: 'admin' });
+
+  assert.equal(member.price, 150000);
+  assert.equal(data.customers[0].price, 150000);
+});
+
 test('deleting radius user removes member linked by radius user id without customer id', () => {
   const data = createDefaultStore();
   const customer = {

@@ -35,6 +35,7 @@ const {
   paymentIsActive,
   resolvePrice,
   summarize,
+  toNumber,
   deleteExpense,
   deleteExternalIncome,
   updateExpense,
@@ -2726,6 +2727,14 @@ function generateMemberCode(data = {}) {
   return String(Date.now()).slice(-9).padStart(9, '0');
 }
 
+function radiusProfileMemberPrice(profile = {}, payload = {}, fallback = 0) {
+  const profilePrice = Math.max(0, Math.round(toNumber(profile.price)));
+  if (profilePrice > 0) return profilePrice;
+  const payloadPrice = Math.max(0, Math.round(toNumber(payload.memberPrice ?? payload.price ?? payload.amount)));
+  if (payloadPrice > 0) return payloadPrice;
+  return Math.max(0, Math.round(toNumber(fallback)));
+}
+
 function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor = {}) {
   const username = String(radiusUser.username || payload.username || '').trim();
   if (!username) {
@@ -2759,6 +2768,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
   const dueDay = dayFromDateInput(activeDate, fallbackDueDay);
   const explicitNextDue = normalizeImportDate(payload.memberNextDue || payload.nextDue || payload.dueDate || '');
   const nextDue = explicitNextDue || anchoredDueDateFromActiveDate(activeDate, invoiceStatus, dueDay);
+  const memberPrice = radiusProfileMemberPrice(profile, payload);
   const customer = addManualCustomer(data, {
     username,
     name: memberName,
@@ -2771,7 +2781,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     locationAccuracy,
     locationUrl,
     packageName: payload.memberPackageName || profile.name || payload.profile || '',
-    price: payload.memberPrice || profile.price || 0,
+    price: memberPrice,
     status: payload.memberStatus || (invoiceStatus === 'unpaid' ? 'pending' : 'active'),
     dueDay
   });
@@ -2834,7 +2844,7 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   customer.ktp = String(payload.memberKtp || payload.ktp || payload.idCard || customer.ktp || customer.idCard || '').trim();
   customer.address = String(payload.memberAddress || payload.address || customer.address || '').trim();
   customer.packageName = payload.memberPackageName || profile.name || payload.profile || customer.packageName || '';
-  customer.price = payload.memberPrice || profile.price || customer.price || 0;
+  customer.price = radiusProfileMemberPrice(profile, payload, customer.price);
   customer.paymentType = normalizeImportPaymentType(payload.memberPaymentType || customer.paymentType || 'postpaid');
   customer.billingPeriod = normalizeImportBillingPeriod(payload.memberBillingPeriod || customer.billingPeriod || 'fixed');
   customer.ppn = String(payload.memberPpn || payload.ppn || customer.ppn || '').trim();
@@ -12782,6 +12792,7 @@ module.exports = {
     paymentGatewayReportPayload,
     publicPaymentGatewayInvoicePayload,
     reportStatisticsPayload,
+    radiusMemberFromPayload,
     readWorkbookRowsFromBase64,
     verifyPaymentGatewayCallback,
     filterVoucherReportOrders,

@@ -224,8 +224,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.11',
-      buildVersion: '1.0.11',
+      version: '1.0.12',
+      buildVersion: '1.0.12',
       releaseDate: '2026-07-15'
     }
   },
@@ -236,8 +236,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.11',
-    buildVersion: '1.0.11',
+    appVersion: '1.0.12',
+    buildVersion: '1.0.12',
     releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
@@ -2366,8 +2366,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.11',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.11',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.12',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.12',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -6891,8 +6891,7 @@ function generatedMemberCode() {
   return String(random).padStart(9, '0');
 }
 
-function radiusMemberFieldsMarkup(options = {}) {
-  const firstProfile = (options.profiles || [])[0] || {};
+function radiusMemberFieldsMarkup() {
   const memberCode = generatedMemberCode();
   return `
     <section class="form-grid radius-wizard-panel compact-wizard-panel" id="radiusMemberFields" data-radius-wizard-panel="member" data-member-wizard-fields hidden>
@@ -6960,7 +6959,7 @@ function radiusMemberFieldsMarkup(options = {}) {
       </label>
       <label class="field">
         <span>Harga</span>
-        <input name="memberPrice" inputmode="numeric" value="${escapeHtml(firstProfile.price || '')}" data-member-field autocomplete="off" readonly disabled>
+        <input name="memberPrice" inputmode="numeric" value="" data-member-field autocomplete="off" readonly disabled>
       </label>
       <label class="field">
         <span>VAT/PPN (%)</span>
@@ -7526,6 +7525,10 @@ function bindRadiusMemberFields(options = {}) {
     const profile = profiles.find((item) => String(item.value || item.label || '') === selected);
     return profile?.price || '';
   };
+  const syncProfilePrice = () => {
+    if (!priceInput) return;
+    priceInput.value = profilePrice();
+  };
   const fillDefaults = () => {
     const username = usernameInput?.value.trim() || '';
     if (codeInput && !codeInput.value) {
@@ -7536,7 +7539,7 @@ function bindRadiusMemberFields(options = {}) {
       nameInput.value = username;
       nameInput.dataset.autoFilled = '1';
     }
-    if (priceInput && !priceInput.value) priceInput.value = profilePrice();
+    syncProfilePrice();
   };
   const syncBillingPeriod = () => {
     if (!billingPeriodSelect) return;
@@ -7585,8 +7588,8 @@ function bindRadiusMemberFields(options = {}) {
   nameInput?.addEventListener('input', () => { nameInput.dataset.autoFilled = '0'; });
   paymentTypeSelect?.addEventListener('change', syncBillingPeriod);
   profileSelect?.addEventListener('change', () => {
-    if (!checkbox.checked || !priceInput) return;
-    priceInput.value = profilePrice();
+    if (!checkbox.checked) return;
+    syncProfilePrice();
   });
   [latitudeInput, longitudeInput, accuracyInput].forEach((input) => {
     input?.addEventListener('input', updateLocationPreview);
