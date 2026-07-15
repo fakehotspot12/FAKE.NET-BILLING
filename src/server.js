@@ -60,8 +60,8 @@ const BILLING_SOURCE = String(process.env.BILLING_SOURCE || (APP_MODE === 'stand
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
-const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || '20260713.3');
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-10');
+const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-15');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);

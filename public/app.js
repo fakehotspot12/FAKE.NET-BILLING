@@ -224,9 +224,9 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.0',
-      buildVersion: '20260713.3',
-      releaseDate: '2026-07-10'
+      version: '1.0.1',
+      buildVersion: '1.0.1',
+      releaseDate: '2026-07-15'
     }
   },
   hotspotVoucherTemplates: [],
@@ -236,9 +236,9 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.0',
-    buildVersion: '20260713.3',
-    releaseDate: '2026-07-10',
+    appVersion: '1.0.1',
+    buildVersion: '1.0.1',
+    releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
   notifications: null,
@@ -2366,9 +2366,9 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.0',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || '20260710.3',
-    releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-10',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.1',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.1',
+    releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
       : settingVerification !== false
@@ -13416,7 +13416,7 @@ async function renderSettings(options = {}) {
 
       <section class="release-footnote" aria-label="Informasi rilis aplikasi">
         <strong>Copyright ${escapeHtml(branding.copyrightYear)} - ${escapeHtml(branding.copyrightName)}</strong>
-        <span>Versi ${escapeHtml(branding.appVersion)} · Build ${escapeHtml(branding.buildVersion)} · ${escapeHtml(branding.releaseDate)}</span>
+        <span>Versi ${escapeHtml(branding.appVersion)} · ${escapeHtml(branding.releaseDate)}</span>
       </section>
     </div>
   `;
