@@ -376,6 +376,16 @@ test('changelog summary returns three newest release sections', () => {
   assert.ok(summary.indexOf('[1.0.4]') < summary.indexOf('[1.0.3]'));
 });
 
+test('commit log summary formats same-version update fallback', () => {
+  const summary = serverInternals.commitLogSummaryFromText(`abc1234 Fix updater status
+def5678 Add billing docs
+`, 1);
+
+  assert.match(summary, /Revisi remote/);
+  assert.match(summary, /abc1234 Fix updater status/);
+  assert.doesNotMatch(summary, /def5678/);
+});
+
 test('deleting radius user removes linked member but keeps transaction history', () => {
   const data = createDefaultStore();
   const customer = {

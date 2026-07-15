@@ -165,6 +165,20 @@ function changelogSummaryFromText(raw = '', limit = 3) {
   }).join('\n\n');
 }
 
+function commitLogSummaryFromText(raw = '', limit = 8) {
+  const lines = String(raw || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, Math.max(1, Math.min(20, Number(limit) || 8)));
+  if (!lines.length) return '';
+  return [
+    '## Revisi remote belum masuk changelog versi',
+    '',
+    ...lines.map((line) => `- ${line}`)
+  ].join('\n');
+}
+
 function appChangelogSummary(limit = 3) {
   try {
     return changelogSummaryFromText(fsSync.readFileSync(CHANGELOG_PATH, 'utf8'), limit);
@@ -208,6 +222,7 @@ async function appUpdateStatus(options = {}) {
     branch: '',
     remoteUrl: '',
     remoteChangelog: '',
+    remoteCommitLog: '',
     dirty: false,
     updateAvailable: false,
     checkedAt: new Date().toISOString(),
@@ -251,6 +266,20 @@ async function appUpdateStatus(options = {}) {
       }
       const remoteChangelogRaw = await gitOutput(['show', `origin/${branch}:CHANGELOG.md`], { timeout: 3000 }).catch(() => '');
       status.remoteChangelog = changelogSummaryFromText(remoteChangelogRaw, 3);
+      const remoteCommitLogRaw = await gitOutput([
+        'log',
+        '--no-merges',
+        '--pretty=format:%h %s',
+        '--max-count=8',
+        `${status.currentCommit}..origin/${branch}`
+      ], { timeout: 3000 }).catch(() => '');
+      status.remoteCommitLog = commitLogSummaryFromText(remoteCommitLogRaw, 8);
+      const localChangelog = appChangelogSummary(3);
+      const sameVersionUpdate = status.remoteVersion && status.remoteVersion === APP_VERSION;
+      const changelogUnchanged = status.remoteChangelog && status.remoteChangelog === localChangelog;
+      if (status.remoteCommitLog && (!status.remoteChangelog || sameVersionUpdate || changelogUnchanged)) {
+        status.remoteChangelog = [status.remoteCommitLog, status.remoteChangelog].filter(Boolean).join('\n\n');
+      }
     }
   } catch (error) {
     status.error = error.message || 'Status update tidak bisa dicek';
@@ -12869,6 +12898,7 @@ module.exports = {
   __test: {
     applyHotspotVoucherExpirations,
     changelogSummaryFromText,
+    commitLogSummaryFromText,
     collectorReportPayments,
     createLocalManualInvoice,
     createHotspotVoucherOrder,
