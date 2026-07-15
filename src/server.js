@@ -677,6 +677,32 @@ function sanitizePublicUrl(value = '') {
   return '';
 }
 
+function sanitizePublicInfoSettings(payload = {}, current = {}) {
+  const textField = (name, fallback = '', max = 1000) => {
+    const source = Object.prototype.hasOwnProperty.call(payload, name) ? payload[name] : current[name];
+    return String(source || fallback || '').replace(/\r\n?/g, '\n').trim().slice(0, max);
+  };
+  const titleField = (name, fallback = '') => textField(name, fallback, 120);
+  const contactPhone = normalizeLocalPhone(textField('contactPhone', '', 40));
+  return {
+    ...current,
+    heroTitle: titleField('heroTitle', 'Informasi Layanan & Pembelian'),
+    heroText: textField('heroText', '', 600),
+    productTitle: titleField('productTitle', 'Portal Billing ISP/RT-RW Net'),
+    productText: textField('productText', '', 900),
+    voucherTitle: titleField('voucherTitle', 'Cara Pembelian Voucher'),
+    voucherSteps: textField('voucherSteps', '', 1200),
+    billingTitle: titleField('billingTitle', 'Cara Pembayaran Tagihan'),
+    billingSteps: textField('billingSteps', '', 1200),
+    termsTitle: titleField('termsTitle', 'Syarat & Ketentuan Ringkas'),
+    termsText: textField('termsText', '', 1000),
+    supportTitle: titleField('supportTitle', 'Kontak Customer Service'),
+    supportText: textField('supportText', '', 700),
+    contactLabel: titleField('contactLabel', contactPhone || 'Hubungi Whatsapp'),
+    contactPhone
+  };
+}
+
 function publicBranding(settings = {}) {
   return {
     businessName: String(settings.businessName || 'FAKE.NET Ops').trim() || 'FAKE.NET Ops',
@@ -8715,7 +8741,10 @@ async function handleApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/branding') {
     const data = await loadStore();
-    sendJson(res, 200, { branding: publicBranding(data.settings) });
+    sendJson(res, 200, {
+      branding: publicBranding(data.settings),
+      publicInfo: sanitizePublicInfoSettings(data.settings?.publicInfo || {})
+    });
     return;
   }
 
@@ -12508,6 +12537,9 @@ async function handleApi(req, res, url) {
       }
       if (typeof payload.voucherLoginUrl === 'string') {
         store.settings.voucherLoginUrl = sanitizePublicUrl(payload.voucherLoginUrl);
+      }
+      if (payload.publicInfo && typeof payload.publicInfo === 'object') {
+        store.settings.publicInfo = sanitizePublicInfoSettings(payload.publicInfo, store.settings.publicInfo || {});
       }
       if (Object.prototype.hasOwnProperty.call(payload, 'voucherRevenueSharePercent')) {
         store.settings.voucherRevenueSharePercent = Math.max(0, Math.min(100, Number(payload.voucherRevenueSharePercent) || 0));

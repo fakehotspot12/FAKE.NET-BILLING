@@ -224,8 +224,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.10',
-      buildVersion: '1.0.10',
+      version: '1.0.11',
+      buildVersion: '1.0.11',
       releaseDate: '2026-07-15'
     }
   },
@@ -236,8 +236,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.10',
-    buildVersion: '1.0.10',
+    appVersion: '1.0.11',
+    buildVersion: '1.0.11',
     releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
@@ -2366,8 +2366,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.10',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.10',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.11',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.11',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13257,6 +13257,89 @@ async function renderPaymentGateway() {
   }, renderPaymentGateway, 10);
 }
 
+function publicInfoSettingsModalBody(publicInfo = {}) {
+  return `
+    <div class="form-grid">
+      <label class="field">
+        <span>Judul hero</span>
+        <input name="heroTitle" value="${escapeHtml(publicInfo.heroTitle || '')}" maxlength="120">
+      </label>
+      <label class="field">
+        <span>Label tombol kontak</span>
+        <input name="contactLabel" value="${escapeHtml(publicInfo.contactLabel || '')}" maxlength="120">
+      </label>
+      <label class="field full">
+        <span>Deskripsi hero</span>
+        <textarea name="heroText" rows="3" maxlength="600">${escapeHtml(publicInfo.heroText || '')}</textarea>
+      </label>
+      <label class="field">
+        <span>Judul produk</span>
+        <input name="productTitle" value="${escapeHtml(publicInfo.productTitle || '')}" maxlength="120">
+      </label>
+      <label class="field">
+        <span>Nomor Whatsapp CS</span>
+        <input name="contactPhone" value="${escapeHtml(publicInfo.contactPhone || '')}" maxlength="40" placeholder="08xxxxxxxxxx">
+      </label>
+      <label class="field full">
+        <span>Deskripsi produk</span>
+        <textarea name="productText" rows="3" maxlength="900">${escapeHtml(publicInfo.productText || '')}</textarea>
+      </label>
+      <label class="field">
+        <span>Judul voucher</span>
+        <input name="voucherTitle" value="${escapeHtml(publicInfo.voucherTitle || '')}" maxlength="120">
+      </label>
+      <label class="field">
+        <span>Judul paket bulanan</span>
+        <input name="billingTitle" value="${escapeHtml(publicInfo.billingTitle || '')}" maxlength="120">
+      </label>
+      <label class="field">
+        <span>Alur pembelian voucher</span>
+        <textarea name="voucherSteps" rows="6" maxlength="1200" placeholder="Satu baris untuk satu poin">${escapeHtml(publicInfo.voucherSteps || '')}</textarea>
+      </label>
+      <label class="field">
+        <span>Alur pembayaran bulanan</span>
+        <textarea name="billingSteps" rows="6" maxlength="1200" placeholder="Satu baris untuk satu poin">${escapeHtml(publicInfo.billingSteps || '')}</textarea>
+      </label>
+      <label class="field">
+        <span>Judul S&K</span>
+        <input name="termsTitle" value="${escapeHtml(publicInfo.termsTitle || '')}" maxlength="120">
+      </label>
+      <label class="field">
+        <span>Judul bantuan</span>
+        <input name="supportTitle" value="${escapeHtml(publicInfo.supportTitle || '')}" maxlength="120">
+      </label>
+      <label class="field">
+        <span>Isi S&K</span>
+        <textarea name="termsText" rows="5" maxlength="1000">${escapeHtml(publicInfo.termsText || '')}</textarea>
+      </label>
+      <label class="field">
+        <span>Isi bantuan</span>
+        <textarea name="supportText" rows="5" maxlength="700">${escapeHtml(publicInfo.supportText || '')}</textarea>
+      </label>
+      <section class="notice field full">
+        <strong>Halaman publik</strong>
+        <span>Perubahan ini tampil di /public-info.html. Bagian alur memakai satu baris sebagai satu poin daftar.</span>
+      </section>
+      <div class="modal-actions field full">
+        <button class="ghost-button" value="cancel" type="button">Batal</button>
+        <button class="button" type="submit">Simpan Public Info</button>
+      </div>
+    </div>
+  `;
+}
+
+function openPublicInfoSettingsModal(publicInfo = {}) {
+  openModal('Edit Public Info', publicInfoSettingsModalBody(publicInfo), async (payload) => {
+    const result = await api('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ publicInfo: payload })
+    });
+    updateBranding({ settings: result.settings });
+    setToast('Public info tersimpan');
+    renderSettings();
+  });
+}
+
 async function renderSettings(options = {}) {
   app.innerHTML = '<div class="empty">Memuat pengaturan...</div>';
   const { settings } = await api('/api/settings');
@@ -13335,6 +13418,10 @@ async function renderSettings(options = {}) {
             <span>Link login voucher</span>
             <input name="voucherLoginUrl" value="${escapeHtml(settings.voucherLoginUrl || '')}" placeholder="http://login.example.net" maxlength="200">
           </label>
+          <div class="field">
+            <span>Halaman public-info</span>
+            <button class="ghost-button" id="editPublicInfoButton" type="button">Edit Public Info</button>
+          </div>
           <label class="field">
             <span>Komisi reseller voucher (%)</span>
             <input name="voucherRevenueSharePercent" type="number" min="0" max="100" step="0.01" value="${escapeHtml(settings.voucherRevenueSharePercent || 0)}">
@@ -13449,6 +13536,10 @@ async function renderSettings(options = {}) {
     if (preview) {
       preview.src = DEFAULT_LOGO_URL;
     }
+  });
+
+  document.getElementById('editPublicInfoButton')?.addEventListener('click', () => {
+    openPublicInfoSettingsModal(settings.publicInfo || {});
   });
 
   document.getElementById('settingsForm').addEventListener('submit', async (event) => {

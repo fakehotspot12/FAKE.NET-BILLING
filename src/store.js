@@ -46,6 +46,22 @@ function createDefaultStore() {
       logoUrl: '/fakenet-logo.png',
       receiptBusinessCode: 'FAKE.NET',
       voucherLoginUrl: '',
+      publicInfo: {
+        heroTitle: 'Informasi Layanan & Pembelian',
+        heroText: 'Halaman ini berisi ringkasan produk, alur transaksi, syarat ketentuan, dan kontak layanan pelanggan untuk kebutuhan review payment gateway.',
+        productTitle: 'Portal Billing ISP/RT-RW Net',
+        productText: 'Aplikasi billing dan layanan pelanggan untuk pembayaran tagihan internet bulanan, pembelian voucher hotspot, pengecekan status layanan, serta portal pelanggan.',
+        voucherTitle: 'Cara Pembelian Voucher',
+        voucherSteps: 'Pelanggan membuka halaman voucher atau login hotspot.\nPelanggan memilih paket, mengisi nama dan nomor Whatsapp aktif.\nPelanggan membayar melalui QRIS payment gateway.\nSetelah pembayaran berhasil, voucher dibuat otomatis dan dapat digunakan.',
+        billingTitle: 'Cara Pembayaran Tagihan',
+        billingSteps: 'Pelanggan menerima link invoice dari admin, sistem Whatsapp, atau portal WifiKu.\nPelanggan memilih metode pembayaran yang tersedia di payment gateway.\nStatus invoice otomatis berubah menjadi lunas setelah callback payment gateway valid.\nJika layanan sedang isolir karena tagihan, sistem dapat mengaktifkan kembali layanan setelah pembayaran tercatat.',
+        termsTitle: 'Syarat & Ketentuan Ringkas',
+        termsText: 'Pelanggan wajib mengisi data yang benar, membayar sesuai nominal yang tampil pada invoice atau checkout, dan mengikuti kebijakan layanan. Voucher atau status pembayaran diproses otomatis setelah transaksi dinyatakan berhasil oleh payment gateway.',
+        supportTitle: 'Kontak Customer Service',
+        supportText: 'Untuk bantuan pembayaran, aktivasi, atau gangguan layanan, hubungi customer service melalui Whatsapp.',
+        contactLabel: 'Hubungi Whatsapp',
+        contactPhone: ''
+      },
       collectorDailyBonusEnabled: true,
       collectorDailyBonusTiers: DEFAULT_COLLECTOR_DAILY_BONUS_TIERS.map((tier) => ({ ...tier })),
       appMode: APP_MODE,
@@ -260,6 +276,7 @@ function ensureShape(data) {
   const waGateway = settings.waGateway && typeof settings.waGateway === 'object' ? settings.waGateway : {};
   const paymentGateway = settings.paymentGateway && typeof settings.paymentGateway === 'object' ? settings.paymentGateway : {};
   const hotspotVoucherOnline = settings.hotspotVoucherOnline && typeof settings.hotspotVoucherOnline === 'object' ? settings.hotspotVoucherOnline : {};
+  const publicInfo = settings.publicInfo && typeof settings.publicInfo === 'object' ? settings.publicInfo : {};
   const security = settings.security && typeof settings.security === 'object' ? settings.security : {};
   const license = settings.license && typeof settings.license === 'object' ? settings.license : {};
 
@@ -356,6 +373,10 @@ function ensureShape(data) {
           ...base.settings.hotspotVoucherOnline.packages,
           ...(hotspotVoucherOnline.packages || {})
         }
+      },
+      publicInfo: {
+        ...base.settings.publicInfo,
+        ...publicInfo
       },
       security: {
         ...base.settings.security,

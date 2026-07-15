@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.11] - 2026-07-15
+
+### Added
+
+- Menambahkan tombol `Edit Public Info` di Pengaturan untuk mengubah isi halaman `/public-info.html` melalui popup.
+- Halaman `/public-info.html` sekarang membaca konten dari pengaturan aplikasi.
+
 ## [1.0.10] - 2026-07-15
 
 ### Fixed
