@@ -224,8 +224,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.12',
-      buildVersion: '1.0.12',
+      version: '1.0.13',
+      buildVersion: '1.0.13',
       releaseDate: '2026-07-15'
     }
   },
@@ -236,8 +236,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.12',
-    buildVersion: '1.0.12',
+    appVersion: '1.0.13',
+    buildVersion: '1.0.13',
     releaseDate: '2026-07-15',
     loginVerificationEnabled: true
   },
@@ -2366,8 +2366,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.12',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.12',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.13',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.13',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-15',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -6987,7 +6987,10 @@ function radiusMemberFieldsMarkup() {
         <div><span>Nama Member</span><strong data-radius-review="memberName">-</strong></div>
         <div><span>WhatsApp</span><strong data-radius-review="phone">-</strong></div>
         <div><span>Payment</span><strong data-radius-review="payment">-</strong></div>
-        <div><span>Harga</span><strong data-radius-review="price">-</strong></div>
+        <div><span>Harga Profile</span><strong data-radius-review="price">-</strong></div>
+        <div><span>PPN</span><strong data-radius-review="ppn">-</strong></div>
+        <div><span>Diskon</span><strong data-radius-review="discount">-</strong></div>
+        <div><span>Total Tagihan Awal</span><strong data-radius-review="total">-</strong></div>
         <div><span>Active Date</span><strong data-radius-review="activeDate">-</strong></div>
         <div><span>Status Invoice</span><strong data-radius-review="invoiceStatus">-</strong></div>
       </div>
@@ -7296,9 +7299,28 @@ function bindRadiusPppWizard() {
     const node = modalBody.querySelector(`[data-radius-review="${name}"]`);
     if (node) node.textContent = value || '-';
   };
+  const numberValue = (value = '') => {
+    let cleaned = String(value || '').trim().replace(/[^\d,.-]/g, '');
+    const hasComma = cleaned.includes(',');
+    const hasDot = cleaned.includes('.');
+    if (hasComma && hasDot) {
+      const decimalSeparator = cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.') ? ',' : '.';
+      const thousandSeparator = decimalSeparator === ',' ? '.' : ',';
+      cleaned = cleaned.replace(new RegExp(`\\${thousandSeparator}`, 'g'), '').replace(decimalSeparator, '.');
+    } else if (hasComma) {
+      const parts = cleaned.split(',');
+      cleaned = parts.at(-1).length === 3 && parts.length > 1 ? parts.join('') : cleaned.replace(',', '.');
+    } else if (hasDot) {
+      const parts = cleaned.split('.');
+      cleaned = parts.at(-1).length === 3 && parts.length > 1 ? parts.join('') : cleaned;
+    }
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const percentValue = (value = '') => Math.max(0, Math.min(100, numberValue(value)));
   const moneyValue = (value = '') => {
-    const clean = String(value || '').replace(/[^\d]/g, '');
-    return clean ? rupiah(Number(clean || 0)) : '-';
+    const number = numberValue(value);
+    return number > 0 ? rupiah(number) : '-';
   };
   const syncReview = () => {
     const type = modalBody.querySelector('#radiusPppType')?.value || 'PPPoE';
@@ -7313,7 +7335,17 @@ function bindRadiusPppWizard() {
     reviewValue('memberName', modalBody.querySelector('input[name="memberName"]')?.value.trim() || '-');
     reviewValue('phone', modalBody.querySelector('input[name="memberPhone"]')?.value.trim() || '-');
     reviewValue('payment', `${selectedText('select[name="memberPaymentType"]')} / ${selectedText('select[name="memberBillingPeriod"]')}`);
-    reviewValue('price', moneyValue(modalBody.querySelector('input[name="memberPrice"]')?.value || ''));
+    const subtotal = Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberPrice"]')?.value || '')));
+    const ppnRate = percentValue(modalBody.querySelector('input[name="memberPpn"]')?.value || '');
+    const discountRate = percentValue(modalBody.querySelector('input[name="memberDiscount"]')?.value || '');
+    const discountAmount = Math.round((subtotal * discountRate) / 100);
+    const taxableAmount = Math.max(0, subtotal - discountAmount);
+    const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
+    const totalAmount = Math.max(0, taxableAmount + ppnAmount);
+    reviewValue('price', moneyValue(subtotal));
+    reviewValue('ppn', ppnRate > 0 ? `${ppnRate}% / ${rupiah(ppnAmount)}` : '-');
+    reviewValue('discount', discountRate > 0 ? `${discountRate}% / ${rupiah(discountAmount)}` : '-');
+    reviewValue('total', totalAmount > 0 ? rupiah(totalAmount) : '-');
     reviewValue('activeDate', dateText(modalBody.querySelector('input[name="memberActiveDate"]')?.value || '') || '-');
     reviewValue('invoiceStatus', selectedText('select[name="memberInvoiceStatus"]'));
   };

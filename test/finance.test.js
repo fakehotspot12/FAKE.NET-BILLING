@@ -141,6 +141,31 @@ test('generates invoices only after the active date month', () => {
   assert.deepEqual(august.map((invoice) => invoice.customerId).sort(), ['cus-active-current', 'cus-active-old']);
 });
 
+test('generated invoices include member PPN and discount in total amount', () => {
+  const data = createDefaultStore();
+  data.customers.push({
+    id: 'cus-taxed',
+    username: 'taxed@kampung.net',
+    name: 'Pelanggan Pajak',
+    packageName: 'Paket 10 Mbps',
+    status: 'active',
+    price: 150000,
+    ppn: '11',
+    discount: '10'
+  });
+
+  const created = generateInvoices(data, '2026-07');
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].subtotal, 150000);
+  assert.equal(created[0].discountRate, 10);
+  assert.equal(created[0].discountAmount, 15000);
+  assert.equal(created[0].ppnRate, 11);
+  assert.equal(created[0].ppnAmount, 14850);
+  assert.equal(created[0].amount, 149850);
+  assert.equal(created[0].totalAmount, 149850);
+});
+
 test('local manual invoice skips active month when first invoice was paid', () => {
   const data = createDefaultStore();
   data.settings.billing = { postpaidDueDay: 10 };
@@ -164,6 +189,53 @@ test('local manual invoice skips active month when first invoice was paid', () =
   assert.equal(preview.period, nextPeriod);
   assert.equal(preview.dueDate, dueDateForPeriod(nextPeriod, dueDay));
   assert.deepEqual(preview.coveredPeriods, [nextPeriod]);
+});
+
+test('local manual invoice preview applies member PPN and discount for multi-month billing', () => {
+  const data = createDefaultStore();
+  const customer = {
+    id: 'cus-manual-taxed',
+    username: 'manual-taxed@kampung.net',
+    name: 'Manual Taxed',
+    packageName: 'Paket 10 Mbps',
+    status: 'active',
+    price: 150000,
+    ppn: '11',
+    discount: '10',
+    activeDate: '2026-06-15',
+    firstInvoiceStatus: 'paid'
+  };
+
+  const preview = serverInternals.localManualInvoicePreview(data, customer, 2);
+
+  assert.equal(preview.subtotal, 300000);
+  assert.equal(preview.discountAmount, 30000);
+  assert.equal(preview.ppnAmount, 29700);
+  assert.equal(preview.totalAmount, 299700);
+});
+
+test('local manual invoice stores PPN and discount fields', () => {
+  const data = createDefaultStore();
+  const customer = {
+    id: 'cus-manual-taxed-store',
+    username: 'manual-taxed-store@kampung.net',
+    name: 'Manual Taxed Store',
+    packageName: 'Paket 10 Mbps',
+    status: 'active',
+    price: 150000,
+    ppn: '11',
+    discount: '10',
+    activeDate: '2026-06-15',
+    firstInvoiceStatus: 'paid'
+  };
+  data.customers.push(customer);
+
+  const { invoice } = serverInternals.createLocalManualInvoice(data, customer, 2, { name: 'Admin', username: 'admin' }, { queueWa: false });
+
+  assert.equal(invoice.subtotal, 300000);
+  assert.equal(invoice.discountAmount, 30000);
+  assert.equal(invoice.ppnAmount, 29700);
+  assert.equal(invoice.amount, 299700);
 });
 
 test('local manual invoice allows active month when first invoice is unpaid', () => {

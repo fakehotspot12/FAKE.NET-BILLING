@@ -21,6 +21,7 @@ const {
   addExpense,
   addExternalIncome,
   addManualCustomer,
+  billingAmountBreakdown,
   currentPeriod,
   customerBillableInPeriod,
   dueDateForPeriod,
@@ -6278,7 +6279,7 @@ function manualInvoiceBasePeriod(customer = {}) {
 function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
   const months = clampInteger(subPeriod, 1, 12, 1);
   const billingSettings = data.settings?.billing || {};
-  const amount = Number(resolvePrice(data.settings || {}, customer) || customer.amount || 0) * months;
+  const billingAmount = billingAmountBreakdown(data.settings || {}, customer, months);
   const dueDay = customer.dueDay || dayFromDateInput(customer.activeDate || customer.installedAt || '', billingSettings.postpaidDueDay || 10);
   const baseInvoicePeriod = manualInvoiceBasePeriod(customer);
   const coveredPeriods = nextUncoveredPeriods(data, customer.id, baseInvoicePeriod, months);
@@ -6296,11 +6297,21 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
     subPeriodMonths: months,
     subscribe: `${months} Bulan`,
     item: customer.packageName || `Tagihan internet ${period}`,
-    amount: formatCurrencyText(amount),
-    ppn: '-',
-    discount: '-',
-    total: formatCurrencyText(amount),
-    totalAmount: amount
+    amount: formatCurrencyText(billingAmount.subtotal),
+    subtotal: billingAmount.subtotal,
+    baseAmount: billingAmount.baseAmount,
+    ppn: billingAmount.ppnRate > 0 ? `${billingAmount.ppnRate}% (${formatCurrencyText(billingAmount.ppnAmount)})` : '-',
+    ppnRate: billingAmount.ppnRate,
+    ppnAmount: billingAmount.ppnAmount,
+    vatRate: billingAmount.vatRate,
+    vatAmount: billingAmount.vatAmount,
+    taxRate: billingAmount.taxRate,
+    taxAmount: billingAmount.taxAmount,
+    discount: billingAmount.discountRate > 0 ? `${billingAmount.discountRate}% (${formatCurrencyText(billingAmount.discountAmount)})` : '-',
+    discountRate: billingAmount.discountRate,
+    discountAmount: billingAmount.discountAmount,
+    total: formatCurrencyText(billingAmount.totalAmount),
+    totalAmount: billingAmount.totalAmount
   };
 }
 
@@ -6331,6 +6342,18 @@ function createLocalManualInvoice(data = {}, customer = {}, subPeriod = 1, actor
     subPeriodMonths: preview.subPeriodMonths || Number(subPeriod) || 1,
     coverageStartPeriod: coveredPeriods[0] || preview.period,
     coverageEndPeriod: coveredPeriods[coveredPeriods.length - 1] || preview.period,
+    subtotal: Number(preview.subtotal || preview.baseAmount || 0),
+    baseAmount: Number(preview.baseAmount || preview.subtotal || 0),
+    ppnRate: Number(preview.ppnRate || 0),
+    ppnAmount: Number(preview.ppnAmount || 0),
+    vatRate: Number(preview.vatRate || preview.ppnRate || 0),
+    vatAmount: Number(preview.vatAmount || preview.ppnAmount || 0),
+    taxRate: Number(preview.taxRate || preview.ppnRate || 0),
+    taxAmount: Number(preview.taxAmount || preview.ppnAmount || 0),
+    discountRate: Number(preview.discountRate || 0),
+    discountAmount: Number(preview.discountAmount || 0),
+    total: Number(preview.totalAmount || 0),
+    totalAmount: Number(preview.totalAmount || 0),
     amount: Number(preview.totalAmount || 0),
     dueDate: preview.dueDate,
     status: Number(preview.totalAmount || 0) > 0 ? 'pending' : 'cancelled',
@@ -12774,6 +12797,7 @@ module.exports = {
   __test: {
     applyHotspotVoucherExpirations,
     collectorReportPayments,
+    createLocalManualInvoice,
     createHotspotVoucherOrder,
     dashboardRadiusServiceSummary,
     dashboardCollectorScope,

@@ -460,6 +460,43 @@ function resolvePrice(settings, customer) {
   return toNumber(settings.packagePrices[customer.packageName]);
 }
 
+function percentValue(value) {
+  if (value === undefined || value === null || value === '') {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, toNumber(value)));
+}
+
+function billingAmountBreakdown(settings = {}, customer = {}, months = 1) {
+  const quantity = Math.max(1, Math.round(toNumber(months) || 1));
+  const unitPrice = Math.max(0, Math.round(resolvePrice(settings, customer)));
+  const subtotal = unitPrice * quantity;
+  const discountRate = percentValue(customer.discount ?? customer.discountRate);
+  const discountAmount = Math.round((subtotal * discountRate) / 100);
+  const taxableAmount = Math.max(0, subtotal - discountAmount);
+  const ppnRate = percentValue(customer.ppn ?? customer.vat ?? customer.taxRate);
+  const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
+  const total = Math.max(0, taxableAmount + ppnAmount);
+  return {
+    unitPrice,
+    months: quantity,
+    subtotal,
+    baseAmount: subtotal,
+    discountRate,
+    discountAmount,
+    taxableAmount,
+    ppnRate,
+    ppnAmount,
+    vatRate: ppnRate,
+    vatAmount: ppnAmount,
+    taxRate: ppnRate,
+    taxAmount: ppnAmount,
+    total,
+    totalAmount: total,
+    amount: total
+  };
+}
+
 function addActivity(data, type, message, meta = {}) {
   data.activity.unshift({
     id: createId('act'),
@@ -624,7 +661,8 @@ function generateInvoices(data, period = currentPeriod()) {
       continue;
     }
 
-    const amount = resolvePrice(data.settings, customer);
+    const billingAmount = billingAmountBreakdown(data.settings, customer, 1);
+    const amount = billingAmount.totalAmount;
     const numbering = nextBillingInvoiceNumber(data, selectedPeriod);
     const invoice = {
       id: createId('inv'),
@@ -639,6 +677,18 @@ function generateInvoices(data, period = currentPeriod()) {
       period: selectedPeriod,
       coveredPeriods: [selectedPeriod],
       subPeriodMonths: 1,
+      subtotal: billingAmount.subtotal,
+      baseAmount: billingAmount.baseAmount,
+      ppnRate: billingAmount.ppnRate,
+      ppnAmount: billingAmount.ppnAmount,
+      vatRate: billingAmount.vatRate,
+      vatAmount: billingAmount.vatAmount,
+      taxRate: billingAmount.taxRate,
+      taxAmount: billingAmount.taxAmount,
+      discountRate: billingAmount.discountRate,
+      discountAmount: billingAmount.discountAmount,
+      total: billingAmount.total,
+      totalAmount: billingAmount.totalAmount,
       amount,
       dueDate: dueDateForPeriod(selectedPeriod, customer.dueDay || billingDueDay(data.settings)),
       status: amount > 0 ? 'pending' : 'cancelled',
@@ -1112,6 +1162,7 @@ module.exports = {
   deleteExternalIncome,
   addExpense,
   addManualCustomer,
+  billingAmountBreakdown,
   currentPeriod,
   customerBillableInPeriod,
   dueDateForPeriod,
