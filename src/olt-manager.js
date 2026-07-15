@@ -38,7 +38,7 @@ function withQuery(baseUrl, params = {}) {
 function managerSettings(settings = {}) {
   const configured = settings.oltManager || {};
   return {
-    baseUrl: cleanText(process.env.OLT_MANAGER_BASE_URL || configured.baseUrl || 'http://172.16.125.253:3005'),
+    baseUrl: cleanText(process.env.OLT_MANAGER_BASE_URL || configured.baseUrl || ''),
     loginPath: cleanText(configured.loginPath || '/api/auth/login'),
     summaryPath: cleanText(configured.summaryPath || '/api/dashboard/summary'),
     onlineOnusPath: cleanText(configured.onlineOnusPath || '/api/dashboard/online-onus'),

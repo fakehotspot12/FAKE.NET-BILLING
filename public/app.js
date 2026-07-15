@@ -6677,7 +6677,7 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
           </label>
           <label class="field">
             <span>Prefix/Suffix Kode</span>
-            <input name="codePrefix" value="${escapeHtml(settings.codePrefix || '')}" placeholder="-fake.net" ${writeAllowed ? '' : 'disabled'}>
+            <input name="codePrefix" value="${escapeHtml(settings.codePrefix || '')}" placeholder="-area" ${writeAllowed ? '' : 'disabled'}>
           </label>
           <label class="field">
             <span>Karakter Kode</span>
@@ -8637,7 +8637,7 @@ function buildIsolirRouterOsScript(options = {}) {
     '# sourceSubnet = subnet/pool user isolir',
     '# billingServerIp = IP mesin billing yang menjalankan subweb isolir, meskipun beda mesin dengan router',
     '',
-    '/ip proxy set enabled=yes port=' + proxyPort + ' anonymous=no cache-administrator=admin@fake.net',
+    '/ip proxy set enabled=yes port=' + proxyPort + ' anonymous=no cache-administrator=admin@example.net',
     '/ip proxy access add dst-port=' + proxyPort + ' action=allow comment=' + routerOsQuoted(proxyComment),
     '/ip proxy access add dst-host=' + isolirHost + ' action=allow comment=' + routerOsQuoted(proxyComment),
     '/ip proxy access add src-address=' + sourceSubnet + ' dst-host=!' + isolirHost + ' action=redirect action-data=' + isolirHost + ' comment=' + routerOsQuoted(proxyComment),
@@ -8667,7 +8667,7 @@ function openRadiusIsolirGuideModal() {
     <div class="stack routeros-guide">
       <div class="notice">
         <strong>Redirect ke web isolir bawaan billing</strong>
-        <span>Script ini mengikuti pola rule MikroTik 192.168.255.2: web-proxy 8080, NAT redirect HTTP/HTTPS, dan filter forward untuk mematikan internet user isolir.</span>
+        <span>Script ini mengikuti pola umum rule MikroTik: web-proxy 8080, NAT redirect HTTP/HTTPS, dan filter forward untuk mematikan internet user isolir.</span>
       </div>
       <div class="form-grid routeros-guide-grid">
         <label class="field">
@@ -8676,7 +8676,7 @@ function openRadiusIsolirGuideModal() {
         </label>
         <label class="field">
           <span>IP Server Billing/Web Isolir</span>
-          <input name="billingServerIp" value="${escapeHtml(defaults.billingServerIp)}" placeholder="Contoh 172.16.125.246">
+          <input name="billingServerIp" value="${escapeHtml(defaults.billingServerIp)}" placeholder="Contoh 192.0.2.10">
         </label>
         <label class="field">
           <span>URL web isolir</span>
@@ -9339,7 +9339,7 @@ async function openGenieAcsSettingsModal() {
     </label>
     <label class="field full">
       <span>URL NBI GenieACS</span>
-      <input name="baseUrl" value="${escapeHtml(settings.baseUrl || 'http://172.16.125.253:7557')}" placeholder="http://172.16.125.253:7557" required>
+      <input name="baseUrl" value="${escapeHtml(settings.baseUrl || '')}" placeholder="http://acs.example.net:7557" required>
     </label>
     <label class="field full">
       <span>Token NBI</span>

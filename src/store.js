@@ -54,7 +54,7 @@ function createDefaultStore() {
       currency: 'IDR',
       packagePrices: { ...DEFAULT_PACKAGE_PRICES },
       oltManager: {
-        baseUrl: process.env.OLT_MANAGER_BASE_URL || 'http://172.16.125.253:3005',
+        baseUrl: process.env.OLT_MANAGER_BASE_URL || '',
         loginPath: process.env.OLT_MANAGER_LOGIN_PATH || '/api/auth/login',
         summaryPath: process.env.OLT_MANAGER_SUMMARY_PATH || '/api/dashboard/summary',
         onlineOnusPath: process.env.OLT_MANAGER_ONLINE_ONUS_PATH || '/api/dashboard/online-onus',

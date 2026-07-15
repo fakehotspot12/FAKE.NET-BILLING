@@ -3708,7 +3708,7 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   const data = createDefaultStore();
   data.settings.paymentGateway.enabled = true;
   data.settings.paymentGateway.provider = 'tripay';
-  data.settings.paymentGateway.callbackUrl = 'https://billing-dev.fakehotspot.net/payment-gateway/webhook';
+  data.settings.paymentGateway.callbackUrl = 'https://billing.example.net/payment-gateway/webhook';
   data.settings.paymentGateway.monthlyAdminFee = 2500;
   data.customers.push({
     id: 'cus-gateway-1',
@@ -3781,7 +3781,7 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   const publicInvoice = serverInternals.publicPaymentGatewayInvoicePayload(data, data.invoices[0]);
   assert.equal(publicInvoice.gatewayAmount, 102500);
   assert.equal(publicInvoice.adminFee, 2500);
-  assert.equal(publicInvoice.paymentGatewayLink, 'https://billing-dev.fakehotspot.net/payment-invoice.html?id=000321');
+  assert.equal(publicInvoice.paymentGatewayLink, 'https://billing.example.net/payment-invoice.html?id=000321');
 
   const second = serverInternals.fulfillPaymentGatewayCallback(data, {
     merchant_ref: '000321',
