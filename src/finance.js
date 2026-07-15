@@ -72,6 +72,41 @@ function billingDueDay(settings = {}) {
   return clampDay(settings?.billing?.postpaidDueDay || 10);
 }
 
+function normalizePaymentType(value = '') {
+  const normalized = cleanText(value || 'postpaid').toLowerCase().replace(/[\s_-]+/g, '');
+  if (['2', 'prepaid', 'prabayar', 'pra'].includes(normalized)) return 'prepaid';
+  return 'postpaid';
+}
+
+function normalizeBillingPeriodForType(value = '', paymentType = 'postpaid') {
+  const type = normalizePaymentType(paymentType);
+  const normalized = cleanText(value || 'fixed').toLowerCase().replace(/[\s_-]+/g, '');
+  let period = 'fixed';
+  if (['2', 'cycle', 'billingcycle', 'siklus'].includes(normalized)) {
+    period = 'cycle';
+  } else if (['3', 'renewal', 'renew'].includes(normalized)) {
+    period = 'renewal';
+  }
+  if (type === 'postpaid') {
+    return period === 'cycle' ? 'cycle' : 'fixed';
+  }
+  return period === 'renewal' ? 'renewal' : 'fixed';
+}
+
+function billingMode(customer = {}) {
+  const paymentType = normalizePaymentType(customer.paymentType || customer.type || 'postpaid');
+  const billingPeriod = normalizeBillingPeriodForType(customer.billingPeriod || customer.method || 'fixed', paymentType);
+  return { paymentType, billingPeriod };
+}
+
+function billingDueDayForCustomer(settings = {}, customer = {}) {
+  const mode = billingMode(customer);
+  if (mode.paymentType === 'postpaid' && mode.billingPeriod === 'cycle') {
+    return billingDueDay(settings);
+  }
+  return clampDay(customer.dueDay || billingDueDay(settings));
+}
+
 function dueDateForPeriod(period, day) {
   const safePeriod = normalizePeriod(period);
   const [year, month] = safePeriod.split('-').map((item) => Number(item));
@@ -637,8 +672,11 @@ function upsertMonthlyEarning(data, incoming) {
   return existing || data.monthlyEarnings[data.monthlyEarnings.length - 1];
 }
 
-function generateInvoices(data, period = currentPeriod()) {
+function generateInvoices(data, period = currentPeriod(), options = {}) {
   const selectedPeriod = normalizePeriod(period);
+  const shouldGenerateCustomerInvoice = typeof options.shouldGenerateCustomerInvoice === 'function'
+    ? options.shouldGenerateCustomerInvoice
+    : null;
   const existingKeys = new Set();
   for (const invoice of data.invoices || []) {
     if (!invoice.customerId || !invoiceBlocksPeriod(invoice)) continue;
@@ -658,6 +696,11 @@ function generateInvoices(data, period = currentPeriod()) {
 
     const key = `${customer.id}:${selectedPeriod}`;
     if (existingKeys.has(key)) {
+      continue;
+    }
+
+    const dueDate = dueDateForPeriod(selectedPeriod, billingDueDayForCustomer(data.settings, customer));
+    if (shouldGenerateCustomerInvoice && !shouldGenerateCustomerInvoice(customer, { period: selectedPeriod, dueDate })) {
       continue;
     }
 
@@ -690,7 +733,7 @@ function generateInvoices(data, period = currentPeriod()) {
       total: billingAmount.total,
       totalAmount: billingAmount.totalAmount,
       amount,
-      dueDate: dueDateForPeriod(selectedPeriod, customer.dueDay || billingDueDay(data.settings)),
+      dueDate,
       status: amount > 0 ? 'pending' : 'cancelled',
       paidAt: '',
       paymentMethod: '',
@@ -1167,12 +1210,15 @@ module.exports = {
   customerBillableInPeriod,
   dueDateForPeriod,
   generateInvoices,
+  billingDueDayForCustomer,
   nextBillingInvoiceNumber,
   invoiceRuntimeStatus,
   invoiceCoveredPeriods,
   invoiceBlocksPeriod,
   markInvoicePaid,
   markInvoiceUnpaid,
+  normalizeBillingPeriodForType,
+  normalizePaymentType,
   paymentIsActive,
   normalizePeriod,
   normalizeStatus,

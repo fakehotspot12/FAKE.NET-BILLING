@@ -21,6 +21,7 @@ const {
   addExpense,
   addExternalIncome,
   addManualCustomer,
+  billingDueDayForCustomer,
   billingAmountBreakdown,
   currentPeriod,
   customerBillableInPeriod,
@@ -32,6 +33,8 @@ const {
   markInvoicePaid,
   markInvoiceUnpaid,
   nextBillingInvoiceNumber,
+  normalizeBillingPeriodForType,
+  normalizePaymentType,
   normalizePeriod,
   paymentIsActive,
   resolvePrice,
@@ -2203,7 +2206,7 @@ async function pppImportTemplateBuffer() {
       { kolom: 'email', wajib: 'Tidak', contoh: 'budi@example.net', keterangan: 'Email pelanggan jika tersedia.' },
       { kolom: 'address', wajib: 'Tidak', contoh: 'Jl. Contoh No. 1', keterangan: 'Alamat pelanggan.' },
       { kolom: 'payment_type', wajib: 'Tidak', contoh: 'postpaid / prepaid', keterangan: 'Bisa juga memakai PASCABAYAR / PRABAYAR dari format Radboox.' },
-      { kolom: 'billing_period', wajib: 'Tidak', contoh: 'fixed / cycle / renewal', keterangan: 'Bisa juga memakai Fixed Date / Billing Cycle / Renewal.' },
+      { kolom: 'billing_period', wajib: 'Tidak', contoh: 'fixed / cycle / renewal', keterangan: 'Postpaid hanya Fixed Date atau Billing Cycle. Prepaid hanya Fixed Date atau Renewal.' },
       { kolom: 'invoice_status', wajib: 'Tidak', contoh: 'paid / unpaid', keterangan: 'Jika unpaid, user awal tersimpan pending sampai pembayaran pertama dicatat.' },
       { kolom: 'active_date', wajib: 'Tidak', contoh: localTodayIso(), keterangan: 'Tanggal aktif/pasang. Jika pelanggan dipasang bulan kemarin, isi tanggal aktif aslinya.' },
       { kolom: 'ppn', wajib: 'Tidak', contoh: '11', keterangan: 'PPN persen jika dipakai.' },
@@ -2314,18 +2317,29 @@ function anchoredDueDateFromActiveDate(activeDate = '', invoiceStatus = 'paid', 
 }
 
 function normalizeImportPaymentType(value = '') {
-  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-  if (['prepaid', 'prabayar', 'pra'].includes(normalized)) return 'prepaid';
-  if (['postpaid', 'pascabayar', 'pasca'].includes(normalized)) return 'postpaid';
-  return value ? String(value).trim().toLowerCase() : 'postpaid';
+  return normalizePaymentType(value || 'postpaid');
 }
 
-function normalizeImportBillingPeriod(value = '') {
-  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-  if (['fixed', 'fixeddate', 'tanggalfixed', 'tetap'].includes(normalized)) return 'fixed';
-  if (['cycle', 'billingcycle', 'siklus'].includes(normalized)) return 'cycle';
-  if (['renewal', 'renew'].includes(normalized)) return 'renewal';
-  return value ? String(value).trim().toLowerCase() : 'fixed';
+function normalizeImportBillingPeriod(value = '', paymentType = 'postpaid') {
+  return normalizeBillingPeriodForType(value || 'fixed', paymentType);
+}
+
+function normalizeMemberBillingMode(payload = {}, fallback = {}) {
+  const paymentType = normalizeImportPaymentType(payload.memberPaymentType || payload.paymentType || fallback.paymentType || 'postpaid');
+  const billingPeriod = normalizeImportBillingPeriod(
+    payload.memberBillingPeriod || payload.billingPeriod || fallback.billingPeriod || 'fixed',
+    paymentType
+  );
+  return { paymentType, billingPeriod };
+}
+
+function memberDueDayForBilling(data = {}, activeDate = '', paymentType = 'postpaid', billingPeriod = 'fixed', fallbackDay = 10) {
+  const normalizedPaymentType = normalizeImportPaymentType(paymentType);
+  const normalizedBillingPeriod = normalizeImportBillingPeriod(billingPeriod, normalizedPaymentType);
+  if (normalizedPaymentType === 'postpaid' && normalizedBillingPeriod === 'cycle') {
+    return billingDueDayForCustomer(data.settings || {}, { paymentType: normalizedPaymentType, billingPeriod: normalizedBillingPeriod });
+  }
+  return dayFromDateInput(activeDate, fallbackDay);
 }
 
 function decodeXmlText(value = '') {
@@ -2473,6 +2487,8 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
       const memberPhone = normalizeLocalPhone(row.whatsapp || row.no_whatsapp || row.phone || row.no_hp || row.telepon || '');
       const activeDate = normalizeImportDate(row.active_date || row.tanggal_aktif || row.installed_at || row.install_date || '');
       const invoiceStatus = String(row.invoice_status || row.status_invoice || '').trim();
+      const importedPaymentType = normalizeImportPaymentType(row.payment_type || row.tipe_pembayaran || '');
+      const importedBillingPeriod = normalizeImportBillingPeriod(row.billing_period || row.periode_billing || '', importedPaymentType);
 
       if (isDhcp && !username) {
         username = macAddress;
@@ -2526,8 +2542,8 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
         memberKtp: row.ktp || row.no_ktp_sim || row.no_ktp || row.id_card || '',
         memberEmail: row.email || '',
         memberAddress: row.address || '',
-        memberPaymentType: normalizeImportPaymentType(row.payment_type || row.tipe_pembayaran || ''),
-        memberBillingPeriod: normalizeImportBillingPeriod(row.billing_period || row.periode_billing || ''),
+        memberPaymentType: importedPaymentType,
+        memberBillingPeriod: importedBillingPeriod,
         memberInvoiceStatus: invoiceStatus,
         memberActiveDate: activeDate,
         activeDate,
@@ -2783,8 +2799,9 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
   const locationAccuracy = String(payload.memberLocationAccuracy || payload.locationAccuracy || '').trim();
   const locationUrl = latitude && longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}` : '';
   const invoiceStatus = String(payload.memberInvoiceStatus || payload.invoiceStatus || 'paid').trim().toLowerCase() === 'unpaid' ? 'unpaid' : 'paid';
+  const billingMode = normalizeMemberBillingMode(payload);
   const fallbackDueDay = payload.memberDueDay || data.settings?.billing?.postpaidDueDay || 10;
-  const dueDay = dayFromDateInput(activeDate, fallbackDueDay);
+  const dueDay = memberDueDayForBilling(data, activeDate, billingMode.paymentType, billingMode.billingPeriod, fallbackDueDay);
   const explicitNextDue = normalizeImportDate(payload.memberNextDue || payload.nextDue || payload.dueDate || '');
   const nextDue = explicitNextDue || anchoredDueDateFromActiveDate(activeDate, invoiceStatus, dueDay);
   const memberPrice = radiusProfileMemberPrice(profile, payload);
@@ -2813,8 +2830,8 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     whatsapp: phone,
     email: String(payload.memberEmail || payload.email || '').trim(),
     ktp: String(payload.memberKtp || payload.ktp || payload.idCard || '').trim(),
-    paymentType: String(payload.memberPaymentType || 'postpaid').trim(),
-    billingPeriod: String(payload.memberBillingPeriod || 'fixed').trim(),
+    paymentType: billingMode.paymentType,
+    billingPeriod: billingMode.billingPeriod,
     ppn: String(payload.memberPpn || payload.ppn || '').trim(),
     discount: String(payload.memberDiscount || payload.discount || '').trim(),
     firstInvoiceStatus: invoiceStatus,
@@ -2848,8 +2865,9 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   const phone = normalizeLocalPhone(payload.memberPhone || payload.phone || customer.whatsapp || customer.phone || '');
   const activeDate = normalizeImportDate(payload.memberActiveDate || payload.activeDate || customer.activeDate || '');
   const invoiceStatus = String(payload.memberInvoiceStatus || payload.invoiceStatus || customer.firstInvoiceStatus || 'paid').trim().toLowerCase() === 'unpaid' ? 'unpaid' : 'paid';
+  const billingMode = normalizeMemberBillingMode(payload, customer);
   const fallbackDueDay = payload.memberDueDay || customer.dueDay || data.settings?.billing?.postpaidDueDay || 10;
-  const dueDay = activeDate ? dayFromDateInput(activeDate, fallbackDueDay) : dayFromDateInput(customer.activeDate, fallbackDueDay);
+  const dueDay = memberDueDayForBilling(data, activeDate || customer.activeDate, billingMode.paymentType, billingMode.billingPeriod, fallbackDueDay);
   const explicitNextDue = normalizeImportDate(payload.memberNextDue || payload.nextDue || payload.dueDate || '');
   if (memberName) {
     customer.name = memberName;
@@ -2864,8 +2882,8 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   customer.address = String(payload.memberAddress || payload.address || customer.address || '').trim();
   customer.packageName = payload.memberPackageName || profile.name || payload.profile || customer.packageName || '';
   customer.price = radiusProfileMemberPrice(profile, payload, customer.price);
-  customer.paymentType = normalizeImportPaymentType(payload.memberPaymentType || customer.paymentType || 'postpaid');
-  customer.billingPeriod = normalizeImportBillingPeriod(payload.memberBillingPeriod || customer.billingPeriod || 'fixed');
+  customer.paymentType = billingMode.paymentType;
+  customer.billingPeriod = billingMode.billingPeriod;
   customer.ppn = String(payload.memberPpn || payload.ppn || customer.ppn || '').trim();
   customer.discount = String(payload.memberDiscount || payload.discount || customer.discount || '').trim();
   customer.dueDay = dueDay;
@@ -3878,8 +3896,8 @@ function publicDashboardMembers(summary = {}) {
 function localMemberSummaryRows(data = {}) {
   const resolver = radiusStatusResolver(data);
   const rows = (data.customers || []).map((customer) => {
-    const paymentType = String(customer.paymentType || 'postpaid').trim().toLowerCase();
-    const billingPeriod = String(customer.billingPeriod || 'fixed').trim().toLowerCase();
+    const paymentType = normalizeImportPaymentType(customer.paymentType || 'postpaid');
+    const billingPeriod = normalizeImportBillingPeriod(customer.billingPeriod || 'fixed', paymentType);
     return {
       status: resolver.statusForCustomer(customer),
       paymentType,
@@ -4627,6 +4645,13 @@ function invoiceGenerationDue(settings = {}, period = currentPeriod(), today = l
   return today >= advanceStart;
 }
 
+function customerInvoiceGenerationDue(settings = {}, customer = {}, period = currentPeriod(), today = localTodayIso()) {
+  const dueDate = dueDateForPeriod(period, billingDueDayForCustomer({ billing: settings }, customer));
+  const advanceDays = clampInteger(settings.fixedInvoiceAdvanceDays ?? 7, 0, 31, 7);
+  const advanceStart = addDaysIso(dueDate, -advanceDays);
+  return today >= advanceStart;
+}
+
 function activeHotspotVoucherUsersWithValidity(data = {}) {
   const profiles = radiusProfileDirectory(data);
   return (data.radiusUsers || []).filter((user) => {
@@ -5010,7 +5035,9 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   const settings = data.settings?.billing || {};
   const today = localTodayIso();
   const period = currentPeriod();
-  const created = invoiceGenerationDue(settings, period, today) ? generateInvoices(data, period) : [];
+  const created = generateInvoices(data, period, {
+    shouldGenerateCustomerInvoice: (customer) => customerInvoiceGenerationDue(settings, customer, period, today)
+  });
   const activatedUsers = [];
   const isolatedUsers = [];
   const reminderInvoices = [];
@@ -6298,7 +6325,10 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
   const months = clampInteger(subPeriod, 1, 12, 1);
   const billingSettings = data.settings?.billing || {};
   const billingAmount = billingAmountBreakdown(data.settings || {}, customer, months);
-  const dueDay = customer.dueDay || dayFromDateInput(customer.activeDate || customer.installedAt || '', billingSettings.postpaidDueDay || 10);
+  const dueDay = billingDueDayForCustomer(data.settings || {}, {
+    ...customer,
+    dueDay: customer.dueDay || dayFromDateInput(customer.activeDate || customer.installedAt || '', billingSettings.postpaidDueDay || 10)
+  });
   const baseInvoicePeriod = manualInvoiceBasePeriod(customer);
   const coveredPeriods = nextUncoveredPeriods(data, customer.id, baseInvoicePeriod, months);
   const period = coveredPeriods[0] || baseInvoicePeriod;
@@ -11312,36 +11342,40 @@ async function handleApi(req, res, url) {
       const billingPeriod = String(url.searchParams.get('billingPeriod') || 'all').trim().toLowerCase();
       const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
       const resolver = radiusStatusResolver(authContext.data);
-      let members = (authContext.data.customers || []).map((customer) => ({
-        id: customer.id,
-        memberId: customer.id,
-        userId: customer.code || customer.username || customer.id,
-        accountId: customer.code || customer.username || '',
-        internet: customer.username || '',
-        username: customer.username || '',
-        fullName: customer.name || customer.customerName || customer.username || '',
-        customerName: customer.name || customer.customerName || '',
-        whatsapp: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
-        phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
-        email: customer.email || '',
-        ktp: customer.ktp || customer.idCard || '',
-        address: customer.address || '',
-        latitude: customer.latitude || '',
-        longitude: customer.longitude || '',
-        locationAccuracy: customer.locationAccuracy || '',
-        locationUrl: customer.locationUrl || (customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : ''),
-        housePhotoUrl: customer.housePhotoUrl || customer.memberHousePhotoUrl || '',
-        status: resolver.statusForCustomer(customer),
-        paymentType: customer.paymentType || 'postpaid',
-        billingPeriod: customer.billingPeriod || 'fixed',
-        activeDate: customer.activeDate || customer.createdAt || '',
-        nextDue: customer.nextDue || customer.dueDate || '',
-        dueDate: customer.dueDate || customer.nextDue || '',
-        price: Number(customer.price || customer.amount || 0),
-        ppn: customer.ppn || '',
-        discount: customer.discount || '',
-        packageName: customer.packageName || ''
-      }));
+      let members = (authContext.data.customers || []).map((customer) => {
+        const memberPaymentType = normalizeImportPaymentType(customer.paymentType || 'postpaid');
+        const memberBillingPeriod = normalizeImportBillingPeriod(customer.billingPeriod || 'fixed', memberPaymentType);
+        return {
+          id: customer.id,
+          memberId: customer.id,
+          userId: customer.code || customer.username || customer.id,
+          accountId: customer.code || customer.username || '',
+          internet: customer.username || '',
+          username: customer.username || '',
+          fullName: customer.name || customer.customerName || customer.username || '',
+          customerName: customer.name || customer.customerName || '',
+          whatsapp: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
+          phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
+          email: customer.email || '',
+          ktp: customer.ktp || customer.idCard || '',
+          address: customer.address || '',
+          latitude: customer.latitude || '',
+          longitude: customer.longitude || '',
+          locationAccuracy: customer.locationAccuracy || '',
+          locationUrl: customer.locationUrl || (customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : ''),
+          housePhotoUrl: customer.housePhotoUrl || customer.memberHousePhotoUrl || '',
+          status: resolver.statusForCustomer(customer),
+          paymentType: memberPaymentType,
+          billingPeriod: memberBillingPeriod,
+          activeDate: customer.activeDate || customer.createdAt || '',
+          nextDue: customer.nextDue || customer.dueDate || '',
+          dueDate: customer.dueDate || customer.nextDue || '',
+          price: Number(customer.price || customer.amount || 0),
+          ppn: customer.ppn || '',
+          discount: customer.discount || '',
+          packageName: customer.packageName || ''
+        };
+      });
       if (status !== 'all') {
         members = members.filter((member) => member.status === normalizeCustomerStatusLocal(status));
       }
@@ -11484,9 +11518,10 @@ async function handleApi(req, res, url) {
         locationUrl: customer.locationUrl || (customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : ''),
         housePhotoUrl: customer.housePhotoUrl || customer.memberHousePhotoUrl || ''
       };
+      const detailPaymentType = normalizeImportPaymentType(customer.paymentType || 'postpaid');
       const payment = {
-        paymentType: customer.paymentType || 'postpaid',
-        billingPeriod: customer.billingPeriod || 'fixed',
+        paymentType: detailPaymentType,
+        billingPeriod: normalizeImportBillingPeriod(customer.billingPeriod || 'fixed', detailPaymentType),
         nextDue: customer.nextDue || customer.dueDate || '',
         dueDate: customer.dueDate || customer.nextDue || '',
         price: Number(customer.price || customer.amount || 0),
@@ -11642,9 +11677,15 @@ async function handleApi(req, res, url) {
           if (!customer) {
             throw new Error('Member tidak ditemukan');
           }
-          customer.paymentType = String(payload.paymentType || customer.paymentType || 'postpaid').trim();
-          customer.billingPeriod = String(payload.billingPeriod || customer.billingPeriod || 'fixed').trim();
-          customer.nextDue = String(payload.nextDue || payload.dueDate || customer.nextDue || customer.dueDate || '').trim();
+          const billingMode = normalizeMemberBillingMode(payload, customer);
+          customer.paymentType = billingMode.paymentType;
+          customer.billingPeriod = billingMode.billingPeriod;
+          const rawNextDue = normalizeImportDate(payload.nextDue || payload.dueDate || customer.nextDue || customer.dueDate || '');
+          const nextDuePeriod = periodFromDateInput(rawNextDue);
+          const fallbackDueDay = customer.dueDay || data.settings?.billing?.postpaidDueDay || 10;
+          const dueDay = memberDueDayForBilling(data, customer.activeDate || customer.installedAt || rawNextDue, billingMode.paymentType, billingMode.billingPeriod, fallbackDueDay);
+          customer.dueDay = dueDay;
+          customer.nextDue = nextDuePeriod ? dueDateForPeriod(nextDuePeriod, dueDay) : rawNextDue;
           customer.dueDate = customer.nextDue;
           customer.ppn = String(payload.ppn || '').trim();
           customer.discount = String(payload.discount || '').trim();
@@ -12831,6 +12872,7 @@ module.exports = {
     fulfillHotspotVoucherOrder,
     fulfillPaymentGatewayCallback,
     hotspotFreeUserWritable,
+    customerInvoiceGenerationDue,
     invoiceGenerationDue,
     importPppUsers,
     isPaymentGatewayWebhookPath,

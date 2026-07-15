@@ -7599,16 +7599,7 @@ function bindRadiusMemberFields(options = {}) {
     syncProfilePrice();
   };
   const syncBillingPeriod = () => {
-    if (!billingPeriodSelect) return;
-    const paymentType = paymentTypeSelect?.value || 'postpaid';
-    const choices = paymentType === 'prepaid'
-      ? [['fixed', 'Fixed Date'], ['renewal', 'Renewal']]
-      : [['fixed', 'Fixed Date'], ['cycle', 'Billing Cycle']];
-    const current = billingPeriodSelect.value;
-    billingPeriodSelect.innerHTML = choices.map(([value, label]) => `<option value="${value}" ${current === value ? 'selected' : ''}>${label}</option>`).join('');
-    if (!choices.some(([value]) => value === billingPeriodSelect.value)) {
-      billingPeriodSelect.value = choices[0][0];
-    }
+    syncBillingPeriodSelect(paymentTypeSelect, billingPeriodSelect);
   };
   const sync = () => {
     memberFields.forEach((field) => {
@@ -10847,7 +10838,7 @@ function paymentTypeValue(value) {
   const normalized = String(value || '').toLowerCase();
   if (['1', 'postpaid', 'post paid'].includes(normalized)) return 'postpaid';
   if (['2', 'prepaid', 'pre paid'].includes(normalized)) return 'prepaid';
-  return 'prepaid';
+  return 'postpaid';
 }
 
 function billingPeriodValue(value) {
@@ -10858,10 +10849,40 @@ function billingPeriodValue(value) {
   return 'fixed';
 }
 
+function billingPeriodOptionsForPaymentType(paymentType = 'postpaid', includeAll = false) {
+  const type = paymentTypeValue(paymentType || 'postpaid');
+  const options = type === 'prepaid'
+    ? [['fixed', 'Fixed Date'], ['renewal', 'Renewal']]
+    : [['fixed', 'Fixed Date'], ['cycle', 'Billing Cycle']];
+  return includeAll ? [['all', 'Semua periode'], ...options] : options;
+}
+
+function normalizeBillingPeriodForPaymentType(period = 'fixed', paymentType = 'postpaid') {
+  const allowed = billingPeriodOptionsForPaymentType(paymentType).map(([value]) => value);
+  const normalized = billingPeriodValue(period);
+  return allowed.includes(normalized) ? normalized : 'fixed';
+}
+
+function billingPeriodOptionTags(paymentType = 'postpaid', selected = 'fixed', includeAll = false) {
+  const normalized = includeAll && selected === 'all'
+    ? 'all'
+    : normalizeBillingPeriodForPaymentType(selected, paymentType);
+  return billingPeriodOptionsForPaymentType(paymentType, includeAll)
+    .map(([value, label]) => `<option value="${value}" ${normalized === value ? 'selected' : ''}>${label}</option>`)
+    .join('');
+}
+
+function syncBillingPeriodSelect(paymentTypeSelect, billingPeriodSelect, includeAll = false) {
+  if (!billingPeriodSelect) return;
+  const paymentType = paymentTypeSelect?.value || 'postpaid';
+  const current = billingPeriodSelect.value || (includeAll ? 'all' : 'fixed');
+  billingPeriodSelect.innerHTML = billingPeriodOptionTags(paymentType, current, includeAll);
+}
+
 function paymentModalBody(member = {}, payment = {}, editable = false) {
   const disabled = editable ? '' : 'disabled';
   const paymentType = paymentTypeValue(payment.paymentType || member.paymentType);
-  const billingPeriod = billingPeriodValue(payment.billingPeriod || member.billingPeriod);
+  const billingPeriod = normalizeBillingPeriodForPaymentType(payment.billingPeriod || member.billingPeriod, paymentType);
   return `
     <div class="member-edit-card">
       ${memberEditHeader(member, payment)}
@@ -10879,9 +10900,7 @@ function paymentModalBody(member = {}, payment = {}, editable = false) {
           </label>
           <label>Periode Billing
             <select name="billingPeriod" ${disabled}>
-              <option value="fixed" ${billingPeriod === 'fixed' ? 'selected' : ''}>Fixed Date</option>
-              <option value="cycle" ${billingPeriod === 'cycle' ? 'selected' : ''}>Billing Cycle</option>
-              <option value="renewal" ${billingPeriod === 'renewal' ? 'selected' : ''}>Renewal</option>
+              ${billingPeriodOptionTags(paymentType, billingPeriod)}
             </select>
           </label>
           <div class="field">
@@ -11046,6 +11065,10 @@ async function openMemberPaymentModal(member = {}) {
       }
     }
   });
+  const paymentTypeSelect = modalBody.querySelector('select[name="paymentType"]');
+  const billingPeriodSelect = modalBody.querySelector('select[name="billingPeriod"]');
+  syncBillingPeriodSelect(paymentTypeSelect, billingPeriodSelect);
+  paymentTypeSelect?.addEventListener('change', () => syncBillingPeriodSelect(paymentTypeSelect, billingPeriodSelect));
 }
 
 async function renderMonitoringMembers(options = {}) {
@@ -11163,10 +11186,14 @@ async function renderMonitoringMembers(options = {}) {
             <option value="postpaid" ${state.monitoringMemberPaymentType === 'postpaid' ? 'selected' : ''}>Postpaid</option>
           </select>
           <select class="control" id="memberBillingPeriodFilter" aria-label="Filter periode billing">
-            <option value="all" ${state.monitoringMemberBillingPeriod === 'all' ? 'selected' : ''}>Semua periode</option>
-            <option value="fixed" ${state.monitoringMemberBillingPeriod === 'fixed' ? 'selected' : ''}>Fixed Date</option>
-            <option value="renewal" ${state.monitoringMemberBillingPeriod === 'renewal' ? 'selected' : ''}>Renewal</option>
-            <option value="cycle" ${state.monitoringMemberBillingPeriod === 'cycle' ? 'selected' : ''}>Billing Cycle</option>
+            ${state.monitoringMemberPaymentType === 'all'
+              ? [
+                ['all', 'Semua periode'],
+                ['fixed', 'Fixed Date'],
+                ['cycle', 'Billing Cycle'],
+                ['renewal', 'Renewal']
+              ].map(([value, label]) => `<option value="${value}" ${state.monitoringMemberBillingPeriod === value ? 'selected' : ''}>${label}</option>`).join('')
+              : billingPeriodOptionTags(state.monitoringMemberPaymentType, state.monitoringMemberBillingPeriod, true)}
           </select>
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, UID, PPPoE, WA" autocomplete="off">
         </div>
@@ -11201,6 +11228,12 @@ async function renderMonitoringMembers(options = {}) {
   });
   document.getElementById('memberPaymentTypeFilter')?.addEventListener('change', (event) => {
     state.monitoringMemberPaymentType = event.target.value || 'all';
+    if (state.monitoringMemberPaymentType !== 'all' && state.monitoringMemberBillingPeriod !== 'all') {
+      state.monitoringMemberBillingPeriod = normalizeBillingPeriodForPaymentType(
+        state.monitoringMemberBillingPeriod,
+        state.monitoringMemberPaymentType
+      );
+    }
     state.monitoringMemberPage = 1;
     renderMonitoringMembers();
   });

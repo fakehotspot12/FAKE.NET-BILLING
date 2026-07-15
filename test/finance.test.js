@@ -109,6 +109,42 @@ test('generates monthly invoices for active customers', () => {
   assert.equal(generateInvoices(data, '2026-06').length, 0);
 });
 
+test('postpaid billing cycle uses billing setting due date while fixed uses member due date', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 10;
+  data.customers.push(
+    {
+      id: 'cus-fixed',
+      username: 'fixed@kampung.net',
+      name: 'Fixed',
+      packageName: 'Paket Fixed',
+      status: 'active',
+      price: 100000,
+      paymentType: 'postpaid',
+      billingPeriod: 'fixed',
+      dueDay: 20
+    },
+    {
+      id: 'cus-cycle',
+      username: 'cycle@kampung.net',
+      name: 'Cycle',
+      packageName: 'Paket Cycle',
+      status: 'active',
+      price: 100000,
+      paymentType: 'postpaid',
+      billingPeriod: 'cycle',
+      dueDay: 20
+    }
+  );
+
+  const created = generateInvoices(data, '2026-08');
+  const fixed = created.find((invoice) => invoice.customerId === 'cus-fixed');
+  const cycle = created.find((invoice) => invoice.customerId === 'cus-cycle');
+
+  assert.equal(fixed.dueDate, '2026-08-20');
+  assert.equal(cycle.dueDate, '2026-08-10');
+});
+
 test('generates invoices only after the active date month', () => {
   const data = createDefaultStore();
   data.customers.push(
@@ -790,6 +826,28 @@ test('billing settings allow H-1 invoice generation and disabled reminders', () 
 
   assert.equal(result.reminderInvoices.length, 0);
   assert.equal(data.waMessages.filter((message) => message.type === 'paymentReminder').length, 0);
+});
+
+test('standalone automation generates fixed-date invoices only inside each member window', () => {
+  const settings = {
+    postpaidDueDay: 10,
+    fixedInvoiceAdvanceDays: 7
+  };
+  const fixedCustomer = {
+    paymentType: 'postpaid',
+    billingPeriod: 'fixed',
+    dueDay: 20
+  };
+  const cycleCustomer = {
+    paymentType: 'postpaid',
+    billingPeriod: 'cycle',
+    dueDay: 20
+  };
+
+  assert.equal(serverInternals.customerInvoiceGenerationDue(settings, fixedCustomer, '2026-08', '2026-08-12'), false);
+  assert.equal(serverInternals.customerInvoiceGenerationDue(settings, fixedCustomer, '2026-08', '2026-08-13'), true);
+  assert.equal(serverInternals.customerInvoiceGenerationDue(settings, cycleCustomer, '2026-08', '2026-08-02'), false);
+  assert.equal(serverInternals.customerInvoiceGenerationDue(settings, cycleCustomer, '2026-08', '2026-08-03'), true);
 });
 
 test('expired hotspot voucher remove-record keeps terminated record', () => {
