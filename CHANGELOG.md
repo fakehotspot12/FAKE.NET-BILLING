@@ -7,6 +7,16 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.23] - 2026-07-16
+
+### Added
+
+- Modal ubah WiFi di portal WifiKu sekarang memiliki checkbox `Lihat password`.
+
+### Changed
+
+- Checkbox password WifiKu dibuat ringkas agar tetap rapi di tampilan mobile dan desktop.
+
 ## [1.0.22] - 2026-07-16
 
 ### Added

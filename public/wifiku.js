@@ -323,7 +323,11 @@ document.querySelectorAll('[data-ssid-band]').forEach((button) => {
       </label>
       <label>
         <span>Password baru ${label}</span>
-        <input name="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Kosongkan jika tidak diubah">
+        <input id="wifiPasswordInput" name="password" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Kosongkan jika tidak diubah">
+      </label>
+      <label class="check-row">
+        <input id="wifiShowPassword" type="checkbox">
+        <span>Lihat password</span>
       </label>
       <p class="muted">Password hanya diubah jika field password diisi.</p>
     `, async (form) => {
@@ -339,6 +343,11 @@ document.querySelectorAll('[data-ssid-band]').forEach((button) => {
         method: 'POST',
         body: JSON.stringify(payload)
       });
+    });
+    const passwordInput = byId('wifiPasswordInput');
+    const showPassword = byId('wifiShowPassword');
+    showPassword?.addEventListener('change', () => {
+      if (passwordInput) passwordInput.type = showPassword.checked ? 'text' : 'password';
     });
   });
 });
