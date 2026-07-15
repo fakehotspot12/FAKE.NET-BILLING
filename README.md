@@ -336,6 +336,17 @@ sudo fakenet-billing-stack update
 
 Setelah server berhasil naik ke versi baru, updater sudah otomatis membersihkan lock basi dan update berikutnya bisa dilakukan dari web.
 
+#### Clean Lock Update
+
+Gunakan ini jika halaman update menampilkan update tersedia, tetapi versi tidak berubah setelah tombol `Update Aplikasi` dipencet, atau log berisi `Update lain masih berjalan`.
+
+```bash
+sudo rm -f /tmp/fakenet-billing-update.lock
+sudo fakenet-billing-stack update
+```
+
+Perintah pertama hanya menghapus lock proses update yang tertinggal. Perintah kedua menjalankan update normal, tetap membuat backup pre-update, lalu restart service aplikasi.
+
 Untuk audit cepat:
 
 ```bash
