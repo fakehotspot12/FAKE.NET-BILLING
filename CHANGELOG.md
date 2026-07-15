@@ -7,6 +7,36 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.19] - 2026-07-15
+
+### Changed
+
+- Menambahkan dokumentasi `Metode Pembayaran Member` di README, termasuk mapping `Postpaid/Prepaid`, `Fixed Date`, `Billing Cycle`, dan `Renewal`.
+- Menjelaskan contoh prorata `Postpaid + Billing Cycle` agar installer/client memahami tagihan awal pelanggan baru.
+
+## [1.0.18] - 2026-07-15
+
+### Added
+
+- Menambahkan prorata invoice pertama untuk pelanggan `Postpaid + Billing Cycle`.
+- Invoice pertama Billing Cycle sekarang dihitung dari `Active Date` sampai due date cycle pertama, lalu invoice berikutnya kembali full bulanan.
+
+### Fixed
+
+- Scheduler invoice otomatis tidak membuat invoice prorata sebelum `Active Date` pelanggan, meskipun sudah masuk window H-minus jatuh tempo.
+
+## [1.0.17] - 2026-07-15
+
+### Changed
+
+- Periode billing member sekarang mengikuti tipe pembayaran seperti Radboox: `Postpaid` hanya `Fixed Date/Billing Cycle`, sedangkan `Prepaid` hanya `Fixed Date/Renewal`.
+- `Postpaid + Billing Cycle` memakai `Due date postpaid` dari Billing Setting sebagai tanggal jatuh tempo global.
+
+### Fixed
+
+- Kombinasi lama yang tidak valid seperti `Postpaid + Renewal` atau `Prepaid + Billing Cycle` dinormalisasi ke `Fixed Date` agar invoice tidak memakai aturan yang salah.
+- Filter dan edit Payment Detail member menampilkan pilihan Billing Period sesuai Payment Type.
+
 ## [1.0.16] - 2026-07-15
 
 ### Fixed
