@@ -7,6 +7,17 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.3] - 2026-07-15
+
+### Changed
+
+- Mengubah wording panel `Update Aplikasi` menjadi berbasis `rilis terbaru` dan `kanal`, bukan label GitHub/commit.
+
+### Fixed
+
+- Updater sekarang membersihkan lock file lama jika proses update sebelumnya sudah tidak berjalan.
+- Server yang tertahan di lock update lama bisa memperbarui aplikasi lagi tanpa install ulang.
+
 ## [1.0.2] - 2026-07-15
 
 ### Changed
