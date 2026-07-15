@@ -1460,7 +1460,10 @@ function radiusUserByUsername(data = {}) {
 }
 
 function radiusSessionServiceType(data = {}, session = {}, user = null) {
-  if (user?.serviceType) return user.serviceType;
+  const userServiceType = String(user?.serviceType || '').trim().toLowerCase();
+  if (['pppoe', 'ppp', 'ppp-dhcp'].includes(userServiceType)) return 'pppoe';
+  if (userServiceType === 'hotspot') return 'hotspot';
+  if (userServiceType) return userServiceType;
   const framedProtocol = String(session.framedProtocol || '').trim().toLowerCase();
   const serviceType = String(session.serviceType || '').trim().toLowerCase();
   const nasPortType = String(session.nasPortType || '').trim().toLowerCase();
@@ -2830,7 +2833,10 @@ function deleteRadiusLinkedMember(data = {}, radiusUser = {}, actor = {}) {
       .join(' ');
     invoice.updatedAt = new Date().toISOString();
   }
-  recordRadiusRemovedUser(data, radiusUser, removed, actor);
+  const directLinkedMemberId = String(radiusUser.customerId || '').trim();
+  if (directLinkedMemberId && directLinkedMemberId === String(removed.id || '').trim()) {
+    recordRadiusRemovedUser(data, radiusUser, removed, actor, { source: 'ppp-delete' });
+  }
   return removed;
 }
 
@@ -2845,9 +2851,10 @@ function radiusRemovedRecordKey(radiusUser = {}, customer = {}) {
   ].map((value) => String(value || '').trim().toLowerCase()).find(Boolean) || '';
 }
 
-function recordRadiusRemovedUser(data = {}, radiusUser = {}, customer = {}, actor = {}) {
+function recordRadiusRemovedUser(data = {}, radiusUser = {}, customer = {}, actor = {}, options = {}) {
   const serviceType = String(radiusUser.serviceType || customer.serviceType || 'pppoe').trim().toLowerCase();
   if (serviceType !== 'pppoe') return null;
+  const source = String(options.source || '').trim() || 'ppp-delete';
   data.radiusRemovedRecords = Array.isArray(data.radiusRemovedRecords) ? data.radiusRemovedRecords : [];
   const now = new Date().toISOString();
   const key = radiusRemovedRecordKey(radiusUser, customer);
@@ -2868,6 +2875,8 @@ function recordRadiusRemovedUser(data = {}, radiusUser = {}, customer = {}, acto
     nasId: radiusUser.nasId || customer.nasId || '',
     lastStatus: radiusUser.status || customer.status || '',
     removedAt: now,
+    source,
+    linkedMember: Boolean(customer.id),
     removedByName: actor?.name || actor?.username || 'Sistem',
     removedByUsername: actor?.username || '',
     removedByRole: actor?.role || '',
@@ -2915,7 +2924,6 @@ function deleteOrphanRadiusMembers(data = {}, actor = {}) {
         invoice.notes = [invoice.notes, `Dibatalkan otomatis karena member orphan dibersihkan oleh ${actorName}.`].filter(Boolean).join(' ');
         invoice.updatedAt = new Date().toISOString();
       }
-      recordRadiusRemovedUser(data, {}, customer, actor);
     }
     addActivity(data, 'customer', `${removed.length} member orphan Radius dibersihkan oleh ${actorName}`, {
       action: 'radius-member-orphan-cleanup',
@@ -3442,16 +3450,20 @@ function radiusRemovedRecordCount(data = {}, serviceType = 'pppoe', period = cur
   return (data.radiusRemovedRecords || []).filter((record) => {
     const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
     const removedPeriod = String(record.removedAt || record.createdAt || '').slice(0, 7);
-    return type === selectedType && removedPeriod === selectedPeriod;
+    const hasLinkedMember = Boolean(String(record.customerId || record.memberCode || '').trim());
+    return hasLinkedMember && type === selectedType && removedPeriod === selectedPeriod;
   }).length;
 }
 
 function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period);
   const users = (data.radiusUsers || []).filter((user) => user.serviceType === serviceType);
+  const customersById = new Map((data.customers || []).map((customer) => [customer.id, customer]));
+  const psbCustomerIds = new Set();
   const counts = {
     total: users.length,
     new: 0,
+    psb: 0,
     online: 0,
     sessionOnline: 0,
     active: 0,
@@ -3462,6 +3474,16 @@ function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period 
   };
   users.forEach((user) => {
     if (String(user.createdAt || '').slice(0, 7) === selectedPeriod) counts.new += 1;
+    if (serviceType === 'pppoe' && user.customerId && !psbCustomerIds.has(user.customerId)) {
+      const customer = customersById.get(user.customerId);
+      const psbDate = customer
+        ? (customer.activeDate || customer.installedAt || customer.createdAt || user.createdAt || '')
+        : '';
+      if (String(psbDate || '').slice(0, 7) === selectedPeriod) {
+        psbCustomerIds.add(user.customerId);
+        counts.psb += 1;
+      }
+    }
     const status = normalizeCustomerStatusLocal(user.status);
     if (status === 'isolated') counts.isolated += 1;
     else if (status === 'terminate') counts.terminated += 1;
@@ -5958,6 +5980,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   for (const record of data.radiusRemovedRecords || []) {
     const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
     if (type !== 'pppoe') continue;
+    if (!String(record.customerId || record.memberCode || '').trim()) continue;
     const removedDate = String(record.removedAt || '').slice(0, 10);
     if (removedDate.slice(0, 7) === selectedPeriod) {
       const key = statisticsRecordKey('removed', record);

@@ -1736,7 +1736,7 @@ input[type="checkbox"] {
 }
 
 .dashboard-member-grid.is-ppp .ppp-main {
-  grid-column: span 3;
+  grid-column: span 2;
 }
 
 .dashboard-member-grid.is-ppp .ppp-status {
@@ -1744,16 +1744,74 @@ input[type="checkbox"] {
 }
 
 .dashboard-member-grid span {
+  --cell-bg: var(--surface-soft);
+  --cell-border: var(--line);
+  --cell-label: var(--muted);
+  --cell-value: var(--primary);
   display: grid;
   align-content: center;
   gap: 3px;
   min-width: 0;
   min-height: 44px;
   padding: 6px 5px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--cell-border);
   border-radius: 8px;
-  background: var(--surface-soft);
+  background: var(--cell-bg);
   text-align: center;
+}
+
+.dashboard-member-grid .stat-total {
+  --cell-bg: rgba(43, 139, 217, 0.13);
+  --cell-border: rgba(43, 139, 217, 0.28);
+  --cell-value: var(--blue);
+}
+
+.dashboard-member-grid .stat-active {
+  --cell-bg: rgba(16, 185, 129, 0.14);
+  --cell-border: rgba(16, 185, 129, 0.30);
+  --cell-value: #047857;
+}
+
+.dashboard-member-grid .stat-psb {
+  --cell-bg: rgba(124, 58, 237, 0.13);
+  --cell-border: rgba(124, 58, 237, 0.28);
+  --cell-value: #6d28d9;
+}
+
+.dashboard-member-grid .warning {
+  --cell-bg: rgba(245, 158, 11, 0.15);
+  --cell-border: rgba(245, 158, 11, 0.33);
+  --cell-value: var(--warning);
+}
+
+.dashboard-member-grid .danger {
+  --cell-bg: rgba(239, 68, 68, 0.13);
+  --cell-border: rgba(239, 68, 68, 0.30);
+  --cell-value: var(--danger);
+}
+
+.dashboard-member-grid .removed {
+  --cell-bg: rgba(100, 116, 139, 0.16);
+  --cell-border: rgba(100, 116, 139, 0.32);
+  --cell-value: #475569;
+}
+
+[data-theme="dark"] .dashboard-member-grid .stat-active {
+  --cell-bg: rgba(34, 197, 94, 0.16);
+  --cell-border: rgba(34, 197, 94, 0.35);
+  --cell-value: #86efac;
+}
+
+[data-theme="dark"] .dashboard-member-grid .stat-psb {
+  --cell-bg: rgba(168, 85, 247, 0.18);
+  --cell-border: rgba(168, 85, 247, 0.36);
+  --cell-value: #d8b4fe;
+}
+
+[data-theme="dark"] .dashboard-member-grid .removed {
+  --cell-bg: rgba(148, 163, 184, 0.15);
+  --cell-border: rgba(148, 163, 184, 0.30);
+  --cell-value: #cbd5e1;
 }
 
 .dashboard-member-grid.is-ppp span {
@@ -1761,7 +1819,7 @@ input[type="checkbox"] {
 }
 
 .dashboard-member-grid small {
-  color: var(--muted);
+  color: var(--cell-label);
   font-size: 10px;
   font-weight: 800;
   line-height: 1.2;
@@ -1769,18 +1827,10 @@ input[type="checkbox"] {
 }
 
 .dashboard-member-grid b {
-  color: var(--primary);
+  color: var(--cell-value);
   font-size: 16px;
   line-height: 1.1;
   text-align: center;
-}
-
-.dashboard-member-grid .warning b {
-  color: var(--warning);
-}
-
-.dashboard-member-grid .danger b {
-  color: var(--danger);
 }
 
 .metric-card,
@@ -5197,6 +5247,34 @@ td:has(.action-menu),
   white-space: nowrap;
 }
 
+.monitoring-customer-table-wrap {
+  box-shadow: none;
+}
+
+.monitoring-customer-table {
+  min-width: 640px;
+  table-layout: fixed;
+}
+
+.monitoring-customer-table th,
+.monitoring-customer-table td {
+  padding: 10px 12px;
+}
+
+.monitoring-customer-table .monitoring-col-no {
+  width: 64px;
+}
+
+.monitoring-customer-table td:nth-child(1),
+.monitoring-customer-table td:last-child {
+  color: var(--muted);
+}
+
+.empty-cell {
+  color: var(--muted);
+  text-align: center;
+}
+
 .service-row-detail {
   display: grid;
   gap: 2px;
@@ -6574,6 +6652,11 @@ dialog::backdrop {
 
   .dashboard-member-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-member-grid.is-ppp .ppp-main,
+  .dashboard-member-grid.is-ppp .ppp-status {
+    grid-column: span 1;
   }
 
   .router-nas-toolbar {

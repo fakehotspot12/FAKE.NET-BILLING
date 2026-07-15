@@ -281,14 +281,17 @@ function rupiah(value) {
 
 function bitRateText(value) {
   let bits = Math.max(0, Number(value || 0));
-  const units = ['bps', 'Kbps', 'Mbps', 'Gbps'];
+  const units = ['bps', 'Kbps', 'Mbps', 'Gbps', 'Tbps', 'Pbps'];
   let unit = 0;
   while (bits >= 1000 && unit < units.length - 1) {
     bits /= 1000;
     unit += 1;
   }
-  const precision = unit <= 1 ? 0 : 1;
-  return `${bits.toFixed(precision)} ${units[unit]}`;
+  const precision = unit === 0 ? 0 : bits >= 100 ? 0 : bits >= 10 ? 1 : 2;
+  return `${bits.toLocaleString('id-ID', {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision
+  })} ${units[unit]}`;
 }
 
 function normalizedPeriod(value) {
@@ -1578,19 +1581,11 @@ function empty(message) {
 }
 
 function mbpsText(value) {
-  const mbps = Number(value || 0) / 1_000_000;
-  const precision = mbps >= 100 ? 0 : mbps >= 10 ? 1 : 2;
-  return `${mbps.toLocaleString('id-ID', {
-    minimumFractionDigits: precision,
-    maximumFractionDigits: precision
-  })} Mbps`;
+  return bitRateText(value);
 }
 
 function mbpsAxisText(value) {
-  const mbps = Number(value || 0) / 1_000_000;
-  if (mbps >= 100) return mbps.toLocaleString('id-ID', { maximumFractionDigits: 0 });
-  if (mbps >= 10) return mbps.toLocaleString('id-ID', { maximumFractionDigits: 1 });
-  return mbps.toLocaleString('id-ID', { maximumFractionDigits: 2 });
+  return bitRateText(value);
 }
 
 function dashboardFinanceOverview(summary = {}) {
@@ -1676,17 +1671,18 @@ function dashboardUserStatusPaper(title = '', summary = {}, updatedAt = '', mode
   const sessionOnline = Number(summary.sessionOnline ?? summary.online ?? 0);
   const cells = mode === 'hotspot'
     ? [
-      ['Total', summary.total || 0, ''],
-      ['New', summary.new || 0, ''],
-      ['Active', sessionOnline, ''],
-      ['Isolir', summary.isolated || 0, Number(summary.isolated || 0) ? 'warning' : '']
+      ['Total', summary.total || 0, 'stat-total'],
+      ['New', summary.new || 0, 'stat-psb'],
+      ['Active', sessionOnline, 'stat-active'],
+      ['Isolir', summary.isolated || 0, 'warning']
     ]
     : [
-      ['Total', summary.total || 0, '', 'ppp-main'],
-      ['Aktif', sessionOnline, '', 'ppp-main'],
-      ['Isolir', summary.isolated || 0, Number(summary.isolated || 0) ? 'warning' : '', 'ppp-status'],
-      ['Terminated', summary.terminated || 0, Number(summary.terminated || 0) ? 'danger' : '', 'ppp-status'],
-      ['Cabut', summary.removed || 0, Number(summary.removed || 0) ? 'danger' : '', 'ppp-status']
+      ['Total', summary.total || 0, 'stat-total', 'ppp-main'],
+      ['Aktif', sessionOnline, 'stat-active', 'ppp-main'],
+      ['PSB', summary.psb || 0, 'stat-psb', 'ppp-main'],
+      ['Isolir', summary.isolated || 0, 'warning', 'ppp-status'],
+      ['Terminated', summary.terminated || 0, 'danger', 'ppp-status'],
+      ['Cabut', summary.removed || 0, 'removed', 'ppp-status']
     ];
   return `
     <section class="section dashboard-member-card ${mode === 'ppp' ? 'is-ppp' : 'is-hotspot'}">
@@ -1851,7 +1847,7 @@ function drawRouterSparkline(canvas, points = []) {
   ctx.fillStyle = surface;
   ctx.fillRect(0, 0, width, height);
   const max = Math.max(1, ...points.flatMap((point) => [point.upload || 0, point.download || 0]));
-  const axisWidth = 43;
+  const axisWidth = 58;
   const rightPad = 8;
   const topPad = 11;
   const bottomPad = 10;
@@ -9627,27 +9623,81 @@ function monitoringCustomerRows(sites = [], type = 'pppoe') {
   const key = type === 'hotspot' ? 'hotspotUsers' : 'pppoeUsers';
   return sites.flatMap((site) => {
     const users = Array.isArray(site[key]) ? site[key] : [];
-    return users.map((user, index) => ({
-      id: user.id || `${site.id || site.name || 'site'}:${index}`,
-      siteId: user.siteId || site.id || site.name || 'site',
-      type: user.type || type,
-      username: user.username || user.interfaceName || '-',
-      interfaceName: user.interfaceName || user.username || '-',
-      customerName: user.customerName || '',
-      profile: user.profile || '',
-      ipAddress: user.framedIpAddress || user.ipAddress || user.staticIp || '',
-      framedIpAddress: user.framedIpAddress || '',
-      staticIp: user.staticIp || '',
-      macAddress: user.macAddress || user.callingStationId || '',
-      nasIpAddress: user.nasIpAddress || user.host || site.host || '',
-      siteName: user.siteName || site.name || '-',
-      siteLocation: user.location || site.location || site.host || '',
-      host: user.host || site.host || '',
-      uptime: user.uptime || '',
-      totalUsageText: user.totalUsageText || '',
-      status: user.status || 'online'
-    }));
+    return users
+      .filter((user) => monitoringCustomerServiceType(user, type) === type)
+      .map((user, index) => ({
+        id: user.id || `${site.id || site.name || 'site'}:${index}`,
+        siteId: user.siteId || site.id || site.name || 'site',
+        type: monitoringCustomerServiceType(user, type),
+        username: user.username || user.interfaceName || '-',
+        interfaceName: user.interfaceName || user.username || '-',
+        customerName: user.customerName || '',
+        profile: user.profile || '',
+        ipAddress: user.framedIpAddress || user.ipAddress || user.staticIp || '',
+        framedIpAddress: user.framedIpAddress || '',
+        staticIp: user.staticIp || '',
+        macAddress: user.macAddress || user.callingStationId || '',
+        nasIpAddress: user.nasIpAddress || user.host || site.host || '',
+        siteName: user.siteName || site.name || '-',
+        siteLocation: user.location || site.location || site.host || '',
+        host: user.host || site.host || '',
+        uptime: user.uptime || '',
+        totalUsageText: user.totalUsageText || '',
+        status: user.status || 'online'
+      }));
   }).sort((a, b) => `${a.siteName} ${a.username}`.localeCompare(`${b.siteName} ${b.username}`));
+}
+
+function monitoringCustomerServiceType(user = {}, fallback = '') {
+  const value = String(user.type || user.serviceType || user.service || user.accessType || fallback || '').trim().toLowerCase();
+  if (value === 'hotspot') return 'hotspot';
+  if (['pppoe', 'ppp', 'ppp-dhcp'].includes(value)) return 'pppoe';
+  return value;
+}
+
+function monitoringCustomerDisplayName(user = {}) {
+  return user.customerName || user.owner || user.name || user.username || user.interfaceName || '-';
+}
+
+function monitoringCustomerAddress(user = {}) {
+  return user.framedIpAddress || user.ipAddress || user.staticIp || '-';
+}
+
+function monitoringCustomerTable(users = [], type = 'pppoe', startNo = 1) {
+  const pppoe = type === 'pppoe';
+  return `
+    <div class="table-wrap monitoring-customer-table-wrap">
+      <table class="monitoring-customer-table">
+        <thead>
+          <tr>
+            <th class="monitoring-col-no">No</th>
+            <th>${pppoe ? 'Nama' : 'User'}</th>
+            ${pppoe ? '<th>MAC</th>' : ''}
+            <th>Address</th>
+            <th>Uptime</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${users.length ? users.map((user, index) => `
+            <tr>
+              <td class="nowrap">${displayNumber(startNo + index)}</td>
+              <td>
+                <strong>${escapeHtml(pppoe ? monitoringCustomerDisplayName(user) : user.username || '-')}</strong>
+                ${pppoe && user.customerName && user.username && user.customerName !== user.username ? `<div class="muted">${escapeHtml(user.username)}</div>` : ''}
+              </td>
+              ${pppoe ? `<td>${escapeHtml(user.macAddress || '-')}</td>` : ''}
+              <td>${escapeHtml(monitoringCustomerAddress(user))}</td>
+              <td class="nowrap">${escapeHtml(user.uptime || '-')}</td>
+            </tr>
+          `).join('') : `
+            <tr>
+              <td colspan="${pppoe ? 5 : 4}" class="empty-cell">Tidak ada ${pppoe ? 'PPPoE' : 'Hotspot'} aktif sesuai filter.</td>
+            </tr>
+          `}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 function filteredMonitoringCustomers(rows = []) {
@@ -9761,7 +9811,7 @@ async function renderMonitoringCustomers(options = {}) {
             <option value="all" ${state.monitoringCustomerSite === 'all' ? 'selected' : ''}>Semua site</option>
             ${sites.map((site) => `<option value="${escapeHtml(site.id)}" ${String(state.monitoringCustomerSite) === String(site.id) ? 'selected' : ''}>${escapeHtml(site.name)}</option>`).join('')}
           </select>
-          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari ${escapeHtml(customerTypeLabel)}, site, host" autocomplete="off">
+          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari ${escapeHtml(customerTypeLabel)}, address, MAC" autocomplete="off">
         </div>
         <div class="row-actions">
           <button class="ghost-button" id="refreshCustomers" type="button">Refresh Live</button>
@@ -9780,24 +9830,7 @@ async function renderMonitoringCustomers(options = {}) {
           </div>
           <span class="muted">Update ${escapeHtml(summary.generatedAt ? dateTimeText(summary.generatedAt) : '-')} - auto 20 detik</span>
         </div>
-        <div class="pppoe-list">
-          ${pageUsers.length ? pageUsers.map((user) => `
-            <article class="pppoe-row">
-              <div class="pppoe-user">
-                <span class="pppoe-status-dot" aria-hidden="true"></span>
-                <div>
-                  <strong title="${escapeHtml(user.username)}">${escapeHtml(user.username)}</strong>
-                  <span title="${escapeHtml(user.customerName || user.interfaceName)}">${escapeHtml(user.customerName || user.interfaceName)}</span>
-                </div>
-              </div>
-              <span class="site-pill" title="${escapeHtml(user.siteLocation || user.host || user.siteName)}">${escapeHtml(user.siteName)}</span>
-              <span class="muted pppoe-host" title="IP pelanggan${user.nasIpAddress ? ` - NAS ${escapeHtml(user.nasIpAddress)}` : ''}">
-                ${escapeHtml(user.ipAddress || '-')}
-              </span>
-              <span class="badge active">Online</span>
-            </article>
-          `).join('') : `<div class="empty">Tidak ada ${escapeHtml(customerTypeLabel)} aktif sesuai filter.</div>`}
-        </div>
+        ${monitoringCustomerTable(pageUsers, customerType, offset + 1)}
         ${customerPaginationControls(pagination, customerTypeLabel)}
       </section>
     </div>

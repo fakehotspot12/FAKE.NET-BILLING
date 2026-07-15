@@ -233,8 +233,33 @@ test('deleting radius user removes linked member but keeps transaction history',
   assert.equal(data.radiusRemovedRecords.length, 1);
   assert.equal(data.radiusRemovedRecords[0].status, 'removed');
   assert.equal(data.radiusRemovedRecords[0].username, 'hapus@ppp.test');
+  assert.equal(data.radiusRemovedRecords[0].source, 'ppp-delete');
+  assert.equal(data.radiusRemovedRecords[0].customerId, customer.id);
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', currentPeriod()).removed, 1);
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', addMonthsToPeriod(currentPeriod(), 1)).removed, 0);
+});
+
+test('dashboard PPP-DHCP PSB counts linked members for selected period only', () => {
+  const data = createDefaultStore();
+  const period = currentPeriod();
+  data.customers.push({
+    id: 'cus-psb-1',
+    username: 'psb-1@ppp.test',
+    name: 'Pelanggan PSB',
+    activeDate: `${period}-05`,
+    createdAt: `${period}-05T09:00:00.000Z`,
+    status: 'active'
+  });
+  data.radiusUsers.push(
+    { id: 'rad-psb-1', serviceType: 'pppoe', username: 'psb-1@ppp.test', customerId: 'cus-psb-1', status: 'active', createdAt: `${period}-05T09:00:00.000Z` },
+    { id: 'rad-psb-duplicate', serviceType: 'pppoe', username: 'psb-1-backup@ppp.test', customerId: 'cus-psb-1', status: 'active', createdAt: `${period}-06T09:00:00.000Z` },
+    { id: 'rad-no-member', serviceType: 'pppoe', username: 'tanpa-member@ppp.test', customerId: '', status: 'active', createdAt: `${period}-07T09:00:00.000Z` },
+    { id: 'rad-hotspot-member', serviceType: 'hotspot', username: 'voucher-psb', customerId: 'cus-psb-1', status: 'active', createdAt: `${period}-07T09:00:00.000Z` }
+  );
+
+  assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', period).psb, 1);
+  assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'hotspot', period).psb, 0);
+  assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', addMonthsToPeriod(period, 1)).psb, 0);
 });
 
 test('deleting radius user removes member linked by radius user id without customer id', () => {
@@ -263,8 +288,7 @@ test('deleting radius user removes member linked by radius user id without custo
 
   assert.equal(removed.id, customer.id);
   assert.equal(data.customers.some((item) => item.id === customer.id), false);
-  assert.equal(data.radiusRemovedRecords.length, 1);
-  assert.equal(data.radiusRemovedRecords[0].radiusUserId, radiusUser.id);
+  assert.equal(data.radiusRemovedRecords.length, 0);
 });
 
 test('orphan radius member cleanup removes stale members and keeps paid history', () => {
@@ -292,8 +316,7 @@ test('orphan radius member cleanup removes stale members and keeps paid history'
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-orphan-pending').status, 'cancelled');
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-orphan-paid').status, 'paid');
   assert.equal(data.payments.length, 1);
-  assert.equal(data.radiusRemovedRecords.length, 1);
-  assert.equal(data.radiusRemovedRecords[0].customerId, 'cus-orphan-radius');
+  assert.equal(data.radiusRemovedRecords.length, 0);
 });
 
 test('standalone billing automation isolates unpaid overdue and reactivates fully paid member', () => {
@@ -382,6 +405,7 @@ test('monthly statistics combines new ppp installs, removed users, and paid vouc
       id: 'rad-stat-removed',
       key: 'rad-stat-removed',
       serviceType: 'pppoe',
+      customerId: 'cus-stat-removed',
       username: 'stat-removed',
       installedAt: `${period}-02T08:00:00.000Z`,
       removedAt: `${period}-10T08:00:00.000Z`,
@@ -391,6 +415,7 @@ test('monthly statistics combines new ppp installs, removed users, and paid vouc
       id: 'rad-stat-removed-next',
       key: 'rad-stat-removed-next',
       serviceType: 'pppoe',
+      customerId: 'cus-stat-removed-next',
       username: 'stat-removed-next',
       installedAt: `${period}-04T08:00:00.000Z`,
       removedAt: `${nextPeriod}-01T08:00:00.000Z`,
