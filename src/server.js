@@ -94,8 +94,8 @@ const LOGIN_VERIFICATION_MAX_ATTEMPTS = Math.max(1, Number(process.env.LOGIN_VER
 const WIFIKU_OTP_MAX_ATTEMPTS = Math.max(1, Number(process.env.WIFIKU_OTP_MAX_ATTEMPTS || 5) || 5);
 const INDONESIAN_MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 const DEFAULT_WA_TEMPLATES = {
-  invoiceIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Invoice anda telah terbit dan dapat dibayarkan, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nAmount: Rp [amount]\nTotal: Rp [total]\nItem: [pppoe_profile]\nJatuh tempo: [due_date]\nPeriod: [period]\n\nMohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+5 (5 hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
-  paymentReminder: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda senilai Rp. [total] belum di bayar, Mohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+5 (5 hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\nAbaikan pesan ini bila sudah membayar.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
+  invoiceIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Invoice anda telah terbit dan dapat dibayarkan, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nAmount: Rp [amount]\nTotal: Rp [total]\nItem: [pppoe_profile]\nJatuh tempo: [due_date]\nPeriod: [period]\n\nMohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *[suspend_grace]* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
+  paymentReminder: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda senilai Rp. [total] belum di bayar, Mohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *[suspend_grace]* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\nAbaikan pesan ini bila sudah membayar.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
   invoiceOverdue: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nDi informasikan, Account anda telah ditangguhkan *(ISOLIR)* oleh *System Billing* kami, dikarenakan keterlambatan dalam pembayaran.\n\nSaat ini anda tidak dapat menggunakan internet, sampai anda menyelesaikan pembayaran senilai Rp. [total]\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini*\n\nTerima kasih.',
   paymentPaid: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda telah dibayar, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nTotal: Rp [total]\nItem: [pppoe_profile]\nPeriod: [period]\nStatus: Paid\nPayment Method: [paid_method]\n\nTerima kasih.',
   paymentCancel: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan pembayaran anda telah dibatalkan, berikut rinciannya :\nNomor Invoice: [no_invoice]\nInvoice Date: [invoice_date]\nTotal: Rp [total]\nDue Date: [due_date]\nPeriod: [period]\nStatus: Unpaid\nSegera lakukan pembayaran\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\nTerima kasih.',
@@ -4632,13 +4632,22 @@ function keepSecret(currentValue, nextValue) {
   return value;
 }
 
+function normalizeWaTemplateVariableText(template = '') {
+  return String(template || '')
+    .replace(/\*H\+5\s*\(5\s*hari\)\*/gi, '*[suspend_grace]*')
+    .replace(/H\+5\s*\(5\s*hari\)/gi, '[suspend_grace]');
+}
+
 function sanitizeWaGatewaySettings(payload = {}, current = {}) {
   const templates = payload.templates && typeof payload.templates === 'object' ? payload.templates : {};
-  const templateBase = payload.resetTemplates === true ? DEFAULT_WA_TEMPLATES : (current.templates || {});
+  const templateBase = Object.fromEntries(Object.entries(
+    payload.resetTemplates === true ? DEFAULT_WA_TEMPLATES : (current.templates || {})
+  ).map(([key, value]) => [key, normalizeWaTemplateVariableText(value)]));
   const provider = normalizeWaProvider(payload.provider || current.provider || 'waha');
   const previousProvider = normalizeWaProvider(current.provider || 'waha');
   const providerDefault = WA_GATEWAY_PROVIDERS[provider] || WA_GATEWAY_PROVIDERS.waha;
   const requestedBaseUrl = String(payload.baseUrl || '').trim();
+  const templateText = (key) => normalizeWaTemplateVariableText(String(templates[key] || templateBase[key] || '').trim());
   return {
     ...current,
     enabled: Object.prototype.hasOwnProperty.call(payload, 'enabled') ? payload.enabled === true : current.enabled === true,
@@ -4655,16 +4664,16 @@ function sanitizeWaGatewaySettings(payload = {}, current = {}) {
     quietEnd: sanitizeTime(payload.quietEnd, current.quietEnd || '20:00'),
     templates: {
       ...templateBase,
-      invoiceIssued: String(templates.invoiceIssued || templateBase.invoiceIssued || '').trim(),
-      paymentReminder: String(templates.paymentReminder || templateBase.paymentReminder || '').trim(),
-      invoiceOverdue: String(templates.invoiceOverdue || templateBase.invoiceOverdue || '').trim(),
-      paymentPaid: String(templates.paymentPaid || templateBase.paymentPaid || '').trim(),
-      paymentCancel: String(templates.paymentCancel || templateBase.paymentCancel || '').trim(),
-      accountSuspend: String(templates.accountSuspend || templateBase.accountSuspend || '').trim(),
-      accountActive: String(templates.accountActive || templateBase.accountActive || '').trim(),
-      voucherIssued: String(templates.voucherIssued || templateBase.voucherIssued || '').trim(),
-      voucherExpired: String(templates.voucherExpired || templateBase.voucherExpired || '').trim(),
-      memberStatus: String(templates.memberStatus || templateBase.memberStatus || '').trim()
+      invoiceIssued: templateText('invoiceIssued'),
+      paymentReminder: templateText('paymentReminder'),
+      invoiceOverdue: templateText('invoiceOverdue'),
+      paymentPaid: templateText('paymentPaid'),
+      paymentCancel: templateText('paymentCancel'),
+      accountSuspend: templateText('accountSuspend'),
+      accountActive: templateText('accountActive'),
+      voucherIssued: templateText('voucherIssued'),
+      voucherExpired: templateText('voucherExpired'),
+      memberStatus: templateText('memberStatus')
     }
   };
 }
@@ -6539,8 +6548,15 @@ function waTemplateValue(values = {}, key = '') {
   return value === undefined || value === null ? '' : String(value);
 }
 
-function renderWaTemplate(template = '', values = {}) {
+function normalizeLegacyWaTemplate(template = '', values = {}) {
+  const suspendGrace = waTemplateValue(values, 'suspend_grace') || 'H+0 (0 hari)';
   return String(template || '')
+    .replace(/\*H\+5\s*\(5\s*hari\)\*/gi, `*${suspendGrace}*`)
+    .replace(/H\+5\s*\(5\s*hari\)/gi, suspendGrace);
+}
+
+function renderWaTemplate(template = '', values = {}) {
+  return normalizeLegacyWaTemplate(template, values)
     .replace(/\[([a-zA-Z0-9_]+)\]/g, (_, key) => waTemplateValue(values, key));
 }
 
@@ -6670,6 +6686,8 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
   const businessName = data.settings?.businessName || data.settings?.receiptBusinessCode || 'ISP Billing';
   const gatewayLink = invoicePaymentGatewayLink(data, invoice);
   const gatewayBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, totalNumber, 'monthly');
+  const suspendGraceDays = Math.max(0, Math.trunc(Number(data.settings?.billing?.suspendGraceDays ?? 0) || 0));
+  const suspendGrace = `H+${suspendGraceDays} (${suspendGraceDays} hari)`;
   return {
     full_name: fullname,
     fullname,
@@ -6692,6 +6710,11 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
     payment_total: formatMoneyNumberText(gatewayBreakdown.totalAmount),
     payment_mutasi: invoiceTransferPaymentMethod(invoice, customer),
     paid_method: paidMethod,
+    suspend_grace: suspendGrace,
+    suspend_grace_text: suspendGrace,
+    suspend_grace_days: String(suspendGraceDays),
+    isolir_grace: suspendGrace,
+    isolir_grace_days: String(suspendGraceDays),
     footer: businessName,
     status: invoiceRuntimeStatus(invoice),
     name: fullname,
@@ -12995,6 +13018,7 @@ module.exports = {
     invoiceGenerationDue,
     importPppUsers,
     isPaymentGatewayWebhookPath,
+    invoiceWaTemplateValues,
     localDailyReport,
     localManualInvoicePreview,
     monthlyBillingDailyRows,
@@ -13005,6 +13029,7 @@ module.exports = {
     radiusMemberFromPayload,
     readWorkbookRowsFromBase64,
     requireRadiusUserProfile,
+    renderWaTemplate,
     verifyPaymentGatewayCallback,
     filterVoucherReportOrders,
     radiusPayloadLocal,

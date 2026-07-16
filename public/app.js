@@ -225,8 +225,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.29',
-      buildVersion: '1.0.29',
+      version: '1.0.30',
+      buildVersion: '1.0.30',
       releaseDate: '2026-07-16'
     }
   },
@@ -237,8 +237,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.29',
-    buildVersion: '1.0.29',
+    appVersion: '1.0.30',
+    buildVersion: '1.0.30',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
   },
@@ -2367,8 +2367,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.29',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.29',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.30',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.30',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -12372,6 +12372,8 @@ const WA_INVOICE_VARIABLES = [
   ['[gateway_total]', 'Total Payment Gateway'],
   ['[period]', 'Invoice Period'],
   ['[due_date]', 'Due Date'],
+  ['[suspend_grace]', 'Batas isolir dari Billing Setting'],
+  ['[suspend_grace_days]', 'Jumlah hari grace isolir'],
   ['[payment_gateway]', 'Payment Gateway Link'],
   ['[payment_mutasi]', 'Bank Transfer Payment Method'],
   ['[paid_method]', 'Payment Method'],

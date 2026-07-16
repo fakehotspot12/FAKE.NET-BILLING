@@ -7,6 +7,17 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.30] - 2026-07-16
+
+### Changed
+
+- Template WhatsApp invoice terbit dan reminder sekarang memakai variable `[suspend_grace]` dari Billing Setting > Isolir.
+- Panel variable template WA menampilkan `[suspend_grace]` dan `[suspend_grace_days]`.
+
+### Fixed
+
+- Template WA lama yang masih berisi teks `H+5 (5 hari)` otomatis dimigrasikan ke `[suspend_grace]` dan tetap mengikuti nilai isolir terbaru saat pesan dikirim.
+
 ## [1.0.29] - 2026-07-16
 
 ### Changed

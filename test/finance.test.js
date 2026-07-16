@@ -902,6 +902,58 @@ test('billing settings allow H-1 invoice generation and disabled reminders', () 
   assert.equal(data.waMessages.filter((message) => message.type === 'paymentReminder').length, 0);
 });
 
+test('invoice whatsapp templates use suspend grace from billing setting', () => {
+  const shaped = ensureShape({
+    settings: {
+      waGateway: {
+        templates: {
+          paymentReminder: 'Jika belum bayar setelah *H+5 (5 hari)* dari tempo.'
+        }
+      }
+    }
+  });
+  const data = createDefaultStore();
+  data.settings.billing.suspendGraceDays = 3;
+  data.settings.businessName = 'FAKE.NET';
+  data.customers.push({
+    id: 'cus-wa-template',
+    source: 'radius',
+    username: 'wa-template@ppp.test',
+    name: 'WA Template',
+    phone: '081234567890',
+    price: 100000
+  });
+  const invoice = {
+    id: 'inv-wa-template',
+    customerId: 'cus-wa-template',
+    customerName: 'WA Template',
+    username: 'wa-template@ppp.test',
+    period: '2026-07',
+    amount: 100000,
+    total: 100000,
+    status: 'pending',
+    dueDate: '2026-07-10',
+    invoiceNo: '000125'
+  };
+
+  const values = serverInternals.invoiceWaTemplateValues(data, invoice);
+
+  assert.equal(values.suspend_grace, 'H+3 (3 hari)');
+  assert.equal(values.suspend_grace_days, '3');
+  assert.equal(
+    shaped.settings.waGateway.templates.paymentReminder,
+    'Jika belum bayar setelah *[suspend_grace]* dari tempo.'
+  );
+  assert.equal(
+    serverInternals.renderWaTemplate('Batas *[suspend_grace]* / [suspend_grace_days]', values),
+    'Batas *H+3 (3 hari)* / 3'
+  );
+  assert.equal(
+    serverInternals.renderWaTemplate('Jika belum bayar setelah *H+5 (5 hari)* dari tempo.', values),
+    'Jika belum bayar setelah *H+3 (3 hari)* dari tempo.'
+  );
+});
+
 test('standalone automation generates fixed-date invoices only inside each member window', () => {
   const settings = {
     postpaidDueDay: 10,
