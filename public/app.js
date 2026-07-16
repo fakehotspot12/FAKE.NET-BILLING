@@ -225,8 +225,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.33',
-      buildVersion: '1.0.33',
+      version: '1.0.34',
+      buildVersion: '1.0.34',
       releaseDate: '2026-07-16'
     }
   },
@@ -237,8 +237,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.33',
-    buildVersion: '1.0.33',
+    appVersion: '1.0.34',
+    buildVersion: '1.0.34',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
   },
@@ -2367,8 +2367,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.33',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.33',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.34',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.34',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -9507,6 +9507,7 @@ async function renderGenieAcs(options = {}) {
               <col class="genie-col-select">
               <col class="genie-col-no">
               <col class="genie-col-status">
+              <col class="genie-col-last-active">
               <col class="genie-col-pppoe">
               <col class="genie-col-ip">
               <col class="genie-col-nas">
@@ -9522,6 +9523,7 @@ async function renderGenieAcs(options = {}) {
                 <th class="select-cell"><input type="checkbox" id="genieAcsSelectAll" aria-label="Pilih semua device" ${writeAllowed ? '' : 'disabled'}></th>
                 <th>No</th>
                 <th>Status</th>
+                <th>Terakhir Aktif</th>
                 <th>PPPoE</th>
                 <th>IP Address</th>
                 <th>NAS</th>
@@ -9534,11 +9536,14 @@ async function renderGenieAcs(options = {}) {
               </tr>
             </thead>
             <tbody>
-              ${rows.length ? rows.map((row, index) => `
+              ${rows.length ? rows.map((row, index) => {
+                const lastActive = dateTimeText(row.lastInform);
+                return `
                 <tr>
                   <td class="select-cell"><input type="checkbox" data-genieacs-select="${index}" aria-label="Pilih device ${escapeHtml(row.serialNumber || row.id || '')}" ${writeAllowed ? '' : 'disabled'}></td>
                   <td>${displayNumber(startNo + index)}</td>
                   <td>${genieStatusBadge(row)}</td>
+                  <td class="genieacs-nowrap" title="${escapeHtml(lastActive)}">${escapeHtml(lastActive)}</td>
                   <td class="genieacs-primary-cell" title="${escapeHtml(row.username || '-')}">
                     <strong>${escapeHtml(row.username || '-')}</strong>
                   </td>
@@ -9558,7 +9563,7 @@ async function renderGenieAcs(options = {}) {
                     </div>` : '-'}
                   </td>
                 </tr>
-              `).join('') : '<tr><td colspan="12" class="empty">Belum ada device sesuai filter.</td></tr>'}
+              `; }).join('') : '<tr><td colspan="13" class="empty">Belum ada device sesuai filter.</td></tr>'}
             </tbody>
           </table>
         </div>

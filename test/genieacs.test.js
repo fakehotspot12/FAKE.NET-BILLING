@@ -6,6 +6,7 @@ const test = require('node:test');
 const genieAcs = require('../src/genieacs');
 
 test('normalizes GenieACS device wifi and optical parameters', () => {
+  const lastInform = new Date().toISOString();
   const device = genieAcs.normalizeDevice({
     _id: 'dev-1',
     _deviceId: {
@@ -13,7 +14,7 @@ test('normalizes GenieACS device wifi and optical parameters', () => {
       _ProductClass: 'HG6245D',
       _SerialNumber: 'FH123'
     },
-    _lastInform: new Date().toISOString(),
+    _lastInform: lastInform,
     InternetGatewayDevice: {
       WANDevice: {
         1: {
@@ -56,6 +57,7 @@ test('normalizes GenieACS device wifi and optical parameters', () => {
   assert.equal(device.rxPowerText, '-21,37 dBm');
   assert.equal(device.ssid24, 'FAKE-2G');
   assert.equal(device.ssid5, 'FAKE-5G');
+  assert.equal(device.lastInform, lastInform);
   assert.equal(device.wifiClients24, 3);
   assert.equal(device.wifiClients5, 2);
   assert.equal(device.wifiClientsTotal, 5);

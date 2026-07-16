@@ -7,6 +7,16 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.34] - 2026-07-16
+
+### Added
+
+- Menu GenieACS menampilkan kolom `Terakhir Aktif` dari `_lastInform` agar ONU/CPE yang lama offline lebih mudah diaudit.
+
+### Changed
+
+- Lebar tabel GenieACS disesuaikan agar tambahan kolom tetap rapi pada tampilan desktop.
+
 ## [1.0.33] - 2026-07-16
 
 ### Fixed

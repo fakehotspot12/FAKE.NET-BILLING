@@ -4171,7 +4171,7 @@ td {
 }
 
 .genieacs-table {
-  min-width: 1285px;
+  min-width: 1470px;
   table-layout: fixed;
   width: 100%;
 }
@@ -4222,11 +4222,15 @@ td {
 }
 
 .genieacs-table .genie-col-status {
-  width: 92px;
+  width: 88px;
+}
+
+.genieacs-table .genie-col-last-active {
+  width: 132px;
 }
 
 .genieacs-table .genie-col-pppoe {
-  width: 270px;
+  width: 245px;
 }
 
 .genieacs-table .genie-col-ip {
