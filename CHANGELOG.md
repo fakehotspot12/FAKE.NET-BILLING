@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.35] - 2026-07-16
+
+### Changed
+
+- Kolom `Terakhir Aktif` pada menu GenieACS dipindahkan ke sisi kanan tabel, tepat sebelum kolom `Aksi`.
+
 ## [1.0.34] - 2026-07-16
 
 ### Added
