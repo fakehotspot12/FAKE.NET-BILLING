@@ -125,6 +125,34 @@ Hal yang perlu diatur setelah install:
 - Role user: admin, owner, finance, teknisi, NOC, collector, reseller voucher, viewer.
 - Backup/restore dan update aplikasi dari menu Pengaturan.
 
+## Tampilan Aplikasi
+
+Screenshot berikut memakai data yang disamarkan untuk dokumentasi publik.
+
+| Dashboard | Pelanggan Online |
+| --- | --- |
+| ![Dashboard FAKE.NET Billing](docs/screenshots/dashboard.png) | ![Monitoring Pelanggan Online](docs/screenshots/monitoring-pelanggan-online.png) |
+
+| Radius PPP-DHCP | Hotspot Voucher |
+| --- | --- |
+| ![Radius PPP-DHCP](docs/screenshots/radius-ppp-dhcp.png) | ![Radius Hotspot Voucher](docs/screenshots/radius-hotspot.png) |
+
+| Member | Tagihan Pelanggan |
+| --- | --- |
+| ![Monitoring Member](docs/screenshots/monitoring-member.png) | ![Monitoring Tagihan Pelanggan](docs/screenshots/monitoring-tagihan-pelanggan.png) |
+
+| Statistik | GenieACS |
+| --- | --- |
+| ![Laporan Statistik](docs/screenshots/laporan-statistik.png) | ![GenieACS](docs/screenshots/genieacs.png) |
+
+| Whatsapp Gateway | Payment Gateway |
+| --- | --- |
+| ![Whatsapp Gateway](docs/screenshots/whatsapp-gateway.png) | ![Payment Gateway](docs/screenshots/payment-gateway.png) |
+
+| Mobile Dashboard |
+| --- |
+| ![Mobile Dashboard](docs/screenshots/mobile-dashboard.png) |
+
 ## Member PPP-DHCP
 
 Member PPP-DHCP digunakan untuk pelanggan bulanan seperti PPPoE dan DHCP yang ditagihkan secara periodik. Data pelanggan dibuat dari wizard akun, member, payment, dan review sehingga informasi teknis internet, identitas pelanggan, nomor Whatsapp, alamat, titik lokasi peta, foto rumah, profile layanan, NAS, serta detail pembayaran tersimpan dalam satu alur.

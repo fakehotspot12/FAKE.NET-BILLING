@@ -6133,7 +6133,11 @@ function statisticsDailyRow(date = '') {
     netGrowth: 0,
     voucherBuyerCount: 0,
     voucherCount: 0,
-    voucherAmount: 0
+    voucherAmount: 0,
+    billingRevenueAmount: 0,
+    externalIncomeAmount: 0,
+    revenueAmount: 0,
+    revenueCount: 0
   };
 }
 
@@ -6145,7 +6149,11 @@ function statisticsMonthlyRow(period = '') {
     netGrowth: 0,
     voucherBuyerCount: 0,
     voucherCount: 0,
-    voucherAmount: 0
+    voucherAmount: 0,
+    billingRevenueAmount: 0,
+    externalIncomeAmount: 0,
+    revenueAmount: 0,
+    revenueCount: 0
   };
 }
 
@@ -6235,11 +6243,18 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       dailyGroups.set(date, dailyRow);
     }
   };
+  const addRevenueRow = (date = '', field = '', amount = 0, count = 1) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return;
+    const value = Number(amount || 0);
+    addRow(date, field, value);
+    addRow(date, 'revenueAmount', value);
+    if (Number(count || 0) > 0) addRow(date, 'revenueCount', Number(count || 0));
+  };
 
   for (const user of data.radiusUsers || []) {
     if (user.serviceType !== 'pppoe') continue;
     const date = pppInstallDateForUser(data, user);
-    if (date.slice(0, 7) !== selectedPeriod) continue;
+    if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     const key = statisticsRecordKey('active', user);
     if (!key || newInstallKeys.has(key)) continue;
     newInstallKeys.add(key);
@@ -6251,7 +6266,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     if (type !== 'pppoe') continue;
     if (!String(record.customerId || record.memberCode || '').trim()) continue;
     const removedDate = String(record.removedAt || '').slice(0, 10);
-    if (removedDate.slice(0, 7) === selectedPeriod) {
+    if (monthPeriodSet.has(removedDate.slice(0, 7))) {
       const key = statisticsRecordKey('removed', record);
       if (key && !removedKeys.has(key)) {
         removedKeys.add(key);
@@ -6259,13 +6274,29 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       }
     }
     const installedDate = pppInstallDateForRemovedRecord(record);
-    if (installedDate.slice(0, 7) === selectedPeriod) {
+    if (monthPeriodSet.has(installedDate.slice(0, 7))) {
       const key = statisticsRecordKey('removed-install', record);
       if (key && !newInstallKeys.has(key)) {
         newInstallKeys.add(key);
         addRow(installedDate, 'newInstallCount', 1);
       }
     }
+  }
+
+  const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
+  for (const payment of activePayments(data)) {
+    const invoice = invoices.get(payment.invoiceId) || {};
+    const date = String(payment.paidAt || payment.createdAt || invoice.paidAt || '').slice(0, 10);
+    if (!monthPeriodSet.has(date.slice(0, 7))) continue;
+    addRevenueRow(date, 'billingRevenueAmount', Number(payment.amount || invoice.amount || 0), 1);
+  }
+
+  for (const income of data.externalIncomes || []) {
+    const status = String(income.status || 'active').toLowerCase();
+    if (['cancelled', 'canceled', 'void', 'batal'].includes(status)) continue;
+    const date = String(income.date || income.createdAt || '').slice(0, 10);
+    if (!monthPeriodSet.has(date.slice(0, 7))) continue;
+    addRevenueRow(date, 'externalIncomeAmount', Number(income.amount || 0), 1);
   }
 
   const firstOnlineByUsername = await generatedVoucherFirstOnlineMap(data);
@@ -6276,7 +6307,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       if (date.slice(0, 7) !== monthPeriod) continue;
       addRow(date, 'voucherBuyerCount', 1);
       addRow(date, 'voucherCount', Number(order.quantity || order.vouchers?.length || 0));
-      addRow(date, 'voucherAmount', Number(order.amount || 0));
+      addRevenueRow(date, 'voucherAmount', Number(order.amount || 0), 1);
     }
   }
 
@@ -6288,13 +6319,21 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     acc.voucherBuyerCount += Number(row.voucherBuyerCount || 0);
     acc.voucherCount += Number(row.voucherCount || 0);
     acc.voucherAmount += Number(row.voucherAmount || 0);
+    acc.billingRevenueAmount += Number(row.billingRevenueAmount || 0);
+    acc.externalIncomeAmount += Number(row.externalIncomeAmount || 0);
+    acc.revenueAmount += Number(row.revenueAmount || 0);
+    acc.revenueCount += Number(row.revenueCount || 0);
     return acc;
   }, {
     newInstallCount: 0,
     removedCount: 0,
     voucherBuyerCount: 0,
     voucherCount: 0,
-    voucherAmount: 0
+    voucherAmount: 0,
+    billingRevenueAmount: 0,
+    externalIncomeAmount: 0,
+    revenueAmount: 0,
+    revenueCount: 0
   });
   summary.netGrowth = summary.newInstallCount - summary.removedCount;
 

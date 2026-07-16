@@ -7,6 +7,19 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.42] - 2026-07-16
+
+### Added
+
+- Monitoring > Pelanggan Online sekarang menampilkan NAS sebagai badge aktif pada tabel PPPoE Aktif dan Hotspot Aktif.
+- Laporan > Statistik dirombak dengan chart 12 bulan untuk pertumbuhan pelanggan PPP-DHCP, penjualan voucher, dan pendapatan bulanan.
+- Dokumentasi README kini menyertakan screenshot aplikasi dengan data yang disamarkan.
+
+### Changed
+
+- Badge NAS dibuat konsisten di tabel Radius, Session, GenieACS, laporan voucher, dan monitoring pelanggan online.
+- Endpoint statistik menghitung PSB, cabut, voucher, tagihan, dan pemasukan lain untuk seluruh rentang 12 bulan, bukan hanya bulan yang sedang dipilih.
+
 ## [1.0.41] - 2026-07-16
 
 ### Fixed

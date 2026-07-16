@@ -225,7 +225,7 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.38',
+      version: '1.0.42',
       buildVersion: '1.0.38',
       releaseDate: '2026-07-16'
     }
@@ -237,7 +237,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.38',
+    appVersion: '1.0.42',
     buildVersion: '1.0.38',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
@@ -1577,6 +1577,12 @@ function metric(label, value, sub, tone = '') {
   `;
 }
 
+function nasActiveBadge(value = '-', options = {}) {
+  const label = String(value || '').trim() || '-';
+  const title = String(options.title || label).trim() || label;
+  return `<span class="badge active nas-badge" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
 function empty(message) {
   return `<div class="empty">${escapeHtml(message)}</div>`;
 }
@@ -2386,8 +2392,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.38',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.38',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.42',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.42',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -3186,38 +3192,164 @@ function statisticsNetText(value = 0) {
   return `${number > 0 ? '+' : ''}${displayNumber(number)}`;
 }
 
-function statisticsActivityChart(rows = []) {
+function statisticsCompactNumber(value = 0) {
+  const number = Math.max(0, Number(value || 0));
+  if (number >= 1000000000) return `${(number / 1000000000).toFixed(number >= 10000000000 ? 0 : 1).replace('.', ',')} M`;
+  if (number >= 1000000) return `${(number / 1000000).toFixed(number >= 10000000 ? 0 : 1).replace('.', ',')} jt`;
+  if (number >= 1000) return `${(number / 1000).toFixed(number >= 10000 ? 0 : 1).replace('.', ',')} rb`;
+  return displayNumber(number);
+}
+
+function statisticsCompactRupiah(value = 0) {
+  return `Rp ${statisticsCompactNumber(value)}`;
+}
+
+function statisticsMax(rows = [], keys = []) {
+  return Math.max(1, ...rows.map((row) => Math.max(...keys.map((key) => Number(row[key] || 0)))));
+}
+
+function statisticsAreaSeries(rows = [], key = '', width = 760, height = 230) {
+  const left = 46;
+  const right = 18;
+  const top = 18;
+  const bottom = 38;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maxValue = statisticsMax(rows, ['newInstallCount', 'removedCount']);
+  const safeRows = rows.length ? rows : [{ period: state.period || todayInput().slice(0, 7), [key]: 0 }];
+  const step = safeRows.length > 1 ? plotWidth / (safeRows.length - 1) : plotWidth;
+  return safeRows.map((row, index) => {
+    const value = Number(row[key] || 0);
+    const x = left + (step * index);
+    const y = top + plotHeight - ((value / maxValue) * plotHeight);
+    return { x, y, value, period: row.period || '' };
+  });
+}
+
+function statisticsLinePath(points = []) {
+  return points.map((point, index) => `${index ? 'L' : 'M'}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
+}
+
+function statisticsAreaPath(points = [], height = 230) {
+  if (!points.length) return '';
+  const baseline = height - 38;
+  return `${statisticsLinePath(points)} L${points[points.length - 1].x.toFixed(2)} ${baseline} L${points[0].x.toFixed(2)} ${baseline} Z`;
+}
+
+function statisticsGrowthAreaChart(rows = []) {
   const chartRows = Array.isArray(rows) ? rows : [];
-  const maxValue = Math.max(1, ...chartRows.map((row) => Math.max(
-    Number(row.newInstallCount || 0),
-    Number(row.removedCount || 0),
-    Number(row.voucherBuyerCount || 0)
-  )));
-  const barHeight = (value = 0) => {
+  const width = 760;
+  const height = 230;
+  const maxValue = statisticsMax(chartRows, ['newInstallCount', 'removedCount']);
+  const installPoints = statisticsAreaSeries(chartRows, 'newInstallCount', width, height);
+  const removedPoints = statisticsAreaSeries(chartRows, 'removedCount', width, height);
+  const axisValues = [maxValue, Math.round(maxValue / 2), 0];
+  return `
+    <div class="statistics-chart-card statistics-growth-chart">
+      <div class="statistics-chart-head">
+        <div>
+          <h3>Pertumbuhan Pelanggan PPP-DHCP</h3>
+          <span>PSB dan cabut dalam 12 bulan terakhir</span>
+        </div>
+        <div class="statistics-legend compact">
+          <span class="install">PSB</span>
+          <span class="removed">Cabut</span>
+        </div>
+      </div>
+      <div class="statistics-svg-wrap">
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Chart pertumbuhan pelanggan PPP-DHCP">
+          ${axisValues.map((value) => {
+            const y = 18 + (height - 56) - ((value / maxValue) * (height - 56));
+            return `<g class="statistics-axis"><line x1="46" y1="${y.toFixed(2)}" x2="${width - 18}" y2="${y.toFixed(2)}"></line><text x="12" y="${(y + 4).toFixed(2)}">${escapeHtml(displayNumber(value))}</text></g>`;
+          }).join('')}
+          <path class="statistics-area install" d="${statisticsAreaPath(installPoints, height)}"></path>
+          <path class="statistics-area removed" d="${statisticsAreaPath(removedPoints, height)}"></path>
+          <path class="statistics-line install" d="${statisticsLinePath(installPoints)}"></path>
+          <path class="statistics-line removed" d="${statisticsLinePath(removedPoints)}"></path>
+          ${installPoints.map((point) => `<circle class="statistics-dot install" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3"><title>${escapeHtml(periodLabel(point.period))}: PSB ${displayNumber(point.value)}</title></circle>`).join('')}
+          ${removedPoints.map((point) => `<circle class="statistics-dot removed" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3"><title>${escapeHtml(periodLabel(point.period))}: Cabut ${displayNumber(point.value)}</title></circle>`).join('')}
+          ${chartRows.map((row, index) => {
+            const point = installPoints[index] || { x: 46 };
+            return `<text class="statistics-x-label" x="${point.x.toFixed(2)}" y="${height - 12}" text-anchor="middle">${escapeHtml(periodShortLabel(row.period))}</text>`;
+          }).join('')}
+        </svg>
+      </div>
+    </div>
+  `;
+}
+
+function statisticsVoucherColumnChart(rows = []) {
+  const chartRows = Array.isArray(rows) ? rows : [];
+  const maxValue = statisticsMax(chartRows, ['voucherCount']);
+  return `
+    <div class="statistics-chart-card">
+      <div class="statistics-chart-head">
+        <div>
+          <h3>Penjualan Voucher Setiap Bulan</h3>
+          <span>Jumlah voucher paid dan omzet voucher</span>
+        </div>
+        <div class="statistics-legend compact">
+          <span class="voucher">Voucher</span>
+        </div>
+      </div>
+      <div class="statistics-column-chart">
+        ${chartRows.map((row) => {
+          const value = Number(row.voucherCount || 0);
+          const height = value > 0 ? Math.max(6, Math.round((value / maxValue) * 100)) : 0;
+          return `
+            <div class="statistics-column" title="${escapeHtml(periodLabel(row.period))}: ${displayNumber(value)} voucher, ${rupiah(row.voucherAmount || 0)}">
+              <strong>${displayNumber(value)}</strong>
+              <div class="statistics-column-track"><span class="voucher" style="height:${height}%"></span></div>
+              <small>${escapeHtml(periodShortLabel(row.period))}</small>
+              <em>${escapeHtml(statisticsCompactRupiah(row.voucherAmount || 0))}</em>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function statisticsRevenueChart(rows = []) {
+  const chartRows = Array.isArray(rows) ? rows : [];
+  const maxValue = statisticsMax(chartRows, ['revenueAmount']);
+  const segmentHeight = (value = 0) => {
     const number = Number(value || 0);
-    if (number <= 0) return 0;
-    return Math.max(4, Math.round((number / maxValue) * 100));
+    return number > 0 ? Math.max(5, Math.round((number / maxValue) * 100)) : 0;
   };
   return `
-    <div class="statistics-chart">
-      ${chartRows.map((row) => {
-        const period = row.period || String(row.date || '').slice(0, 7);
-        const label = row.period ? periodShortLabel(row.period) : String(row.date || '').slice(-2);
-        const title = row.period ? periodLabel(row.period) : dateText(row.date);
-        const newHeight = barHeight(row.newInstallCount);
-        const removedHeight = barHeight(row.removedCount);
-        const voucherHeight = barHeight(row.voucherBuyerCount);
-        return `
-          <div class="statistics-chart-day" title="${escapeHtml(title)}: pasang ${displayNumber(row.newInstallCount || 0)}, cabut ${displayNumber(row.removedCount || 0)}, voucher ${displayNumber(row.voucherBuyerCount || 0)}" data-period="${escapeHtml(period)}">
-            <div class="statistics-bars">
-              <span class="install" style="height:${newHeight}%"></span>
-              <span class="removed" style="height:${removedHeight}%"></span>
-              <span class="voucher" style="height:${voucherHeight}%"></span>
+    <div class="statistics-chart-card">
+      <div class="statistics-chart-head">
+        <div>
+          <h3>Pendapatan Setiap Bulan</h3>
+          <span>Tagihan, voucher, dan pemasukan lain</span>
+        </div>
+        <div class="statistics-legend compact">
+          <span class="billing">Tagihan</span>
+          <span class="voucher">Voucher</span>
+          <span class="external">Pemasukan lain</span>
+        </div>
+      </div>
+      <div class="statistics-column-chart revenue">
+        ${chartRows.map((row) => {
+          const billing = Number(row.billingRevenueAmount || 0);
+          const voucher = Number(row.voucherAmount || 0);
+          const external = Number(row.externalIncomeAmount || 0);
+          const total = Number(row.revenueAmount || 0);
+          return `
+            <div class="statistics-column" title="${escapeHtml(periodLabel(row.period))}: ${rupiah(total)}">
+              <strong>${escapeHtml(statisticsCompactRupiah(total))}</strong>
+              <div class="statistics-column-track stacked">
+                <span class="external" style="height:${segmentHeight(external)}%"></span>
+                <span class="voucher" style="height:${segmentHeight(voucher)}%"></span>
+                <span class="billing" style="height:${segmentHeight(billing)}%"></span>
+              </div>
+              <small>${escapeHtml(periodShortLabel(row.period))}</small>
+              <em>${displayNumber(row.revenueCount || 0)} trx</em>
             </div>
-            <small>${escapeHtml(label)}</small>
-          </div>
-        `;
-      }).join('')}
+          `;
+        }).join('')}
+      </div>
     </div>
   `;
 }
@@ -3285,22 +3417,21 @@ async function renderReportsStatistics() {
         <div class="statistics-card-grid">
           ${metric('Pasang Baru', displayNumber(summary.newInstallCount || 0), 'User PPP-DHCP baru', 'positive')}
           ${metric('Cabut', displayNumber(summary.removedCount || 0), 'User PPP-DHCP dihapus', Number(summary.removedCount || 0) ? 'negative' : '')}
-          ${metric('Pembeli Voucher', displayNumber(summary.voucherBuyerCount || 0), 'Transaksi voucher paid')}
-          ${metric('Voucher Terjual', displayNumber(summary.voucherCount || 0), rupiah(summary.voucherAmount || 0), 'positive')}
+          ${metric('Voucher Terjual', displayNumber(summary.voucherCount || 0), `${displayNumber(summary.voucherBuyerCount || 0)} transaksi`, 'positive')}
+          ${metric('Pendapatan', statisticsCompactRupiah(summary.revenueAmount || 0), `${displayNumber(summary.revenueCount || 0)} transaksi`, 'positive')}
         </div>
       </section>
 
-      <section class="section">
+      <section class="section statistics-dashboard">
         <div class="section-head">
-          <h2>Tren 12 Bulan</h2>
+          <h2>Statistik 12 Bulan</h2>
           <span>${escapeHtml(`${periodShortLabel(firstMonth)} - ${periodShortLabel(lastMonth)}`)}</span>
         </div>
-        <div class="statistics-legend">
-          <span class="install">Pasang baru</span>
-          <span class="removed">Cabut</span>
-          <span class="voucher">Pembeli voucher</span>
+        <div class="statistics-chart-grid">
+          ${statisticsGrowthAreaChart(monthlyRows)}
+          ${statisticsVoucherColumnChart(monthlyRows)}
+          ${statisticsRevenueChart(monthlyRows)}
         </div>
-        ${statisticsActivityChart(monthlyRows)}
       </section>
 
       <section class="section">
@@ -3573,7 +3704,7 @@ async function renderReportsVoucherDaily() {
                     <div class="muted">${escapeHtml(order.whatsapp || '')}</div>
                   </td>
                   <td>${escapeHtml(order.packageLabel || order.profileName || '-')}</td>
-                  <td>${escapeHtml(order.nasName || '-')}</td>
+                  <td>${nasActiveBadge(order.nasName || '-')}</td>
                   ${scoped ? '' : `<td>${escapeHtml(order.resellerName || order.resellerUsername || '-')}</td>`}
                   <td>${displayNumber(order.quantity || order.vouchers?.length || 0)}</td>
                   <td><span class="badge active">${escapeHtml(order.paymentMethod || 'QRIS')}</span></td>
@@ -6530,7 +6661,7 @@ function radiusUserRows(rows = [], type = 'ppp', writeAllowed = false, startNo =
       </td>
       <td>${escapeHtml(row.profile || '-')}</td>
       <td>
-        <span>${escapeHtml(row.nas || row.site || '-')}</span>
+        ${nasActiveBadge(row.nas || row.site || '-')}
         ${sessionIp || staticIp ? `<div class="muted">${sessionIp ? 'Session' : 'Static'} IP: ${escapeHtml(sessionIp || staticIp)}</div>` : '<div class="muted">IP dinamis</div>'}
       </td>
       <td>
@@ -6564,7 +6695,7 @@ function radiusSessionRows(rows = [], type = 'ppp', writeAllowed = false) {
         <strong>${escapeHtml(row.username || '-')}</strong>
         <div class="muted">${escapeHtml(row.customerName || '-')}</div>
       </td>
-      <td>${escapeHtml(row.nas || row.site || '-')}</td>
+      <td>${nasActiveBadge(row.nas || row.site || '-')}</td>
       <td>
         <span>${escapeHtml(row.ipAddress || '-')}</span>
         <div class="muted">${escapeHtml(row.macAddress || '-')}</div>
@@ -9616,7 +9747,7 @@ async function renderGenieAcs(options = {}) {
                     <strong>${escapeHtml(row.username || '-')}</strong>
                   </td>
                   <td class="genieacs-nowrap" title="${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}">${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}</td>
-                  <td class="genieacs-truncate" title="${escapeHtml(row.nasName || row.nasIpAddress || '-')}">${escapeHtml(row.nasName || row.nasIpAddress || '-')}</td>
+                  <td class="genieacs-truncate" title="${escapeHtml(row.nasName || row.nasIpAddress || '-')}">${nasActiveBadge(row.nasName || row.nasIpAddress || '-')}</td>
                   <td class="genieacs-truncate" title="${escapeHtml(row.productClass || '-')}">${escapeHtml(row.productClass || '-')}</td>
                   <td class="genieacs-sn-cell" title="${escapeHtml(row.serialNumber || '-')}"><code>${escapeHtml(row.serialNumber || '-')}</code></td>
                   <td class="genieacs-nowrap"><strong>${escapeHtml(row.rxPowerText || '-')}</strong></td>
@@ -9812,6 +9943,7 @@ function monitoringCustomerTable(users = [], type = 'pppoe', startNo = 1) {
           <tr>
             <th class="monitoring-col-no">No</th>
             <th>${pppoe ? 'Nama' : 'User'}</th>
+            <th>NAS</th>
             ${pppoe ? '<th>MAC</th>' : ''}
             <th>Address</th>
             <th>Uptime</th>
@@ -9825,13 +9957,14 @@ function monitoringCustomerTable(users = [], type = 'pppoe', startNo = 1) {
                 <strong>${escapeHtml(pppoe ? monitoringCustomerDisplayName(user) : user.username || '-')}</strong>
                 ${pppoe && user.customerName && user.username && user.customerName !== user.username ? `<div class="muted">${escapeHtml(user.username)}</div>` : ''}
               </td>
+              <td>${nasActiveBadge(user.siteName || user.nasIpAddress || '-')}</td>
               ${pppoe ? `<td>${escapeHtml(user.macAddress || '-')}</td>` : ''}
               <td>${escapeHtml(monitoringCustomerAddress(user))}</td>
               <td class="nowrap">${escapeHtml(user.uptime || '-')}</td>
             </tr>
           `).join('') : `
             <tr>
-              <td colspan="${pppoe ? 5 : 4}" class="empty-cell">Tidak ada ${pppoe ? 'PPPoE' : 'Hotspot'} aktif sesuai filter.</td>
+              <td colspan="${pppoe ? 6 : 5}" class="empty-cell">Tidak ada ${pppoe ? 'PPPoE' : 'Hotspot'} aktif sesuai filter.</td>
             </tr>
           `}
         </tbody>
