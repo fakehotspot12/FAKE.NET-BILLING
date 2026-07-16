@@ -269,6 +269,23 @@ function periodFromDateText(value = '') {
   return local ? `${local[3]}-${local[2].padStart(2, '0')}` : '';
 }
 
+function addMonthsToPeriodText(period = '', months = 1) {
+  const match = String(period || '').match(/^(\d{4})-(\d{2})$/);
+  if (!match) return '';
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + Number(months || 0), 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function dateForPeriodDay(period = '', day = 10) {
+  const match = String(period || '').match(/^(\d{4})-(\d{2})$/);
+  if (!match) return '';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const dueDay = Math.max(1, Math.min(maxDay, Math.round(numberValue(day, 10))));
+  return `${match[1]}-${match[2]}-${String(dueDay).padStart(2, '0')}`;
+}
+
 function normalizedStatusText(value = '') {
   return String(value || '').trim().toLowerCase();
 }
@@ -326,6 +343,7 @@ function syncLinkedRadiusMemberProfiles(data = {}) {
     .map((profile) => [String(profile.id || ''), profile]));
   const customers = new Map((data.customers || []).map((customer) => [String(customer.id || ''), customer]));
   const now = new Date().toISOString();
+  const cycleDueDay = Math.max(1, Math.min(31, Math.round(numberValue(data.settings?.billing?.postpaidDueDay, 10))));
   let changed = 0;
   for (const user of data.radiusUsers || []) {
     if (String(user.serviceType || '').toLowerCase() !== 'pppoe') continue;
@@ -341,10 +359,36 @@ function syncLinkedRadiusMemberProfiles(data = {}) {
       : Math.max(0, Math.round(numberValue(customer.price || customer.amount || 0)));
     const previousPackageName = String(customer.packageName || '').trim();
     const previousPrice = Math.max(0, Math.round(numberValue(customer.price || customer.amount || 0)));
-    if (previousPackageName === nextPackageName && previousPrice === nextPrice) continue;
-    customer.packageName = nextPackageName;
-    customer.price = nextPrice;
-    customer.amount = nextPrice;
+    let customerChanged = false;
+    if (previousPackageName !== nextPackageName || previousPrice !== nextPrice) {
+      customer.packageName = nextPackageName;
+      customer.price = nextPrice;
+      customer.amount = nextPrice;
+      customerChanged = true;
+    }
+    const paymentType = normalizedStatusText(customer.paymentType || 'postpaid');
+    const billingPeriod = normalizedStatusText(customer.billingPeriod || 'fixed');
+    if (paymentType === 'postpaid' && ['cycle', 'billingcycle', 'billing_cycle'].includes(billingPeriod)) {
+      const activeDate = String(customer.activeDate || customer.installedAt || customer.createdAt || '').slice(0, 10);
+      const activePeriod = periodFromDateText(activeDate);
+      const cycleDueThisPeriod = dateForPeriodDay(activePeriod, cycleDueDay);
+      const firstInvoiceStatus = normalizedStatusText(customer.firstInvoiceStatus || customer.initialInvoiceStatus || 'paid');
+      const fallbackDuePeriod = firstInvoiceStatus === 'unpaid' && activeDate && cycleDueThisPeriod && activeDate <= cycleDueThisPeriod
+        ? activePeriod
+        : addMonthsToPeriodText(activePeriod, 1);
+      const duePeriod = periodFromDateText(customer.nextDue || customer.dueDate || '') || fallbackDuePeriod;
+      const nextCycleDue = dateForPeriodDay(duePeriod, cycleDueDay);
+      if (Math.round(numberValue(customer.dueDay, 0)) !== cycleDueDay) {
+        customer.dueDay = cycleDueDay;
+        customerChanged = true;
+      }
+      if (nextCycleDue && (customer.nextDue !== nextCycleDue || customer.dueDate !== nextCycleDue)) {
+        customer.nextDue = nextCycleDue;
+        customer.dueDate = nextCycleDue;
+        customerChanged = true;
+      }
+    }
+    if (!customerChanged) continue;
     customer.updatedAt = now;
     customer.updatedBy = customer.updatedBy || 'Sistem';
     changed += 1;

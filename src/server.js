@@ -2373,11 +2373,16 @@ function dayFromDateInput(value = '', fallback = 10) {
 }
 
 function anchoredDueDateFromActiveDate(activeDate = '', invoiceStatus = 'paid', fallbackDay = 10) {
-  const activePeriod = periodFromDateInput(activeDate);
+  const normalizedActiveDate = normalizeImportDate(activeDate);
+  const activePeriod = periodFromDateInput(normalizedActiveDate);
   if (!activePeriod) return '';
-  const dueDay = dayFromDateInput(activeDate, fallbackDay);
+  const parsedDueDay = Number(fallbackDay);
+  const dueDay = Number.isFinite(parsedDueDay) ? Math.max(1, Math.min(31, Math.round(parsedDueDay))) : 10;
   const status = String(invoiceStatus || 'paid').trim().toLowerCase();
-  const invoicePeriod = status === 'unpaid' ? activePeriod : addMonthsToPeriod(activePeriod, 1);
+  const dueThisPeriod = dueDateForPeriod(activePeriod, dueDay);
+  const invoicePeriod = status === 'unpaid' && normalizedActiveDate <= dueThisPeriod
+    ? activePeriod
+    : addMonthsToPeriod(activePeriod, 1);
   return dueDateForPeriod(invoicePeriod, dueDay);
 }
 

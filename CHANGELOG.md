@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.41] - 2026-07-16
+
+### Fixed
+
+- Member PPP-DHCP `Postpaid > Billing Cycle` sekarang memakai tanggal jatuh tempo dari `Radius > Setting > Billing Setting`, bukan tanggal aktif member.
+- Data member billing cycle yang sudah tersimpan dengan `nextDue/dueDate` salah akan diselaraskan saat aplikasi start setelah update.
+
 ## [1.0.40] - 2026-07-16
 
 ### Fixed

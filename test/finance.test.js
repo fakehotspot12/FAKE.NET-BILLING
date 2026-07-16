@@ -585,6 +585,87 @@ test('PPP member price follows selected profile instead of stale form payload', 
   assert.equal(data.customers[0].price, 150000);
 });
 
+test('PPP postpaid billing cycle member next due follows billing setting day', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 15;
+  data.radiusProfiles.push({
+    id: 'prof-cycle-15m',
+    name: '15 Mbps',
+    serviceType: 'pppoe',
+    price: 180000
+  });
+  const radiusUser = {
+    id: 'rad-azizah-cycle',
+    username: 'rt01.azizah@pt',
+    profileId: 'prof-cycle-15m',
+    serviceType: 'pppoe'
+  };
+
+  const member = serverInternals.radiusMemberFromPayload(data, {
+    addToMember: true,
+    memberName: 'Azizah',
+    memberPhone: '085200000002',
+    memberActiveDate: '2026-07-16',
+    memberInvoiceStatus: 'paid',
+    memberPaymentType: 'postpaid',
+    memberBillingPeriod: 'cycle'
+  }, radiusUser, { name: 'Admin', username: 'admin' });
+
+  assert.equal(member.dueDay, 15);
+  assert.equal(member.dueDate, '2026-08-15');
+  assert.equal(member.nextDue, '2026-08-15');
+});
+
+test('PPP fixed date and prepaid renewal stay anchored to member active date', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 15;
+  data.radiusProfiles.push({
+    id: 'prof-fixed-renewal',
+    name: '10 Mbps',
+    serviceType: 'pppoe',
+    price: 150000
+  });
+
+  const fixed = serverInternals.radiusMemberFromPayload(data, {
+    addToMember: true,
+    memberName: 'Fixed Date',
+    memberPhone: '085200000003',
+    memberActiveDate: '2026-07-16',
+    memberInvoiceStatus: 'paid',
+    memberPaymentType: 'postpaid',
+    memberBillingPeriod: 'fixed'
+  }, {
+    id: 'rad-fixed-date',
+    username: 'fixed-date@ppp.test',
+    profileId: 'prof-fixed-renewal',
+    serviceType: 'pppoe'
+  }, { name: 'Admin', username: 'admin' });
+
+  const renewal = serverInternals.radiusMemberFromPayload(data, {
+    addToMember: true,
+    memberName: 'Prepaid Renewal',
+    memberPhone: '085200000004',
+    memberActiveDate: '2026-07-16',
+    memberInvoiceStatus: 'paid',
+    memberPaymentType: 'prepaid',
+    memberBillingPeriod: 'renewal'
+  }, {
+    id: 'rad-prepaid-renewal',
+    username: 'prepaid-renewal@ppp.test',
+    profileId: 'prof-fixed-renewal',
+    serviceType: 'pppoe'
+  }, { name: 'Admin', username: 'admin' });
+
+  assert.equal(fixed.dueDay, 16);
+  assert.equal(fixed.dueDate, '2026-08-16');
+  assert.equal(fixed.nextDue, '2026-08-16');
+  assert.equal(renewal.paymentType, 'prepaid');
+  assert.equal(renewal.billingPeriod, 'renewal');
+  assert.equal(renewal.dueDay, 16);
+  assert.equal(renewal.dueDate, '2026-08-16');
+  assert.equal(renewal.nextDue, '2026-08-16');
+});
+
 test('PPP profile update syncs linked member price without touching existing invoices', () => {
   const data = createDefaultStore();
   data.radiusProfiles.push(
@@ -958,7 +1039,12 @@ test('ensureShape restores invoices cancelled only because customer was terminat
 
 test('ensureShape syncs stale linked PPP members from radius profile without touching invoices', () => {
   const data = ensureShape({
-    settings: { businessName: 'Linked Profile Sync' },
+    settings: {
+      businessName: 'Linked Profile Sync',
+      billing: {
+        postpaidDueDay: 15
+      }
+    },
     radiusProfiles: [
       {
         id: 'prof-linked-180',
@@ -985,6 +1071,14 @@ test('ensureShape syncs stale linked PPP members from radius profile without tou
         packageName: 'Paket Lama',
         price: 150000,
         amount: 150000,
+        paymentType: 'postpaid',
+        billingPeriod: 'cycle',
+        dueDay: 16,
+        dueDate: '2026-08-16',
+        nextDue: '2026-08-16',
+        activeDate: '2026-07-16',
+        firstInvoiceStatus: 'paid',
+        initialInvoiceStatus: 'paid',
         status: 'active'
       }
     ],
@@ -1005,6 +1099,9 @@ test('ensureShape syncs stale linked PPP members from radius profile without tou
   assert.equal(customer.packageName, 'Paket 180');
   assert.equal(customer.price, 180000);
   assert.equal(customer.amount, 180000);
+  assert.equal(customer.dueDay, 15);
+  assert.equal(customer.dueDate, '2026-08-15');
+  assert.equal(customer.nextDue, '2026-08-15');
   assert.equal(data.invoices[0].packageName, 'Paket Lama');
   assert.equal(data.invoices[0].amount, 150000);
 });
