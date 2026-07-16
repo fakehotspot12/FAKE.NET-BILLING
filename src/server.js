@@ -2885,6 +2885,15 @@ function syncRadiusMemberProfile(data = {}, radiusUser = {}, actor = {}) {
   };
 }
 
+function syncRadiusMembersForProfile(data = {}, profile = {}, actor = {}) {
+  const profileId = String(profile.id || '').trim();
+  if (!profileId || String(profile.serviceType || '').toLowerCase() !== 'pppoe') return [];
+  return (data.radiusUsers || [])
+    .filter((user) => String(user.serviceType || '').toLowerCase() === 'pppoe' && String(user.profileId || '') === profileId)
+    .map((user) => syncRadiusMemberProfile(data, user, actor))
+    .filter(Boolean);
+}
+
 function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor = {}) {
   const username = String(radiusUser.username || payload.username || '').trim();
   if (!username) {
@@ -10876,18 +10885,21 @@ async function handleApi(req, res, url) {
           : method === 'PUT'
             ? freeradius.updateProfile(store, id, radiusProfilePayload(payload, 'pppoe'), authContext.user)
             : freeradius.deleteProfile(store, id);
+        const memberProfileSync = method === 'PUT' ? syncRadiusMembersForProfile(store, next, authContext.user) : [];
         addActivity(store, 'monitoring', `Profile PPP-DHCP ${next.name || id} ${method === 'POST' ? 'ditambahkan' : method === 'PUT' ? 'diperbarui' : 'dihapus'} oleh ${authContext.user.name || authContext.user.username}`, {
           action: method === 'POST' ? 'radius-ppp-profile-create' : method === 'PUT' ? 'radius-ppp-profile-update' : 'radius-ppp-profile-delete',
           radiusProfileId: id || next.id || '',
           radiusProfileName: next.name || '',
-          triggerCoa: next.triggerCoa === true
+          triggerCoa: next.triggerCoa === true,
+          syncedMembers: memberProfileSync.filter((item) => item.changed).length
         });
         await syncFreeradiusIfNeeded(store, authContext.user, `radius-ppp-profile-${method.toLowerCase()}`);
-        return next;
+        return { profile: next, memberProfileSync };
       });
       sendJson(res, 200, {
         ok: true,
-        profile: radiusProfileRowsLocal(data, 'pppoe').find((row) => row.id === result.id) || result
+        profile: radiusProfileRowsLocal(data, 'pppoe').find((row) => row.id === result.profile?.id) || result.profile,
+        memberProfileSync: result.memberProfileSync || []
       });
     } catch (error) {
       sendJson(res, 400, {
@@ -13137,6 +13149,7 @@ module.exports = {
     sanitizeBillingSettings,
     stampHotspotVoucherValidityFromFirstOnline,
     syncRadiusMemberProfile,
+    syncRadiusMembersForProfile,
     syncRadiusCustomerStatus,
     standaloneBillingAutomation,
     updateAvailableFallbackSummary

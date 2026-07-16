@@ -273,6 +273,20 @@ function normalizedStatusText(value = '') {
   return String(value || '').trim().toLowerCase();
 }
 
+function numberValue(value, fallback = 0) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  const normalized = text
+    .replace(/rp/gi, '')
+    .replace(/\s+/g, '')
+    .replace(/\./g, '')
+    .replace(/,/g, '.')
+    .replace(/[^\d.-]/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function firstInvoicePaid(customer = {}) {
   const statuses = [
     customer.firstInvoiceStatus,
@@ -302,6 +316,43 @@ function cancelInvalidPaidInitialProrataInvoices(data = {}) {
     invoice.cancelReason = invoice.cancelReason || 'Invoice prorata bulan pemasangan dibatalkan karena status invoice awal member Paid.';
     invoice.notes = `${String(invoice.notes || '').trim()} Dibatalkan otomatis: status invoice awal Paid.`.trim();
     invoice.updatedAt = now;
+  }
+  return data;
+}
+
+function syncLinkedRadiusMemberProfiles(data = {}) {
+  const profiles = new Map((data.radiusProfiles || [])
+    .filter((profile) => String(profile.serviceType || '').toLowerCase() === 'pppoe')
+    .map((profile) => [String(profile.id || ''), profile]));
+  const customers = new Map((data.customers || []).map((customer) => [String(customer.id || ''), customer]));
+  const now = new Date().toISOString();
+  let changed = 0;
+  for (const user of data.radiusUsers || []) {
+    if (String(user.serviceType || '').toLowerCase() !== 'pppoe') continue;
+    const profile = profiles.get(String(user.profileId || ''));
+    if (!profile) continue;
+    const customer = customers.get(String(user.customerId || ''));
+    if (!customer) continue;
+    const profileName = String(profile.name || '').trim();
+    const profilePrice = Math.max(0, Math.round(numberValue(profile.price)));
+    const nextPackageName = profileName || String(customer.packageName || '').trim();
+    const nextPrice = profilePrice > 0
+      ? profilePrice
+      : Math.max(0, Math.round(numberValue(customer.price || customer.amount || 0)));
+    const previousPackageName = String(customer.packageName || '').trim();
+    const previousPrice = Math.max(0, Math.round(numberValue(customer.price || customer.amount || 0)));
+    if (previousPackageName === nextPackageName && previousPrice === nextPrice) continue;
+    customer.packageName = nextPackageName;
+    customer.price = nextPrice;
+    customer.amount = nextPrice;
+    customer.updatedAt = now;
+    customer.updatedBy = customer.updatedBy || 'Sistem';
+    changed += 1;
+  }
+  if (changed > 0) {
+    data.radiusSyncState = data.radiusSyncState && typeof data.radiusSyncState === 'object' ? data.radiusSyncState : {};
+    data.radiusSyncState.linkedMemberProfileSyncAt = now;
+    data.radiusSyncState.linkedMemberProfileSyncCount = changed;
   }
   return data;
 }
@@ -473,7 +524,7 @@ function ensureShape(data) {
     users: Array.isArray(safe.users) ? safe.users : [],
     activity: Array.isArray(safe.activity) ? safe.activity : []
   };
-  return cancelInvalidPaidInitialProrataInvoices(restoreTerminatedPendingInvoices(shaped));
+  return syncLinkedRadiusMemberProfiles(cancelInvalidPaidInitialProrataInvoices(restoreTerminatedPendingInvoices(shaped)));
 }
 
 function postgresEnabled() {

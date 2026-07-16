@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.40] - 2026-07-16
+
+### Fixed
+
+- Edit harga/nama Profile PPP-DHCP sekarang otomatis menyinkronkan paket dan harga semua member yang memakai profile tersebut.
+- Data member linked PPP-DHCP yang sudah terlanjur stale ikut dibenahi saat aplikasi start setelah update.
+- Invoice lama tetap dibiarkan sesuai nominal awal agar histori tagihan tidak berubah diam-diam.
+
 ## [1.0.39] - 2026-07-16
 
 ### Added

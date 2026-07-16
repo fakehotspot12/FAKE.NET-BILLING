@@ -646,6 +646,63 @@ test('PPP profile update syncs linked member price without touching existing inv
   assert.equal(data.invoices[0].totalAmount, 150000);
 });
 
+test('PPP profile price edit syncs every linked member without touching existing invoices', () => {
+  const data = createDefaultStore();
+  const profile = {
+    id: 'prof-azizah',
+    name: 'Paket 180',
+    serviceType: 'pppoe',
+    price: 180000
+  };
+  data.radiusProfiles.push(profile);
+  data.customers.push(
+    {
+      id: 'cus-azizah-profile',
+      source: 'radius',
+      username: 'azizah',
+      name: 'Azizah',
+      packageName: 'Paket Lama',
+      price: 150000,
+      amount: 150000,
+      status: 'active'
+    },
+    {
+      id: 'cus-budi-profile',
+      source: 'radius',
+      username: 'budi',
+      name: 'Budi',
+      packageName: 'Paket Lama',
+      price: 150000,
+      amount: 150000,
+      status: 'active'
+    }
+  );
+  data.radiusUsers.push(
+    { id: 'rad-azizah-profile', username: 'azizah', customerId: 'cus-azizah-profile', profileId: 'prof-azizah', serviceType: 'pppoe', status: 'active' },
+    { id: 'rad-budi-profile', username: 'budi', customerId: 'cus-budi-profile', profileId: 'prof-azizah', serviceType: 'pppoe', status: 'active' }
+  );
+  data.invoices.push({
+    id: 'inv-azizah-profile',
+    customerId: 'cus-azizah-profile',
+    invoiceNo: '000010',
+    packageName: 'Paket Lama',
+    amount: 150000,
+    totalAmount: 150000,
+    status: 'pending',
+    dueDate: '2026-07-10'
+  });
+
+  const synced = serverInternals.syncRadiusMembersForProfile(data, profile, { name: 'Admin', username: 'admin' });
+
+  assert.equal(synced.length, 2);
+  assert.equal(synced.filter((item) => item.changed).length, 2);
+  assert.equal(data.customers.find((customer) => customer.username === 'azizah').packageName, 'Paket 180');
+  assert.equal(data.customers.find((customer) => customer.username === 'azizah').price, 180000);
+  assert.equal(data.customers.find((customer) => customer.username === 'budi').price, 180000);
+  assert.equal(data.invoices[0].packageName, 'Paket Lama');
+  assert.equal(data.invoices[0].amount, 150000);
+});
+
 test('manual radius user create requires a selected profile', () => {
   const data = createDefaultStore();
   data.radiusProfiles.push(
@@ -897,6 +954,59 @@ test('ensureShape restores invoices cancelled only because customer was terminat
 
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-restored').status, 'pending');
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-deleted-member').status, 'cancelled');
+});
+
+test('ensureShape syncs stale linked PPP members from radius profile without touching invoices', () => {
+  const data = ensureShape({
+    settings: { businessName: 'Linked Profile Sync' },
+    radiusProfiles: [
+      {
+        id: 'prof-linked-180',
+        serviceType: 'pppoe',
+        name: 'Paket 180',
+        price: 180000
+      }
+    ],
+    radiusUsers: [
+      {
+        id: 'rad-linked-azizah',
+        serviceType: 'pppoe',
+        username: 'azizah',
+        customerId: 'cus-linked-azizah',
+        profileId: 'prof-linked-180'
+      }
+    ],
+    customers: [
+      {
+        id: 'cus-linked-azizah',
+        source: 'radius',
+        username: 'azizah',
+        name: 'Azizah',
+        packageName: 'Paket Lama',
+        price: 150000,
+        amount: 150000,
+        status: 'active'
+      }
+    ],
+    invoices: [
+      {
+        id: 'inv-linked-azizah',
+        customerId: 'cus-linked-azizah',
+        invoiceNo: '000011',
+        packageName: 'Paket Lama',
+        amount: 150000,
+        totalAmount: 150000,
+        status: 'pending'
+      }
+    ]
+  });
+
+  const customer = data.customers.find((item) => item.id === 'cus-linked-azizah');
+  assert.equal(customer.packageName, 'Paket 180');
+  assert.equal(customer.price, 180000);
+  assert.equal(customer.amount, 180000);
+  assert.equal(data.invoices[0].packageName, 'Paket Lama');
+  assert.equal(data.invoices[0].amount, 150000);
 });
 
 test('ensureShape cancels invalid paid initial postpaid-cycle prorata invoices', () => {
