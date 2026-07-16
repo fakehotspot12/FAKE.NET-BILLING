@@ -2830,6 +2830,56 @@ function radiusProfileMemberPrice(profile = {}, payload = {}, fallback = 0) {
   return Math.max(0, Math.round(toNumber(fallback)));
 }
 
+function syncRadiusMemberProfile(data = {}, radiusUser = {}, actor = {}) {
+  const customer = findCustomerForRadiusUser(data, radiusUser);
+  if (!customer) return null;
+  const profile = radiusFindProfile(data, radiusUser.profileId || radiusUser.profile, 'pppoe') || {};
+  if (!profile.id && !profile.name) return null;
+
+  const previousPackageName = String(customer.packageName || '').trim();
+  const previousPrice = Math.max(0, Math.round(toNumber(customer.price || customer.amount || 0)));
+  const nextPackageName = String(profile.name || previousPackageName).trim();
+  const nextPrice = radiusProfileMemberPrice(profile, {}, previousPrice);
+  const changed = previousPackageName !== nextPackageName || previousPrice !== nextPrice;
+
+  radiusUser.customerId = customer.id;
+  if (!changed) {
+    return {
+      changed: false,
+      customer,
+      previousPackageName,
+      previousPrice,
+      nextPackageName,
+      nextPrice
+    };
+  }
+
+  customer.packageName = nextPackageName;
+  customer.price = nextPrice;
+  customer.amount = nextPrice;
+  customer.updatedAt = new Date().toISOString();
+  customer.updatedBy = actor.name || actor.username || 'Sistem';
+  addActivity(data, 'customer', `Paket member ${customer.name || customer.username || radiusUser.username} disinkronkan ke ${nextPackageName || '-'} oleh ${actor.name || actor.username || 'Sistem'}`, {
+    action: 'radius-member-profile-sync',
+    customerId: customer.id || '',
+    radiusUserId: radiusUser.id || '',
+    username: radiusUser.username || customer.username || '',
+    previousPackageName,
+    nextPackageName,
+    previousPrice,
+    nextPrice
+  });
+
+  return {
+    changed: true,
+    customer,
+    previousPackageName,
+    previousPrice,
+    nextPackageName,
+    nextPrice
+  };
+}
+
 function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor = {}) {
   const username = String(radiusUser.username || payload.username || '').trim();
   if (!username) {
@@ -10721,6 +10771,7 @@ async function handleApi(req, res, url) {
         let waQueued = null;
         let removedMember = null;
         let orphanMembers = [];
+        let memberProfileSync = null;
         let coa = null;
         if (method === 'POST' && payloadEnabled(payload.addToMember)) {
           if (!canCreateRadiusLinkedMember(authContext.user)) {
@@ -10743,6 +10794,9 @@ async function handleApi(req, res, url) {
           removedMember = deleteRadiusLinkedMember(store, next, authContext.user);
           orphanMembers = deleteOrphanRadiusMembers(store, authContext.user);
         } else {
+          if (method === 'PUT') {
+            memberProfileSync = syncRadiusMemberProfile(store, next, authContext.user);
+          }
           syncRadiusCustomerStatus(store, next);
         }
         const targetUsername = payload.username || url.searchParams.get('username') || next.username || id;
@@ -10763,7 +10817,7 @@ async function handleApi(req, res, url) {
         if (method !== 'POST') {
           coa = await freeradiusCoa.disconnectUser(store, next);
         }
-        return { user: next, member, invoice, waQueued, removedMember, orphanMembers, coa };
+        return { user: next, member, invoice, waQueued, removedMember, orphanMembers, memberProfileSync, coa };
       });
       sendJson(res, 200, {
         ok: true,
@@ -10773,6 +10827,7 @@ async function handleApi(req, res, url) {
         waQueued: result.waQueued || null,
         removedMember: result.removedMember || null,
         orphanMembers: result.orphanMembers || [],
+        memberProfileSync: result.memberProfileSync || null,
         coa: result.coa || null
       });
     } catch (error) {
@@ -13045,6 +13100,7 @@ module.exports = {
     resellerHotspotVoucherRowVisible,
     sanitizeBillingSettings,
     stampHotspotVoucherValidityFromFirstOnline,
+    syncRadiusMemberProfile,
     syncRadiusCustomerStatus,
     standaloneBillingAutomation,
     updateAvailableFallbackSummary

@@ -535,6 +535,67 @@ test('PPP member price follows selected profile instead of stale form payload', 
   assert.equal(data.customers[0].price, 150000);
 });
 
+test('PPP profile update syncs linked member price without touching existing invoices', () => {
+  const data = createDefaultStore();
+  data.radiusProfiles.push(
+    {
+      id: 'prof-150',
+      name: 'Paket 150',
+      serviceType: 'pppoe',
+      price: 150000
+    },
+    {
+      id: 'prof-180',
+      name: 'Paket 180',
+      serviceType: 'pppoe',
+      price: 180000
+    }
+  );
+  data.customers.push({
+    id: 'cus-azizah',
+    source: 'radius',
+    username: 'azizah',
+    name: 'Azizah',
+    customerName: 'Azizah',
+    packageName: 'Paket 150',
+    price: 150000,
+    amount: 150000,
+    status: 'active'
+  });
+  const radiusUser = {
+    id: 'rad-azizah',
+    username: 'azizah',
+    customerId: 'cus-azizah',
+    profileId: 'prof-180',
+    serviceType: 'pppoe',
+    status: 'active'
+  };
+  data.radiusUsers.push(radiusUser);
+  data.invoices.push({
+    id: 'inv-azizah',
+    customerId: 'cus-azizah',
+    invoiceNo: '000001',
+    packageName: 'Paket 150',
+    subtotal: 150000,
+    baseAmount: 150000,
+    total: 150000,
+    totalAmount: 150000,
+    amount: 150000,
+    status: 'pending',
+    dueDate: '2026-07-10'
+  });
+
+  const result = serverInternals.syncRadiusMemberProfile(data, radiusUser, { name: 'Admin', username: 'admin' });
+
+  assert.equal(result.changed, true);
+  assert.equal(data.customers[0].packageName, 'Paket 180');
+  assert.equal(data.customers[0].price, 180000);
+  assert.equal(data.customers[0].amount, 180000);
+  assert.equal(data.invoices[0].packageName, 'Paket 150');
+  assert.equal(data.invoices[0].amount, 150000);
+  assert.equal(data.invoices[0].totalAmount, 150000);
+});
+
 test('manual radius user create requires a selected profile', () => {
   const data = createDefaultStore();
   data.radiusProfiles.push(
