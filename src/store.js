@@ -261,6 +261,51 @@ function restoreTerminatedPendingInvoices(data = {}) {
   return data;
 }
 
+function periodFromDateText(value = '') {
+  const text = String(value || '').trim();
+  const iso = text.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}`;
+  const local = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  return local ? `${local[3]}-${local[2].padStart(2, '0')}` : '';
+}
+
+function normalizedStatusText(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function firstInvoicePaid(customer = {}) {
+  const statuses = [
+    customer.firstInvoiceStatus,
+    customer.initialInvoiceStatus,
+    customer.memberInvoiceStatus,
+    customer.invoiceStatus,
+    customer.paymentStatus
+  ].map(normalizedStatusText).filter(Boolean);
+  if (!statuses.length) return false;
+  return statuses.some((status) => ['paid', 'lunas', 'terbayar'].includes(status))
+    && !statuses.some((status) => ['unpaid', 'pending', 'belum bayar'].includes(status));
+}
+
+function cancelInvalidPaidInitialProrataInvoices(data = {}) {
+  const customers = new Map((data.customers || []).map((customer) => [String(customer.id || ''), customer]));
+  const now = new Date().toISOString();
+  for (const invoice of data.invoices || []) {
+    const customer = customers.get(String(invoice.customerId || ''));
+    if (!customer || !firstInvoicePaid(customer)) continue;
+    const activePeriod = periodFromDateText(customer.activeDate || customer.installedAt || customer.createdAt || '');
+    if (!activePeriod || String(invoice.period || '') !== activePeriod) continue;
+    if (normalizedStatusText(invoice.status) !== 'pending') continue;
+    if (normalizedStatusText(invoice.source) !== 'generated') continue;
+    if (invoice.prorated !== true && !/prorata/i.test(String(invoice.notes || ''))) continue;
+    invoice.status = 'cancelled';
+    invoice.cancelledAt = invoice.cancelledAt || now;
+    invoice.cancelReason = invoice.cancelReason || 'Invoice prorata bulan pemasangan dibatalkan karena status invoice awal member Paid.';
+    invoice.notes = `${String(invoice.notes || '').trim()} Dibatalkan otomatis: status invoice awal Paid.`.trim();
+    invoice.updatedAt = now;
+  }
+  return data;
+}
+
 function normalizeWaTemplatePlaceholders(template = '', key = '') {
   const graceVariableText = 'H+[suspend_grace_days] ([suspend_grace_days] hari)';
   let next = String(template || '')
@@ -428,7 +473,7 @@ function ensureShape(data) {
     users: Array.isArray(safe.users) ? safe.users : [],
     activity: Array.isArray(safe.activity) ? safe.activity : []
   };
-  return restoreTerminatedPendingInvoices(shaped);
+  return cancelInvalidPaidInitialProrataInvoices(restoreTerminatedPendingInvoices(shaped));
 }
 
 function postgresEnabled() {

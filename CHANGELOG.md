@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.33] - 2026-07-16
+
+### Fixed
+
+- Migrasi data otomatis membatalkan invoice prorata bulan pemasangan yang terlanjur dibuat untuk member Postpaid Billing Cycle dengan status invoice awal `Paid`.
+- Invoice invalid tersebut hanya diubah menjadi `cancelled`, tidak dihapus, sehingga histori nomor invoice dan audit tetap aman.
+
 ## [1.0.32] - 2026-07-16
 
 ### Fixed

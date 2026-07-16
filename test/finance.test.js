@@ -788,6 +788,71 @@ test('ensureShape restores invoices cancelled only because customer was terminat
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-deleted-member').status, 'cancelled');
 });
 
+test('ensureShape cancels invalid paid initial postpaid-cycle prorata invoices', () => {
+  const data = ensureShape({
+    settings: { businessName: 'Prorata Cleanup' },
+    customers: [
+      {
+        id: 'cus-paid-cycle',
+        username: 'paid-cycle@ppp.test',
+        status: 'active',
+        activeDate: '2026-07-15',
+        paymentType: 'postpaid',
+        billingPeriod: 'cycle',
+        firstInvoiceStatus: 'paid',
+        initialInvoiceStatus: 'paid'
+      },
+      {
+        id: 'cus-unpaid-cycle',
+        username: 'unpaid-cycle@ppp.test',
+        status: 'active',
+        activeDate: '2026-07-15',
+        paymentType: 'postpaid',
+        billingPeriod: 'cycle',
+        firstInvoiceStatus: 'unpaid'
+      }
+    ],
+    invoices: [
+      {
+        id: 'inv-paid-prorata',
+        customerId: 'cus-paid-cycle',
+        status: 'pending',
+        source: 'generated',
+        period: '2026-07',
+        amount: 5000,
+        prorated: true,
+        notes: 'Prorata 1/30 hari'
+      },
+      {
+        id: 'inv-unpaid-prorata',
+        customerId: 'cus-unpaid-cycle',
+        status: 'pending',
+        source: 'generated',
+        period: '2026-07',
+        amount: 5000,
+        prorated: true,
+        notes: 'Prorata 1/30 hari'
+      },
+      {
+        id: 'inv-paid-normal-next',
+        customerId: 'cus-paid-cycle',
+        status: 'pending',
+        source: 'generated',
+        period: '2026-08',
+        amount: 150000,
+        prorated: false,
+        notes: ''
+      }
+    ]
+  });
+
+  const paidProrata = data.invoices.find((invoice) => invoice.id === 'inv-paid-prorata');
+  assert.equal(paidProrata.status, 'cancelled');
+  assert.match(paidProrata.cancelReason, /status invoice awal member Paid/i);
+  assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-unpaid-prorata').status, 'pending');
+  assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-paid-normal-next').status, 'pending');
+});
+
 test('standalone billing automation ignores pending invoice covered by paid multi-month invoice', () => {
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';
