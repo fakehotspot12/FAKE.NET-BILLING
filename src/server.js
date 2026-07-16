@@ -5,6 +5,7 @@ const { execFile, spawn } = require('child_process');
 const fsSync = require('fs');
 const fs = require('fs/promises');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
 const { URL } = require('url');
@@ -68,7 +69,7 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-15');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-16');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
@@ -1655,6 +1656,10 @@ function radiusProfileRowsLocal(data = {}, serviceType = 'pppoe') {
       status: profile.active === false ? 'disabled' : 'active',
       note: profile.note || '',
       updatedAt: profile.updatedAt || profile.createdAt || ''
+    }))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'id', {
+      numeric: true,
+      sensitivity: 'base'
     }));
 }
 
@@ -1831,6 +1836,7 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         paidAt: user.paidAt || '',
         price: profile.price || 0,
         service: user.accessType || (serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE'),
+        serviceName: user.serviceName || '',
         type: user.accessType || (serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE'),
         server: nas.name || 'all',
         createdByName: user.createdByName || '',
@@ -2029,6 +2035,7 @@ function radiusUserPayload(payload = {}, serviceType = 'pppoe', data = {}) {
     password: String(accessType).toLowerCase() === 'dhcp' ? '' : payload.password,
     serviceType,
     accessType,
+    serviceName: payload.serviceName || payload.service || '',
     profileId: profile?.id || '',
     nasId: nas?.id || '',
     staticIp: payload.staticIp || payload.ipAddress || '',
@@ -2132,6 +2139,7 @@ const PPP_IMPORT_COLUMNS = [
   'create_invoice',
   'invoice_status',
   'active_date',
+  'count_as_psb',
   'ppn',
   'ppn_%',
   'discount_%',
@@ -2184,7 +2192,23 @@ async function workbookBuffer(sheets = {}) {
       worksheet.addRow(textRow);
     }
     if (columns.length) {
-      worksheet.getRow(1).font = { bold: true };
+      const headerRow = worksheet.getRow(1);
+      headerRow.height = 24;
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF1769AA' }
+      };
+      headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      headerRow.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF0F4F82' } },
+          left: { style: 'thin', color: { argb: 'FF0F4F82' } },
+          bottom: { style: 'thin', color: { argb: 'FF0F4F82' } },
+          right: { style: 'thin', color: { argb: 'FF0F4F82' } }
+        };
+      });
       worksheet.views = [{ state: 'frozen', ySplit: 1 }];
       worksheet.autoFilter = {
         from: { row: 1, column: 1 },
@@ -2195,7 +2219,11 @@ async function workbookBuffer(sheets = {}) {
         column.numFmt = '@';
         column.eachCell({ includeEmpty: true }, (cell) => {
           cell.numFmt = '@';
-          cell.alignment = { vertical: 'middle', wrapText: true };
+          cell.alignment = {
+            vertical: 'middle',
+            horizontal: cell.row === 1 ? 'center' : undefined,
+            wrapText: true
+          };
         });
       });
     }
@@ -2213,6 +2241,7 @@ async function pppImportTemplateBuffer() {
         profile: 'Nama Profile PPP',
         nas: 'Nama NAS atau IP NAS',
         static_ip: '',
+        service_name: '',
         mac_address: '',
         status: 'active',
         add_to_member: 'yes',
@@ -2224,7 +2253,8 @@ async function pppImportTemplateBuffer() {
         payment_type: 'postpaid',
         billing_period: 'fixed',
         invoice_status: 'paid',
-        active_date: localTodayIso(),
+        active_date: dateDisplayText(localTodayIso()),
+        count_as_psb: 'no',
         ppn: '',
         discount: '',
         price: '150000',
@@ -2237,6 +2267,7 @@ async function pppImportTemplateBuffer() {
         profile: 'Nama Profile DHCP',
         nas: 'Nama NAS atau IP NAS',
         static_ip: '',
+        service_name: '',
         mac_address: 'AA:BB:CC:DD:EE:FF',
         status: 'active',
         add_to_member: 'yes',
@@ -2248,7 +2279,8 @@ async function pppImportTemplateBuffer() {
         payment_type: 'postpaid',
         billing_period: 'fixed',
         invoice_status: 'paid',
-        active_date: localTodayIso(),
+        active_date: dateDisplayText(localTodayIso()),
+        count_as_psb: 'no',
         ppn: '',
         discount: '',
         price: '150000',
@@ -2262,6 +2294,7 @@ async function pppImportTemplateBuffer() {
       { kolom: 'profile', wajib: 'Ya', contoh: '10M', keterangan: 'Harus sama dengan nama profile PPP-DHCP yang sudah dibuat.' },
       { kolom: 'nas', wajib: 'Ya', contoh: 'FAKE.NET atau 10.1.13.14', keterangan: 'Harus sama dengan nama/IP NAS di Monitoring > Site.' },
       { kolom: 'static_ip', wajib: 'Tidak', contoh: '172.16.7.10', keterangan: 'Kosongkan jika IP dinamis.' },
+      { kolom: 'service_name', wajib: 'Tidak', contoh: '', keterangan: 'Nama service PPPoE jika NAS membutuhkannya. Kosong berarti Any.' },
       { kolom: 'mac_address', wajib: 'Wajib jika DHCP', contoh: 'AA:BB:CC:DD:EE:FF', keterangan: 'Dipakai sebagai Caller-ID DHCP.' },
       { kolom: 'status', wajib: 'Tidak', contoh: 'active', keterangan: 'active, isolated, terminated, disabled, pending.' },
       { kolom: 'add_to_member', wajib: 'Tidak', contoh: 'yes', keterangan: 'Isi yes jika user juga dibuatkan data member.' },
@@ -2273,7 +2306,8 @@ async function pppImportTemplateBuffer() {
       { kolom: 'payment_type', wajib: 'Tidak', contoh: 'postpaid / prepaid', keterangan: 'Bisa juga memakai PASCABAYAR / PRABAYAR dari format Radboox.' },
       { kolom: 'billing_period', wajib: 'Tidak', contoh: 'fixed / cycle / renewal', keterangan: 'Postpaid hanya Fixed Date atau Billing Cycle. Prepaid hanya Fixed Date atau Renewal.' },
       { kolom: 'invoice_status', wajib: 'Tidak', contoh: 'paid / unpaid', keterangan: 'Jika unpaid, user awal tersimpan pending sampai pembayaran pertama dicatat.' },
-      { kolom: 'active_date', wajib: 'Tidak', contoh: localTodayIso(), keterangan: 'Tanggal aktif/pasang. Jika pelanggan dipasang bulan kemarin, isi tanggal aktif aslinya.' },
+      { kolom: 'active_date', wajib: 'Tidak', contoh: dateDisplayText(localTodayIso()), keterangan: 'Tanggal aktif/pasang dengan format DD/MM/YYYY. Tanggal ini tetap menjadi acuan billing.' },
+      { kolom: 'count_as_psb', wajib: 'Tidak', contoh: 'no', keterangan: 'Default no agar data impor dianggap pelanggan existing. Isi yes hanya untuk pemasangan baru yang harus masuk statistik PSB.' },
       { kolom: 'ppn', wajib: 'Tidak', contoh: '11', keterangan: 'PPN persen jika dipakai.' },
       { kolom: 'discount', wajib: 'Tidak', contoh: '0', keterangan: 'Diskon persen jika dipakai.' },
       { kolom: 'price', wajib: 'Tidak', contoh: '150000', keterangan: 'Harga manual jika diperlukan, biasanya ikut profile.' },
@@ -2299,6 +2333,7 @@ function pppExportRows(data = {}) {
         profile: profile.name || '',
         nas: nas.name || nas.address || '',
         static_ip: user.staticIp || '',
+        service_name: user.serviceName || '',
         mac_address: user.callerId || '',
         status: user.status || 'active',
         add_to_member: user.customerId ? 'yes' : 'no',
@@ -2311,6 +2346,7 @@ function pppExportRows(data = {}) {
         billing_period: customer.billingPeriod || '',
         invoice_status: customer.firstInvoiceStatus || customer.initialInvoiceStatus || '',
         active_date: customer.activeDate || user.activeDate || '',
+        count_as_psb: customer.countsAsPsb === false ? 'no' : 'yes',
         ppn: customer.ppn || '',
         discount: customer.discount || '',
         price: profile.price || customer.price || '',
@@ -2552,6 +2588,7 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
       const profileName = String(row.profile || row.profile_name || '').trim();
       const nasName = String(row.nas || row.router || row.nas_name || '').trim();
       const macAddress = String(row.mac_address || row.mac || '').trim();
+      const serviceName = String(row.service_name || row.service || '').trim();
       const addToMember = row.add_to_member || row.add_on_billing || row.member || '';
       const memberName = String(row.member_name || row.full_name || row.name || username || '').trim();
       const memberPhone = normalizeLocalPhone(row.whatsapp || row.no_whatsapp || row.phone || row.no_hp || row.telepon || '');
@@ -2586,6 +2623,10 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
       }
       const existing = (data.radiusUsers || []).find((user) => user.serviceType === 'pppoe' && String(user.username || '').toLowerCase() === username.toLowerCase());
       const existingMember = existing ? findCustomerForRadiusUser(data, existing) : null;
+      const hasCountAsPsb = Object.prototype.hasOwnProperty.call(row, 'count_as_psb')
+        || Object.prototype.hasOwnProperty.call(row, 'hitung_sebagai_psb')
+        || Object.prototype.hasOwnProperty.call(row, 'hitung_psb');
+      const countAsPsb = payloadEnabled(row.count_as_psb || row.hitung_sebagai_psb || row.hitung_psb || '');
       if (payloadEnabled(addToMember)) {
         if (!memberName && !existingMember?.name) {
           throw new Error('Nama member wajib diisi jika add_to_member yes');
@@ -2601,13 +2642,14 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
         type: accessType,
         profile: profileName,
         nas: nasName,
+        serviceName,
         ipAddress: row.static_ip || row.ip_address || '',
         macAddress,
         status: row.status || 'active',
         note: row.note || row.notes || '',
         addToMember,
         memberName: memberName || username,
-        memberCode: row.member_code || row.code || username,
+        memberCode: row.member_code || row.code || '',
         memberPhone,
         memberKtp: row.ktp || row.no_ktp_sim || row.no_ktp || row.id_card || '',
         memberEmail: row.email || '',
@@ -2619,7 +2661,10 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
         activeDate,
         memberPpn: row.ppn || row.ppn_ || row.vat || '',
         memberDiscount: row.discount || row.discount_ || row.diskon || '',
-        memberPrice: row.price || row.harga || ''
+        memberPrice: row.price || row.harga || '',
+        memberCountsAsPsb: existingMember && !hasCountAsPsb ? undefined : countAsPsb,
+        memberRecordOrigin: existingMember ? undefined : 'import',
+        memberImportedAt: existingMember ? undefined : new Date().toISOString()
       };
       const next = existing
         ? freeradius.updateRadiusUser(data, existing.id, radiusUserPayload(payload, 'pppoe', data), actor)
@@ -2977,6 +3022,9 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     locationAccuracy,
     locationUrl,
     activeDate,
+    countsAsPsb: payload.memberCountsAsPsb === undefined ? true : payloadEnabled(payload.memberCountsAsPsb),
+    recordOrigin: String(payload.memberRecordOrigin || payload.recordOrigin || 'wizard').trim(),
+    importedAt: String(payload.memberImportedAt || payload.importedAt || '').trim(),
     housePhotoUrl: String(payload.memberHousePhotoUrl || payload.housePhotoUrl || '').trim(),
     createdByName: customer.createdByName || actor.name || actor.username || 'Sistem',
     createdByUsername: customer.createdByUsername || actor.username || '',
@@ -3028,6 +3076,15 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   customer.site = nas.site || customer.site || '';
   customer.siteName = nas.site || nas.name || customer.siteName || '';
   if (activeDate) customer.activeDate = activeDate;
+  if (payload.memberCountsAsPsb !== undefined) {
+    customer.countsAsPsb = payloadEnabled(payload.memberCountsAsPsb);
+  }
+  if (payload.memberRecordOrigin !== undefined) {
+    customer.recordOrigin = String(payload.memberRecordOrigin || '').trim();
+  }
+  if (payload.memberImportedAt !== undefined) {
+    customer.importedAt = String(payload.memberImportedAt || '').trim();
+  }
   if (explicitNextDue) {
     customer.nextDue = explicitNextDue;
     customer.dueDate = explicitNextDue;
@@ -3720,10 +3777,11 @@ function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period 
     if (String(user.createdAt || '').slice(0, 7) === selectedPeriod) counts.new += 1;
     if (serviceType === 'pppoe' && user.customerId && !psbCustomerIds.has(user.customerId)) {
       const customer = customersById.get(user.customerId);
+      const countsAsPsb = customer?.countsAsPsb !== false;
       const psbDate = customer
         ? (customer.activeDate || customer.installedAt || customer.createdAt || user.createdAt || '')
         : '';
-      if (String(psbDate || '').slice(0, 7) === selectedPeriod) {
+      if (countsAsPsb && String(psbDate || '').slice(0, 7) === selectedPeriod) {
         psbCustomerIds.add(user.customerId);
         counts.psb += 1;
       }
@@ -7471,8 +7529,45 @@ function publicSiteMediaServices(target = {}, fallbackMediaServices = {}) {
   };
 }
 
-function publicMonitoringTarget(target = {}, fallbackMediaServices = {}) {
+function localIpv4Addresses() {
+  const configured = String(process.env.RADIUS_SERVER_IP || '').trim();
+  const rows = [];
+  if (netIsIpv4(configured)) rows.push(configured);
+  let interfaces = {};
+  try {
+    interfaces = os.networkInterfaces();
+  } catch {
+    interfaces = {};
+  }
+  for (const [name, addresses] of Object.entries(interfaces || {})) {
+    if (/^(lo|docker|veth|br-|virbr)/i.test(name)) continue;
+    for (const address of addresses || []) {
+      if (address?.family !== 'IPv4' || address.internal || !netIsIpv4(address.address)) continue;
+      rows.push(address.address);
+    }
+  }
+  return [...new Set(rows)];
+}
+
+function netIsIpv4(value = '') {
+  const parts = String(value || '').trim().split('.');
+  return parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255);
+}
+
+function suggestedRadiusServerAddress(target = {}) {
+  const candidates = localIpv4Addresses();
+  const nasAddress = String(target.host || target.radius?.address || '').trim();
+  if (netIsIpv4(nasAddress)) {
+    const prefix = nasAddress.split('.').slice(0, 3).join('.');
+    const sameSubnet = candidates.find((address) => address.startsWith(`${prefix}.`));
+    if (sameSubnet) return sameSubnet;
+  }
+  return candidates[0] || '';
+}
+
+function publicMonitoringTarget(target = {}, fallbackMediaServices = {}, options = {}) {
   const radius = target.radius && typeof target.radius === 'object' ? target.radius : {};
+  const includeRadiusSecret = options.includeRadiusSecret === true;
   return {
     ...target,
     radius: {
@@ -7481,7 +7576,9 @@ function publicMonitoringTarget(target = {}, fallbackMediaServices = {}) {
       address: target.host || radius.address || '',
       port: radius.port || 3799,
       type: radius.type || 'mikrotik',
-      credentialStored: Boolean(radius.secret)
+      credentialStored: Boolean(radius.secret),
+      serverAddress: includeRadiusSecret ? suggestedRadiusServerAddress(target) : '',
+      secret: includeRadiusSecret ? String(radius.secret || '') : ''
     },
     mediaServices: publicSiteMediaServices(target, fallbackMediaServices)
   };
@@ -10570,7 +10667,8 @@ async function handleApi(req, res, url) {
     sendJson(res, 200, {
       targets: targets.map((target) => publicMonitoringTarget(
         target,
-        target.id === legacyServiceTargetId ? data.settings.mediaServices : {}
+        target.id === legacyServiceTargetId ? data.settings.mediaServices : {},
+        { includeRadiusSecret: auth.hasPermission(authContext.user, 'monitoring:write') }
       )),
       summary: operations.monitoringSummary(data.monitoringTargets || [])
     });
@@ -10587,7 +10685,7 @@ async function handleApi(req, res, url) {
         await syncFreeradiusIfNeeded(data, authContext.user, 'monitoring-site-create');
         return target;
       });
-      sendJson(res, 201, { target: publicMonitoringTarget(result) });
+      sendJson(res, 201, { target: publicMonitoringTarget(result, {}, { includeRadiusSecret: true }) });
     } catch (error) {
       badRequest(res, error.message || 'Target monitoring tidak bisa dibuat');
     }
@@ -10627,7 +10725,7 @@ async function handleApi(req, res, url) {
         notFound(res);
         return;
       }
-      sendJson(res, 200, { target: publicMonitoringTarget(result) });
+      sendJson(res, 200, { target: publicMonitoringTarget(result, {}, { includeRadiusSecret: true }) });
     } catch (error) {
       badRequest(res, error.message || 'Target monitoring tidak bisa diperbarui');
     }
@@ -13239,7 +13337,10 @@ module.exports = {
     monthlyBillingDailyRows,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
+    pppImportTemplateBuffer,
     publicPaymentGatewayInvoicePayload,
+    publicMonitoringTarget,
+    radiusProfileRowsLocal,
     reportStatisticsPayload,
     radiusMemberFromPayload,
     readWorkbookRowsFromBase64,

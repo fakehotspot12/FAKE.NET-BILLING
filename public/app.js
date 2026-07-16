@@ -225,7 +225,7 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.45',
+      version: '1.0.46',
       buildVersion: '1.0.38',
       releaseDate: '2026-07-16'
     }
@@ -237,7 +237,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.45',
+    appVersion: '1.0.46',
     buildVersion: '1.0.38',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
@@ -2392,8 +2392,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.45',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.45',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.46',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.46',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -7256,7 +7256,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
     </label>
     <label class="field">
       <span>Service Name</span>
-      <input name="service" value="${escapeHtml(user?.service === 'Any' ? '' : user?.service || '')}" autocomplete="off" placeholder="Any">
+      <input name="service" value="${escapeHtml(user?.serviceName || '')}" autocomplete="off" placeholder="Any">
     </label>
   `;
 
@@ -9285,6 +9285,7 @@ async function renderMonitoringSite() {
                   <td>
                     <div class="row-actions">
                       ${checkAllowed ? `<button class="ghost-button compact" type="button" data-check-target="${escapeHtml(target.id)}">Cek</button>` : ''}
+                      ${writeAllowed && target.radius?.enabled ? `<button class="ghost-button compact" type="button" data-connect-radius="${escapeHtml(target.id)}">Hubungkan RADIUS</button>` : ''}
                       ${writeAllowed ? `<button class="ghost-button compact" type="button" data-edit-target="${escapeHtml(target.id)}">Edit</button>` : ''}
                       ${writeAllowed ? `<button class="danger-button compact" type="button" data-delete-target="${escapeHtml(target.id)}">Hapus</button>` : ''}
                     </div>
@@ -9321,6 +9322,12 @@ async function renderMonitoringSite() {
     });
   }
   if (writeAllowed) {
+    app.querySelectorAll('[data-connect-radius]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const target = targets.find((entry) => entry.id === button.dataset.connectRadius);
+        if (target) openRadiusConnectModal(target);
+      });
+    });
     app.querySelectorAll('[data-edit-target]').forEach((button) => {
       button.addEventListener('click', () => {
         const target = targets.find((entry) => entry.id === button.dataset.editTarget);
@@ -9407,8 +9414,8 @@ function monitoringFormBody(target = {}) {
       </label>
       <label class="field">
         <span>Secret Radius</span>
-        <input name="radiusSecret" type="text" autocomplete="off" placeholder="${radius.credentialStored ? 'Secret tersimpan, isi jika ingin ganti' : 'Shared secret MikroTik'}">
-        ${radius.credentialStored ? '<span class="muted">Kosongkan untuk tetap memakai secret tersimpan.</span>' : ''}
+        <input name="radiusSecret" type="text" autocomplete="off" value="${escapeHtml(radius.secret || '')}" placeholder="Shared secret MikroTik">
+        ${radius.credentialStored ? '<span class="muted">Secret ditampilkan agar dapat dicocokkan dengan konfigurasi MikroTik.</span>' : ''}
       </label>
       <div class="field full form-subhead">
         <strong>Layanan site</strong>
@@ -9457,6 +9464,98 @@ function openMonitoringModal(target = null) {
     setToast(target ? 'Target diperbarui' : 'Target ditambahkan');
     renderMonitoringSite();
   });
+}
+
+function buildRadiusRouterOsScript(options = {}) {
+  const radiusServer = String(options.radiusServer || 'ISI_IP_SERVER_BILLING').trim();
+  const nasAddress = String(options.nasAddress || 'ISI_IP_NAS').trim();
+  const radiusSecret = String(options.radiusSecret || 'ISI_SECRET_RADIUS').trim();
+  const services = Array.isArray(options.services) && options.services.length
+    ? options.services.join(',')
+    : 'ppp,hotspot,dhcp';
+  const includesPpp = services.includes('ppp');
+  const includesHotspot = services.includes('hotspot');
+  const includesDhcp = services.includes('dhcp');
+  return [
+    '# Konfigurasi RADIUS MikroTik - Generated by Billing',
+    '# Aman dijalankan ulang: entry server yang sama diperbarui, bukan diduplikasi.',
+    `:local radiusServer ${routerOsQuoted(radiusServer)}`,
+    `:local nasAddress ${routerOsQuoted(nasAddress)}`,
+    `:local radiusSecret ${routerOsQuoted(radiusSecret)}`,
+    ':local radiusId [/radius find where address=$radiusServer]',
+    ':if ([:len $radiusId] = 0) do={',
+    `  /radius add address=$radiusServer secret=$radiusSecret service=${services} authentication-port=1812 accounting-port=1813 timeout=3s src-address=$nasAddress disabled=no`,
+    '} else={',
+    `  /radius set $radiusId secret=$radiusSecret service=${services} authentication-port=1812 accounting-port=1813 timeout=3s src-address=$nasAddress disabled=no`,
+    '}',
+    '/radius incoming set accept=yes port=3799',
+    includesPpp ? '/ppp aaa set use-radius=yes accounting=yes interim-update=5m' : '',
+    includesHotspot ? '/ip hotspot profile set [find] use-radius=yes radius-accounting=yes radius-interim-update=received' : '',
+    includesDhcp ? '/ip dhcp-server set [find] use-radius=yes accounting=yes' : '',
+    ':put "RADIUS Billing sudah diterapkan. Jalankan /radius monitor 0 once untuk memeriksa counter."'
+  ].filter(Boolean).join('\n');
+}
+
+function openRadiusConnectModal(target = {}) {
+  const radius = target.radius || {};
+  const defaults = {
+    radiusServer: radius.serverAddress || defaultBillingServerIp(),
+    nasAddress: target.host || radius.address || '',
+    radiusSecret: radius.secret || '',
+    services: ['ppp', 'hotspot', 'dhcp']
+  };
+  openModal('Hubungkan RADIUS MikroTik', `
+    <div class="stack routeros-guide">
+      <div class="notice">
+        <strong>${escapeHtml(target.name || 'Site')}</strong>
+        <span>Periksa nilai otomatis berikut, salin script, lalu paste satu kali di Terminal MikroTik.</span>
+      </div>
+      ${!defaults.radiusSecret ? '<div class="notice warning">Secret Radius belum diisi. Edit Site dan simpan secret terlebih dahulu.</div>' : ''}
+      <div class="form-grid routeros-guide-grid">
+        <label class="field">
+          <span>IP Server Billing/RADIUS</span>
+          <input name="radiusServer" value="${escapeHtml(defaults.radiusServer)}" placeholder="Contoh 172.16.10.253">
+        </label>
+        <label class="field">
+          <span>IP NAS / Source MikroTik</span>
+          <input name="nasAddress" value="${escapeHtml(defaults.nasAddress)}" placeholder="Contoh 172.16.10.1">
+        </label>
+        <label class="field full">
+          <span>Secret Radius</span>
+          <input name="radiusSecret" type="text" autocomplete="off" value="${escapeHtml(defaults.radiusSecret)}">
+        </label>
+        <div class="field full radius-service-choice">
+          <span>Layanan Radius</span>
+          <div class="row-actions">
+            <label class="checkbox-field"><input type="checkbox" name="radiusService" value="ppp" checked><span>PPP</span></label>
+            <label class="checkbox-field"><input type="checkbox" name="radiusService" value="hotspot" checked><span>Hotspot</span></label>
+            <label class="checkbox-field"><input type="checkbox" name="radiusService" value="dhcp" checked><span>DHCP</span></label>
+          </div>
+        </div>
+      </div>
+      <div class="routeros-script-head">
+        <strong>Script RouterOS</strong>
+        <button class="button compact" type="button" id="copyRadiusRouterOsScript">Salin Script</button>
+      </div>
+      <textarea class="routeros-script-output" id="radiusRouterOsScript" readonly spellcheck="false">${escapeHtml(buildRadiusRouterOsScript(defaults))}</textarea>
+      <p class="muted">Source MikroTik harus sama dengan IP NAS pada Site. Perbedaan source adalah penyebab umum status radius timeout.</p>
+    </div>
+  `, async () => {});
+
+  const frame = modal.querySelector('.modal-frame');
+  const output = modalBody.querySelector('#radiusRouterOsScript');
+  const updateScript = () => {
+    const services = [...modalBody.querySelectorAll('input[name="radiusService"]:checked')].map((input) => input.value);
+    const values = Object.fromEntries([...modalBody.querySelectorAll('.routeros-guide-grid input:not([name="radiusService"])')]
+      .map((input) => [input.name, input.value]));
+    output.value = buildRadiusRouterOsScript({ ...values, services });
+  };
+  modalBody.querySelectorAll('.routeros-guide-grid input').forEach((input) => input.addEventListener('input', updateScript));
+  modalBody.querySelector('#copyRadiusRouterOsScript')?.addEventListener('click', async () => {
+    await copyTextToClipboard(output?.value || '');
+    setToast('Script koneksi RADIUS disalin');
+  });
+  if (frame) frame.onsubmit = (event) => event.preventDefault();
 }
 
 function genieStatusBadge(row = {}) {

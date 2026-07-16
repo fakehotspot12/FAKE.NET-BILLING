@@ -388,6 +388,7 @@ function addRadiusUser(data, input, actor) {
     password: radiusUserPassword(username, input.password, serviceType),
     serviceType,
     accessType: text(input.accessType || input.type || (serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE')),
+    serviceName: text(input.serviceName || input.service),
     profileId: text(input.profileId),
     nasId: text(input.nasId),
     customerId: text(input.customerId),
@@ -441,6 +442,9 @@ function updateRadiusUser(data, id, input, actor) {
   }
   item.serviceType = serviceType;
   item.accessType = text(input.accessType || input.type || item.accessType || (item.serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE'));
+  if (Object.prototype.hasOwnProperty.call(input, 'serviceName') || Object.prototype.hasOwnProperty.call(input, 'service')) {
+    item.serviceName = text(input.serviceName || input.service);
+  }
   item.profileId = text(input.profileId);
   item.nasId = text(input.nasId);
   if (Object.prototype.hasOwnProperty.call(input, 'customerId')) {

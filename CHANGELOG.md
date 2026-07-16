@@ -7,6 +7,25 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.46] - 2026-07-16
+
+### Added
+
+- Monitoring > Site kini menyediakan aksi `Hubungkan RADIUS` yang menghasilkan script RouterOS idempotent dengan IP server, IP NAS, secret, accounting, dan CoA terisi otomatis.
+- Template import PPP-DHCP memiliki opsi `count_as_psb`; nilai default `no` memperlakukan hasil import sebagai pelanggan existing, sedangkan `yes` tetap dapat dipakai untuk PSB aktual.
+
+### Changed
+
+- Header baris pertama template dan export XLSX diberi warna, teks putih, border, filter, serta freeze row agar mudah dibedakan dari data.
+- Member ID hasil import dibuat otomatis 9 digit, tanggal contoh memakai `DD/MM/YYYY`, dan Service Name ikut dipetakan.
+- Profile PPP-DHCP dan Hotspot diurutkan ascending A-Z tanpa mengubah urutan tabel user.
+- Secret Radius ditampilkan pada form edit Site hanya untuk role yang memiliki izin mengubah Site.
+
+### Fixed
+
+- Statistik PSB tidak lagi memasukkan pelanggan existing yang dibuat melalui import XLSX secara default.
+- Service Name PPP-DHCP sekarang tersimpan dan dapat dibersihkan kembali saat user diedit.
+
 ## [1.0.45] - 2026-07-16
 
 ### Fixed

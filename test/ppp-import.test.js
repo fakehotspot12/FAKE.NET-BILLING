@@ -99,4 +99,59 @@ test('imports Radboox PPP-DHCP XLSX header and active date', async () => {
   assert.equal(data.customers[0].billingPeriod, 'fixed');
   assert.equal(data.customers[0].firstInvoiceStatus, 'paid');
   assert.equal(data.customers[0].ppn, '11');
+  assert.match(data.customers[0].code, /^\d{9}$/);
+  assert.notEqual(data.customers[0].code, 'bejo@kampung.net');
+  assert.equal(data.customers[0].countsAsPsb, false);
+  assert.equal(data.customers[0].recordOrigin, 'import');
+  assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', '2026-06').psb, 0);
+});
+
+test('PPP-DHCP import can explicitly count a current installation as PSB', () => {
+  const data = createDefaultStore();
+  data.radiusProfiles.push({ id: 'profile-10m', name: '10M', serviceType: 'pppoe', price: 150000, active: true });
+  data.radiusNas.push({ id: 'nas-site-a', name: 'SITE-A', address: '10.10.10.1', active: true });
+
+  const summary = serverInternals.importPppUsers(data, [{
+    username: 'psb-import@test',
+    password: 'secret',
+    type: 'PPPoE',
+    profile: '10M',
+    nas: 'SITE-A',
+    service_name: 'internet',
+    add_to_member: 'yes',
+    member_name: 'PSB Import',
+    whatsapp: '080000000003',
+    active_date: '15/07/2099',
+    count_as_psb: 'yes',
+    invoice_status: 'paid'
+  }], { name: 'Admin', username: 'admin' });
+
+  assert.equal(summary.errors.length, 0);
+  assert.equal(data.radiusUsers[0].serviceName, 'internet');
+  assert.equal(data.customers[0].countsAsPsb, true);
+  assert.equal(data.customers[0].recordOrigin, 'import');
+  assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', '2099-07').psb, 1);
+});
+
+test('PPP-DHCP XLSX template uses styled headers and local date format', async () => {
+  const buffer = await serverInternals.pppImportTemplateBuffer();
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const worksheet = workbook.getWorksheet('ppp_dhcp_users');
+  const headers = worksheet.getRow(1).values.slice(1);
+  const activeDateColumn = headers.indexOf('active_date') + 1;
+  const todayParts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Makassar',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  }).format(new Date());
+
+  assert.equal(worksheet.getCell('A1').fill.pattern, 'solid');
+  assert.equal(worksheet.getCell('A1').fill.fgColor.argb, 'FF1769AA');
+  assert.equal(worksheet.getCell('A1').font.color.argb, 'FFFFFFFF');
+  assert.equal(worksheet.getCell('A1').font.bold, true);
+  assert.equal(worksheet.getCell(2, activeDateColumn).value, todayParts);
+  assert.ok(headers.includes('service_name'));
+  assert.ok(headers.includes('count_as_psb'));
 });

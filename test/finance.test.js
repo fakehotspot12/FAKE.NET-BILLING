@@ -569,6 +569,72 @@ test('dashboard PPP-DHCP PSB counts linked members for selected period only', ()
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', addMonthsToPeriod(period, 1)).psb, 0);
 });
 
+test('dashboard PPP-DHCP PSB ignores imported historical members', () => {
+  const data = createDefaultStore();
+  const period = currentPeriod();
+  data.customers.push({
+    id: 'cus-import-existing',
+    username: 'existing@ppp.test',
+    name: 'Pelanggan Existing',
+    activeDate: `${period}-05`,
+    countsAsPsb: false,
+    recordOrigin: 'import',
+    createdAt: `${period}-05T09:00:00.000Z`,
+    status: 'active'
+  });
+  data.radiusUsers.push({
+    id: 'rad-import-existing',
+    serviceType: 'pppoe',
+    username: 'existing@ppp.test',
+    customerId: 'cus-import-existing',
+    status: 'active',
+    createdAt: `${period}-05T09:00:00.000Z`
+  });
+
+  assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', period).psb, 0);
+});
+
+test('Radius profiles are sorted ascending without changing user order', () => {
+  const data = createDefaultStore();
+  data.radiusProfiles.push(
+    { id: 'profile-z', name: 'Zeta 20', serviceType: 'pppoe' },
+    { id: 'profile-a10', name: 'Alpha 10', serviceType: 'pppoe' },
+    { id: 'profile-a2', name: 'Alpha 2', serviceType: 'pppoe' },
+    { id: 'profile-hotspot', name: 'Voucher A', serviceType: 'hotspot' }
+  );
+  data.radiusUsers.push(
+    { id: 'user-z', username: 'z-user', serviceType: 'pppoe' },
+    { id: 'user-a', username: 'a-user', serviceType: 'pppoe' }
+  );
+
+  assert.deepEqual(
+    serverInternals.radiusProfileRowsLocal(data, 'pppoe').map((profile) => profile.name),
+    ['Alpha 2', 'Alpha 10', 'Zeta 20']
+  );
+  assert.deepEqual(data.radiusUsers.map((user) => user.username), ['z-user', 'a-user']);
+});
+
+test('Monitoring Site exposes Radius secret only to users allowed to edit Site', () => {
+  const target = {
+    id: 'site-secret-test',
+    name: 'SITE TEST',
+    host: '192.0.2.1',
+    radius: {
+      enabled: true,
+      secret: 'radius-secret-test',
+      port: 3799,
+      type: 'mikrotik'
+    }
+  };
+
+  const readonly = serverInternals.publicMonitoringTarget(target);
+  const editable = serverInternals.publicMonitoringTarget(target, {}, { includeRadiusSecret: true });
+  assert.equal(readonly.radius.secret, '');
+  assert.equal(readonly.radius.serverAddress, '');
+  assert.equal(editable.radius.secret, 'radius-secret-test');
+  assert.equal(editable.radius.credentialStored, true);
+});
+
 test('PPP member price follows selected profile instead of stale form payload', () => {
   const data = createDefaultStore();
   data.radiusProfiles.push({
