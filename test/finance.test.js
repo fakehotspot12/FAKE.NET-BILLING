@@ -466,6 +466,18 @@ test('changelog summary returns three newest release sections', () => {
   assert.ok(summary.indexOf('[1.0.4]') < summary.indexOf('[1.0.3]'));
 });
 
+test('changelog summary defaults to ten newest release sections', () => {
+  const releases = Array.from({ length: 11 }, (_, index) => {
+    const version = 11 - index;
+    return `## [1.0.${version}] - 2026-07-16\n- Perubahan ${version}`;
+  }).join('\n\n');
+  const summary = serverInternals.changelogSummaryFromText(`# Changelog\n\n${releases}`);
+
+  assert.match(summary, /\[1\.0\.11\]/);
+  assert.match(summary, /\[1\.0\.2\]/);
+  assert.doesNotMatch(summary, /\[1\.0\.1\]/);
+});
+
 test('commit log summary formats same-version update fallback', () => {
   const summary = serverInternals.commitLogSummaryFromText(`abc1234 Fix updater status
 def5678 Add billing docs

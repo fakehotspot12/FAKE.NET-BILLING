@@ -152,11 +152,11 @@ let updateStatusCache = {
   value: null
 };
 
-function changelogSummaryFromText(raw = '', limit = 3) {
+function changelogSummaryFromText(raw = '', limit = 10) {
   const source = String(raw || '').trim();
   if (!source) return '';
   const sectionMatches = [...source.matchAll(/^## \[[^\]]+\][^\n]*/gm)];
-  const sectionLimit = Math.max(1, Math.min(10, Number(limit) || 3));
+  const sectionLimit = Math.max(1, Math.min(10, Number(limit) || 10));
   if (!sectionMatches.length) return source;
   return sectionMatches.slice(0, sectionLimit).map((match, index) => {
     const start = match.index || 0;
@@ -166,12 +166,12 @@ function changelogSummaryFromText(raw = '', limit = 3) {
   }).join('\n\n');
 }
 
-function commitLogSummaryFromText(raw = '', limit = 8) {
+function commitLogSummaryFromText(raw = '', limit = 10) {
   const lines = String(raw || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .slice(0, Math.max(1, Math.min(20, Number(limit) || 8)));
+    .slice(0, Math.max(1, Math.min(20, Number(limit) || 10)));
   if (!lines.length) return '';
   return [
     '## Revisi remote belum masuk changelog versi',
@@ -196,7 +196,7 @@ function updateAvailableFallbackSummary(update = {}) {
   ].join('\n');
 }
 
-function appChangelogSummary(limit = 3) {
+function appChangelogSummary(limit = 10) {
   try {
     return changelogSummaryFromText(fsSync.readFileSync(CHANGELOG_PATH, 'utf8'), limit);
   } catch {
@@ -282,16 +282,16 @@ async function appUpdateStatus(options = {}) {
         status.remoteVersion = '';
       }
       const remoteChangelogRaw = await gitOutput(['show', `origin/${branch}:CHANGELOG.md`], { timeout: 3000 }).catch(() => '');
-      status.remoteChangelog = changelogSummaryFromText(remoteChangelogRaw, 3);
+      status.remoteChangelog = changelogSummaryFromText(remoteChangelogRaw, 10);
       const remoteCommitLogRaw = await gitOutput([
         'log',
         '--no-merges',
         '--pretty=format:%h %s',
-        '--max-count=8',
+        '--max-count=10',
         `${status.currentCommit}..origin/${branch}`
       ], { timeout: 3000 }).catch(() => '');
-      status.remoteCommitLog = commitLogSummaryFromText(remoteCommitLogRaw, 8);
-      const localChangelog = appChangelogSummary(3);
+      status.remoteCommitLog = commitLogSummaryFromText(remoteCommitLogRaw, 10);
+      const localChangelog = appChangelogSummary(10);
       const sameVersionUpdate = status.remoteVersion && status.remoteVersion === APP_VERSION;
       const changelogUnchanged = status.remoteChangelog && status.remoteChangelog === localChangelog;
       if (status.remoteCommitLog && (!status.remoteChangelog || sameVersionUpdate || changelogUnchanged)) {
@@ -6487,7 +6487,7 @@ function dateDisplayText(value = '') {
   if (!parts || parts.month < 1 || parts.month > 12 || parts.day < 1 || parts.day > 31) {
     return readablePeriodText(text);
   }
-  return `${String(parts.day).padStart(2, '0')}-${String(parts.month).padStart(2, '0')}-${parts.year}`;
+  return `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}/${parts.year}`;
 }
 
 function dateTimeDisplayText(value = '') {
@@ -6505,7 +6505,7 @@ function dateTimeDisplayText(value = '') {
     acc[part.type] = part.value;
     return acc;
   }, {});
-  return `${parts.day}-${parts.month}-${parts.year} ${parts.hour}:${parts.minute}`;
+  return `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
 }
 
 function periodDisplayText(value = '') {
@@ -12893,7 +12893,7 @@ async function handleApi(req, res, url) {
       updaterInstalled: fsSync.existsSync(APP_UPDATE_COMMAND),
       update,
       log,
-      changelog: update.remoteChangelog || update.remoteCommitLog || updateAvailableFallbackSummary(update) || appChangelogSummary(3)
+      changelog: update.remoteChangelog || update.remoteCommitLog || updateAvailableFallbackSummary(update) || appChangelogSummary(10)
     });
     return;
   }

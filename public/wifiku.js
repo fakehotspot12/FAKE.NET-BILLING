@@ -103,6 +103,20 @@ function periodText(value = '') {
   return `${MONTHS[month - 1] || String(month).padStart(2, '0')} ${year}`;
 }
 
+function dateText(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  const local = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  const parts = iso
+    ? { year: Number(iso[1]), month: Number(iso[2]), day: Number(iso[3]) }
+    : (local ? { year: Number(local[3]), month: Number(local[2]), day: Number(local[1]) } : null);
+  if (!parts || parts.month < 1 || parts.month > 12 || parts.day < 1 || parts.day > 31) {
+    return text;
+  }
+  return `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}/${parts.year}`;
+}
+
 function wifiBandKey(value = '') {
   const text = String(value || '').toLowerCase().replace(/\s+/g, '');
   return text.includes('5') ? '5g' : '2.4g';
@@ -148,7 +162,7 @@ function renderBillingSummary(billing = {}) {
   byId('billingBadge').className = `billing-badge ${billingBadgeClass(status)}`;
   byId('billingInvoiceNo').textContent = billing.invoiceNo || billing.reference || '-';
   byId('billingPeriod').textContent = billing.period || periodText(billing.periodRaw || todayPeriod());
-  byId('billingDueDate').textContent = billing.dueDate || '-';
+  byId('billingDueDate').textContent = dateText(billing.dueDate || billing.dueDateRaw || '');
   byId('billingAmount').textContent = billing.gatewayAmountText || billing.amountText || '-';
   byId('billingMessage').textContent = billing.message || (exists
     ? 'Ringkasan tagihan bulan ini tersedia.'

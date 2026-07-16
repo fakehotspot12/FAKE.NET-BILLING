@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.44] - 2026-07-16
+
+### Changed
+
+- Halaman login dan aktivasi sekarang menampilkan copyright serta versi aplikasi.
+- Format tanggal tampilan diseragamkan menjadi `DD/MM/YYYY` di aplikasi utama dan subweb.
+- Changelog pada Pengaturan > Update dipindahkan ke popup scroll yang memuat 10 rilis terbaru.
+
 ## [1.0.43] - 2026-07-16
 
 ### Changed

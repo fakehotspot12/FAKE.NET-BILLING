@@ -225,7 +225,7 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.43',
+      version: '1.0.44',
       buildVersion: '1.0.38',
       releaseDate: '2026-07-16'
     }
@@ -237,7 +237,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.43',
+    appVersion: '1.0.44',
     buildVersion: '1.0.38',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
@@ -337,7 +337,7 @@ function readableDateParts(value) {
 
 function readableDateFromParts(parts) {
   if (!parts || parts.month < 1 || parts.month > 12 || parts.day < 1 || parts.day > 31) return '';
-  return `${String(parts.day).padStart(2, '0')}-${String(parts.month).padStart(2, '0')}-${parts.year}`;
+  return `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}/${parts.year}`;
 }
 
 function percentText(value) {
@@ -503,7 +503,7 @@ function dateTimeText(value) {
     acc[part.type] = part.value;
     return acc;
   }, {});
-  return `${parts.day}-${parts.month}-${parts.year} ${parts.hour}:${parts.minute}`;
+  return `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
 }
 
 function timeText(value) {
@@ -2392,13 +2392,22 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.43',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.43',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.44',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.44',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
       : settingVerification !== false
   };
+}
+
+function appReleaseFootnoteMarkup(branding = currentBranding()) {
+  return `
+    <div class="login-release-footnote">
+      <strong>Copyright ${escapeHtml(branding.copyrightYear)} - ${escapeHtml(branding.copyrightName)}</strong>
+      <span>Versi ${escapeHtml(branding.appVersion)} · ${escapeHtml(dateText(branding.releaseDate))}</span>
+    </div>
+  `;
 }
 
 function brandingPrintLabel(documentLabel = '', branding = currentBranding()) {
@@ -2529,7 +2538,7 @@ function renderLogin() {
               <input name="verificationCode" autocomplete="off" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Masukkan kode" required>
             </label>` : ''}
             <button class="button" type="submit">Masuk</button>
-            <p class="login-note">Akses aplikasi dibatasi sesuai role user.</p>
+            ${appReleaseFootnoteMarkup(branding)}
           </form>
           <a class="login-info-link" href="/public-info.html" target="_blank" rel="noopener">
             <span>Informasi Layanan & Pembelian</span>
@@ -2624,6 +2633,7 @@ function renderActivation(licenseStatus = {}) {
           <button class="button" type="submit">Aktivasi Aplikasi</button>
         </form>
         <p class="login-note">Untuk mendapatkan license key, kirim HWID ke CS Whatsapp 083878122381.</p>
+        ${appReleaseFootnoteMarkup(branding)}
       </div>
     </section>
   `;
@@ -3818,11 +3828,7 @@ async function renderReportsVoucherMonthly() {
 function legacySourceDateTimeText(value) {
   const date = legacySourceDate(value);
   if (!date) return '';
-  return date.toLocaleString('id-ID', {
-    timeZone: APP_TIME_ZONE,
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  });
+  return dateTimeText(date);
 }
 
 function reportTransactionDateText(transaction = {}) {
@@ -5117,7 +5123,7 @@ function fallbackDateParts(value) {
 
 function formatDateDisplayFromParts(parts) {
   if (!parts) return '';
-  return `${String(parts.day).padStart(2, '0')}-${String(parts.month).padStart(2, '0')}-${parts.year}`;
+  return `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}/${parts.year}`;
 }
 
 function formatDateIsoFromParts(parts) {
@@ -13730,6 +13736,55 @@ function openPublicInfoSettingsModal(publicInfo = {}) {
   });
 }
 
+function changelogPreviewMarkup(raw = '') {
+  const source = String(raw || '').trim();
+  if (!source) {
+    return '<div class="empty">Belum ada changelog rilis.</div>';
+  }
+  const sections = source
+    .split(/(?=^##\s+)/m)
+    .map((section) => section.trim())
+    .filter((section) => section.startsWith('## '))
+    .slice(0, 10);
+  if (!sections.length) {
+    return `<div class="changelog-release"><p>${escapeHtml(source)}</p></div>`;
+  }
+  return sections.map((section) => {
+    const lines = section.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const heading = lines.shift() || 'Perubahan';
+    const versionHeading = heading.match(/^##\s+\[([^\]]+)\]\s*-\s*(\d{4}-\d{1,2}-\d{1,2})/);
+    const headingText = versionHeading
+      ? `v${versionHeading[1]} · ${dateText(versionHeading[2])}`
+      : heading.replace(/^##\s+/, '');
+    const body = lines.map((line) => {
+      if (line.startsWith('### ')) {
+        return `<h4>${escapeHtml(line.slice(4))}</h4>`;
+      }
+      if (line.startsWith('- ')) {
+        return `<div class="changelog-item"><i class="fa-solid fa-check" aria-hidden="true"></i><span>${escapeHtml(line.slice(2))}</span></div>`;
+      }
+      return `<p>${escapeHtml(line.replace(/^#+\s*/, ''))}</p>`;
+    }).join('');
+    return `
+      <article class="changelog-release">
+        <h3>${escapeHtml(headingText)}</h3>
+        ${body}
+      </article>
+    `;
+  }).join('');
+}
+
+function openAppChangelogModal(changelogText = '') {
+  openModal('Changelog - 10 Perubahan Terakhir', `
+    <div class="changelog-preview">
+      ${changelogPreviewMarkup(changelogText)}
+    </div>
+    <div class="modal-actions">
+      <button class="ghost-button" type="button" data-close-modal>Tutup</button>
+    </div>
+  `, async () => {});
+}
+
 async function renderSettings(options = {}) {
   app.innerHTML = '<div class="empty">Memuat pengaturan...</div>';
   const { settings } = await api('/api/settings');
@@ -13886,13 +13941,10 @@ async function renderSettings(options = {}) {
               ${updateMeta ? `<span>${escapeHtml(updateMeta)}</span>` : ''}
             </div>
           </div>
-          <label class="field full">
-            <span>Changelog 3 perubahan terakhir</span>
-            <textarea rows="8" readonly>${escapeHtml(changelogText)}</textarea>
-          </label>
           <div class="modal-actions field full">
             <button class="button" id="runAppUpdateButton" type="button" ${updateStatus.updaterInstalled ? '' : 'disabled'}>Update Aplikasi</button>
             <button class="ghost-button" id="refreshAppUpdateStatus" type="button">Check for Update</button>
+            <button class="ghost-button" id="openAppChangelogButton" type="button">Lihat Changelog</button>
           </div>
         </div>
       </section>
@@ -14000,6 +14052,10 @@ async function renderSettings(options = {}) {
 
   document.getElementById('refreshAppUpdateStatus')?.addEventListener('click', () => {
     renderSettings({ refreshUpdateStatus: true });
+  });
+
+  document.getElementById('openAppChangelogButton')?.addEventListener('click', () => {
+    openAppChangelogModal(changelogText);
   });
 
   document.getElementById('runAppUpdateButton')?.addEventListener('click', async (event) => {

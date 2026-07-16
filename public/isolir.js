@@ -48,7 +48,7 @@
     if (!text) return '-';
     const match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
     if (!match) return periodText(text);
-    return `${String(Number(match[3])).padStart(2, '0')}-${String(Number(match[2])).padStart(2, '0')}-${match[1]}`;
+    return `${String(Number(match[3])).padStart(2, '0')}/${String(Number(match[2])).padStart(2, '0')}/${match[1]}`;
   }
 
   function applyBranding(payload = {}) {
