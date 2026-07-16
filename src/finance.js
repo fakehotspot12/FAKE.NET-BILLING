@@ -1007,6 +1007,9 @@ function markInvoicePaid(data, invoiceId, payload = {}) {
   if (!invoice) {
     return null;
   }
+  if (invoiceRuntimeStatus(invoice) === 'cancelled') {
+    throw new Error('Invoice yang sudah dibatalkan tidak bisa dibayar');
+  }
 
   invoice.status = 'paid';
   invoice.paidAt = payload.paidAt || todayIso();
@@ -1057,6 +1060,41 @@ function markInvoiceUnpaid(data, invoiceId) {
   }
   addActivity(data, 'invoice', `Tagihan ${invoice.customerName || invoice.username} dikembalikan ke belum bayar`, {
     invoiceId: invoice.id
+  });
+  return invoice;
+}
+
+function cancelInvoice(data, invoiceId, payload = {}) {
+  const invoice = data.invoices.find((item) => item.id === invoiceId);
+  if (!invoice) {
+    return null;
+  }
+
+  const runtimeStatus = invoiceRuntimeStatus(invoice);
+  if (runtimeStatus === 'paid') {
+    throw new Error('Invoice yang sudah lunas tidak bisa dibatalkan');
+  }
+  if (runtimeStatus === 'cancelled') {
+    return invoice;
+  }
+
+  const now = new Date().toISOString();
+  const actorName = cleanText(payload.createdByName || payload.actorName || payload.admin || 'Admin');
+  const actorUsername = cleanText(payload.createdByUsername || payload.actorUsername);
+  const reason = cleanText(payload.reason || payload.notes || 'Invoice dibatalkan');
+  invoice.status = 'cancelled';
+  invoice.cancelledAt = now;
+  invoice.cancelReason = reason;
+  invoice.cancelledByName = actorName;
+  invoice.cancelledByUsername = actorUsername;
+  invoice.updatedAt = now;
+  addActivity(data, 'invoice', `Invoice ${invoice.invoiceNo || invoice.externalId || invoice.id} dibatalkan oleh ${actorName || 'Admin'}`, {
+    action: 'invoice-cancel',
+    invoiceId: invoice.id,
+    invoiceNo: invoice.invoiceNo || invoice.externalId || '',
+    customerId: invoice.customerId || '',
+    customerName: invoice.customerName || invoice.username || '',
+    reason
   });
   return invoice;
 }
@@ -1311,6 +1349,7 @@ module.exports = {
   dueDateForPeriod,
   generateInvoices,
   billingDueDayForCustomer,
+  cancelInvoice,
   nextBillingInvoiceNumber,
   invoiceRuntimeStatus,
   invoiceCoveredPeriods,

@@ -7,6 +7,18 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.39] - 2026-07-16
+
+### Added
+
+- Monitoring > Tagihan Pelanggan sekarang mendukung pembatalan invoice melalui checklist batch untuk role berwenang.
+
+### Fixed
+
+- Invoice batal tidak lagi mengunci periode, sehingga invoice salah bisa dibatalkan lalu dibuat ulang mengikuti data paket/harga member terbaru.
+- Invoice yang sudah lunas ditolak saat dicoba dibatalkan agar histori pembayaran tidak rusak.
+- Checkout dan callback payment gateway menolak invoice yang sudah dibatalkan.
+
 ## [1.0.38] - 2026-07-16
 
 ### Added

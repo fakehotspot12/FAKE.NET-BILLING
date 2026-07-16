@@ -23,6 +23,7 @@ const {
   addManualCustomer,
   billingDueDayForCustomer,
   billingAmountBreakdownForPeriods,
+  cancelInvoice,
   currentPeriod,
   customerBillableInPeriod,
   dueDateForPeriod,
@@ -830,6 +831,10 @@ function actorPayload(user = {}) {
     updatedByUsername: username,
     updatedByRole: role
   };
+}
+
+function invoiceCancelAllowedUser(user = {}) {
+  return ['admin', 'owner', 'finance'].includes(String(user.role || '').toLowerCase());
 }
 
 const RADBOOX_STALE_MS = 10 * 60 * 1000;
@@ -8041,6 +8046,9 @@ function upsertPaidBillingPaymentGatewayTransaction(data = {}, invoice = {}, pay
 function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}, actor = {}) {
   const invoice = findBillingInvoiceByReference(data, value);
   if (!invoice) throw new Error('Invoice bulanan tidak ditemukan');
+  if (invoiceRuntimeStatus(invoice) === 'cancelled') {
+    throw new Error('Invoice bulanan sudah dibatalkan');
+  }
   const status = normalizePaymentStatus(payment.status || 'paid');
   if (status !== 'paid') {
     return { invoice, status, transaction: null, reused: false };
@@ -8685,6 +8693,14 @@ async function handleApi(req, res, url) {
     const publicInvoice = publicPaymentGatewayInvoicePayload(data, invoice);
     if (publicInvoice.status === 'paid') {
       sendJson(res, 200, { ok: true, paid: true, invoice: publicInvoice });
+      return;
+    }
+    if (!['pending', 'overdue', 'unpaid'].includes(publicInvoice.status) || publicInvoice.canPay === false) {
+      sendJson(res, 400, {
+        ok: false,
+        error: publicInvoice.status === 'cancelled' ? 'Invoice sudah dibatalkan' : 'Invoice belum bisa dibayar',
+        invoice: publicInvoice
+      });
       return;
     }
     try {
@@ -11417,8 +11433,12 @@ async function handleApi(req, res, url) {
       badRequest(res, 'Nomor invoice tidak tersedia');
       return;
     }
-    if (!['pay', 'rollback'].includes(action)) {
+    if (!['pay', 'rollback', 'cancel'].includes(action)) {
       badRequest(res, 'Aksi invoice tidak valid');
+      return;
+    }
+    if (action === 'cancel' && !invoiceCancelAllowedUser(authContext.user)) {
+      forbidden(res);
       return;
     }
 
@@ -11456,6 +11476,12 @@ async function handleApi(req, res, url) {
           }
           return paid;
         }
+        if (action === 'cancel') {
+          return cancelInvoice(data, invoice.id, {
+            reason: payload.reason || 'Invoice dibatalkan dari Monitoring Tagihan Pelanggan',
+            ...actorPayload(authContext.user)
+          });
+        }
         const rollback = markInvoiceUnpaid(data, invoice.id);
         if (rollback) queueInvoiceWaMessage(data, rollback, 'paymentCancel', authContext.user);
         return rollback;
@@ -11471,7 +11497,17 @@ async function handleApi(req, res, url) {
         source: 'standalone',
         invoice: result.result,
         invoiceNo,
-        message: action === 'pay' ? 'Invoice ditandai lunas' : 'Invoice dikembalikan ke belum bayar'
+        message: action === 'pay'
+          ? 'Invoice ditandai lunas'
+          : (action === 'cancel' ? 'Invoice dibatalkan' : 'Invoice dikembalikan ke belum bayar')
+      });
+      return;
+    }
+
+    if (action === 'cancel') {
+      sendJson(res, 501, {
+        ok: false,
+        error: 'Pembatalan invoice dari aplikasi hanya tersedia pada billing standalone'
       });
       return;
     }

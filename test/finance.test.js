@@ -8,6 +8,7 @@ const {
   addExpense,
   addExternalIncome,
   addMonthsToPeriod,
+  cancelInvoice,
   currentPeriod,
   dueDateForPeriod,
   generateInvoices,
@@ -361,6 +362,55 @@ test('local manual invoice stores PPN and discount fields', () => {
   assert.equal(invoice.discountAmount, 30000);
   assert.equal(invoice.ppnAmount, 29700);
   assert.equal(invoice.amount, 299700);
+});
+
+test('cancelled local manual invoice releases period for recreation with updated price', () => {
+  const data = createDefaultStore();
+  const period = currentPeriod();
+  const customer = {
+    id: 'cus-manual-cancel-recreate',
+    username: 'cancel-recreate@kampung.net',
+    name: 'Cancel Recreate',
+    packageName: 'Paket 10 Mbps',
+    status: 'active',
+    price: 150000,
+    activeDate: `${period}-10`,
+    firstInvoiceStatus: 'unpaid'
+  };
+  data.customers.push(customer);
+
+  const { invoice: oldInvoice } = serverInternals.createLocalManualInvoice(data, customer, 1, { name: 'Admin', username: 'admin' }, { queueWa: false });
+  cancelInvoice(data, oldInvoice.id, { actorName: 'Admin', actorUsername: 'admin' });
+  customer.price = 180000;
+  customer.amount = 180000;
+  customer.packageName = 'Paket 15 Mbps';
+  const { invoice: newInvoice } = serverInternals.createLocalManualInvoice(data, customer, 1, { name: 'Admin', username: 'admin' }, { queueWa: false });
+
+  assert.equal(oldInvoice.status, 'cancelled');
+  assert.equal(newInvoice.period, oldInvoice.period);
+  assert.deepEqual(newInvoice.coveredPeriods, oldInvoice.coveredPeriods);
+  assert.equal(newInvoice.amount, 180000);
+  assert.equal(newInvoice.packageName, 'Paket 15 Mbps');
+});
+
+test('paid invoice cannot be cancelled', () => {
+  const data = createDefaultStore();
+  const customer = {
+    id: 'cus-paid-cancel-blocked',
+    username: 'paid-cancel@kampung.net',
+    name: 'Paid Cancel',
+    packageName: 'Paket 10 Mbps',
+    status: 'active',
+    price: 150000,
+    activeDate: `${currentPeriod()}-10`,
+    firstInvoiceStatus: 'unpaid'
+  };
+  data.customers.push(customer);
+  const { invoice } = serverInternals.createLocalManualInvoice(data, customer, 1, { name: 'Admin', username: 'admin' }, { queueWa: false });
+  markInvoicePaid(data, invoice.id, { createdByName: 'Admin' });
+
+  assert.throws(() => cancelInvoice(data, invoice.id, { actorName: 'Admin' }), /sudah lunas/);
+  assert.equal(invoice.status, 'paid');
 });
 
 test('local manual invoice allows active month when first invoice is unpaid', () => {

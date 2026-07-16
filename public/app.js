@@ -10068,6 +10068,15 @@ function billingPayAllowed(invoice = {}) {
   return Boolean(can('invoices:manage') && billingInvoiceNo(invoice) && ['unpaid', 'pending', 'overdue'].includes(status) && Number(invoice.amount || 0) > 0);
 }
 
+function billingCancelAllowed(invoice = {}) {
+  const status = String(invoice.status || '').toLowerCase();
+  const role = String(state.auth?.role || '').toLowerCase();
+  return Boolean(can('invoices:manage')
+    && ['admin', 'owner', 'finance'].includes(role)
+    && billingInvoiceNo(invoice)
+    && ['unpaid', 'pending', 'overdue'].includes(status));
+}
+
 function billingRollbackAllowed(invoice = {}) {
   const status = String(invoice.status || '').toLowerCase();
   return Boolean(can('invoices:manage') && billingInvoiceNo(invoice) && status === 'paid');
@@ -11440,6 +11449,7 @@ async function renderMonitoringBilling(options = {}) {
     : (customerStatusLabels[state.monitoringBillingCustomerStatus] || 'Tagihan sesuai filter');
   const batchReminderAllowed = can('billing-monitor:read');
   const batchPayAllowed = can('invoices:manage');
+  const batchCancelAllowed = can('invoices:manage') && ['admin', 'owner', 'finance'].includes(String(state.auth?.role || '').toLowerCase());
 
   const rows = invoices.length ? invoices.map((invoice, index) => {
     const customerName = invoice.customerName || invoice.accountId || invoice.username || '-';
@@ -11452,7 +11462,7 @@ async function renderMonitoringBilling(options = {}) {
     return `
       <tr class="billing-row">
         <td>
-          <input type="checkbox" data-billing-select="${index}" ${(billingReminderAllowed(invoice) || billingPayAllowed(invoice)) ? '' : 'disabled'} aria-label="Pilih invoice ${escapeHtml(invoiceLabel)}">
+          <input type="checkbox" data-billing-select="${index}" ${(billingReminderAllowed(invoice) || billingPayAllowed(invoice) || billingCancelAllowed(invoice)) ? '' : 'disabled'} aria-label="Pilih invoice ${escapeHtml(invoiceLabel)}">
         </td>
         <td>
           <div class="cell-stack">
@@ -11527,7 +11537,7 @@ async function renderMonitoringBilling(options = {}) {
         </div>
       </div>
 
-      ${(batchReminderAllowed || batchPayAllowed) ? `
+      ${(batchReminderAllowed || batchPayAllowed || batchCancelAllowed) ? `
         <div class="toolbar compact-toolbar billing-batch-toolbar" id="billingBatchToolbar" hidden>
           <div class="filters">
             <span class="muted" id="billingSelectedInfo">0 dipilih</span>
@@ -11535,6 +11545,7 @@ async function renderMonitoringBilling(options = {}) {
           <div class="row-actions">
             ${batchReminderAllowed ? '<button class="ghost-button compact" id="billingBatchReminder" type="button" disabled>Reminder WA</button>' : ''}
             ${batchPayAllowed ? '<button class="button compact" id="billingBatchPay" type="button" disabled>Bayar</button>' : ''}
+            ${batchCancelAllowed ? '<button class="danger-button compact" id="billingBatchCancel" type="button" disabled>Batalkan</button>' : ''}
           </div>
         </div>
       ` : ''}
@@ -11617,8 +11628,10 @@ async function renderMonitoringBilling(options = {}) {
     if (info) info.textContent = `${displayNumber(selected.length)} dipilih`;
     const reminderButton = document.getElementById('billingBatchReminder');
     const payButton = document.getElementById('billingBatchPay');
+    const cancelButton = document.getElementById('billingBatchCancel');
     if (reminderButton) reminderButton.disabled = !selected.some((invoice) => billingReminderAllowed(invoice));
     if (payButton) payButton.disabled = !selected.some((invoice) => billingPayAllowed(invoice));
+    if (cancelButton) cancelButton.disabled = !selected.some((invoice) => billingCancelAllowed(invoice));
   };
   document.getElementById('billingSelectAll')?.addEventListener('change', (event) => {
     app.querySelectorAll('[data-billing-select]:not(:disabled)').forEach((checkbox) => {
@@ -11663,6 +11676,25 @@ async function renderMonitoringBilling(options = {}) {
       paid += 1;
     }
     setToast(`${displayNumber(paid)} tagihan dibayar`);
+    renderMonitoringBilling({ refresh: true });
+  });
+  document.getElementById('billingBatchCancel')?.addEventListener('click', async () => {
+    const selected = selectedBillingInvoices().filter((invoice) => billingCancelAllowed(invoice));
+    if (!selected.length) return;
+    if (!window.confirm(`Batalkan ${displayNumber(selected.length)} invoice terpilih? Invoice batal tidak tampil di tagihan aktif dan periode bisa dibuat ulang.`)) return;
+    let cancelled = 0;
+    for (const invoice of selected) {
+      await api('/api/monitoring/billing-action', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'cancel',
+          invoiceNo: billingInvoiceNo(invoice),
+          customerName: invoice.customerName || invoice.accountId || invoice.username || ''
+        })
+      });
+      cancelled += 1;
+    }
+    setToast(`${displayNumber(cancelled)} invoice dibatalkan`);
     renderMonitoringBilling({ refresh: true });
   });
   bindSearch(() => {
