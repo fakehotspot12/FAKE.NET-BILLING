@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.45] - 2026-07-16
+
+### Fixed
+
+- Uninstall total sekarang mendeteksi unit FreeRADIUS dengan benar sehingga backend Radius billing dapat dihentikan tanpa menyentuh service media lain.
+
 ## [1.0.44] - 2026-07-16
 
 ### Changed

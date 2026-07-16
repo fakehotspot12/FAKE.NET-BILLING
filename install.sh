@@ -695,7 +695,7 @@ uninstall_total() {
   if command -v systemctl >/dev/null 2>&1; then
     systemctl stop fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
     systemctl disable fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
-    radius_unit="$(resolve_systemd_group "freeradius.service radiusd.service" || true)"
+    radius_unit="$(resolve_systemd_group freeradius.service radiusd.service || true)"
     if [ -n "$radius_unit" ]; then
       systemctl stop "$radius_unit" >/dev/null 2>&1 || true
       systemctl disable "$radius_unit" >/dev/null 2>&1 || true
