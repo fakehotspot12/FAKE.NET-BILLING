@@ -225,7 +225,7 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.42',
+      version: '1.0.43',
       buildVersion: '1.0.38',
       releaseDate: '2026-07-16'
     }
@@ -237,7 +237,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.42',
+    appVersion: '1.0.43',
     buildVersion: '1.0.38',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
@@ -2392,8 +2392,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.42',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.42',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.43',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.43',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -3208,147 +3208,174 @@ function statisticsMax(rows = [], keys = []) {
   return Math.max(1, ...rows.map((row) => Math.max(...keys.map((key) => Number(row[key] || 0)))));
 }
 
-function statisticsAreaSeries(rows = [], key = '', width = 760, height = 230) {
-  const left = 46;
-  const right = 18;
-  const top = 18;
-  const bottom = 38;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-  const maxValue = statisticsMax(rows, ['newInstallCount', 'removedCount']);
-  const safeRows = rows.length ? rows : [{ period: state.period || todayInput().slice(0, 7), [key]: 0 }];
-  const step = safeRows.length > 1 ? plotWidth / (safeRows.length - 1) : plotWidth;
-  return safeRows.map((row, index) => {
-    const value = Number(row[key] || 0);
-    const x = left + (step * index);
-    const y = top + plotHeight - ((value / maxValue) * plotHeight);
-    return { x, y, value, period: row.period || '' };
-  });
+function statisticsChartRange(values = [], options = {}) {
+  const clean = values.map((value) => Number(value || 0)).filter((value) => Number.isFinite(value));
+  const rawMin = clean.length ? Math.min(...clean) : 0;
+  const rawMax = clean.length ? Math.max(...clean) : 1;
+  const zeroBase = options.zeroBase !== false;
+  let min = zeroBase ? 0 : rawMin;
+  let max = Math.max(rawMax, min + 1);
+  const span = Math.max(1, max - min);
+  const padding = Math.max(Number(options.minPadding || 0), span * Number(options.padding || 0.12));
+  if (!zeroBase) min = Math.max(0, min - padding);
+  max += padding;
+  const stepBase = Number(options.stepBase || 1);
+  min = Math.floor(min / stepBase) * stepBase;
+  max = Math.ceil(max / stepBase) * stepBase;
+  if (max <= min) max = min + stepBase;
+  const ticks = [max, min + ((max - min) * 0.66), min + ((max - min) * 0.33), min].map((value) => Math.round(value / stepBase) * stepBase);
+  return { min, max, ticks: [...new Set(ticks)] };
+}
+
+function statisticsChartPoint(value = 0, range = {}, box = {}) {
+  const top = box.top || 18;
+  const plotHeight = box.plotHeight || 132;
+  const min = Number(range.min || 0);
+  const max = Number(range.max || 1);
+  const ratio = Math.max(0, Math.min(1, (Number(value || 0) - min) / Math.max(1, max - min)));
+  return top + plotHeight - (ratio * plotHeight);
 }
 
 function statisticsLinePath(points = []) {
   return points.map((point, index) => `${index ? 'L' : 'M'}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
 }
 
-function statisticsAreaPath(points = [], height = 230) {
-  if (!points.length) return '';
-  const baseline = height - 38;
-  return `${statisticsLinePath(points)} L${points[points.length - 1].x.toFixed(2)} ${baseline} L${points[0].x.toFixed(2)} ${baseline} Z`;
+function statisticsAxisMarkup(range = {}, box = {}, formatter = displayNumber) {
+  const left = box.left || 44;
+  const right = box.right || 12;
+  const width = box.width || 420;
+  return (range.ticks || []).map((value) => {
+    const y = statisticsChartPoint(value, range, box);
+    return `<g class="statistics-axis"><line x1="${left}" y1="${y.toFixed(2)}" x2="${width - right}" y2="${y.toFixed(2)}"></line><text x="8" y="${(y + 4).toFixed(2)}">${escapeHtml(formatter(value))}</text></g>`;
+  }).join('');
 }
 
-function statisticsGrowthAreaChart(rows = []) {
+function statisticsMonthAxisMarkup(rows = [], box = {}) {
+  const left = box.left || 44;
+  const width = box.width || 420;
+  const right = box.right || 12;
+  const bottomY = (box.top || 18) + (box.plotHeight || 132) + 24;
+  const plotWidth = width - left - right;
+  const step = rows.length > 1 ? plotWidth / (rows.length - 1) : plotWidth;
+  return rows.map((row, index) => {
+    const x = left + (step * index);
+    const [monthLabel, yearLabel] = periodShortLabel(row.period).split(' ');
+    return `<text class="statistics-x-label" x="${x.toFixed(2)}" y="${bottomY}" text-anchor="middle"><tspan x="${x.toFixed(2)}">${escapeHtml(monthLabel || '-')}</tspan><tspan x="${x.toFixed(2)}" dy="10">${escapeHtml(yearLabel || '')}</tspan></text>`;
+  }).join('');
+}
+
+function statisticsGrowthLineChart(rows = []) {
   const chartRows = Array.isArray(rows) ? rows : [];
-  const width = 760;
-  const height = 230;
-  const maxValue = statisticsMax(chartRows, ['newInstallCount', 'removedCount']);
-  const installPoints = statisticsAreaSeries(chartRows, 'newInstallCount', width, height);
-  const removedPoints = statisticsAreaSeries(chartRows, 'removedCount', width, height);
-  const axisValues = [maxValue, Math.round(maxValue / 2), 0];
+  const box = { width: 420, height: 204, left: 44, right: 12, top: 18, plotHeight: 132 };
+  const range = statisticsChartRange(chartRows.map((row) => row.activeCustomerCount), { zeroBase: false, minPadding: 10, stepBase: 10 });
+  const plotWidth = box.width - box.left - box.right;
+  const step = chartRows.length > 1 ? plotWidth / (chartRows.length - 1) : plotWidth;
+  const points = chartRows.map((row, index) => ({
+    x: box.left + (step * index),
+    y: statisticsChartPoint(row.activeCustomerCount, range, box),
+    row
+  }));
   return `
     <div class="statistics-chart-card statistics-growth-chart">
       <div class="statistics-chart-head">
         <div>
-          <h3>Pertumbuhan Pelanggan PPP-DHCP</h3>
-          <span>PSB dan cabut dalam 12 bulan terakhir</span>
+          <h3>Pertumbuhan Pelanggan Bulanan</h3>
+          <span>Perubahan jumlah pelanggan aktif dari bulan ke bulan.</span>
         </div>
         <div class="statistics-legend compact">
-          <span class="install">PSB</span>
-          <span class="removed">Cabut</span>
+          <span class="active-total">Total pelanggan aktif</span>
         </div>
       </div>
       <div class="statistics-svg-wrap">
-        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Chart pertumbuhan pelanggan PPP-DHCP">
-          ${axisValues.map((value) => {
-            const y = 18 + (height - 56) - ((value / maxValue) * (height - 56));
-            return `<g class="statistics-axis"><line x1="46" y1="${y.toFixed(2)}" x2="${width - 18}" y2="${y.toFixed(2)}"></line><text x="12" y="${(y + 4).toFixed(2)}">${escapeHtml(displayNumber(value))}</text></g>`;
+        <svg viewBox="0 0 ${box.width} ${box.height}" role="img" aria-label="Pertumbuhan pelanggan bulanan">
+          ${statisticsAxisMarkup(range, box, displayNumber)}
+          <path class="statistics-line active-total" d="${statisticsLinePath(points)}"></path>
+          ${points.map((point) => {
+            const row = point.row || {};
+            const tooltip = `${periodLabel(row.period)}\nTotal pelanggan aktif: ${displayNumber(row.activeCustomerCount || 0)}\nPelanggan baru: ${displayNumber(row.newInstallCount || 0)}\nPelanggan berhenti: ${displayNumber(row.removedCount || 0)}\nPertumbuhan bersih: ${statisticsNetText(row.netGrowth || 0)}`;
+            return `<circle class="statistics-dot active-total" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.5"><title>${escapeHtml(tooltip)}</title></circle>`;
           }).join('')}
-          <path class="statistics-area install" d="${statisticsAreaPath(installPoints, height)}"></path>
-          <path class="statistics-area removed" d="${statisticsAreaPath(removedPoints, height)}"></path>
-          <path class="statistics-line install" d="${statisticsLinePath(installPoints)}"></path>
-          <path class="statistics-line removed" d="${statisticsLinePath(removedPoints)}"></path>
-          ${installPoints.map((point) => `<circle class="statistics-dot install" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3"><title>${escapeHtml(periodLabel(point.period))}: PSB ${displayNumber(point.value)}</title></circle>`).join('')}
-          ${removedPoints.map((point) => `<circle class="statistics-dot removed" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3"><title>${escapeHtml(periodLabel(point.period))}: Cabut ${displayNumber(point.value)}</title></circle>`).join('')}
-          ${chartRows.map((row, index) => {
-            const point = installPoints[index] || { x: 46 };
-            return `<text class="statistics-x-label" x="${point.x.toFixed(2)}" y="${height - 12}" text-anchor="middle">${escapeHtml(periodShortLabel(row.period))}</text>`;
-          }).join('')}
+          ${statisticsMonthAxisMarkup(chartRows, box)}
         </svg>
       </div>
     </div>
   `;
 }
 
-function statisticsVoucherColumnChart(rows = []) {
+function statisticsVoucherBarChart(rows = []) {
   const chartRows = Array.isArray(rows) ? rows : [];
-  const maxValue = statisticsMax(chartRows, ['voucherCount']);
+  const box = { width: 420, height: 204, left: 44, right: 12, top: 18, plotHeight: 132 };
+  const range = statisticsChartRange(chartRows.map((row) => row.voucherCount), { zeroBase: true, minPadding: 10, stepBase: 10 });
+  const plotWidth = box.width - box.left - box.right;
+  const step = chartRows.length ? plotWidth / chartRows.length : plotWidth;
+  const barWidth = Math.max(8, Math.min(18, step * 0.46));
   return `
     <div class="statistics-chart-card">
       <div class="statistics-chart-head">
         <div>
-          <h3>Penjualan Voucher Setiap Bulan</h3>
-          <span>Jumlah voucher paid dan omzet voucher</span>
+          <h3>Penjualan Voucher Bulanan</h3>
+          <span>Jumlah voucher yang berhasil terjual setiap bulan.</span>
         </div>
         <div class="statistics-legend compact">
-          <span class="voucher">Voucher</span>
+          <span class="voucher">Voucher terjual</span>
         </div>
       </div>
-      <div class="statistics-column-chart">
-        ${chartRows.map((row) => {
-          const value = Number(row.voucherCount || 0);
-          const height = value > 0 ? Math.max(6, Math.round((value / maxValue) * 100)) : 0;
-          return `
-            <div class="statistics-column" title="${escapeHtml(periodLabel(row.period))}: ${displayNumber(value)} voucher, ${rupiah(row.voucherAmount || 0)}">
-              <strong>${displayNumber(value)}</strong>
-              <div class="statistics-column-track"><span class="voucher" style="height:${height}%"></span></div>
-              <small>${escapeHtml(periodShortLabel(row.period))}</small>
-              <em>${escapeHtml(statisticsCompactRupiah(row.voucherAmount || 0))}</em>
-            </div>
-          `;
-        }).join('')}
+      <div class="statistics-svg-wrap">
+        <svg viewBox="0 0 ${box.width} ${box.height}" role="img" aria-label="Penjualan voucher bulanan">
+          ${statisticsAxisMarkup(range, box, (value) => `${displayNumber(value)} voucher`)}
+          ${chartRows.map((row, index) => {
+            const value = Number(row.voucherCount || 0);
+            const y = statisticsChartPoint(value, range, box);
+            const height = Math.max(0, (box.top + box.plotHeight) - y);
+            const x = box.left + (step * index) + ((step - barWidth) / 2);
+            const tooltip = `${periodLabel(row.period)}\nVoucher terjual: ${displayNumber(value)}\nOmzet voucher: ${rupiah(row.voucherAmount || 0)}`;
+            return `<rect class="statistics-bar voucher" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${height.toFixed(2)}" rx="5"><title>${escapeHtml(tooltip)}</title></rect>`;
+          }).join('')}
+          ${statisticsMonthAxisMarkup(chartRows, box)}
+        </svg>
       </div>
     </div>
   `;
 }
 
-function statisticsRevenueChart(rows = []) {
+function statisticsRevenueGroupedChart(rows = []) {
   const chartRows = Array.isArray(rows) ? rows : [];
-  const maxValue = statisticsMax(chartRows, ['revenueAmount']);
-  const segmentHeight = (value = 0) => {
-    const number = Number(value || 0);
-    return number > 0 ? Math.max(5, Math.round((number / maxValue) * 100)) : 0;
-  };
+  const box = { width: 420, height: 204, left: 50, right: 12, top: 18, plotHeight: 132 };
+  const range = statisticsChartRange(chartRows.flatMap((row) => [row.revenueAmount, row.expenseAmount]), { zeroBase: true, minPadding: 100000, stepBase: 100000 });
+  const plotWidth = box.width - box.left - box.right;
+  const step = chartRows.length ? plotWidth / chartRows.length : plotWidth;
+  const barWidth = Math.max(5, Math.min(10, step * 0.24));
   return `
     <div class="statistics-chart-card">
       <div class="statistics-chart-head">
         <div>
           <h3>Pendapatan Setiap Bulan</h3>
-          <span>Tagihan, voucher, dan pemasukan lain</span>
+          <span>Pendapatan dan pengeluaran bulanan.</span>
         </div>
         <div class="statistics-legend compact">
-          <span class="billing">Tagihan</span>
-          <span class="voucher">Voucher</span>
-          <span class="external">Pemasukan lain</span>
+          <span class="income">Pendapatan</span>
+          <span class="expense">Pengeluaran</span>
         </div>
       </div>
-      <div class="statistics-column-chart revenue">
-        ${chartRows.map((row) => {
-          const billing = Number(row.billingRevenueAmount || 0);
-          const voucher = Number(row.voucherAmount || 0);
-          const external = Number(row.externalIncomeAmount || 0);
-          const total = Number(row.revenueAmount || 0);
-          return `
-            <div class="statistics-column" title="${escapeHtml(periodLabel(row.period))}: ${rupiah(total)}">
-              <strong>${escapeHtml(statisticsCompactRupiah(total))}</strong>
-              <div class="statistics-column-track stacked">
-                <span class="external" style="height:${segmentHeight(external)}%"></span>
-                <span class="voucher" style="height:${segmentHeight(voucher)}%"></span>
-                <span class="billing" style="height:${segmentHeight(billing)}%"></span>
-              </div>
-              <small>${escapeHtml(periodShortLabel(row.period))}</small>
-              <em>${displayNumber(row.revenueCount || 0)} trx</em>
-            </div>
-          `;
-        }).join('')}
+      <div class="statistics-svg-wrap">
+        <svg viewBox="0 0 ${box.width} ${box.height}" role="img" aria-label="Pendapatan dan pengeluaran bulanan">
+          ${statisticsAxisMarkup(range, box, statisticsCompactRupiah)}
+          ${chartRows.map((row, index) => {
+            const income = Number(row.revenueAmount || 0);
+            const expense = Number(row.expenseAmount || 0);
+            const net = income - expense;
+            const baseX = box.left + (step * index) + ((step - (barWidth * 2 + 3)) / 2);
+            const incomeY = statisticsChartPoint(income, range, box);
+            const expenseY = statisticsChartPoint(expense, range, box);
+            const baseline = box.top + box.plotHeight;
+            const tooltip = `${periodLabel(row.period)}\nPendapatan: ${rupiah(income)}\nPengeluaran: ${rupiah(expense)}\nLaba bersih: ${rupiah(net)}`;
+            return `
+              <rect class="statistics-bar income" x="${baseX.toFixed(2)}" y="${incomeY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(0, baseline - incomeY).toFixed(2)}" rx="4"><title>${escapeHtml(tooltip)}</title></rect>
+              <rect class="statistics-bar expense" x="${(baseX + barWidth + 3).toFixed(2)}" y="${expenseY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(0, baseline - expenseY).toFixed(2)}" rx="4"><title>${escapeHtml(tooltip)}</title></rect>
+            `;
+          }).join('')}
+          ${statisticsMonthAxisMarkup(chartRows, box)}
+        </svg>
       </div>
     </div>
   `;
@@ -3428,9 +3455,9 @@ async function renderReportsStatistics() {
           <span>${escapeHtml(`${periodShortLabel(firstMonth)} - ${periodShortLabel(lastMonth)}`)}</span>
         </div>
         <div class="statistics-chart-grid">
-          ${statisticsGrowthAreaChart(monthlyRows)}
-          ${statisticsVoucherColumnChart(monthlyRows)}
-          ${statisticsRevenueChart(monthlyRows)}
+          ${statisticsGrowthLineChart(monthlyRows)}
+          ${statisticsVoucherBarChart(monthlyRows)}
+          ${statisticsRevenueGroupedChart(monthlyRows)}
         </div>
       </section>
 

@@ -7,6 +7,15 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.43] - 2026-07-16
+
+### Changed
+
+- Laporan > Statistik sekarang menampilkan tiga chart compact dalam satu baris pada desktop dan otomatis turun per kartu pada mobile.
+- Chart pertumbuhan pelanggan diubah menjadi line chart total pelanggan PPP-DHCP aktif per bulan dengan tooltip PSB, cabut, dan pertumbuhan bersih.
+- Chart pendapatan bulanan diubah menjadi grouped bar pendapatan vs pengeluaran, tanpa batang laba bersih.
+- Screenshot dokumentasi diperbarui, termasuk Payment Gateway setelah konten selesai dimuat.
+
 ## [1.0.42] - 2026-07-16
 
 ### Added

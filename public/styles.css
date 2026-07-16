@@ -1618,6 +1618,7 @@ input[type="checkbox"] {
 
 .statistics-chart-grid {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1626,7 +1627,7 @@ input[type="checkbox"] {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow);
-  padding: 12px;
+  padding: 10px;
   min-width: 0;
 }
 
@@ -1641,13 +1642,13 @@ input[type="checkbox"] {
 .statistics-chart-head h3 {
   margin: 0;
   color: var(--text);
-  font-size: 15px;
+  font-size: 13.5px;
   line-height: 1.25;
 }
 
 .statistics-chart-head span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -1658,6 +1659,15 @@ input[type="checkbox"] {
 
 .statistics-legend .billing::before {
   background: var(--blue);
+}
+
+.statistics-legend .active-total::before,
+.statistics-legend .income::before {
+  background: var(--blue);
+}
+
+.statistics-legend .expense::before {
+  background: var(--danger);
 }
 
 .statistics-legend .external::before {
@@ -1672,7 +1682,7 @@ input[type="checkbox"] {
 
 .statistics-svg-wrap svg {
   display: block;
-  min-width: 620px;
+  min-width: 0;
   width: 100%;
   height: auto;
 }
@@ -1714,9 +1724,31 @@ input[type="checkbox"] {
   fill: var(--blue);
 }
 
+.statistics-line.active-total,
+.statistics-dot.active-total {
+  stroke: var(--blue);
+  fill: var(--blue);
+}
+
 .statistics-line.removed,
 .statistics-dot.removed {
   stroke: var(--danger);
+  fill: var(--danger);
+}
+
+.statistics-bar {
+  fill: var(--blue);
+}
+
+.statistics-bar.voucher {
+  fill: #0f766e;
+}
+
+.statistics-bar.income {
+  fill: var(--blue);
+}
+
+.statistics-bar.expense {
   fill: var(--danger);
 }
 
@@ -1803,8 +1835,10 @@ input[type="checkbox"] {
 
 [data-theme="dark"] .statistics-bars .voucher,
 [data-theme="dark"] .statistics-legend .voucher::before,
-[data-theme="dark"] .statistics-column-track .voucher {
+[data-theme="dark"] .statistics-column-track .voucher,
+[data-theme="dark"] .statistics-bar.voucher {
   background: #2dd4bf;
+  fill: #2dd4bf;
 }
 
 [data-theme="dark"] .statistics-chart-card {
@@ -6720,8 +6754,12 @@ dialog::backdrop {
     padding: 10px;
   }
 
+  .statistics-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
   .statistics-svg-wrap svg {
-    min-width: 560px;
+    min-width: 520px;
   }
 
   .statistics-column-chart {

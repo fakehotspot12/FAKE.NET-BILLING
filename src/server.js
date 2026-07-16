@@ -6137,7 +6137,10 @@ function statisticsDailyRow(date = '') {
     billingRevenueAmount: 0,
     externalIncomeAmount: 0,
     revenueAmount: 0,
-    revenueCount: 0
+    revenueCount: 0,
+    expenseAmount: 0,
+    profitAmount: 0,
+    activeCustomerCount: 0
   };
 }
 
@@ -6153,7 +6156,10 @@ function statisticsMonthlyRow(period = '') {
     billingRevenueAmount: 0,
     externalIncomeAmount: 0,
     revenueAmount: 0,
-    revenueCount: 0
+    revenueCount: 0,
+    expenseAmount: 0,
+    profitAmount: 0,
+    activeCustomerCount: 0
   };
 }
 
@@ -6189,8 +6195,16 @@ function statisticsMonthlyRows(periods = [], groups = new Map()) {
     const normalized = normalizePeriod(period);
     const row = groups.get(normalized) || statisticsMonthlyRow(normalized);
     row.netGrowth = Number(row.newInstallCount || 0) - Number(row.removedCount || 0);
+    row.profitAmount = Number(row.revenueAmount || 0) - Number(row.expenseAmount || 0);
     return row;
   });
+}
+
+function statisticsMonthEndIso(period = currentPeriod()) {
+  const normalized = normalizePeriod(period);
+  const [year, month] = normalized.split('-').map((item) => Number(item));
+  const day = new Date(year, month, 0).getDate();
+  return `${normalized}-${String(day).padStart(2, '0')}`;
 }
 
 function pppInstallDateForUser(data = {}, user = {}) {
@@ -6217,6 +6231,30 @@ function pppInstallDateForRemovedRecord(record = {}) {
 function statisticsRecordKey(prefix = '', item = {}) {
   const value = String(item.key || item.id || item.radiusUserId || item.customerId || item.username || '').trim().toLowerCase();
   return value ? `${prefix}:${value}` : '';
+}
+
+function statisticsPppStatusIsActive(status = '') {
+  return normalizeCustomerStatusLocal(status) === 'active';
+}
+
+function statisticsCurrentPppCustomerActiveAtMonthEnd(data = {}, user = {}, period = currentPeriod()) {
+  if (String(user.serviceType || '').trim().toLowerCase() !== 'pppoe') return false;
+  const installedDate = pppInstallDateForUser(data, user);
+  if (!installedDate || installedDate > statisticsMonthEndIso(period)) return false;
+  const customer = findCustomerForRadiusUser(data, user) || {};
+  const status = strongestCustomerStatus(customer.status, radiusStatusForCustomer(user));
+  return statisticsPppStatusIsActive(status);
+}
+
+function statisticsRemovedPppCustomerActiveAtMonthEnd(record = {}, period = currentPeriod()) {
+  const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
+  if (type !== 'pppoe') return false;
+  if (!String(record.customerId || record.memberCode || '').trim()) return false;
+  if (!statisticsPppStatusIsActive(record.lastStatus || 'active')) return false;
+  const installedDate = pppInstallDateForRemovedRecord(record);
+  const monthEnd = statisticsMonthEndIso(period);
+  const removedDate = String(record.removedAt || '').slice(0, 10);
+  return Boolean(installedDate && installedDate <= monthEnd && (!removedDate || removedDate > monthEnd));
 }
 
 async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
@@ -6249,6 +6287,10 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     addRow(date, field, value);
     addRow(date, 'revenueAmount', value);
     if (Number(count || 0) > 0) addRow(date, 'revenueCount', Number(count || 0));
+  };
+  const addExpenseRow = (date = '', amount = 0) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return;
+    addRow(date, 'expenseAmount', Number(amount || 0));
   };
 
   for (const user of data.radiusUsers || []) {
@@ -6299,6 +6341,12 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     addRevenueRow(date, 'externalIncomeAmount', Number(income.amount || 0), 1);
   }
 
+  for (const expense of data.expenses || []) {
+    const date = String(expense.date || expense.createdAt || '').slice(0, 10);
+    if (!monthPeriodSet.has(date.slice(0, 7))) continue;
+    addExpenseRow(date, Number(expense.amount || 0));
+  }
+
   const firstOnlineByUsername = await generatedVoucherFirstOnlineMap(data);
   for (const monthPeriod of monthPeriods) {
     const voucherOrders = await paidVoucherOrdersForReport(data, monthPeriod, firstOnlineByUsername);
@@ -6313,6 +6361,14 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
 
   const dailyRows = statisticsPeriodRows(selectedPeriod, dailyGroups);
   const monthlyRows = statisticsMonthlyRows(monthPeriods, monthlyGroups);
+  for (const row of monthlyRows) {
+    row.activeCustomerCount = (data.radiusUsers || [])
+      .filter((user) => statisticsCurrentPppCustomerActiveAtMonthEnd(data, user, row.period))
+      .length
+      + (data.radiusRemovedRecords || [])
+        .filter((record) => statisticsRemovedPppCustomerActiveAtMonthEnd(record, row.period))
+        .length;
+  }
   const summary = dailyRows.reduce((acc, row) => {
     acc.newInstallCount += Number(row.newInstallCount || 0);
     acc.removedCount += Number(row.removedCount || 0);
@@ -6323,6 +6379,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     acc.externalIncomeAmount += Number(row.externalIncomeAmount || 0);
     acc.revenueAmount += Number(row.revenueAmount || 0);
     acc.revenueCount += Number(row.revenueCount || 0);
+    acc.expenseAmount += Number(row.expenseAmount || 0);
     return acc;
   }, {
     newInstallCount: 0,
@@ -6333,9 +6390,12 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     billingRevenueAmount: 0,
     externalIncomeAmount: 0,
     revenueAmount: 0,
-    revenueCount: 0
+    revenueCount: 0,
+    expenseAmount: 0
   });
   summary.netGrowth = summary.newInstallCount - summary.removedCount;
+  summary.profitAmount = summary.revenueAmount - summary.expenseAmount;
+  summary.activeCustomerCount = monthlyRows.find((row) => row.period === selectedPeriod)?.activeCustomerCount || 0;
 
   return {
     ok: true,
