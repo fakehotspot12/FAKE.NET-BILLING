@@ -2008,10 +2008,13 @@ function radiusUserPayload(payload = {}, serviceType = 'pppoe', data = {}) {
   const profile = radiusFindProfile(data, payload.profileId || payload.profile, serviceType);
   const nas = radiusFindNas(data, payload.nasId || payload.nas || payload.routerNas);
   const accessType = payload.type || payload.accessType || (serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE');
-  const paymentStatus = normalizeRadiusUserPaymentStatus(payload.paymentStatus);
+  const memberInvoiceStatus = String(payload.memberInvoiceStatus || payload.invoiceStatus || '').trim().toLowerCase();
+  const paymentStatus = normalizeRadiusUserPaymentStatus(
+    payload.paymentStatus || (serviceType === 'pppoe' && payloadEnabled(payload.addToMember) ? memberInvoiceStatus : '')
+  );
   const firstInvoiceUnpaid = serviceType === 'pppoe'
     && payloadEnabled(payload.addToMember)
-    && String(payload.memberInvoiceStatus || payload.invoiceStatus || '').trim().toLowerCase() === 'unpaid';
+    && memberInvoiceStatus === 'unpaid';
   const username = String(payload.username || '').trim()
     || (String(accessType).toLowerCase() === 'dhcp'
       ? String(payload.macAddress || payload.callerId || payload.memberCode || payload.memberPhone || '').trim()

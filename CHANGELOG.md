@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.32] - 2026-07-16
+
+### Fixed
+
+- Postpaid Billing Cycle tidak lagi membuat invoice prorata pada bulan pemasangan jika status invoice awal member adalah `Paid` atau tidak ditandai eksplisit `Unpaid`.
+- Status invoice awal PPP-DHCP + member ikut disimpan sebagai `paymentStatus` pada user Radius agar audit Paid/Unpaid tidak kosong.
+
 ## [1.0.31] - 2026-07-16
 
 ### Changed

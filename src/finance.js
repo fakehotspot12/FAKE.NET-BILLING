@@ -139,6 +139,17 @@ function postpaidCycleProrationInfo(settings = {}, customer = {}, period = curre
   };
 }
 
+function customerFirstInvoiceUnpaid(customer = {}) {
+  const candidates = [
+    customer.firstInvoiceStatus,
+    customer.initialInvoiceStatus,
+    customer.memberInvoiceStatus,
+    customer.invoiceStatus,
+    customer.paymentStatus
+  ].map((value) => cleanText(value).toLowerCase()).filter(Boolean);
+  return candidates.some((status) => ['unpaid', 'pending', 'belum bayar'].includes(status));
+}
+
 function dueDateForPeriod(period, day) {
   const safePeriod = normalizePeriod(period);
   const [year, month] = safePeriod.split('-').map((item) => Number(item));
@@ -768,6 +779,9 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       continue;
     }
     const proration = postpaidCycleProrationInfo(data.settings, customer, selectedPeriod);
+    if (proration && !customerFirstInvoiceUnpaid(customer)) {
+      continue;
+    }
     if (!customerBillableInPeriod(customer, selectedPeriod) && !proration) {
       continue;
     }

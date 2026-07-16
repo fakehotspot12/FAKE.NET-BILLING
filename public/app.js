@@ -225,8 +225,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.31',
-      buildVersion: '1.0.31',
+      version: '1.0.32',
+      buildVersion: '1.0.32',
       releaseDate: '2026-07-16'
     }
   },
@@ -237,8 +237,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.31',
-    buildVersion: '1.0.31',
+    appVersion: '1.0.32',
+    buildVersion: '1.0.32',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
   },
@@ -2367,8 +2367,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.31',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.31',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.32',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.32',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false

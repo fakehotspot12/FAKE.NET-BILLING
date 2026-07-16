@@ -159,6 +159,7 @@ test('first postpaid billing cycle invoice is prorated from active date to cycle
       paymentType: 'postpaid',
       billingPeriod: 'cycle',
       activeDate: '2026-07-20',
+      firstInvoiceStatus: 'unpaid',
       dueDay: 20
     },
     {
@@ -171,6 +172,7 @@ test('first postpaid billing cycle invoice is prorated from active date to cycle
       paymentType: 'postpaid',
       billingPeriod: 'cycle',
       activeDate: '2026-07-10',
+      firstInvoiceStatus: 'unpaid',
       dueDay: 10
     }
   );
@@ -192,6 +194,44 @@ test('first postpaid billing cycle invoice is prorated from active date to cycle
   assert.equal(firstAfterCycle.proration.usedDays, 27);
   assert.equal(nextBeforeCycle.amount, 150000);
   assert.equal(nextBeforeCycle.prorated, false);
+});
+
+test('postpaid billing cycle skips active month when first invoice was paid', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 15;
+  data.customers.push(
+    {
+      id: 'cus-cycle-paid',
+      username: 'cycle-paid@kampung.net',
+      name: 'Cycle Paid',
+      packageName: 'Paket Cycle',
+      status: 'active',
+      price: 150000,
+      paymentType: 'postpaid',
+      billingPeriod: 'cycle',
+      activeDate: '2026-07-15',
+      firstInvoiceStatus: 'paid'
+    },
+    {
+      id: 'cus-cycle-default',
+      username: 'cycle-default@kampung.net',
+      name: 'Cycle Default',
+      packageName: 'Paket Cycle',
+      status: 'active',
+      price: 150000,
+      paymentType: 'postpaid',
+      billingPeriod: 'cycle',
+      activeDate: '2026-07-15'
+    }
+  );
+
+  assert.equal(generateInvoices(data, '2026-07').length, 0);
+
+  const august = generateInvoices(data, '2026-08');
+  assert.equal(august.length, 2);
+  assert.deepEqual(august.map((invoice) => invoice.customerId).sort(), ['cus-cycle-default', 'cus-cycle-paid']);
+  assert.equal(august.every((invoice) => invoice.amount === 150000), true);
+  assert.equal(august.every((invoice) => invoice.prorated === false), true);
 });
 
 test('generates invoices only after the active date month', () => {
