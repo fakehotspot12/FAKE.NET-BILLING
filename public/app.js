@@ -225,8 +225,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.37',
-      buildVersion: '1.0.37',
+      version: '1.0.38',
+      buildVersion: '1.0.38',
       releaseDate: '2026-07-16'
     }
   },
@@ -237,8 +237,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.37',
-    buildVersion: '1.0.37',
+    appVersion: '1.0.38',
+    buildVersion: '1.0.38',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
   },
@@ -1670,6 +1670,7 @@ function dashboardPercentText(value = 0) {
 function dashboardUserStatusPaper(title = '', summary = {}, updatedAt = '', mode = 'ppp') {
   const activePercent = dashboardActivePercent(summary);
   const sessionOnline = Number(summary.sessionOnline ?? summary.online ?? 0);
+  const targetView = mode === 'hotspot' ? 'radiusHotspot' : 'radiusPppDhcp';
   const cells = mode === 'hotspot'
     ? [
       ['Total', summary.total || 0, 'stat-total'],
@@ -1697,6 +1698,7 @@ function dashboardUserStatusPaper(title = '', summary = {}, updatedAt = '', mode
             <span class="MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate" style="transform: translateX(-${100 - activePercent}%);"></span>
           </div>
         </div>
+        ${canView(targetView) ? `<button class="icon-button dashboard-member-link" type="button" data-dashboard-radius-link="${targetView}" aria-label="Buka ${escapeHtml(title)}" title="Buka ${escapeHtml(title)}">...</button>` : ''}
       </div>
       <div class="dashboard-member-grid ${mode === 'ppp' ? 'is-ppp' : 'is-hotspot'}">
         ${cells.map(([label, value, tone, layout]) => `
@@ -1715,6 +1717,23 @@ function dashboardMembersCompact(members = {}, radiusSummary = {}) {
     ${dashboardUserStatusPaper('PPP-DHCP Users', radiusSummary.pppDhcp || {}, members.checkedAt || '', 'ppp')}
     ${dashboardUserStatusPaper('Hotspot Users', radiusSummary.hotspot || {}, members.checkedAt || '', 'hotspot')}
   `;
+}
+
+function bindDashboardRadiusLinks() {
+  app.querySelectorAll('[data-dashboard-radius-link]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const view = button.dataset.dashboardRadiusLink;
+      if (view === 'radiusPppDhcp') {
+        state.radiusPppTab = 'users';
+        state.radiusPppPage = 1;
+      }
+      if (view === 'radiusHotspot') {
+        state.radiusHotspotTab = 'users';
+        state.radiusHotspotPage = 1;
+      }
+      setView(view);
+    });
+  });
 }
 
 function dashboardRouterKey(router = {}, index = 0) {
@@ -2367,8 +2386,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.37',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.37',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.38',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.38',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -2521,12 +2540,25 @@ function renderLogin() {
   }
   document.getElementById('loginForm').addEventListener('submit', async (event) => {
     event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = form.querySelector('button[type="submit"]');
     try {
-      const submitButton = event.currentTarget.querySelector('button[type="submit"]');
       if (submitButton) submitButton.disabled = true;
+      if (verificationEnabled) {
+        const verificationId = String(form.verificationId?.value || '').trim();
+        const verificationCode = String(form.verificationCode?.value || '').trim();
+        if (!verificationId) {
+          await refreshLoginVerification();
+          throw new Error('Kode verifikasi belum siap, masukkan kode yang baru tampil');
+        }
+        if (!verificationCode) {
+          throw new Error('Kode verifikasi wajib diisi');
+        }
+        form.verificationCode.value = verificationCode.replace(/\s+/g, '');
+      }
       const payload = await api('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify(formData(event.currentTarget)),
+        body: JSON.stringify(formData(form)),
         skipAuthRedirect: true
       });
       state.auth = payload.user;
@@ -2544,9 +2576,8 @@ function renderLogin() {
         return;
       }
       setToast(error.message);
-      await refreshLoginVerification();
+      if (verificationEnabled) await refreshLoginVerification();
     } finally {
-      const submitButton = event.currentTarget.querySelector('button[type="submit"]');
       if (submitButton) submitButton.disabled = false;
     }
   });
@@ -2688,6 +2719,7 @@ async function renderDashboard(options = {}) {
   `;
 
   if (!restrictedPersonalDashboard) {
+    bindDashboardRadiusLinks();
     mountDashboardRouterNasShell();
     loadDashboardRouterNas({ silent: Boolean(dashboardRouterNasPayload) });
   }
@@ -6121,18 +6153,23 @@ function radiusOptionTags(options = [], selected = '', emptyLabel = 'Semua') {
   ].join('');
 }
 
+function radiusProfileMissing(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return !normalized || normalized === 'none';
+}
+
 function bindRequiredRadiusProfileWarning(selector, label = 'Radius') {
   const select = modalBody.querySelector(selector);
   if (!select) return () => true;
   const warn = () => {
-    if (!String(select.value || '').trim()) {
+    if (radiusProfileMissing(select.value)) {
       setToast(`Profile ${label} wajib dipilih, tidak boleh None`);
       return false;
     }
     return true;
   };
   select.addEventListener('change', () => {
-    if (!String(select.value || '').trim()) warn();
+    if (radiusProfileMissing(select.value)) warn();
   });
   return warn;
 }
@@ -7096,7 +7133,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
     <div class="modal-actions">
       <button class="ghost-button" value="cancel" type="submit">Batal</button>
       ${canAddMember ? '<button class="ghost-button" id="radiusWizardPrev" type="button">Kembali</button><button class="button" id="radiusWizardNext" type="button">Next</button>' : ''}
-      <button class="button" id="radiusWizardSubmit" type="submit" ${canAddMember ? 'hidden' : ''}>Simpan</button>
+      <button class="button" id="radiusWizardSubmit" type="submit" formnovalidate ${canAddMember ? 'hidden' : ''}>Simpan</button>
     </div>
   `;
 }
@@ -7250,11 +7287,22 @@ async function openRadiusPppUserModal(user = null) {
   const options = await loadRadiusOptions('ppp');
   openModal(user ? 'Edit User PPP-DHCP' : 'Tambah User PPP-DHCP', radiusPppUserFormBody(user, options), async (payload, form) => {
     const type = String(payload.type || '').toLowerCase();
-    if (!user && !String(payload.profile || payload.profileId || '').trim()) {
+    if (!user && payload.addToMember && typeof form?._radiusPppWizardFinalize === 'function') {
+      if (!form._radiusPppWizardFinalize()) {
+        throw new Error('Selesaikan wizard sampai Review sebelum menyimpan user dan member');
+      }
+    }
+    if (!user && radiusProfileMissing(payload.profile || payload.profileId)) {
       throw new Error('Profile PPP-DHCP wajib dipilih, tidak boleh None');
     }
     if (!user && payload.addToMember && form?.dataset.radiusWizardReady !== '1') {
       throw new Error('Selesaikan wizard sampai Review sebelum menyimpan user dan member');
+    }
+    if (!user && type === 'dhcp' && !String(payload.macAddress || '').trim()) {
+      throw new Error('MAC Address wajib diisi untuk DHCP');
+    }
+    if (!user && type !== 'dhcp' && (!String(payload.username || '').trim() || !String(payload.password || '').trim())) {
+      throw new Error('Username dan password wajib diisi untuk PPPoE');
     }
     if (type === 'dhcp') {
       delete payload.password;
@@ -7307,6 +7355,7 @@ function bindRadiusPppWizard() {
   let step = 0;
   let highestUnlockedStep = 0;
   const activeSteps = () => addToMember?.checked ? stepKeys : ['account'];
+  const currentStepKey = () => activeSteps()[step] || 'account';
   const selectedText = (selector, fallback = '-') => {
     const select = modalBody.querySelector(selector);
     return select?.selectedOptions?.[0]?.textContent?.trim() || fallback;
@@ -7366,7 +7415,7 @@ function bindRadiusPppWizard() {
     reviewValue('invoiceStatus', selectedText('select[name="memberInvoiceStatus"]'));
   };
   const validateStep = () => {
-    const current = activeSteps()[step] || 'account';
+    const current = currentStepKey();
     if (current === 'account') {
       const type = String(modalBody.querySelector('#radiusPppType')?.value || '').toLowerCase();
       const profile = modalBody.querySelector('#radiusPppProfile')?.value.trim() || '';
@@ -7402,7 +7451,7 @@ function bindRadiusPppWizard() {
   };
   const renderStep = () => {
     const steps = activeSteps();
-    const current = steps[step] || 'account';
+    const current = currentStepKey();
     panels.forEach((panel) => {
       panel.hidden = panel.dataset.radiusWizardPanel !== current;
     });
@@ -7424,6 +7473,21 @@ function bindRadiusPppWizard() {
       form.dataset.radiusWizardReady = (!addToMember?.checked || current === 'review') ? '1' : '0';
     }
     if (current === 'review') syncReview();
+  };
+  form._radiusPppWizardFinalize = () => {
+    const current = currentStepKey();
+    if (addToMember?.checked && current !== 'review') {
+      setToast('Selesaikan wizard sampai Review sebelum menyimpan user dan member');
+      form.dataset.radiusWizardReady = '0';
+      return false;
+    }
+    if (!validateStep()) {
+      form.dataset.radiusWizardReady = '0';
+      return false;
+    }
+    if (current === 'review') syncReview();
+    form.dataset.radiusWizardReady = (!addToMember?.checked || current === 'review') ? '1' : '0';
+    return form.dataset.radiusWizardReady === '1';
   };
   stepButtons.forEach((button) => {
     button.addEventListener('click', () => {
@@ -7764,8 +7828,11 @@ function bindRadiusProfileModeFields() {
 async function openRadiusHotspotUserModal(user = null) {
   const options = await loadRadiusOptions('hotspot');
   openModal(user ? 'Edit User Hotspot' : 'Tambah User Hotspot', radiusHotspotUserFormBody(user, options), async (payload) => {
-    if (!user && !String(payload.profile || payload.profileId || '').trim()) {
+    if (!user && radiusProfileMissing(payload.profile || payload.profileId)) {
       throw new Error('Profile Hotspot wajib dipilih, tidak boleh None');
+    }
+    if (!user && !String(payload.username || '').trim()) {
+      throw new Error('Username Hotspot wajib diisi');
     }
     await api(user ? `/api/radius/hotspot/users/${encodeURIComponent(user.id)}` : '/api/radius/hotspot/users', {
       method: user ? 'PUT' : 'POST',

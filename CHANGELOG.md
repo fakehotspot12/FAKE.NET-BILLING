@@ -7,6 +7,18 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.38] - 2026-07-16
+
+### Added
+
+- Kartu dashboard `PPP-DHCP Users` dan `Hotspot Users` sekarang memiliki tombol `...` untuk langsung membuka menu Radius terkait.
+
+### Fixed
+
+- Submit wizard tambah user PPP-DHCP dibuat lebih tahan terhadap event mobile/Enter agar tombol `Simpan` di tahap Review tidak macet pada role non-admin yang punya izin membuat user.
+- Login dengan kode verifikasi sekarang memvalidasi kesiapan kode sebelum request login dan refresh kode hanya saat verifikasi aktif.
+- Validasi profile PPP-DHCP dan Hotspot di frontend sekarang menolak pilihan kosong/`None` secara konsisten.
+
 ## [1.0.37] - 2026-07-16
 
 ### Fixed
