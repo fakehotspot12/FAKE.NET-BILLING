@@ -27,6 +27,29 @@ const DEFAULT_RX_POWER_PARAMETERS = [
   'Device.Optical.Interface.1.RXPower'
 ];
 
+const DEFAULT_TEMPERATURE_PARAMETERS = [
+  'VirtualParameters.gettemp',
+  'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Temperature',
+  'InternetGatewayDevice.WANDevice.1.X_CU_WANGPONInterfaceConfig.OpticalTransceiver.Temperature',
+  'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.2.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_FH_EponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_HW_EponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_HW_GponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.X_HW_RMS.PonStatus.TransceiverTemperature',
+  'InternetGatewayDevice.X_HW_RMS.PonStatus.Temperature',
+  'Device.Optical.Interface.1.Temperature',
+  'Device.Optical.Interface.1.TransceiverTemperature',
+  'InternetGatewayDevice.DeviceInfo.TemperatureStatus.TemperatureSensor.1.Value',
+  'Device.DeviceInfo.TemperatureStatus.TemperatureSensor.1.Value'
+];
+
 const DEFAULT_WIFI_PASSWORD_PARAMETERS = [
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase',
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
@@ -97,6 +120,7 @@ function normalizeSettings(settings = {}) {
     connectionRequest: raw.connectionRequest !== false,
     usernameParameters: DEFAULT_USERNAME_PARAMETERS.slice(),
     rxPowerParameters: DEFAULT_RX_POWER_PARAMETERS.slice(),
+    temperatureParameters: DEFAULT_TEMPERATURE_PARAMETERS.slice(),
     wifiPasswordParameters: DEFAULT_WIFI_PASSWORD_PARAMETERS.slice(),
     wifiSsidParameters: DEFAULT_WIFI_SSID_PARAMETERS.slice(),
     wifi5gSsidParameters: DEFAULT_WIFI_5G_SSID_PARAMETERS.slice(),
@@ -305,6 +329,44 @@ function rxPowerSummaryText(value) {
   })} dBm`;
 }
 
+function normalizeTemperature(value = '') {
+  const number = temperatureNumber(value);
+  if (number === null) return '';
+  return `${number.toLocaleString('id-ID', { maximumFractionDigits: 0 })} C`;
+}
+
+function temperatureNumber(value = '') {
+  const text = cleanText(value);
+  if (!text || text.toUpperCase() === 'N/A') return null;
+  const number = Number(text.replace(',', '.').replace(/[^\d.-]/g, ''));
+  if (!Number.isFinite(number)) return null;
+  if ([0, -255, 255, 65535, 32767].includes(number)) return null;
+  if (number > 1000 && number < 20000) return Math.round(convertTr069Temperature(number));
+  if (number > 150 && number <= 1000) return Math.round(number / 10);
+  if (number < 5 || number > 120) return null;
+  return Math.round(number);
+}
+
+function convertTr069Temperature(rawValue) {
+  const samples = [[11509, 45], [11876, 46], [10866, 42], [10592, 41], [11142, 43], [11968, 46]];
+  const sumX = samples.reduce((sum, [x]) => sum + x, 0);
+  const sumY = samples.reduce((sum, [, y]) => sum + y, 0);
+  const sumXY = samples.reduce((sum, [x, y]) => sum + x * y, 0);
+  const sumX2 = samples.reduce((sum, [x]) => sum + x * x, 0);
+  const n = samples.length;
+  const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+  const intercept = (sumY - slope * sumX) / n;
+  return slope * rawValue + intercept;
+}
+
+function redamanQuality(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  if (number <= HIGH_REDAMAN_THRESHOLD_DBM) return 'high';
+  if (number <= -18) return 'normal';
+  return 'good';
+}
+
 function highRedamanCount(values = []) {
   return values.filter((value) => Number.isFinite(Number(value)) && Number(value) <= HIGH_REDAMAN_THRESHOLD_DBM).length;
 }
@@ -407,6 +469,7 @@ function normalizeDevice(device = {}, settings = {}) {
   const username = firstParameter(device, cfg.usernameParameters);
   const pppIpAddress = firstIpParameter(device, pppIpParameterCandidates(username.path));
   const rxPower = firstParameter(device, cfg.rxPowerParameters);
+  const temperature = firstParameter(device, cfg.temperatureParameters);
   const ssid24 = firstParameter(device, cfg.wifiSsidParameters);
   const ssid5 = firstParameter(device, cfg.wifi5gSsidParameters);
   const clients24 = firstParameter(device, cfg.wifiClientCountParameters);
@@ -448,6 +511,10 @@ function normalizeDevice(device = {}, settings = {}) {
     rxPowerValue: rxPowerNumber(rxPower.value, rxPower.path),
     rxPowerText: normalizeRxPower(rxPower.value, rxPower.path),
     rxPowerParameter: rxPower.path,
+    temperature: temperature.value,
+    temperatureValue: temperatureNumber(temperature.value),
+    temperatureText: normalizeTemperature(temperature.value) || '-',
+    temperatureParameter: temperature.path,
     ssid24: wifi24?.ssid || ssid24.value,
     ssid24Parameter: wifi24?.ssidParameter || ssid24.path,
     ssid5: wifi5?.ssid || ssid5.value,
@@ -497,15 +564,20 @@ async function listDevices(settings = {}, options = {}) {
   const cfg = normalizeSettings(settings);
   const query = searchQuery(options.search || '');
   const status = cleanText(options.status || 'all').toLowerCase();
+  const redaman = cleanText(options.redaman || 'all').toLowerCase();
   const rawRows = await requestJson(cfg, '/devices/', {
     query: {
       query: JSON.stringify(query)
     }
   });
   const rows = Array.isArray(rawRows) ? rawRows.map((device) => normalizeDevice(device, cfg)) : [];
-  const filteredRows = ['online', 'offline'].includes(status)
-    ? rows.filter((row) => row.status === status)
-    : rows;
+  const filteredRows = rows.filter((row) => {
+    const statusMatch = ['online', 'offline'].includes(status) ? row.status === status : true;
+    const redamanMatch = ['good', 'normal', 'high'].includes(redaman)
+      ? redamanQuality(row.rxPowerValue) === redaman
+      : true;
+    return statusMatch && redamanMatch;
+  });
   const rxValues = rows
     .map((row) => row.rxPowerValue)
     .filter((value) => Number.isFinite(Number(value)));
@@ -514,17 +586,22 @@ async function listDevices(settings = {}, options = {}) {
     : null;
   const redamanHighCount = highRedamanCount(rxValues);
   const page = Math.max(1, Number(options.page || 1) || 1);
-  const limit = Math.max(1, Math.min(100, Number(options.limit || 10) || 10));
+  const requestedLimit = cleanText(options.limit).toLowerCase() === 'all'
+    ? Number.MAX_SAFE_INTEGER
+    : Number(options.limit || 10) || 10;
+  const limit = requestedLimit >= 1000000
+    ? Number.MAX_SAFE_INTEGER
+    : Math.max(1, Math.min(100, requestedLimit));
   const total = filteredRows.length;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const totalPages = limit === Number.MAX_SAFE_INTEGER ? 1 : Math.max(1, Math.ceil(total / limit));
   const currentPage = Math.min(page, totalPages);
-  const offset = (currentPage - 1) * limit;
+  const offset = limit === Number.MAX_SAFE_INTEGER ? 0 : (currentPage - 1) * limit;
   return {
     ok: true,
     enabled: cfg.enabled,
     configured: configured(cfg),
     baseUrl: cfg.baseUrl,
-    rows: filteredRows.slice(offset, offset + limit),
+    rows: limit === Number.MAX_SAFE_INTEGER ? filteredRows : filteredRows.slice(offset, offset + limit),
     summary: {
       total: rows.length,
       online: rows.filter((row) => row.online).length,
@@ -532,6 +609,8 @@ async function listDevices(settings = {}, options = {}) {
       filtered: filteredRows.length,
       redamanCount: rxValues.length,
       redamanHighCount,
+      redamanGoodCount: rxValues.filter((value) => redamanQuality(value) === 'good').length,
+      redamanNormalCount: rxValues.filter((value) => redamanQuality(value) === 'normal').length,
       redamanHighThreshold: HIGH_REDAMAN_THRESHOLD_DBM,
       redamanHighThresholdText: rxPowerSummaryText(HIGH_REDAMAN_THRESHOLD_DBM),
       redamanAverage: rxAverage,
@@ -728,6 +807,7 @@ async function setWifiSsidAndOptionalPassword(settings = {}, deviceId = '', payl
 module.exports = {
   DEFAULT_BASE_URL,
   DEFAULT_RX_POWER_PARAMETERS,
+  DEFAULT_TEMPERATURE_PARAMETERS,
   DEFAULT_USERNAME_PARAMETERS,
   DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS,
   DEFAULT_WIFI_5G_SSID_PARAMETERS,

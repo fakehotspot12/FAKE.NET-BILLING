@@ -4171,7 +4171,7 @@ td {
 }
 
 .genieacs-table {
-  min-width: 1210px;
+  min-width: 1285px;
   table-layout: fixed;
   width: 100%;
 }
@@ -4247,6 +4247,10 @@ td {
 
 .genieacs-table .genie-col-redaman {
   width: 92px;
+}
+
+.genieacs-table .genie-col-temp {
+  width: 75px;
 }
 
 .genieacs-table .genie-col-active {

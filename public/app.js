@@ -169,6 +169,7 @@ const state = {
   genieAcsPage: 1,
   genieAcsLimit: 10,
   genieAcsStatus: 'all',
+  genieAcsRedaman: 'all',
   dailyReportDate: todayInput(),
   dailyReportAdmin: 'all',
   dailyReportSite: 'all',
@@ -224,8 +225,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.27',
-      buildVersion: '1.0.27',
+      version: '1.0.29',
+      buildVersion: '1.0.29',
       releaseDate: '2026-07-16'
     }
   },
@@ -236,8 +237,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.27',
-    buildVersion: '1.0.27',
+    appVersion: '1.0.29',
+    buildVersion: '1.0.29',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
   },
@@ -2366,8 +2367,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.27',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.27',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.29',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.29',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -9272,6 +9273,16 @@ function genieAcsPaginationControls(pagination = {}) {
   `;
 }
 
+function genieAcsRedamanLabel(value = 'all') {
+  const labels = {
+    all: 'Semua Redaman',
+    good: 'Bagus (< 18)',
+    normal: 'Normal (18 s/d 26,5)',
+    high: 'Tinggi (> 26,5)'
+  };
+  return labels[value] || labels.all;
+}
+
 function openGenieWifiModal(row = {}) {
   const networks = genieWifiNetworks(row);
   const firstNetwork = networks.find((item) => item.enabled) || networks[0] || {};
@@ -9438,6 +9449,7 @@ async function renderGenieAcs(options = {}) {
     page: state.genieAcsPage,
     limit: state.genieAcsLimit,
     status: state.genieAcsStatus,
+    redaman: state.genieAcsRedaman,
     search: state.search,
     refresh: options.refresh ? '1' : ''
   })}`);
@@ -9452,7 +9464,7 @@ async function renderGenieAcs(options = {}) {
         ${metric('Total Device', displayNumber(summary.total || 0), 'GenieACS')}
         ${metric('Online', displayNumber(summary.online || 0), 'Last inform <= 15 menit', 'positive')}
         ${metric('Offline', displayNumber(summary.offline || 0), 'Perlu dicek', Number(summary.offline || 0) ? 'negative' : '')}
-        ${metric('Redaman Tinggi', displayNumber(summary.redamanHighCount || 0), `<= ${summary.redamanHighThresholdText || '-26,5 dBm'} dari ${displayNumber(summary.redamanCount || 0)} terbaca`, Number(summary.redamanHighCount || 0) ? 'negative' : '')}
+        ${metric('Redaman Tinggi', displayNumber(summary.redamanHighCount || 0), `> 26,5 dB dari ${displayNumber(summary.redamanCount || 0)} terbaca`, Number(summary.redamanHighCount || 0) ? 'negative' : '')}
       </section>
 
       <div class="toolbar">
@@ -9462,6 +9474,12 @@ async function renderGenieAcs(options = {}) {
             <option value="all" ${state.genieAcsStatus === 'all' ? 'selected' : ''}>Semua Status</option>
             <option value="online" ${state.genieAcsStatus === 'online' ? 'selected' : ''}>Online</option>
             <option value="offline" ${state.genieAcsStatus === 'offline' ? 'selected' : ''}>Offline</option>
+          </select>
+          <select class="control" id="genieAcsRedamanFilter" title="Filter kualitas redaman">
+            <option value="all" ${state.genieAcsRedaman === 'all' ? 'selected' : ''}>${genieAcsRedamanLabel('all')}</option>
+            <option value="good" ${state.genieAcsRedaman === 'good' ? 'selected' : ''}>${genieAcsRedamanLabel('good')}</option>
+            <option value="normal" ${state.genieAcsRedaman === 'normal' ? 'selected' : ''}>${genieAcsRedamanLabel('normal')}</option>
+            <option value="high" ${state.genieAcsRedaman === 'high' ? 'selected' : ''}>${genieAcsRedamanLabel('high')}</option>
           </select>
         </div>
         <div class="row-actions">
@@ -9495,6 +9513,7 @@ async function renderGenieAcs(options = {}) {
               <col class="genie-col-type">
               <col class="genie-col-sn">
               <col class="genie-col-redaman">
+              <col class="genie-col-temp">
               <col class="genie-col-active">
               <col class="genie-col-action">
             </colgroup>
@@ -9509,6 +9528,7 @@ async function renderGenieAcs(options = {}) {
                 <th>Type Modem</th>
                 <th>SN</th>
                 <th>Redaman</th>
+                <th>Suhu</th>
                 <th>Total Active</th>
                 <th>Aksi</th>
               </tr>
@@ -9527,6 +9547,7 @@ async function renderGenieAcs(options = {}) {
                   <td class="genieacs-truncate" title="${escapeHtml(row.productClass || '-')}">${escapeHtml(row.productClass || '-')}</td>
                   <td class="genieacs-sn-cell" title="${escapeHtml(row.serialNumber || '-')}"><code>${escapeHtml(row.serialNumber || '-')}</code></td>
                   <td class="genieacs-nowrap"><strong>${escapeHtml(row.rxPowerText || '-')}</strong></td>
+                  <td class="genieacs-nowrap">${escapeHtml(row.temperatureText || '-')}</td>
                   <td class="genieacs-number-cell">
                     <strong>${displayNumber(row.wifiClientsTotal || 0)}</strong>
                   </td>
@@ -9537,7 +9558,7 @@ async function renderGenieAcs(options = {}) {
                     </div>` : '-'}
                   </td>
                 </tr>
-              `).join('') : '<tr><td colspan="11" class="empty">Belum ada device sesuai filter.</td></tr>'}
+              `).join('') : '<tr><td colspan="12" class="empty">Belum ada device sesuai filter.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -9556,6 +9577,11 @@ async function renderGenieAcs(options = {}) {
   });
   document.getElementById('genieAcsStatusFilter')?.addEventListener('change', (event) => {
     state.genieAcsStatus = event.target.value || 'all';
+    state.genieAcsPage = 1;
+    renderGenieAcs();
+  });
+  document.getElementById('genieAcsRedamanFilter')?.addEventListener('change', (event) => {
+    state.genieAcsRedaman = event.target.value || 'all';
     state.genieAcsPage = 1;
     renderGenieAcs();
   });
@@ -10551,6 +10577,16 @@ function memberMeta(member = {}) {
   return [member.userId || member.accountId, member.internet || member.username].filter(Boolean).join(' / ') || '-';
 }
 
+function sameMemberText(a = '', b = '') {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
+function memberCreatorText(member = {}) {
+  const name = member.createdByName || member.createdByUsername || '';
+  if (!name) return '';
+  return `Dibuat oleh ${name}`;
+}
+
 function memberLocationUrl(member = {}) {
   const latitude = String(member.latitude || member.memberLatitude || '').trim();
   const longitude = String(member.longitude || member.memberLongitude || '').trim();
@@ -11087,6 +11123,10 @@ async function renderMonitoringMembers(options = {}) {
     const contactText = member.whatsapp || member.phone || '-';
     const paymentText = `${memberPaymentTypeLabel(member.paymentType || member.type)} / ${memberBillingPeriodLabel(member.billingPeriod || member.method)}`;
     const mapUrl = memberLocationUrl(member);
+    const titleText = memberTitle(member);
+    const internetText = member.internet || member.username || '';
+    const showInternetLine = internetText && !sameMemberText(titleText, internetText);
+    const creatorText = memberCreatorText(member);
     const dateLines = [
       member.activeDate ? `Aktif ${dateText(member.activeDate)}` : '',
       (member.nextDue || member.dueDate) ? `Next ${dateText(member.nextDue || member.dueDate)}` : ''
@@ -11095,12 +11135,12 @@ async function renderMonitoringMembers(options = {}) {
       <tr>
         <td>
           <div class="cell-stack">
-            <strong class="cell-title" title="${escapeHtml(memberTitle(member))}">${escapeHtml(memberTitle(member))}</strong>
+            <strong class="cell-title" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</strong>
             <span class="cell-subline member-id-line" title="${escapeHtml(memberDisplayId(member))}">
-              <small>ID Member</small>
               <b>${escapeHtml(memberDisplayId(member))}</b>
             </span>
-            ${member.internet || member.username ? `<span class="cell-subline" title="${escapeHtml(member.internet || member.username)}">${escapeHtml(member.internet || member.username)}</span>` : ''}
+            ${showInternetLine ? `<span class="cell-subline" title="${escapeHtml(internetText)}">${escapeHtml(internetText)}</span>` : ''}
+            ${creatorText ? `<span class="cell-subline muted" title="${escapeHtml(creatorText)}">${escapeHtml(creatorText)}</span>` : ''}
           </div>
         </td>
         <td>

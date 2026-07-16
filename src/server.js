@@ -2876,7 +2876,8 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     packageName: payload.memberPackageName || profile.name || payload.profile || '',
     price: memberPrice,
     status: payload.memberStatus || (invoiceStatus === 'unpaid' ? 'pending' : 'active'),
-    dueDay
+    dueDay,
+    ...actorPayload(actor)
   });
 
   Object.assign(customer, {
@@ -2905,6 +2906,9 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     locationUrl,
     activeDate,
     housePhotoUrl: String(payload.memberHousePhotoUrl || payload.housePhotoUrl || '').trim(),
+    createdByName: customer.createdByName || actor.name || actor.username || 'Sistem',
+    createdByUsername: customer.createdByUsername || actor.username || '',
+    createdByRole: customer.createdByRole || actor.role || '',
     updatedBy: actor.name || actor.username || 'Sistem'
   });
   addActivity(data, 'customer', `Member ${customer.name || customer.username} dibuat dari user PPP-DHCP`, {
@@ -9676,7 +9680,10 @@ async function handleApi(req, res, url) {
       badRequest(res, 'Nama atau username pelanggan wajib diisi');
       return;
     }
-    const { result } = await mutate((data) => addManualCustomer(data, payload));
+    const { result } = await mutate((data) => addManualCustomer(data, {
+      ...payload,
+      ...actorPayload(authContext.user)
+    }));
     sendJson(res, 201, { customer: result });
     return;
   }
@@ -9794,15 +9801,17 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/genieacs/devices') {
     const authContext = await requirePermission(req, res, 'genieacs:read');
     if (!authContext) return;
-    const { page, limit } = paginationParams(url, 10, 100);
+    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
     const search = String(url.searchParams.get('search') || '').trim();
     const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
+    const redaman = String(url.searchParams.get('redaman') || 'all').trim().toLowerCase();
     try {
       const payload = await genieAcs.listDevices(authContext.data.settings || {}, {
         page,
         limit,
         search,
-        status
+        status,
+        redaman
       });
       const rows = await enrichGenieAcsRowsWithLocalData(authContext.data, payload.rows || [], currentPeriod());
       sendJson(res, 200, {
@@ -11442,6 +11451,11 @@ async function handleApi(req, res, url) {
       const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
       const resolver = radiusStatusResolver(authContext.data);
       let members = (authContext.data.customers || []).map((customer) => {
+        const radiusUser = (authContext.data.radiusUsers || []).find((user) => {
+          return user.customerId === customer.id
+            || user.id === customer.radiusUserId
+            || String(user.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase();
+        }) || {};
         const memberPaymentType = normalizeImportPaymentType(customer.paymentType || 'postpaid');
         const memberBillingPeriod = normalizeImportBillingPeriod(customer.billingPeriod || 'fixed', memberPaymentType);
         return {
@@ -11472,7 +11486,12 @@ async function handleApi(req, res, url) {
           price: Number(customer.price || customer.amount || 0),
           ppn: customer.ppn || '',
           discount: customer.discount || '',
-          packageName: customer.packageName || ''
+          packageName: customer.packageName || '',
+          createdByName: customer.createdByName || radiusUser.createdByName || '',
+          createdByUsername: customer.createdByUsername || radiusUser.createdByUsername || '',
+          createdByRole: customer.createdByRole || radiusUser.createdByRole || '',
+          createdAt: customer.createdAt || radiusUser.createdAt || '',
+          updatedBy: customer.updatedBy || radiusUser.updatedBy || ''
         };
       });
       if (status !== 'all') {

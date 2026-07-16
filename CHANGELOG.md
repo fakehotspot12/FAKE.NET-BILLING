@@ -7,6 +7,24 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.29] - 2026-07-16
+
+### Changed
+
+- Tampilan Monitoring Member diringkas agar username PPP-DHCP tidak tampil dobel ketika nama member belum diisi berbeda.
+- Row member menampilkan informasi `Dibuat oleh` dari data pembuat customer atau fallback user Radius terkait.
+
+## [1.0.28] - 2026-07-16
+
+### Added
+
+- Menu GenieACS menambahkan filter kualitas redaman `Bagus`, `Normal`, dan `Tinggi`.
+- Tabel GenieACS menampilkan kolom suhu modem di sebelah kanan redaman.
+
+### Fixed
+
+- Pilihan pager `All` pada GenieACS sekarang menampilkan semua device sesuai filter, tidak lagi dibatasi 100 data.
+
 ## [1.0.27] - 2026-07-16
 
 ### Fixed

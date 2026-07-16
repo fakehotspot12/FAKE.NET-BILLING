@@ -64,6 +64,40 @@ test('normalizes GenieACS device wifi and optical parameters', () => {
   assert.equal(device.wifiNetworks[0].passwordParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase');
 });
 
+test('normalizes GenieACS temperature from virtual and raw parameters', () => {
+  const virtualTemp = genieAcs.normalizeDevice({
+    _id: 'temp-virtual',
+    VirtualParameters: {
+      gettemp: { _value: '45' }
+    }
+  }, {});
+  const rawTemp = genieAcs.normalizeDevice({
+    _id: 'temp-raw',
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          X_CMCC_EponInterfaceConfig: {
+            TransceiverTemperature: { _value: '14060' }
+          }
+        }
+      }
+    }
+  }, {});
+  const invalidTemp = genieAcs.normalizeDevice({
+    _id: 'temp-invalid',
+    VirtualParameters: {
+      gettemp: { _value: '0' }
+    }
+  }, {});
+
+  assert.equal(virtualTemp.temperatureText, '45 C');
+  assert.equal(virtualTemp.temperatureValue, 45);
+  assert.equal(virtualTemp.temperatureParameter, 'VirtualParameters.gettemp');
+  assert.equal(rawTemp.temperatureText, '54 C');
+  assert.equal(invalidTemp.temperatureText, '-');
+  assert.equal(invalidTemp.temperatureValue, null);
+});
+
 test('uses built-in GenieACS parameters and normalizes ZTE RX power', () => {
   const device = genieAcs.normalizeDevice({
     _id: 'zte-1',

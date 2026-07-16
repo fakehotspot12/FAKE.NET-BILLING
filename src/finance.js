@@ -1064,6 +1064,9 @@ function addManualCustomer(data, payload) {
     price: toNumber(payload.price),
     status: normalizeStatus(payload.status || 'active'),
     dueDay: clampDay(payload.dueDay || billingDueDay(data.settings)),
+    createdByName: cleanText(payload.createdByName || payload.actorName),
+    createdByUsername: cleanText(payload.createdByUsername || payload.actorUsername),
+    createdByRole: cleanText(payload.createdByRole || payload.actorRole),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     lastSyncedAt: ''
