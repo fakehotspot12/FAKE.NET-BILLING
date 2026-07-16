@@ -150,12 +150,12 @@ Monitoring member PPP-DHCP memuat status pelanggan, status pembayaran, NAS, kont
 
 Billing member mengikuti pola umum ISP seperti Radboox, yaitu kombinasi `Payment Type` dan `Billing Period`. Pilihan periode billing dibatasi berdasarkan tipe pembayaran agar skema tagihan tidak rancu.
 
-| Payment Type | Billing Period yang tersedia | Fungsi |
-| --- | --- | --- |
-| Postpaid | Fixed Date | Pelanggan memakai layanan lebih dulu, lalu ditagih pada tanggal tetap milik member. Cocok untuk pelanggan bulanan dengan tanggal jatuh tempo mengikuti tanggal aktif/pasang. |
-| Postpaid | Billing Cycle | Pelanggan memakai layanan lebih dulu, lalu ditagih mengikuti tanggal cycle global dari Billing Setting. Cocok jika semua pelanggan ingin disatukan ke satu tanggal jatuh tempo, misalnya tanggal 10 atau 15. |
-| Prepaid | Fixed Date | Pelanggan membayar lebih dulu untuk periode tanggal tetap. Jika invoice awal belum paid, layanan tidak dianggap aman secara billing sampai pembayaran dicatat. |
-| Prepaid | Renewal | Pelanggan membayar lebih dulu dan masa aktif diperpanjang dari masa aktif/expired terakhir. Cocok untuk skema prabayar yang diperpanjang berdasarkan pembayaran berikutnya. |
+| Payment Type | Billing Period | Sumber jatuh tempo | Cara kerja invoice | Cocok untuk |
+| --- | --- | --- | --- | --- |
+| Postpaid | Fixed Date | Tanggal jatuh tempo milik member, biasanya mengikuti tanggal aktif/pasang pelanggan. | Pelanggan memakai layanan lebih dulu. Invoice dibuat sesuai tanggal member tersebut, lalu pembayaran dicatat manual atau otomatis dari payment gateway. | Pelanggan bulanan yang tanggal tagihannya berbeda-beda mengikuti tanggal pasang. |
+| Postpaid | Billing Cycle | Tanggal global `Due date postpaid` di `Radius > Setting > Billing Setting`. | Semua pelanggan cycle ditarik ke tanggal jatuh tempo yang sama. Jika pelanggan aktif sebelum/sesudah tanggal cycle, invoice pertama dapat prorata, lalu periode berikutnya full bulanan. | ISP yang ingin semua tagihan jatuh pada tanggal seragam, misalnya tanggal 10 atau 15 setiap bulan. |
+| Prepaid | Fixed Date | Tanggal jatuh tempo milik member. | Pelanggan bayar dulu untuk periode tanggal tetap. Jika invoice awal `Unpaid`, layanan belum dianggap aman sampai pembayaran dicatat `Paid`. | Pelanggan prabayar yang tetap memakai tanggal jatuh tempo tertentu. |
+| Prepaid | Renewal | Masa aktif/expired terakhir pelanggan, lalu diperpanjang setelah pembayaran berikutnya. | Pelanggan bayar dulu, lalu masa aktif diperbarui dari periode renewal. Tidak memakai tanggal cycle global. | Skema prabayar berbasis perpanjangan masa aktif, mirip voucher/langganan yang diperpanjang ketika bayar. |
 
 Kombinasi yang tidak sesuai tidak digunakan. `Postpaid + Renewal` dan `Prepaid + Billing Cycle` akan dinormalisasi ke `Fixed Date` agar data tetap aman dan invoice tidak dibuat dengan aturan yang salah.
 
