@@ -2232,9 +2232,10 @@ async function workbookBuffer(sheets = {}) {
 }
 
 async function pppImportTemplateBuffer() {
-  return workbookBuffer({
+  const buffer = await workbookBuffer({
     ppp_dhcp_users: [
       {
+        no: 'Contoh 1',
         username: 'pppoe-contoh',
         password: 'password-ppp',
         type: 'PPPoE',
@@ -2261,6 +2262,7 @@ async function pppImportTemplateBuffer() {
         note: 'Contoh PPPoE: username dan password wajib'
       },
       {
+        no: 'Contoh 2',
         username: '',
         password: '',
         type: 'DHCP',
@@ -2285,9 +2287,13 @@ async function pppImportTemplateBuffer() {
         discount: '',
         price: '150000',
         note: 'Contoh DHCP: MAC address wajib, username boleh kosong'
+      },
+      {
+        no: 'Data Import Terbaca mulai dari 5'
       }
     ],
     petunjuk: [
+      { kolom: 'No', wajib: 'Tidak', contoh: '1', keterangan: 'Nomor urut untuk memudahkan pencocokan dengan baris Excel saat terjadi error.' },
       { kolom: 'username', wajib: 'PPPoE wajib. DHCP boleh kosong.', contoh: 'pppoe-budi', keterangan: 'Untuk DHCP yang kosong, aplikasi memakai MAC address sebagai identitas radius.' },
       { kolom: 'password', wajib: 'PPPoE wajib. DHCP boleh kosong.', contoh: 'password123', keterangan: 'Password PPPoE. Tidak dipakai untuk DHCP.' },
       { kolom: 'type', wajib: 'Ya', contoh: 'PPPoE / DHCP', keterangan: 'Isi PPPoE atau DHCP.' },
@@ -2314,6 +2320,54 @@ async function pppImportTemplateBuffer() {
       { kolom: 'note', wajib: 'Tidak', contoh: 'Catatan opsional', keterangan: 'Catatan internal.' }
     ]
   });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const worksheet = workbook.getWorksheet('ppp_dhcp_users');
+  if (worksheet) {
+    const lastColumn = Math.max(1, worksheet.columnCount);
+    worksheet.getCell(1, 1).value = 'No';
+    worksheet.getRow(1).height = 30;
+    worksheet.getColumn(1).width = 11;
+    const widthByHeader = {
+      username: 24,
+      password: 20,
+      profile: 22,
+      nas: 22,
+      member_name: 24,
+      whatsapp: 18,
+      email: 25,
+      address: 32,
+      note: 34
+    };
+    worksheet.getRow(1).eachCell((cell, columnNumber) => {
+      const key = normalizeImportKey(cell.value);
+      if (widthByHeader[key]) worksheet.getColumn(columnNumber).width = widthByHeader[key];
+    });
+    worksheet.mergeCells(4, 1, 4, lastColumn);
+    const markerCell = worksheet.getCell(4, 1);
+    markerCell.value = 'Data Import Terbaca mulai dari 5';
+    markerCell.font = { bold: true, color: { argb: 'FF0F4F82' }, size: 12 };
+    markerCell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFDCEEFF' }
+    };
+    markerCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    markerCell.border = {
+      top: { style: 'medium', color: { argb: 'FF1769AA' } },
+      left: { style: 'medium', color: { argb: 'FF1769AA' } },
+      bottom: { style: 'medium', color: { argb: 'FF1769AA' } },
+      right: { style: 'medium', color: { argb: 'FF1769AA' } }
+    };
+    worksheet.getRow(4).height = 34;
+    worksheet.getRow(5).height = 22;
+    worksheet.views = [{ state: 'frozen', ySplit: 4 }];
+    worksheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: lastColumn }
+    };
+  }
+  return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
 function pppExportRows(data = {}) {
@@ -2322,11 +2376,12 @@ function pppExportRows(data = {}) {
   const customers = radiusCustomerDirectory(data);
   return (data.radiusUsers || [])
     .filter((user) => user.serviceType === 'pppoe')
-    .map((user) => {
+    .map((user, index) => {
       const profile = profiles.get(user.profileId) || {};
       const nas = nasMap.get(user.nasId) || {};
       const customer = customers.get(user.customerId) || {};
       return {
+        no: index + 1,
         username: user.username || '',
         password: user.password || '',
         type: user.accessType || 'PPPoE',
@@ -2534,7 +2589,10 @@ function detectImportDataStartRow(rows = [], headerRowNumber = 1) {
   const marker = rows.find((row) => {
     if (row.rowNumber <= headerRowNumber || row.rowNumber > headerRowNumber + 20) return false;
     const text = (row.cells || []).join(' ').toLowerCase();
-    return text.includes('diatas adalah contoh') || text.includes('silahkan tambah') || text.includes('silakan tambah');
+    return text.includes('data import terbaca mulai dari')
+      || text.includes('diatas adalah contoh')
+      || text.includes('silahkan tambah')
+      || text.includes('silakan tambah');
   });
   return marker ? marker.rowNumber + 1 : headerRowNumber + 1;
 }
@@ -2682,7 +2740,12 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
       if (existing) updated.push(next);
       else created.push(next);
     } catch (error) {
-      errors.push({ row: row.__row_number || index + 2, username, error: error.message || 'Gagal import user' });
+      errors.push({
+        row: row.__row_number || index + 2,
+        no: String(row.no || '').trim(),
+        username,
+        error: error.message || 'Gagal import user'
+      });
     }
   });
   return { created, updated, errors };

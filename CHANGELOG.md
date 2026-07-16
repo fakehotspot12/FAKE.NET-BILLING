@@ -7,6 +7,17 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.47] - 2026-07-17
+
+### Changed
+
+- Template import PPP-DHCP mempertahankan dua baris contoh dan memakai baris 4 sebagai pembatas; data import sekarang dimulai dari baris Excel 5.
+- Template dan export PPP-DHCP memiliki kolom nomor urut sebelum username, header lebih jelas, serta area pembatas yang digabung sepanjang tabel.
+
+### Fixed
+
+- Hasil import yang gagal sekarang menampilkan nomor baris Excel, nomor urut, username, dan penyebab error tanpa menghentikan baris valid lainnya.
+
 ## [1.0.46] - 2026-07-16
 
 ### Added

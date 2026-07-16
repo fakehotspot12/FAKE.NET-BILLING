@@ -133,6 +133,27 @@ test('PPP-DHCP import can explicitly count a current installation as PSB', () =>
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', '2099-07').psb, 1);
 });
 
+test('PPP-DHCP import error reports the Excel row and sequence number', () => {
+  const data = createDefaultStore();
+  const summary = serverInternals.importPppUsers(data, [{
+    __row_number: 8,
+    no: '4',
+    username: 'user-error',
+    password: 'secret',
+    type: 'PPPoE',
+    profile: '',
+    nas: 'SITE-A'
+  }], { name: 'Admin', username: 'admin' });
+
+  assert.equal(summary.created.length, 0);
+  assert.deepEqual(summary.errors, [{
+    row: 8,
+    no: '4',
+    username: 'user-error',
+    error: 'Profile wajib diisi'
+  }]);
+});
+
 test('PPP-DHCP XLSX template uses styled headers and local date format', async () => {
   const buffer = await serverInternals.pppImportTemplateBuffer();
   const workbook = new ExcelJS.Workbook();
@@ -151,7 +172,43 @@ test('PPP-DHCP XLSX template uses styled headers and local date format', async (
   assert.equal(worksheet.getCell('A1').fill.fgColor.argb, 'FF1769AA');
   assert.equal(worksheet.getCell('A1').font.color.argb, 'FFFFFFFF');
   assert.equal(worksheet.getCell('A1').font.bold, true);
+  assert.equal(worksheet.getCell('A1').value, 'No');
+  assert.equal(worksheet.getRow(1).height, 30);
   assert.equal(worksheet.getCell(2, activeDateColumn).value, todayParts);
+  assert.equal(worksheet.getCell('A4').value, 'Data Import Terbaca mulai dari 5');
+  assert.equal(worksheet.getCell('A4').isMerged, true);
+  assert.equal(worksheet.getRow(4).height, 34);
   assert.ok(headers.includes('service_name'));
   assert.ok(headers.includes('count_as_psb'));
+
+  const templateRows = await serverInternals.readWorkbookRowsFromBase64(buffer.toString('base64'));
+  assert.equal(templateRows.length, 0);
+});
+
+test('PPP-DHCP XLSX template starts import data at Excel row 5', async () => {
+  const buffer = await serverInternals.pppImportTemplateBuffer();
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const worksheet = workbook.getWorksheet('ppp_dhcp_users');
+  const headers = worksheet.getRow(1).values.slice(1);
+  const values = {
+    No: '1',
+    username: 'uji-row-5',
+    password: 'rahasia',
+    type: 'PPPoE',
+    profile: '10M',
+    nas: 'SITE-A'
+  };
+  headers.forEach((header, index) => {
+    if (Object.prototype.hasOwnProperty.call(values, header)) {
+      worksheet.getCell(5, index + 1).value = values[header];
+    }
+  });
+
+  const nextBuffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  const rows = await serverInternals.readWorkbookRowsFromBase64(nextBuffer.toString('base64'));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].__row_number, 5);
+  assert.equal(rows[0].no, '1');
+  assert.equal(rows[0].username, 'uji-row-5');
 });

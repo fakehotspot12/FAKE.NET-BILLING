@@ -225,9 +225,9 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.46',
+      version: '1.0.47',
       buildVersion: '1.0.38',
-      releaseDate: '2026-07-16'
+      releaseDate: '2026-07-17'
     }
   },
   hotspotVoucherTemplates: [],
@@ -237,9 +237,9 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.46',
+    appVersion: '1.0.47',
     buildVersion: '1.0.38',
-    releaseDate: '2026-07-16',
+    releaseDate: '2026-07-17',
     loginVerificationEnabled: true
   },
   notifications: null,
@@ -2392,9 +2392,9 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.46',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.46',
-    releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.47',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.47',
+    releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-17',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
       : settingVerification !== false
@@ -8495,7 +8495,39 @@ async function renderRadiusPppDhcp(options = {}) {
         body: JSON.stringify({ filename: file.name, contentBase64 })
       });
       const failed = Array.isArray(result.errors) ? result.errors.length : 0;
-      setToast(`Import selesai: ${displayNumber(result.created)} baru, ${displayNumber(result.updated)} update${failed ? `, ${displayNumber(failed)} gagal` : ''}`);
+      if (failed) {
+        openModal('Hasil Import PPP-DHCP', `
+          <div class="stack">
+            <div class="notice warning">
+              <strong>${displayNumber(failed)} baris gagal diproses</strong>
+              <span>${displayNumber(result.created)} user baru dan ${displayNumber(result.updated)} user diperbarui. Baris valid tetap diproses.</span>
+            </div>
+            <div class="table-wrap compact-table">
+              <table>
+                <thead>
+                  <tr><th>Baris Excel</th><th>No</th><th>Username</th><th>Keterangan</th></tr>
+                </thead>
+                <tbody>
+                  ${result.errors.map((item) => `
+                    <tr>
+                      <td><strong>${escapeHtml(item.row || '-')}</strong></td>
+                      <td>${escapeHtml(item.no || '-')}</td>
+                      <td>${escapeHtml(item.username || '-')}</td>
+                      <td>${escapeHtml(item.error || 'Gagal import user')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+            <div class="muted">Perbaiki baris yang tercantum lalu import ulang. User yang sudah berhasil dibuat akan diperbarui, bukan diduplikasi.</div>
+          </div>
+          <div class="modal-actions">
+            <button class="button" type="button" data-close-modal>Tutup</button>
+          </div>
+        `, async () => {});
+      } else {
+        setToast(`Import selesai: ${displayNumber(result.created)} baru, ${displayNumber(result.updated)} update`);
+      }
       renderRadiusPppDhcp({ refresh: true });
     } catch (error) {
       setToast(error.message);
