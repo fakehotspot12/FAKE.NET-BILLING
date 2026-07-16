@@ -7,6 +7,16 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.31] - 2026-07-16
+
+### Changed
+
+- Template WhatsApp invoice terbit dan reminder sekarang menampilkan format eksplisit `H+[suspend_grace_days] ([suspend_grace_days] hari)` di kalimat isolir.
+
+### Fixed
+
+- Template WA tersimpan yang sudah memakai `[suspend_grace]` pada invoice/reminder otomatis dimigrasikan ke variable `[suspend_grace_days]` agar editor template menampilkan variable hari secara jelas.
+
 ## [1.0.30] - 2026-07-16
 
 ### Changed

@@ -942,7 +942,11 @@ test('invoice whatsapp templates use suspend grace from billing setting', () => 
   assert.equal(values.suspend_grace_days, '3');
   assert.equal(
     shaped.settings.waGateway.templates.paymentReminder,
-    'Jika belum bayar setelah *[suspend_grace]* dari tempo.'
+    'Jika belum bayar setelah *H+[suspend_grace_days] ([suspend_grace_days] hari)* dari tempo.'
+  );
+  assert.equal(
+    serverInternals.renderWaTemplate('Batas *H+[suspend_grace_days] ([suspend_grace_days] hari)*', values),
+    'Batas *H+3 (3 hari)*'
   );
   assert.equal(
     serverInternals.renderWaTemplate('Batas *[suspend_grace]* / [suspend_grace_days]', values),
