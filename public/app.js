@@ -225,8 +225,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.35',
-      buildVersion: '1.0.35',
+      version: '1.0.36',
+      buildVersion: '1.0.36',
       releaseDate: '2026-07-16'
     }
   },
@@ -237,8 +237,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.35',
-    buildVersion: '1.0.35',
+    appVersion: '1.0.36',
+    buildVersion: '1.0.36',
     releaseDate: '2026-07-16',
     loginVerificationEnabled: true
   },
@@ -2367,8 +2367,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.35',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.35',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.36',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.36',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-16',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13489,30 +13489,29 @@ async function renderSettings(options = {}) {
     return /^\d/.test(raw) ? `v${raw}` : raw;
   };
   const installedVersion = updateInfo.currentVersion || updateInfo.localVersion || branding.appVersion;
-  const latestVersion = updateInfo.remoteVersion || (updateAvailable ? '' : installedVersion);
-  const sameVersionUpdate = updateAvailable && installedVersion && latestVersion && versionLabel(installedVersion) === versionLabel(latestVersion);
+  const latestVersion = updateInfo.remoteVersion || installedVersion;
+  const installedVersionLabel = versionLabel(installedVersion);
+  const latestVersionLabel = versionLabel(latestVersion);
+  const hasNewVersion = updateAvailable && installedVersionLabel && latestVersionLabel && installedVersionLabel !== latestVersionLabel;
   const changelogText = updateStatus.changelog || 'Belum ada changelog rilis.';
-  const updateNoticeClass = !updateStatus.updaterInstalled || updateInfo.error ? 'warning' : updateAvailable ? 'warning' : 'positive';
+  const updateNoticeClass = !updateStatus.updaterInstalled || updateInfo.error ? 'warning' : hasNewVersion ? 'warning' : 'positive';
   const updateTitle = !updateStatus.updaterInstalled
     ? 'Updater belum terpasang'
-    : updateAvailable
-      ? (sameVersionUpdate ? 'Revisi update tersedia' : 'Update tersedia')
-      : updateInfo.error
-        ? 'Status update belum bisa dicek'
-        : 'Aplikasi sudah terbaru';
+    : updateInfo.error
+      ? 'Status update belum bisa dicek'
+      : hasNewVersion
+        ? 'Update tersedia'
+        : 'Up to Date';
   const updateDescription = !updateStatus.updaterInstalled
     ? 'Jalankan install.sh agar command updater terpasang di server.'
-    : updateAvailable
-      ? (sameVersionUpdate
-        ? 'Ada perubahan baru pada versi yang sama. Klik Update Aplikasi untuk memperbarui tanpa menghapus data.'
-        : 'Rilis terbaru tersedia. Klik Update Aplikasi untuk memperbarui tanpa menghapus data.')
-      : updateInfo.error
-        ? updateInfo.error
-        : 'Versi lokal sudah sama dengan rilis terbaru.';
+    : updateInfo.error
+      ? updateInfo.error
+      : hasNewVersion
+        ? 'Rilis terbaru tersedia. Klik Update Aplikasi untuk memperbarui tanpa menghapus data.'
+        : 'Versi aplikasi sudah memakai rilis terbaru.';
   const updateMeta = [
-    installedVersion ? `Terpasang: ${versionLabel(installedVersion)}` : '',
-    latestVersion ? `Rilis terbaru: ${versionLabel(latestVersion)}` : '',
-    sameVersionUpdate ? 'Revisi rilis remote lebih baru' : '',
+    installedVersionLabel ? `Terpasang: ${installedVersionLabel}` : '',
+    latestVersionLabel ? `Rilis terbaru: ${latestVersionLabel}` : '',
     updateInfo.dirty ? 'Ada perubahan lokal, updater akan menyimpannya dulu sebelum pull.' : ''
   ].filter(Boolean).join(' | ');
   const collectorBonusTiers = Array.isArray(settings.collectorDailyBonusTiers) && settings.collectorDailyBonusTiers.length
