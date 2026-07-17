@@ -225,7 +225,7 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.51',
+      version: '1.0.52',
       buildVersion: '1.0.38',
       releaseDate: '2026-07-17'
     }
@@ -237,7 +237,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.51',
+    appVersion: '1.0.52',
     buildVersion: '1.0.38',
     releaseDate: '2026-07-17',
     loginVerificationEnabled: true
@@ -2392,8 +2392,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.51',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.51',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.52',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.52',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-17',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13542,7 +13542,7 @@ function paymentGatewayAdvancedModalBody(settings = {}) {
       </label>
       <section class="notice field full">
         <strong>Rincian gateway</strong>
-        <span>Callback URL tetap satu untuk semua provider: /payment-gateway/webhook. Fee ini hanya muncul pada pembayaran lewat payment gateway. Pembayaran manual tetap memakai nominal tagihan asli.</span>
+        <span>Callback URL tetap satu untuk semua provider: /payment-gateway/webhook. Fee ini hanya muncul pada pembayaran lewat payment gateway. Khusus Tripay gerai, Rp3.000 dari fee bulanan otomatis dialokasikan sebagai biaya yang dibayar di kasir. Pembayaran manual tetap memakai nominal tagihan asli.</span>
       </section>
       <div class="modal-actions field full">
         <button class="ghost-button" value="cancel" type="submit">Batal</button>

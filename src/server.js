@@ -6926,6 +6926,53 @@ function paymentGatewayAmountBreakdown(settings = {}, amount = 0, kind = 'monthl
   };
 }
 
+const TRIPAY_RETAIL_CASHIER_FEE = 3000;
+const TRIPAY_RETAIL_CHANNEL_CODES = new Set(['ALFAMART', 'ALFAMIDI', 'INDOMARET']);
+
+function isTripayRetailChannel(channel = {}) {
+  const value = typeof channel === 'string' ? { code: channel, name: channel } : (channel || {});
+  const code = String(value.code || value.method || '').trim().toUpperCase();
+  const name = String(value.name || '').trim().toLowerCase();
+  const group = String(value.group || '').trim().toLowerCase();
+  return TRIPAY_RETAIL_CHANNEL_CODES.has(code)
+    || group.includes('convenience')
+    || group.includes('retail')
+    || name.includes('alfamart')
+    || name.includes('alfamidi')
+    || name.includes('indomaret');
+}
+
+function tripayCheckoutAmountBreakdown(params = {}) {
+  const kind = String(params.kind || '').trim().toLowerCase();
+  const rawRequestedAmount = Math.max(0, Math.round(Number(params.amount || 0) || 0));
+  const hasAdminFee = params.adminFee !== undefined && params.adminFee !== null && params.adminFee !== '';
+  const configuredAdminFee = hasAdminFee
+    ? Math.max(0, Math.round(Number(params.adminFee || 0) || 0))
+    : 0;
+  const hasBaseAmount = params.baseAmount !== undefined && params.baseAmount !== null && params.baseAmount !== '';
+  const baseAmount = hasBaseAmount
+    ? Math.max(0, Math.round(Number(params.baseAmount || 0) || 0))
+    : Math.max(0, rawRequestedAmount - configuredAdminFee);
+  const requestedAmount = Math.max(baseAmount, rawRequestedAmount);
+  const effectiveAdminFee = hasAdminFee
+    ? configuredAdminFee
+    : Math.max(0, requestedAmount - baseAmount);
+  const retail = !kind.includes('voucher') && isTripayRetailChannel(params.channel || params.method || '');
+  const cashierFee = retail ? TRIPAY_RETAIL_CASHIER_FEE : 0;
+  const checkoutAdminFee = retail
+    ? Math.max(0, effectiveAdminFee - cashierFee)
+    : effectiveAdminFee;
+  return {
+    baseAmount,
+    configuredAdminFee: effectiveAdminFee,
+    checkoutAdminFee,
+    cashierFee,
+    gatewayAmount: baseAmount + checkoutAdminFee,
+    customerAmount: baseAmount + Math.max(effectiveAdminFee, cashierFee),
+    retail
+  };
+}
+
 function paymentGatewayInvoiceReference(invoice = {}) {
   return displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id || '');
 }
@@ -8322,9 +8369,12 @@ function upsertPaidBillingPaymentGatewayTransaction(data = {}, invoice = {}, pay
     customerName: customer.name || invoice.customerName || invoice.username || '',
     username: customer.username || invoice.username || '',
     amount: Number(payment.amount || invoice.amount || 0),
+    gatewayAmount: Number(payment.gatewayAmount || payment.amount || invoice.amount || 0),
     baseAmount: Number(payment.baseAmount || invoice.amount || 0),
     fee: Number(payment.adminFee ?? payment.fee ?? existing?.fee ?? 0),
     adminFee: Number(payment.adminFee ?? payment.fee ?? existing?.adminFee ?? 0),
+    providerFee: Number(payment.providerFee ?? payment.fee ?? existing?.providerFee ?? 0),
+    cashierFee: Number(payment.cashierFee ?? existing?.cashierFee ?? 0),
     status: 'paid',
     paidAt: payment.paidAt || now,
     paymentAt: payment.paidAt || now,
@@ -8357,7 +8407,21 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
   }
   const amount = Math.round(Number(payment.amount || 0) || 0);
   const gatewayBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, invoice.amount || 0, 'monthly');
-  if (amount > 0 && amount < gatewayBreakdown.totalAmount) {
+  const provider = String(payment.provider || data.settings?.paymentGateway?.provider || '').trim().toLowerCase();
+  const checkoutBreakdown = provider === 'tripay'
+    ? tripayCheckoutAmountBreakdown({
+      kind: 'monthly-package',
+      method: payment.method,
+      baseAmount: gatewayBreakdown.baseAmount,
+      adminFee: gatewayBreakdown.adminFee,
+      amount: gatewayBreakdown.totalAmount
+    })
+    : {
+      gatewayAmount: gatewayBreakdown.totalAmount,
+      customerAmount: gatewayBreakdown.totalAmount,
+      cashierFee: 0
+    };
+  if (amount > 0 && amount < checkoutBreakdown.gatewayAmount) {
     throw new Error('Nominal pembayaran lebih kecil dari invoice');
   }
   const existingPayment = activePayments(data).find((item) => item.invoiceId === invoice.id);
@@ -8390,10 +8454,13 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
   }
   const transaction = upsertPaidBillingPaymentGatewayTransaction(data, paid || invoice, {
     ...payment,
-    amount: amount || gatewayBreakdown.totalAmount,
+    amount: checkoutBreakdown.customerAmount,
+    gatewayAmount: amount || checkoutBreakdown.gatewayAmount,
     baseAmount: gatewayBreakdown.baseAmount,
-    fee: payment.fee || gatewayBreakdown.adminFee,
-    adminFee: gatewayBreakdown.adminFee
+    providerFee: payment.fee || 0,
+    fee: gatewayBreakdown.adminFee,
+    adminFee: gatewayBreakdown.adminFee,
+    cashierFee: checkoutBreakdown.cashierFee
   }, actor);
   return { invoice: paid || invoice, status: 'paid', transaction, activatedUser, reused: wasPaid || Boolean(existingPayment) };
 }
@@ -8499,9 +8566,18 @@ function paymentGatewayReturnUrl(data = {}, fallbackPath = '/') {
   return `${origin}${fallbackPath.startsWith('/') ? fallbackPath : `/${fallbackPath}`}`;
 }
 
-function tripayChannelPayload(channel = {}, amount = 0) {
+function tripayChannelPayload(channel = {}, amount = 0, options = {}) {
   const minimumAmount = Number(channel.minimum_amount || channel.min_amount || channel.minimumAmount || 0) || 0;
   const maximumAmount = Number(channel.maximum_amount || channel.max_amount || channel.maximumAmount || 0) || 0;
+  const checkoutBreakdown = tripayCheckoutAmountBreakdown({
+    kind: options.kind,
+    method: channel.code,
+    channel,
+    baseAmount: options.baseAmount,
+    adminFee: options.adminFee,
+    amount
+  });
+  const availabilityAmount = checkoutBreakdown.gatewayAmount || amount;
   return {
     code: String(channel.code || '').trim().toUpperCase(),
     name: String(channel.name || channel.title || channel.code || '').trim(),
@@ -8512,7 +8588,10 @@ function tripayChannelPayload(channel = {}, amount = 0) {
     minimumAmount,
     maximumAmount,
     available: !amount
-      || ((!minimumAmount || amount >= minimumAmount) && (!maximumAmount || amount <= maximumAmount)),
+      || ((!minimumAmount || availabilityAmount >= minimumAmount) && (!maximumAmount || availabilityAmount <= maximumAmount)),
+    checkoutAmount: checkoutBreakdown.gatewayAmount,
+    cashierFee: checkoutBreakdown.cashierFee,
+    customerAmount: checkoutBreakdown.customerAmount,
     feeMerchant: channel.fee_merchant || channel.feeMerchant || {},
     feeCustomer: channel.fee_customer || channel.feeCustomer || {},
     totalFee: channel.total_fee || channel.totalFee || {}
@@ -8555,7 +8634,7 @@ async function tripayPaymentChannels(data = {}, options = {}) {
   }
   const rows = Array.isArray(body.data) ? body.data : [];
   return rows
-    .map((channel) => tripayChannelPayload(channel, amount))
+    .map((channel) => tripayChannelPayload(channel, amount, options))
     .filter((channel) => channel.code && channel.active && channel.available);
 }
 
@@ -8585,8 +8664,8 @@ async function createTripayCheckout(data = {}, params = {}) {
     throw new Error('Credential Tripay belum lengkap');
   }
   const merchantRef = String(params.reference || '').trim();
-  const amount = Math.max(0, Math.round(Number(params.amount || 0) || 0));
-  if (!merchantRef || amount <= 0) {
+  const requestedAmount = Math.max(0, Math.round(Number(params.amount || 0) || 0));
+  if (!merchantRef || requestedAmount <= 0) {
     throw new Error('Reference dan nominal payment gateway wajib tersedia');
   }
   const kind = String(params.kind || '').trim().toLowerCase();
@@ -8601,6 +8680,14 @@ async function createTripayCheckout(data = {}, params = {}) {
   if (!method || ['ALL', 'SEMUA'].includes(method)) {
     throw new Error('Metode pembayaran wajib dipilih');
   }
+  const amountBreakdown = tripayCheckoutAmountBreakdown({
+    kind,
+    method,
+    baseAmount: params.baseAmount,
+    adminFee: params.adminFee,
+    amount: requestedAmount
+  });
+  const amount = amountBreakdown.gatewayAmount;
   const signature = crypto.createHmac('sha256', privateKey)
     .update(`${merchantCode}${merchantRef}${amount}`)
     .digest('hex');
@@ -8647,6 +8734,10 @@ async function createTripayCheckout(data = {}, params = {}) {
     reference: merchantRef,
     externalReference: trx.reference || '',
     amount,
+    customerAmount: amountBreakdown.customerAmount,
+    adminFee: amountBreakdown.configuredAdminFee,
+    checkoutAdminFee: amountBreakdown.checkoutAdminFee,
+    cashierFee: amountBreakdown.cashierFee,
     checkoutUrl: trx.checkout_url || trx.payment_url || trx.paymentUrl || '',
     paymentUrl: trx.checkout_url || trx.payment_url || trx.paymentUrl || '',
     qrUrl: trx.qr_url || trx.qrUrl || '',
@@ -8948,8 +9039,11 @@ async function handleApi(req, res, url) {
     const data = await loadStore();
     const amount = decimalNumber(url.searchParams.get('amount') || 0);
     const kind = String(url.searchParams.get('kind') || 'monthly-package').trim();
+    const channelOptions = { amount, kind };
+    if (url.searchParams.has('baseAmount')) channelOptions.baseAmount = decimalNumber(url.searchParams.get('baseAmount') || 0);
+    if (url.searchParams.has('adminFee')) channelOptions.adminFee = decimalNumber(url.searchParams.get('adminFee') || 0);
     try {
-      const channels = await paymentGatewayChannels(data, { amount, kind });
+      const channels = await paymentGatewayChannels(data, channelOptions);
       sendJson(res, 200, {
         ok: true,
         provider: data.settings?.paymentGateway?.provider || 'tripay',
@@ -9013,6 +9107,8 @@ async function handleApi(req, res, url) {
         reference: publicInvoice.reference,
         method: payload.method || payload.paymentMethod || '',
         amount: publicInvoice.gatewayAmount,
+        baseAmount: publicInvoice.amount,
+        adminFee: publicInvoice.adminFee,
         customerName: publicInvoice.customerName || 'Pelanggan',
         customerEmail: customer.email || '',
         customerPhone: publicInvoice.phone || '',
@@ -13429,6 +13525,7 @@ module.exports = {
     monthlyBillingDailyRows,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
+    isTripayRetailChannel,
     paidVoucherOrdersForReport,
     pppImportTemplateBuffer,
     publicPaymentGatewayInvoicePayload,
@@ -13450,6 +13547,7 @@ module.exports = {
     syncRadiusMembersForProfile,
     syncRadiusCustomerStatus,
     standaloneBillingAutomation,
+    tripayCheckoutAmountBreakdown,
     updateAvailableFallbackSummary
   }
 };

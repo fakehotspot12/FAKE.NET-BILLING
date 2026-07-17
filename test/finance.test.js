@@ -4776,6 +4776,98 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   assert.equal(data.paymentGatewayTransactions.length, 1);
 });
 
+test('Tripay monthly checkout keeps flat customer fee while retail cashier takes its share', () => {
+  assert.equal(serverInternals.isTripayRetailChannel('Alfamart via Tripay'), true);
+  assert.equal(serverInternals.isTripayRetailChannel('BCAVA'), false);
+  const retail = serverInternals.tripayCheckoutAmountBreakdown({
+    kind: 'monthly-package',
+    method: 'ALFAMART',
+    baseAmount: 150000,
+    adminFee: 5000,
+    amount: 155000
+  });
+  assert.equal(retail.retail, true);
+  assert.equal(retail.checkoutAdminFee, 2000);
+  assert.equal(retail.cashierFee, 3000);
+  assert.equal(retail.gatewayAmount, 152000);
+  assert.equal(retail.customerAmount, 155000);
+
+  const bca = serverInternals.tripayCheckoutAmountBreakdown({
+    kind: 'monthly-package',
+    method: 'BCAVA',
+    baseAmount: 150000,
+    adminFee: 5000,
+    amount: 155000
+  });
+  assert.equal(bca.retail, false);
+  assert.equal(bca.checkoutAdminFee, 5000);
+  assert.equal(bca.cashierFee, 0);
+  assert.equal(bca.gatewayAmount, 155000);
+  assert.equal(bca.customerAmount, 155000);
+
+  const voucher = serverInternals.tripayCheckoutAmountBreakdown({
+    kind: 'hotspot-voucher',
+    method: 'ALFAMART',
+    baseAmount: 10000,
+    adminFee: 820,
+    amount: 10820
+  });
+  assert.equal(voucher.retail, false);
+  assert.equal(voucher.gatewayAmount, 10820);
+});
+
+test('Tripay retail callback accepts checkout amount and records full flat customer fee', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.paymentGateway.provider = 'tripay';
+  data.settings.paymentGateway.monthlyAdminFee = 5000;
+  data.customers.push({
+    id: 'cus-tripay-retail',
+    username: 'pppoe-tripay-retail',
+    name: 'Pelanggan Tripay Gerai',
+    packageName: 'Paket Bulanan',
+    status: 'active',
+    price: 150000
+  });
+  data.invoices.push({
+    id: 'inv-tripay-retail',
+    source: 'generated',
+    externalId: '000551',
+    invoiceNo: '000551',
+    customerId: 'cus-tripay-retail',
+    customerName: 'Pelanggan Tripay Gerai',
+    username: 'pppoe-tripay-retail',
+    packageName: 'Paket Bulanan',
+    period: '2026-07',
+    coveredPeriods: ['2026-07'],
+    amount: 150000,
+    dueDate: '2026-07-20',
+    status: 'pending'
+  });
+
+  const result = serverInternals.fulfillPaymentGatewayCallback(data, {
+    merchant_ref: '000551',
+    reference: 'T-RETAIL-1',
+    status: 'PAID',
+    amount: 152000,
+    fee: 3500,
+    payment_method: 'ALFAMART',
+    paid_at: '2026-07-17T04:00:00.000Z'
+  }, {
+    username: 'payment-gateway',
+    name: 'Payment Gateway'
+  });
+
+  assert.equal(result.status, 'paid');
+  assert.equal(data.invoices[0].status, 'paid');
+  assert.equal(data.paymentGatewayTransactions.length, 1);
+  assert.equal(data.paymentGatewayTransactions[0].amount, 155000);
+  assert.equal(data.paymentGatewayTransactions[0].gatewayAmount, 152000);
+  assert.equal(data.paymentGatewayTransactions[0].fee, 5000);
+  assert.equal(data.paymentGatewayTransactions[0].providerFee, 3500);
+  assert.equal(data.paymentGatewayTransactions[0].cashierFee, 3000);
+});
+
 test('payment gateway payment does not auto activate manually terminated customer', () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.enabled = true;

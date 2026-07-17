@@ -7,6 +7,18 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.52] - 2026-07-17
+
+### Changed
+
+- Fee paket bulanan tetap ditampilkan sesuai nominal flat yang dikonfigurasi untuk seluruh metode pembayaran.
+- Khusus gerai Tripay, Rp3.000 dari fee flat otomatis dialokasikan sebagai biaya yang dibayar langsung di kasir tanpa mengubah total biaya pelanggan.
+- Checkout dan laporan menyimpan nominal gateway, biaya kasir, biaya provider, serta total pelanggan secara terpisah agar rekonsiliasi tetap akurat.
+
+### Fixed
+
+- Callback Tripay gerai kini memvalidasi nominal checkout setelah alokasi biaya kasir dan tetap mencatat invoice lunas dengan fee flat penuh.
+
 ## [1.0.51] - 2026-07-17
 
 ### Changed

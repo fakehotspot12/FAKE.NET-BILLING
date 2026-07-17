@@ -70,6 +70,23 @@
     return parts.join(' - ');
   }
 
+  function rupiah(value = 0) {
+    return `Rp. ${Math.max(0, Number(value || 0) || 0).toLocaleString('id-ID')}`;
+  }
+
+  function updateMethodHelp(message = '') {
+    const help = $('paymentMethodHelp');
+    const select = $('paymentMethodSelect');
+    if (!help || !select) return;
+    const selected = currentChannels.find((channel) => channel.code === select.value);
+    const cashierFee = Number(selected?.cashierFee || 0);
+    if (cashierFee > 0) {
+      help.textContent = `Fee tetap ${currentInvoice?.adminFeeText || rupiah(currentInvoice?.adminFee)}. ${rupiah(cashierFee)} dari Fee dibayarkan langsung di kasir gerai.`;
+      return;
+    }
+    help.textContent = message || 'Pilih salah satu metode pembayaran aktif dari Tripay.';
+  }
+
   function renderChannels(channels = [], message = '') {
     currentChannels = channels;
     const box = $('methodBox');
@@ -96,7 +113,7 @@
         ${escapeHtml(channelLabel(channel))}
       </option>
     `).join('');
-    if (help) help.textContent = message || 'Pilih salah satu metode pembayaran aktif dari Tripay.';
+    updateMethodHelp(message);
   }
 
   async function api(path, options) {
@@ -148,7 +165,7 @@
     }
     try {
       const amount = currentInvoice.gatewayAmount || currentInvoice.amount || 0;
-      const payload = await api(`/api/public/payment-gateway/channels?kind=monthly-package&amount=${encodeURIComponent(amount)}`);
+      const payload = await api(`/api/public/payment-gateway/channels?kind=monthly-package&amount=${encodeURIComponent(amount)}&baseAmount=${encodeURIComponent(currentInvoice.amount || 0)}&adminFee=${encodeURIComponent(currentInvoice.adminFee || 0)}`);
       renderChannels(payload.channels || []);
     } catch (error) {
       renderChannels([], error.message || 'Channel payment gateway gagal dibaca');
@@ -212,6 +229,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     $('payButton')?.addEventListener('click', checkout);
     $('refreshButton')?.addEventListener('click', loadInvoice);
+    $('paymentMethodSelect')?.addEventListener('change', () => updateMethodHelp());
     loadInvoice().catch((error) => notice(error.message, 'error'));
   });
 }());
