@@ -70,10 +70,6 @@
     return parts.join(' - ');
   }
 
-  function rupiah(value = 0) {
-    return `Rp. ${Math.max(0, Number(value || 0) || 0).toLocaleString('id-ID')}`;
-  }
-
   function updateMethodHelp(message = '') {
     const help = $('paymentMethodHelp');
     const select = $('paymentMethodSelect');
@@ -81,7 +77,7 @@
     const selected = currentChannels.find((channel) => channel.code === select.value);
     const cashierFee = Number(selected?.cashierFee || 0);
     if (cashierFee > 0) {
-      help.textContent = `Fee tetap ${currentInvoice?.adminFeeText || rupiah(currentInvoice?.adminFee)}. ${rupiah(cashierFee)} dari Fee dibayarkan langsung di kasir gerai.`;
+      help.textContent = 'Total pembayaran sudah termasuk biaya layanan gerai. Silakan bayar sesuai nominal yang ditampilkan kasir.';
       return;
     }
     help.textContent = message || 'Pilih salah satu metode pembayaran aktif dari Tripay.';

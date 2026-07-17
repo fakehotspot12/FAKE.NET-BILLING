@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.53] - 2026-07-17
+
+### Changed
+
+- Keterangan metode gerai pada checkout dibuat lebih ringkas dan tidak lagi menampilkan pembagian internal fee aplikasi dengan biaya kasir.
+- Pelanggan cukup melihat bahwa total sudah termasuk biaya layanan gerai dan membayar sesuai nominal yang ditampilkan kasir.
+
 ## [1.0.52] - 2026-07-17
 
 ### Changed
