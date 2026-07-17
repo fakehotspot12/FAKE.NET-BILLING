@@ -7,6 +7,15 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.48] - 2026-07-17
+
+### Fixed
+
+- Laporan > Statistik kini menghitung pemasangan baru hanya dari akun PPP-DHCP yang benar-benar tertaut ke member melalui opsi Tambahkan ke Member.
+- Akun PPP-DHCP internal tanpa member tidak lagi memengaruhi pertumbuhan maupun total pelanggan aktif.
+- Member import existing dengan `count_as_psb=no` tetap masuk total pelanggan aktif, tetapi tidak dihitung sebagai PSB baru.
+- Total pelanggan aktif bulanan dideduplikasi berdasarkan Member ID agar satu member dengan lebih dari satu akun PPP tidak dihitung berulang.
+
 ## [1.0.47] - 2026-07-17
 
 ### Changed

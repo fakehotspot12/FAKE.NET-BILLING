@@ -3234,6 +3234,7 @@ function recordRadiusRemovedUser(data = {}, radiusUser = {}, customer = {}, acto
     installedAt: customer.activeDate || radiusUser.activeDate || customer.createdAt || radiusUser.createdAt || '',
     radiusCreatedAt: radiusUser.createdAt || '',
     memberCreatedAt: customer.createdAt || '',
+    countsAsPsb: customer.countsAsPsb !== false,
     profileId: radiusUser.profileId || customer.profileId || '',
     profileName: customer.packageName || radiusUser.profileName || '',
     nasId: radiusUser.nasId || customer.nasId || '',
@@ -6328,8 +6329,21 @@ function statisticsMonthEndIso(period = currentPeriod()) {
   return `${normalized}-${String(day).padStart(2, '0')}`;
 }
 
+function statisticsLinkedPppCustomer(data = {}, user = {}) {
+  if (String(user.serviceType || '').trim().toLowerCase() !== 'pppoe') return null;
+  const customers = data.customers || [];
+  const customerId = String(user.customerId || '').trim();
+  if (customerId) {
+    return customers.find((customer) => String(customer.id || '').trim() === customerId) || null;
+  }
+  const radiusUserId = String(user.id || '').trim();
+  if (!radiusUserId) return null;
+  return customers.find((customer) => String(customer.radiusUserId || '').trim() === radiusUserId) || null;
+}
+
 function pppInstallDateForUser(data = {}, user = {}) {
-  const customer = findCustomerForRadiusUser(data, user) || {};
+  const customer = statisticsLinkedPppCustomer(data, user);
+  if (!customer) return '';
   return String(
     customer.activeDate
     || user.activeDate
@@ -6360,9 +6374,10 @@ function statisticsPppStatusIsActive(status = '') {
 
 function statisticsCurrentPppCustomerActiveAtMonthEnd(data = {}, user = {}, period = currentPeriod()) {
   if (String(user.serviceType || '').trim().toLowerCase() !== 'pppoe') return false;
+  const customer = statisticsLinkedPppCustomer(data, user);
+  if (!customer) return false;
   const installedDate = pppInstallDateForUser(data, user);
   if (!installedDate || installedDate > statisticsMonthEndIso(period)) return false;
-  const customer = findCustomerForRadiusUser(data, user) || {};
   const status = strongestCustomerStatus(customer.status, radiusStatusForCustomer(user));
   return statisticsPppStatusIsActive(status);
 }
@@ -6376,6 +6391,22 @@ function statisticsRemovedPppCustomerActiveAtMonthEnd(record = {}, period = curr
   const monthEnd = statisticsMonthEndIso(period);
   const removedDate = String(record.removedAt || '').slice(0, 10);
   return Boolean(installedDate && installedDate <= monthEnd && (!removedDate || removedDate > monthEnd));
+}
+
+function statisticsActivePppCustomerCountAtMonthEnd(data = {}, period = currentPeriod()) {
+  const customerKeys = new Set();
+  for (const user of data.radiusUsers || []) {
+    if (!statisticsCurrentPppCustomerActiveAtMonthEnd(data, user, period)) continue;
+    const customer = statisticsLinkedPppCustomer(data, user);
+    const key = String(customer?.id || customer?.code || '').trim();
+    if (key) customerKeys.add(key);
+  }
+  for (const record of data.radiusRemovedRecords || []) {
+    if (!statisticsRemovedPppCustomerActiveAtMonthEnd(record, period)) continue;
+    const key = String(record.customerId || record.memberCode || '').trim();
+    if (key) customerKeys.add(key);
+  }
+  return customerKeys.size;
 }
 
 async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
@@ -6416,9 +6447,11 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
 
   for (const user of data.radiusUsers || []) {
     if (user.serviceType !== 'pppoe') continue;
+    const customer = statisticsLinkedPppCustomer(data, user);
+    if (!customer || customer.countsAsPsb === false) continue;
     const date = pppInstallDateForUser(data, user);
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
-    const key = statisticsRecordKey('active', user);
+    const key = statisticsRecordKey('active', customer);
     if (!key || newInstallKeys.has(key)) continue;
     newInstallKeys.add(key);
     addRow(date, 'newInstallCount', 1);
@@ -6437,7 +6470,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       }
     }
     const installedDate = pppInstallDateForRemovedRecord(record);
-    if (monthPeriodSet.has(installedDate.slice(0, 7))) {
+    if (record.countsAsPsb !== false && monthPeriodSet.has(installedDate.slice(0, 7))) {
       const key = statisticsRecordKey('removed-install', record);
       if (key && !newInstallKeys.has(key)) {
         newInstallKeys.add(key);
@@ -6483,12 +6516,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   const dailyRows = statisticsPeriodRows(selectedPeriod, dailyGroups);
   const monthlyRows = statisticsMonthlyRows(monthPeriods, monthlyGroups);
   for (const row of monthlyRows) {
-    row.activeCustomerCount = (data.radiusUsers || [])
-      .filter((user) => statisticsCurrentPppCustomerActiveAtMonthEnd(data, user, row.period))
-      .length
-      + (data.radiusRemovedRecords || [])
-        .filter((record) => statisticsRemovedPppCustomerActiveAtMonthEnd(record, row.period))
-        .length;
+    row.activeCustomerCount = statisticsActivePppCustomerCountAtMonthEnd(data, row.period);
   }
   const summary = dailyRows.reduce((acc, row) => {
     acc.newInstallCount += Number(row.newInstallCount || 0);

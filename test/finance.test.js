@@ -1026,13 +1026,49 @@ test('monthly statistics combines new ppp installs, removed users, and paid vouc
   const data = createDefaultStore();
   const period = currentPeriod();
   const nextPeriod = addMonthsToPeriod(period, 1);
-  data.radiusUsers.push({
-    id: 'rad-stat-active',
-    serviceType: 'pppoe',
-    username: 'stat-active',
-    status: 'active',
-    createdAt: `${period}-03T08:00:00.000Z`
-  });
+  data.customers.push(
+    {
+      id: 'cus-stat-active',
+      radiusUserId: 'rad-stat-active',
+      username: 'stat-active',
+      activeDate: `${period}-03`,
+      status: 'active'
+    },
+    {
+      id: 'cus-stat-import',
+      radiusUserId: 'rad-stat-import',
+      username: 'stat-import',
+      activeDate: `${period}-05`,
+      countsAsPsb: false,
+      recordOrigin: 'import',
+      status: 'active'
+    }
+  );
+  data.radiusUsers.push(
+    {
+      id: 'rad-stat-active',
+      customerId: 'cus-stat-active',
+      serviceType: 'pppoe',
+      username: 'stat-active',
+      status: 'active',
+      createdAt: `${period}-03T08:00:00.000Z`
+    },
+    {
+      id: 'rad-stat-internal',
+      serviceType: 'pppoe',
+      username: 'stat-internal',
+      status: 'active',
+      createdAt: `${period}-04T08:00:00.000Z`
+    },
+    {
+      id: 'rad-stat-import',
+      customerId: 'cus-stat-import',
+      serviceType: 'pppoe',
+      username: 'stat-import',
+      status: 'active',
+      createdAt: `${period}-05T08:00:00.000Z`
+    }
+  );
   data.radiusRemovedRecords.push(
     {
       id: 'rad-stat-removed',
@@ -1089,6 +1125,7 @@ test('monthly statistics combines new ppp installs, removed users, and paid vouc
   assert.equal(payload.monthlyRows.find((row) => row.period === period).newInstallCount, 3);
   assert.equal(payload.monthlyRows.find((row) => row.period === period).removedCount, 1);
   assert.equal(payload.monthlyRows.find((row) => row.period === period).voucherBuyerCount, 1);
+  assert.equal(payload.monthlyRows.find((row) => row.period === period).activeCustomerCount, 3);
   assert.equal(payload.monthlyRows.find((row) => row.period === nextPeriod), undefined);
 });
 
