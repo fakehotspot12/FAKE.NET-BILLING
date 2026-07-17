@@ -7,6 +7,18 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.55] - 2026-07-18
+
+### Added
+
+- Mode migrasi dapat menahan sementara automasi invoice dan pengiriman WhatsApp selama proses cutover data berlangsung.
+
+### Fixed
+
+- Generator invoice menghormati periode `nextDue` untuk member dengan pembayaran awal lunas sehingga periode yang sudah terbayar tidak ditagih ulang.
+- Automasi WhatsApp tidak lagi membuat draft atau menandai reminder terkirim ketika gateway dinonaktifkan.
+- Notifikasi voucher kedaluwarsa menunggu gateway WhatsApp aktif agar pesan tidak dianggap sudah diproses sebelum perangkat ditautkan.
+
 ## [1.0.54] - 2026-07-17
 
 ### Changed

@@ -65,6 +65,7 @@ const PORT = Number(process.env.PORT || 8891);
 const HOST = process.env.HOST || '0.0.0.0';
 const APP_MODE = String(process.env.APP_MODE || 'standalone').toLowerCase();
 const BILLING_SOURCE = String(process.env.BILLING_SOURCE || (APP_MODE === 'standalone' ? 'local' : 'radboox')).toLowerCase();
+const MIGRATION_MODE = ['1', 'true', 'yes', 'on'].includes(String(process.env.MIGRATION_MODE || '').toLowerCase());
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
@@ -5105,7 +5106,7 @@ function hotspotVoucherTemplateValues(data = {}, order = {}, vouchers = [], user
 
 function queueVoucherExpiryNotice(data = {}, user = {}, profile = {}, actor = {}) {
   const settings = data.settings?.hotspotVoucherOnline || {};
-  if (settings.sendVoucherWa === false) return null;
+  if (settings.sendVoucherWa === false || data.settings?.waGateway?.enabled !== true) return null;
   const order = hotspotVoucherOrderForUser(data, user);
   const customer = findCustomerForRadiusUser(data, user);
   const phone = order.whatsapp || user.voucherBuyerWhatsapp || customer?.whatsapp || customer?.phone || '';
@@ -5330,6 +5331,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const unpaidByCustomer = new Map();
   const paidCoverage = paidInvoiceCoverageByCustomer(data);
+  const waAutomationEnabled = data.settings?.waGateway?.enabled === true;
 
   for (const invoice of data.invoices || []) {
     const status = invoiceRuntimeStatus(invoice, today);
@@ -5348,7 +5350,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   }
 
   const reminderDays = Number(settings.notificationBeforeDueDays || 0);
-  if (reminderDays > 0) {
+  if (waAutomationEnabled && reminderDays > 0) {
     for (const invoice of data.invoices || []) {
       const status = invoiceRuntimeStatus(invoice, today);
       if (!['pending', 'overdue'].includes(status) || !invoice.dueDate) continue;
@@ -5405,32 +5407,38 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     }
   }
 
-  for (const invoice of created) {
-    queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+  if (waAutomationEnabled) {
+    for (const invoice of created) {
+      queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+    }
   }
-  for (const user of isolatedUsers) {
-    const customer = (data.customers || []).find((item) => {
-      return item.id === user.customerId
-        || item.id === user.radiusUserId
-        || String(item.username || '').trim().toLowerCase() === String(user.username || '').trim().toLowerCase();
-    }) || {};
-    const invoice = (data.invoices || []).find((item) => {
-      return item.customerId === customer.id
-        && ['pending', 'overdue'].includes(invoiceRuntimeStatus(item, today))
-        && invoiceUncoveredPeriods(item, paidCoverage).length;
-    })
-      || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: unpaidByCustomer.get(customer.id)?.amount || 0, dueDate: unpaidByCustomer.get(customer.id)?.dueDate || '', period };
-    queueInvoiceWaMessage(data, invoice, 'accountSuspend', actor);
+  if (waAutomationEnabled) {
+    for (const user of isolatedUsers) {
+      const customer = (data.customers || []).find((item) => {
+        return item.id === user.customerId
+          || item.id === user.radiusUserId
+          || String(item.username || '').trim().toLowerCase() === String(user.username || '').trim().toLowerCase();
+      }) || {};
+      const invoice = (data.invoices || []).find((item) => {
+        return item.customerId === customer.id
+          && ['pending', 'overdue'].includes(invoiceRuntimeStatus(item, today))
+          && invoiceUncoveredPeriods(item, paidCoverage).length;
+      })
+        || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: unpaidByCustomer.get(customer.id)?.amount || 0, dueDate: unpaidByCustomer.get(customer.id)?.dueDate || '', period };
+      queueInvoiceWaMessage(data, invoice, 'accountSuspend', actor);
+    }
   }
-  for (const user of activatedUsers) {
-    const customer = (data.customers || []).find((item) => {
-      return item.id === user.customerId
-        || item.id === user.radiusUserId
-        || String(item.username || '').trim().toLowerCase() === String(user.username || '').trim().toLowerCase();
-    }) || {};
-    const invoice = (data.invoices || []).find((item) => item.customerId === customer.id && invoiceRuntimeStatus(item, today) === 'paid')
-      || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: customer.price || 0, dueDate: customer.dueDate || '', period };
-    queueInvoiceWaMessage(data, invoice, 'accountActive', actor);
+  if (waAutomationEnabled) {
+    for (const user of activatedUsers) {
+      const customer = (data.customers || []).find((item) => {
+        return item.id === user.customerId
+          || item.id === user.radiusUserId
+          || String(item.username || '').trim().toLowerCase() === String(user.username || '').trim().toLowerCase();
+      }) || {};
+      const invoice = (data.invoices || []).find((item) => item.customerId === customer.id && invoiceRuntimeStatus(item, today) === 'paid')
+        || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: customer.price || 0, dueDate: customer.dueDate || '', period };
+      queueInvoiceWaMessage(data, invoice, 'accountActive', actor);
+    }
   }
 
   if (created.length || reminderInvoices.length || isolatedUsers.length || activatedUsers.length) {
@@ -7612,6 +7620,9 @@ let waGatewaySenderRunning = false;
 let waGatewaySenderTimer = null;
 
 async function runWaGatewaySender(reason = 'interval', options = {}) {
+  if (MIGRATION_MODE) {
+    return { sent: 0, failed: 0, retried: 0, skipped: true, reason: 'migration-mode' };
+  }
   if (waGatewaySenderRunning) return null;
   waGatewaySenderRunning = true;
   const now = new Date();
@@ -7685,6 +7696,10 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
 }
 
 function startWaGatewaySender() {
+  if (MIGRATION_MODE) {
+    console.log('Whatsapp Gateway sender dinonaktifkan selama migration mode');
+    return;
+  }
   const run = (reason) => {
     runWaGatewaySender(reason).catch((error) => {
       console.error(`Whatsapp Gateway sender gagal: ${error.message || error}`);
@@ -7868,6 +7883,9 @@ let billingAutomationRunning = false;
 let billingAutomationTimer = null;
 
 async function runStandaloneBillingAutomation(reason = 'interval') {
+  if (MIGRATION_MODE) {
+    return { created: [], isolatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] }, skipped: true, reason: 'migration-mode' };
+  }
   if (billingAutomationRunning) return null;
   billingAutomationRunning = true;
   const actor = { username: 'billing-auto', name: 'Billing Auto' };
@@ -7892,6 +7910,10 @@ async function runStandaloneBillingAutomation(reason = 'interval') {
 }
 
 function startStandaloneBillingAutomation() {
+  if (MIGRATION_MODE) {
+    console.log('Billing otomatis dinonaktifkan selama migration mode');
+    return;
+  }
   if (!['standalone', 'local'].includes(APP_MODE) && BILLING_SOURCE !== 'local') return;
   const run = (reason) => {
     runStandaloneBillingAutomation(reason).catch((error) => {

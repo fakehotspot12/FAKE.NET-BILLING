@@ -785,6 +785,10 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
     if (!customerBillableInPeriod(customer, selectedPeriod) && !proration) {
       continue;
     }
+    const nextDuePeriod = periodFromDateText(customer.nextDue || customer.dueDate || '');
+    if (nextDuePeriod && selectedPeriod < nextDuePeriod && !customerFirstInvoiceUnpaid(customer)) {
+      continue;
+    }
 
     const key = `${customer.id}:${selectedPeriod}`;
     if (existingKeys.has(key)) {

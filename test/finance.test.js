@@ -235,6 +235,44 @@ test('postpaid billing cycle skips active month when first invoice was paid', ()
   assert.equal(august.every((invoice) => invoice.prorated === false), true);
 });
 
+test('invoice generation respects a paid member next due period', () => {
+  const data = createDefaultStore();
+  data.customers.push(
+    {
+      id: 'cus-migrated-paid',
+      username: 'migrated-paid@kampung.net',
+      name: 'Migrated Paid',
+      packageName: 'Paket Fixed',
+      status: 'active',
+      price: 150000,
+      paymentType: 'postpaid',
+      billingPeriod: 'fixed',
+      activeDate: '2026-01-10',
+      firstInvoiceStatus: 'paid',
+      nextDue: '2026-08-10'
+    },
+    {
+      id: 'cus-migrated-unpaid',
+      username: 'migrated-unpaid@kampung.net',
+      name: 'Migrated Unpaid',
+      packageName: 'Paket Fixed',
+      status: 'active',
+      price: 150000,
+      paymentType: 'postpaid',
+      billingPeriod: 'fixed',
+      activeDate: '2026-01-10',
+      firstInvoiceStatus: 'unpaid',
+      nextDue: '2026-08-10'
+    }
+  );
+
+  const july = generateInvoices(data, '2026-07');
+  assert.deepEqual(july.map((invoice) => invoice.customerId), ['cus-migrated-unpaid']);
+
+  const august = generateInvoices(data, '2026-08');
+  assert.deepEqual(august.map((invoice) => invoice.customerId).sort(), ['cus-migrated-paid', 'cus-migrated-unpaid']);
+});
+
 test('generates invoices only after the active date month', () => {
   const data = createDefaultStore();
   data.customers.push(
@@ -1346,6 +1384,7 @@ test('standalone billing automation queues payment reminder once before due date
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';
   data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = true;
   data.settings.billing.notificationBeforeDueDays = 1;
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Makassar',
@@ -1384,6 +1423,40 @@ test('standalone billing automation queues payment reminder once before due date
   assert.equal(second.reminderInvoices.length, 0);
   assert.equal(data.waMessages.filter((message) => message.type === 'paymentReminder').length, 1);
   assert.equal(data.invoices[0].paymentReminderDueDate, dueDate);
+});
+
+test('standalone billing automation does not consume reminders while whatsapp is disabled', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = false;
+  data.settings.billing.notificationBeforeDueDays = 1;
+  const dueDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Makassar', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+  data.customers.push({
+    id: 'cus-reminder-disabled',
+    username: 'reminder-disabled@ppp.test',
+    name: 'Reminder Disabled',
+    status: 'active',
+    phone: '081234567890',
+    price: 100000
+  });
+  data.invoices.push({
+    id: 'inv-reminder-disabled',
+    customerId: 'cus-reminder-disabled',
+    period: currentPeriod(),
+    amount: 100000,
+    status: 'pending',
+    dueDate,
+    invoiceNo: '000124'
+  });
+
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' });
+
+  assert.equal(result.reminderInvoices.length, 0);
+  assert.equal(data.waMessages.length, 0);
+  assert.equal(data.invoices[0].paymentReminderSentAt, undefined);
 });
 
 test('billing settings allow H-1 invoice generation and disabled reminders', () => {
