@@ -4543,6 +4543,65 @@ test('voucher report scopes reseller revenue and calculates commission', () => {
   assert.equal(adminFiltered[0].commissionAmount, 3000);
 });
 
+test('free hotspot vouchers are excluded from voucher reports and statistics', async () => {
+  const data = createDefaultStore();
+  const period = currentPeriod();
+  data.radiusProfiles.push({
+    id: 'profile-voucher-report',
+    serviceType: 'hotspot',
+    name: 'Voucher Report',
+    price: 5000,
+    active: true
+  });
+  data.radiusUsers.push(
+    {
+      id: 'voucher-free-manual',
+      serviceType: 'hotspot',
+      username: 'free-manual',
+      profileId: 'profile-voucher-report',
+      paymentStatus: 'free',
+      amount: 0,
+      createdAt: `${period}-06T08:00:00.000Z`
+    },
+    {
+      id: 'voucher-paid-manual',
+      serviceType: 'hotspot',
+      username: 'paid-manual',
+      profileId: 'profile-voucher-report',
+      paymentStatus: 'paid',
+      amount: 5000,
+      paidAt: `${period}-07T08:00:00.000Z`,
+      createdAt: `${period}-07T08:00:00.000Z`
+    }
+  );
+  data.radiusVoucherRecords.push({
+    id: 'voucher-free-record',
+    serviceType: 'hotspot',
+    username: 'free-record',
+    profileId: 'profile-voucher-report',
+    paymentStatus: 'free',
+    amount: 0,
+    createdAt: `${period}-08T08:00:00.000Z`
+  });
+  data.hotspotVoucherOrders.push({
+    id: 'voucher-free-online',
+    reference: 'FREE-ONLINE',
+    status: 'paid',
+    paymentStatus: 'free',
+    amount: 0,
+    quantity: 1,
+    paidAt: `${period}-09T08:00:00.000Z`
+  });
+
+  const orders = await serverInternals.paidVoucherOrdersForReport(data, period);
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].reference, 'paid-manual');
+
+  const statistics = await serverInternals.reportStatisticsPayload(data, period);
+  assert.equal(statistics.summary.voucherCount, 1);
+  assert.equal(statistics.summary.voucherAmount, 5000);
+});
+
 test('online voucher order only creates payment gateway transaction after paid', () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.enabled = true;

@@ -6125,6 +6125,7 @@ async function generatedVoucherFirstOnlineMap(data = {}) {
 
 function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUsername = new Map()) {
   const onlineOrders = (data.hotspotVoucherOrders || [])
+    .filter((order) => !['free', 'unpaid'].includes(String(order.paymentStatus || order.payment_status || '').toLowerCase()))
     .filter((order) => String(order.status || '').toLowerCase() === 'paid')
     .filter((order) => String(order.paidAt || order.updatedAt || order.createdAt || '').slice(0, 7) === period)
     .map((order) => ({
@@ -13428,6 +13429,7 @@ module.exports = {
     monthlyBillingDailyRows,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
+    paidVoucherOrdersForReport,
     pppImportTemplateBuffer,
     publicPaymentGatewayInvoicePayload,
     publicMonitoringTarget,
