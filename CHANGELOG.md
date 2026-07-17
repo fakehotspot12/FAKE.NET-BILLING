@@ -7,6 +7,16 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.50] - 2026-07-17
+
+### Changed
+
+- Form Payment Gateway kini hanya menampilkan credential yang relevan untuk provider terpilih.
+- Reserve settlement diganti menjadi Saldo minimum tersisa dan hanya ditampilkan untuk Xendit.
+- Mode Sandbox/Production disembunyikan untuk provider Custom.
+- Field Merchant ID Midtrans dan Shared Key DOKU yang tidak diperlukan untuk alur checkout standar disembunyikan tanpa menghapus credential lama yang tersimpan.
+- Provider selain Tripay menampilkan status integrasi checkout agar gateway yang belum didukung tidak disangka sudah operasional.
+
 ## [1.0.49] - 2026-07-17
 
 ### Fixed

@@ -225,7 +225,7 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.49',
+      version: '1.0.50',
       buildVersion: '1.0.38',
       releaseDate: '2026-07-17'
     }
@@ -237,7 +237,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.49',
+    appVersion: '1.0.50',
     buildVersion: '1.0.38',
     releaseDate: '2026-07-17',
     loginVerificationEnabled: true
@@ -2392,8 +2392,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.49',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.49',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.50',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.50',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-17',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13451,23 +13451,58 @@ async function renderWaGateway() {
 function paymentProviderFields(settings = {}, provider = 'tripay') {
   const value = settings[provider] || {};
   const fields = {
-    tripay: [['merchantCode', 'Merchant Code'], ['apiKey', 'API Key'], ['privateKey', 'Private Key']],
-    midtrans: [['merchantId', 'Merchant ID'], ['serverKey', 'Server Key'], ['clientKey', 'Client Key']],
-    xendit: [['accountId', 'Account ID'], ['secretKey', 'Secret Key'], ['callbackToken', 'Callback Token']],
-    doku: [['clientId', 'Client ID'], ['secretKey', 'Secret Key'], ['sharedKey', 'Shared Key']],
-    duitku: [['merchantCode', 'Merchant Code'], ['apiKey', 'API Key']],
-    ipaymu: [['va', 'VA'], ['apiKey', 'API Key']],
-    custom: [['baseUrl', 'Base URL'], ['apiKey', 'API Key']]
+    tripay: [
+      { name: 'merchantCode', label: 'Merchant Code' },
+      { name: 'apiKey', label: 'API Key', sensitive: true },
+      { name: 'privateKey', label: 'Private Key', sensitive: true }
+    ],
+    midtrans: [
+      { name: 'serverKey', label: 'Server Key', sensitive: true },
+      { name: 'clientKey', label: 'Client Key', sensitive: true }
+    ],
+    xendit: [
+      { name: 'secretKey', label: 'Secret API Key', sensitive: true },
+      { name: 'callbackToken', label: 'Webhook Verification Token', sensitive: true },
+      { name: 'accountId', label: 'Business/Sub-account ID', hint: 'Opsional, hanya untuk XenPlatform.' }
+    ],
+    doku: [
+      { name: 'clientId', label: 'Client ID' },
+      { name: 'secretKey', label: 'Secret Key', sensitive: true }
+    ],
+    duitku: [
+      { name: 'merchantCode', label: 'Merchant Code' },
+      { name: 'apiKey', label: 'API Key', sensitive: true }
+    ],
+    ipaymu: [
+      { name: 'va', label: 'Virtual Account (VA)' },
+      { name: 'apiKey', label: 'API Key', sensitive: true }
+    ],
+    custom: [
+      { name: 'baseUrl', label: 'Base URL' },
+      { name: 'apiKey', label: 'API Key', sensitive: true }
+    ]
   }[provider] || [];
-  return fields.map(([name, label]) => {
-    const sensitive = /key|token|secret|private/i.test(name);
+  return fields.map((field) => {
+    const name = field.name;
+    const sensitive = field.sensitive === true || /key|token|secret|private/i.test(name);
     return `
       <label class="field">
-        <span>${escapeHtml(label)}</span>
+        <span>${escapeHtml(field.label)}</span>
         <input name="${escapeHtml(name)}" ${sensitive ? 'type="password"' : ''} value="${sensitive ? '' : escapeHtml(value[name] || '')}" placeholder="${sensitive && value[name] ? 'Tersimpan' : ''}" autocomplete="off">
+        ${field.hint ? `<span class="muted">${escapeHtml(field.hint)}</span>` : ''}
       </label>
     `;
   }).join('');
+}
+
+function paymentProviderNotice(provider = 'tripay') {
+  if (provider === 'tripay') return '';
+  return `
+    <div class="notice warning field full">
+      <strong>Checkout otomatis belum aktif</strong>
+      <span>Credential ${escapeHtml(provider.toUpperCase())} dapat disimpan, tetapi transaksi otomatis pada build ini masih menggunakan Tripay.</span>
+    </div>
+  `;
 }
 
 function paymentGatewayAdvancedModalBody(settings = {}) {
@@ -13647,22 +13682,28 @@ async function renderPaymentGateway() {
               ${providers.map((item) => `<option value="${escapeHtml(item.value)}" ${item.value === provider ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
             </select>
           </label>
-          <label class="field">
-            <span>Mode</span>
-            <select name="mode">
-              <option value="sandbox" ${settings.mode !== 'production' ? 'selected' : ''}>Sandbox</option>
-              <option value="production" ${settings.mode === 'production' ? 'selected' : ''}>Production</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Reserve settlement</span>
-            <input name="settlementReserveAmount" inputmode="numeric" value="${escapeHtml(settings.settlementReserveAmount || 10000)}">
-          </label>
+          ${provider !== 'custom' ? `
+            <label class="field">
+              <span>Mode</span>
+              <select name="mode">
+                <option value="sandbox" ${settings.mode !== 'production' ? 'selected' : ''}>Sandbox</option>
+                <option value="production" ${settings.mode === 'production' ? 'selected' : ''}>Production</option>
+              </select>
+            </label>
+          ` : ''}
+          ${provider === 'xendit' ? `
+            <label class="field">
+              <span>Saldo minimum tersisa</span>
+              <input name="settlementReserveAmount" inputmode="numeric" value="${escapeHtml(settings.settlementReserveAmount ?? 10000)}">
+              <span class="muted">Saldo yang tidak ikut ditarik saat withdraw.</span>
+            </label>
+          ` : ''}
           <label class="field full">
             <span>Callback URL</span>
             <input name="callbackUrl" value="${escapeHtml(settings.callbackUrl || '')}">
           </label>
           ${paymentProviderFields(settings, provider)}
+          ${paymentProviderNotice(provider)}
           <div class="field payment-gateway-settings-field">
             <span>Settings</span>
             <button class="icon-button payment-gateway-settings-button" id="paymentGatewayAdvancedButton" type="button" title="Settings Payment Gateway" aria-label="Settings Payment Gateway">
