@@ -3681,7 +3681,7 @@ function enrichVoucherOrderForReport(data = {}, order = {}) {
   const amount = Math.max(0, Math.round(Number(order.amount || 0) || 0));
   const commissionPercent = reseller ? voucherReportCommissionPercent(data.settings || {}) : 0;
   const commissionAmount = Math.round((amount * commissionPercent) / 100);
-  const methodGroup = paymentMethodGroup(order.paymentMethod || order.method || '');
+  const methodGroup = paymentCategoryForRecord(order, order.paymentMethod || order.method || '');
   return {
     ...order,
     amount,
@@ -3757,7 +3757,11 @@ function voucherReportSummary(orders = []) {
     commissionAmount: orders.reduce((sum, order) => sum + Number(order.commissionAmount || 0), 0),
     netAmount: orders.reduce((sum, order) => sum + Number(order.netAmount || 0), 0),
     cashAmount: orders.filter((order) => order.methodGroup === 'cash').reduce((sum, order) => sum + Number(order.amount || 0), 0),
-    transferAmount: orders.filter((order) => order.methodGroup !== 'cash').reduce((sum, order) => sum + Number(order.amount || 0), 0)
+    cashCount: orders.filter((order) => order.methodGroup === 'cash').length,
+    transferAmount: orders.filter((order) => order.methodGroup === 'transfer').reduce((sum, order) => sum + Number(order.amount || 0), 0),
+    transferCount: orders.filter((order) => order.methodGroup === 'transfer').length,
+    onlineAmount: orders.filter((order) => order.methodGroup === 'online').reduce((sum, order) => sum + Number(order.amount || 0), 0),
+    onlineCount: orders.filter((order) => order.methodGroup === 'online').length
   };
 }
 
@@ -4499,6 +4503,9 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
       const siteName = customer.site || customer.siteName || customer.nas || invoice.siteName || '';
       const site = sites.find((item) => item.name === siteName || item.id === siteName) || {};
       const method = payment?.method || invoice.paymentMethod || 'Tunai';
+      const paymentCategory = payment
+        ? paymentCategoryForRecord({ ...invoice, ...payment }, method)
+        : '';
       const status = invoiceRuntimeStatus(invoice);
       const admin = payment?.admin || payment?.createdBy || payment?.createdByName || invoice.createdByName || 'Sistem';
       const storedInvoiceNo = invoice.externalId || invoice.invoiceNo || invoice.id || payment?.invoiceId || payment?.id;
@@ -4515,6 +4522,7 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
         phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
         item: invoice.packageName || customer.packageName || 'Tagihan internet',
         method: payment ? method : '-',
+        paymentCategory,
         status,
         admin,
         adminName: admin,
@@ -4531,16 +4539,22 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
     })
     .filter(Boolean)
     .sort((a, b) => String(a.paymentAt || a.dueDate || '').localeCompare(String(b.paymentAt || b.dueDate || '')));
+  const cashIncome = transactions
+    .filter((item) => item.paymentCategory === 'cash')
+    .reduce((sum, item) => sum + Number(item.income || 0), 0);
   const transferIncome = transactions
-    .filter((item) => /transfer|bank|qris|xendit|gateway/i.test(item.method || ''))
+    .filter((item) => item.paymentCategory === 'transfer')
+    .reduce((sum, item) => sum + Number(item.income || 0), 0);
+  const onlineIncome = transactions
+    .filter((item) => item.paymentCategory === 'online')
     .reduce((sum, item) => sum + Number(item.income || 0), 0);
   const totalIncome = transactions.reduce((sum, item) => sum + Number(item.income || 0), 0);
-  const cashIncome = totalIncome - transferIncome;
   return {
     source: 'local',
     date,
     cashIncome,
     transferIncome,
+    onlineIncome,
     totalIncome,
     transactionCount: transactions.length,
     transactions,
@@ -6021,10 +6035,74 @@ function displayBillingInvoiceNo(value = '') {
   return String(Number(match[1]) || match[1]).padStart(6, '0');
 }
 
-function paymentMethodGroup(value = '') {
-  const method = String(value || '').trim().toLowerCase();
+function normalizePaymentCategory(value = '') {
+  const category = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (['cash', 'tunai'].includes(category)) return 'cash';
+  if (['online', 'digital', 'gateway', 'paymentgateway'].includes(category)) return 'online';
+  if (['transfer', 'bank', 'banktransfer', 'manualtransfer'].includes(category)) return 'transfer';
+  return '';
+}
+
+function paymentCategoryForRecord(record = {}, fallbackMethod = '') {
+  const explicit = normalizePaymentCategory(
+    record.paymentCategory
+    || record.payment_category
+    || record.methodGroup
+    || record.method_group
+  );
+  if (explicit) return explicit;
+
+  const source = String(record.source || record.sourceType || record.type || '').trim().toLowerCase();
+  const actor = String(
+    record.createdByUsername
+    || record.paidByUsername
+    || record.updatedByUsername
+    || record.admin
+    || ''
+  ).trim().toLowerCase();
+  const gatewayMarker = [
+    record.paymentProvider,
+    record.provider,
+    record.gatewayProvider,
+    record.paymentGatewayReference,
+    record.gatewayReference,
+    record.onlineOrderId,
+    record.onlineOrderReference
+  ].some((value) => String(value || '').trim());
+  const notes = String(record.notes || record.description || '').trim().toLowerCase();
+  if (
+    source === 'online'
+    || source === 'payment-gateway'
+    || source === 'billing-online'
+    || source === 'hotspot-voucher-online'
+    || gatewayMarker
+    || actor === 'payment-gateway'
+    || notes.includes('payment gateway')
+  ) {
+    return 'online';
+  }
+
+  const method = String(
+    fallbackMethod
+    || record.method
+    || record.paymentMethod
+    || record.payment_method
+    || ''
+  ).trim().toLowerCase();
   if (method.includes('tunai') || method.includes('cash')) return 'cash';
+  if (['manual', 'generated'].includes(source) && /^(paid|first online)$/.test(method)) return 'cash';
+  if (
+    /\b(qris|qris2|ovo|dana|linkaja|shopeepay|gopay|alfamart|alfamidi|indomaret|tripay|xendit|midtrans|duitku|doku|ipaymu)\b/i.test(method)
+    || /(^|[^a-z])(briva|bniva|bcava|mandiriva|permatava|muamalatva|cimbva|danamonva|maybankva|bsi(?:va)?)([^a-z]|$)/i.test(method)
+    || /virtual\s*account|e-?wallet|retail\s*outlet|qr\s*code/i.test(method)
+  ) {
+    return 'online';
+  }
   return 'transfer';
+}
+
+function paymentMethodGroup(value = '', record = {}) {
+  return paymentCategoryForRecord(record, value);
 }
 
 function dailyFinanceRow(date = '') {
@@ -6032,6 +6110,7 @@ function dailyFinanceRow(date = '') {
     date,
     incomeCash: 0,
     incomeTransfer: 0,
+    incomeOnline: 0,
     expenseCash: 0,
     expenseTransfer: 0,
     incomeTotal: 0,
@@ -6046,7 +6125,7 @@ function addDailyFinanceAmount(groups, date, field, amount, count = 0) {
   const row = groups.get(date) || dailyFinanceRow(date);
   row[field] += Number(amount || 0);
   row.transactionCount += Number(count || 0);
-  row.incomeTotal = row.incomeCash + row.incomeTransfer;
+  row.incomeTotal = row.incomeCash + row.incomeTransfer + row.incomeOnline;
   row.expenseTotal = row.expenseCash + row.expenseTransfer;
   row.profit = row.incomeTotal - row.expenseTotal;
   groups.set(date, row);
@@ -6083,9 +6162,10 @@ function monthlyBillingDailyRows(data = {}, period = currentPeriod(), options = 
     const invoice = invoices.get(payment.invoiceId) || {};
     const date = String(payment.paidAt || payment.createdAt || invoice.paidAt || '').slice(0, 10);
     if (date.slice(0, 7) !== period) continue;
-    const method = paymentMethodGroup(payment.method || invoice.paymentMethod);
+    const method = paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod);
     const amount = Number(payment.amount || invoice.amount || 0);
-    addDailyFinanceAmount(groups, date, method === 'cash' ? 'incomeCash' : 'incomeTransfer', amount, 1);
+    const field = method === 'cash' ? 'incomeCash' : method === 'online' ? 'incomeOnline' : 'incomeTransfer';
+    addDailyFinanceAmount(groups, date, field, amount, 1);
   }
   return periodDailyRows(period, groups);
 }
@@ -6206,12 +6286,13 @@ async function paidVoucherOrdersForReport(data = {}, period = currentPeriod(), f
 function monthlyVoucherDailyRows(data = {}, period = currentPeriod(), voucherOrders = null) {
   const groups = new Map();
   for (const order of voucherOrders || paidVoucherOrders(data, period)) {
-    const method = paymentMethodGroup(order.paymentMethod);
+    const method = paymentCategoryForRecord(order, order.paymentMethod);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(order.date || ''))) continue;
     const row = groups.get(order.date) || {
       date: order.date,
       cashAmount: 0,
       transferAmount: 0,
+      onlineAmount: 0,
       totalAmount: 0,
       commissionAmount: 0,
       netAmount: 0,
@@ -6220,6 +6301,7 @@ function monthlyVoucherDailyRows(data = {}, period = currentPeriod(), voucherOrd
     };
     const amount = Number(order.amount || 0);
     if (method === 'cash') row.cashAmount += amount;
+    else if (method === 'online') row.onlineAmount += amount;
     else row.transferAmount += amount;
     row.totalAmount += amount;
     row.commissionAmount += Number(order.commissionAmount || 0);
@@ -6238,6 +6320,7 @@ function monthlyVoucherDailyRows(data = {}, period = currentPeriod(), voucherOrd
       date,
       cashAmount: 0,
       transferAmount: 0,
+      onlineAmount: 0,
       totalAmount: 0,
       commissionAmount: 0,
       netAmount: 0,
@@ -6259,6 +6342,9 @@ function statisticsDailyRow(date = '') {
     voucherAmount: 0,
     billingRevenueAmount: 0,
     externalIncomeAmount: 0,
+    cashRevenueAmount: 0,
+    transferRevenueAmount: 0,
+    onlineRevenueAmount: 0,
     revenueAmount: 0,
     revenueCount: 0,
     expenseAmount: 0,
@@ -6278,6 +6364,9 @@ function statisticsMonthlyRow(period = '') {
     voucherAmount: 0,
     billingRevenueAmount: 0,
     externalIncomeAmount: 0,
+    cashRevenueAmount: 0,
+    transferRevenueAmount: 0,
+    onlineRevenueAmount: 0,
     revenueAmount: 0,
     revenueCount: 0,
     expenseAmount: 0,
@@ -6434,10 +6523,17 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       dailyGroups.set(date, dailyRow);
     }
   };
-  const addRevenueRow = (date = '', field = '', amount = 0, count = 1) => {
+  const addRevenueRow = (date = '', field = '', amount = 0, count = 1, category = 'transfer') => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return;
     const value = Number(amount || 0);
     addRow(date, field, value);
+    const normalizedCategory = normalizePaymentCategory(category) || 'transfer';
+    const categoryField = normalizedCategory === 'cash'
+      ? 'cashRevenueAmount'
+      : normalizedCategory === 'online'
+        ? 'onlineRevenueAmount'
+        : 'transferRevenueAmount';
+    addRow(date, categoryField, value);
     addRow(date, 'revenueAmount', value);
     if (Number(count || 0) > 0) addRow(date, 'revenueCount', Number(count || 0));
   };
@@ -6485,7 +6581,8 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     const invoice = invoices.get(payment.invoiceId) || {};
     const date = String(payment.paidAt || payment.createdAt || invoice.paidAt || '').slice(0, 10);
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
-    addRevenueRow(date, 'billingRevenueAmount', Number(payment.amount || invoice.amount || 0), 1);
+    const category = paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod);
+    addRevenueRow(date, 'billingRevenueAmount', Number(payment.amount || invoice.amount || 0), 1, category);
   }
 
   for (const income of data.externalIncomes || []) {
@@ -6493,7 +6590,8 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     if (['cancelled', 'canceled', 'void', 'batal'].includes(status)) continue;
     const date = String(income.date || income.createdAt || '').slice(0, 10);
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
-    addRevenueRow(date, 'externalIncomeAmount', Number(income.amount || 0), 1);
+    const category = paymentCategoryForRecord(income, income.paymentMethod || income.method);
+    addRevenueRow(date, 'externalIncomeAmount', Number(income.amount || 0), 1, category);
   }
 
   for (const expense of data.expenses || []) {
@@ -6510,7 +6608,8 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       if (date.slice(0, 7) !== monthPeriod) continue;
       addRow(date, 'voucherBuyerCount', 1);
       addRow(date, 'voucherCount', Number(order.quantity || order.vouchers?.length || 0));
-      addRevenueRow(date, 'voucherAmount', Number(order.amount || 0), 1);
+      const category = paymentCategoryForRecord(order, order.paymentMethod || order.method);
+      addRevenueRow(date, 'voucherAmount', Number(order.amount || 0), 1, category);
     }
   }
 
@@ -6527,6 +6626,9 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     acc.voucherAmount += Number(row.voucherAmount || 0);
     acc.billingRevenueAmount += Number(row.billingRevenueAmount || 0);
     acc.externalIncomeAmount += Number(row.externalIncomeAmount || 0);
+    acc.cashRevenueAmount += Number(row.cashRevenueAmount || 0);
+    acc.transferRevenueAmount += Number(row.transferRevenueAmount || 0);
+    acc.onlineRevenueAmount += Number(row.onlineRevenueAmount || 0);
     acc.revenueAmount += Number(row.revenueAmount || 0);
     acc.revenueCount += Number(row.revenueCount || 0);
     acc.expenseAmount += Number(row.expenseAmount || 0);
@@ -6539,6 +6641,9 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     voucherAmount: 0,
     billingRevenueAmount: 0,
     externalIncomeAmount: 0,
+    cashRevenueAmount: 0,
+    transferRevenueAmount: 0,
+    onlineRevenueAmount: 0,
     revenueAmount: 0,
     revenueCount: 0,
     expenseAmount: 0
@@ -8430,6 +8535,7 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
     ? invoice
     : markInvoicePaid(data, invoice.id, {
       paymentMethod: payment.method || 'Payment Gateway',
+      paymentCategory: 'online',
       amount: invoice.amount,
       paidAt: payment.paidAt || localTodayIso(),
       notes: payment.externalId ? `Payment Gateway ${payment.externalId}` : 'Payment Gateway',
@@ -9940,6 +10046,7 @@ async function handleApi(req, res, url) {
           packageName: invoice.packageName || customer.packageName || '',
           amount: Number(payment.amount || invoice.amount || 0),
           method: payment.method || invoice.paymentMethod || 'Tunai',
+          paymentCategory: paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod),
           paidAt: payment.paidAt || payment.createdAt || '',
           submittedAt: payment.paidAt || payment.createdAt || '',
           submittedRaw: payment.paidAt || payment.createdAt || '',
@@ -9963,6 +10070,7 @@ async function handleApi(req, res, url) {
       packageName: order.packageLabel || order.profileName || 'Voucher Hotspot',
       amount: Number(order.amount || 0),
       method: order.paymentMethod || 'QRIS',
+      paymentCategory: order.methodGroup || paymentCategoryForRecord(order, order.paymentMethod || order.method),
       paidAt: order.paidAt || order.updatedAt || order.createdAt || '',
       submittedAt: order.paidAt || order.updatedAt || order.createdAt || '',
       submittedRaw: order.paidAt || order.updatedAt || order.createdAt || '',
@@ -9995,7 +10103,7 @@ async function handleApi(req, res, url) {
       .map((row) => ({
         id: `pg-${row.id || row.reference}`,
         source: 'payment-gateway',
-        sourceLabel: 'Payment Gateway',
+        sourceLabel: 'Online',
         invoiceNo: row.reference || row.invoiceNo || row.id || '',
         legacyInvoiceNo: row.reference || row.invoiceNo || row.id || '',
         customerName: row.customerName || row.description || '',
@@ -10003,12 +10111,13 @@ async function handleApi(req, res, url) {
         packageName: paymentGatewayTransactionKindLabel(paymentGatewayTransactionKind(row)),
         amount: Number(row.amount || 0),
         method: row.method || row.paymentMethod || row.provider || 'Transfer',
+        paymentCategory: 'online',
         paidAt: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
         submittedAt: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
         submittedRaw: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
         item: row.description || paymentGatewayTransactionKindLabel(paymentGatewayTransactionKind(row)),
         description: row.description || row.customerName || '',
-        type: 'Payment Gateway',
+        type: 'Online',
         admin: row.paidByName || row.provider || 'Payment Gateway',
         notes: row.externalId || '',
         paymentGatewayReference: row.reference || row.invoiceNo || ''
@@ -10016,11 +10125,11 @@ async function handleApi(req, res, url) {
     let transactions = billingTransactions.concat(voucherTransactions, paymentGatewayTransactions);
     if (methodFilter !== 'all') {
       transactions = transactions.filter((transaction) => {
-        const group = paymentMethodGroup(transaction.method);
+        const group = transaction.paymentCategory || paymentCategoryForRecord(transaction, transaction.method);
         return methodFilter === group || String(transaction.method || '').toLowerCase().includes(methodFilter);
       });
     }
-    transactions = filterSearch(transactions, search, ['invoiceNo', 'customerName', 'username', 'packageName', 'method', 'admin', 'notes', 'sourceLabel', 'description', 'paymentGatewayReference']);
+    transactions = filterSearch(transactions, search, ['invoiceNo', 'customerName', 'username', 'packageName', 'method', 'paymentCategory', 'admin', 'notes', 'sourceLabel', 'description', 'paymentGatewayReference']);
     transactions.sort(sortReportTransactionsNewestFirst);
     const summary = {
       totalCount: transactions.length,
@@ -10029,12 +10138,12 @@ async function handleApi(req, res, url) {
       billingAmount: transactions.filter((transaction) => transaction.source === 'billing').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
       voucherCount: transactions.filter((transaction) => transaction.source === 'voucher').length,
       voucherAmount: transactions.filter((transaction) => transaction.source === 'voucher').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      gatewayCount: transactions.filter((transaction) => transaction.source === 'payment-gateway').length,
-      gatewayAmount: transactions.filter((transaction) => transaction.source === 'payment-gateway').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      cashCount: transactions.filter((transaction) => paymentMethodGroup(transaction.method) === 'cash').length,
-      cashAmount: transactions.filter((transaction) => paymentMethodGroup(transaction.method) === 'cash').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      transferCount: transactions.filter((transaction) => paymentMethodGroup(transaction.method) !== 'cash').length,
-      transferAmount: transactions.filter((transaction) => paymentMethodGroup(transaction.method) !== 'cash').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0)
+      cashCount: transactions.filter((transaction) => transaction.paymentCategory === 'cash').length,
+      cashAmount: transactions.filter((transaction) => transaction.paymentCategory === 'cash').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
+      transferCount: transactions.filter((transaction) => transaction.paymentCategory === 'transfer').length,
+      transferAmount: transactions.filter((transaction) => transaction.paymentCategory === 'transfer').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
+      onlineCount: transactions.filter((transaction) => transaction.paymentCategory === 'online').length,
+      onlineAmount: transactions.filter((transaction) => transaction.paymentCategory === 'online').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0)
     };
     const pagination = paginationPayload(page, limit, transactions.length);
     const offset = (pagination.page - 1) * limit;
@@ -10070,6 +10179,7 @@ async function handleApi(req, res, url) {
           category: 'Tagihan Internet',
           description: invoice.customerName || invoice.username || payment.notes || 'Pembayaran tagihan',
           amount: Number(payment.amount || invoice.amount || 0),
+          paymentCategory: paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod),
           date: payment.paidAt || payment.createdAt || ''
         };
       });
@@ -10080,6 +10190,7 @@ async function handleApi(req, res, url) {
         category: income.category || 'Pemasukan Lain',
         description: income.payerName || income.itemName || income.description || income.receiptNo || '',
         amount: Number(income.amount || 0),
+        paymentCategory: paymentCategoryForRecord(income, income.paymentMethod || income.method),
         date: income.date || income.createdAt || ''
       }));
     const expenses = (data.expenses || [])
@@ -10104,6 +10215,15 @@ async function handleApi(req, res, url) {
     };
     const incomeTotal = incomeRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
     const expenseTotal = expenses.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const paymentSummary = (category) => ({
+      count: incomeRows.filter((row) => row.paymentCategory === category).length,
+      amount: incomeRows
+        .filter((row) => row.paymentCategory === category)
+        .reduce((sum, row) => sum + Number(row.amount || 0), 0)
+    });
+    const cash = paymentSummary('cash');
+    const transfer = paymentSummary('transfer');
+    const online = paymentSummary('online');
     sendJson(res, 200, {
       ok: true,
       period,
@@ -10112,7 +10232,13 @@ async function handleApi(req, res, url) {
         incomeTotal,
         expenseCount: expenses.length,
         expenseTotal,
-        profit: incomeTotal - expenseTotal
+        profit: incomeTotal - expenseTotal,
+        cashCount: cash.count,
+        cashAmount: cash.amount,
+        transferCount: transfer.count,
+        transferAmount: transfer.amount,
+        onlineCount: online.count,
+        onlineAmount: online.amount
       },
       incomeGroups: groupRows(incomeRows),
       expenseGroups: groupRows(expenses),
@@ -13523,6 +13649,8 @@ module.exports = {
     localDailyReport,
     localManualInvoicePreview,
     monthlyBillingDailyRows,
+    monthlyVoucherDailyRows,
+    paymentCategoryForRecord,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
     isTripayRetailChannel,

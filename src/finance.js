@@ -1014,6 +1014,7 @@ function markInvoicePaid(data, invoiceId, payload = {}) {
   invoice.status = 'paid';
   invoice.paidAt = payload.paidAt || todayIso();
   invoice.paymentMethod = cleanText(payload.paymentMethod || 'Tunai');
+  invoice.paymentCategory = cleanText(payload.paymentCategory || invoice.paymentCategory);
   invoice.paidByName = cleanText(payload.createdByName || payload.actorName || payload.admin);
   invoice.paidByUsername = cleanText(payload.createdByUsername || payload.actorUsername);
   invoice.updatedAt = new Date().toISOString();
@@ -1025,6 +1026,7 @@ function markInvoicePaid(data, invoiceId, payload = {}) {
     amount: toNumber(payload.amount || invoice.amount),
     paidAt: invoice.paidAt,
     method: invoice.paymentMethod,
+    paymentCategory: cleanText(payload.paymentCategory),
     status: 'paid',
     notes: cleanText(payload.notes),
     createdByName: cleanText(payload.createdByName || payload.actorName || payload.admin),
@@ -1050,6 +1052,7 @@ function markInvoiceUnpaid(data, invoiceId) {
   invoice.status = 'pending';
   invoice.paidAt = '';
   invoice.paymentMethod = '';
+  invoice.paymentCategory = '';
   invoice.updatedAt = now;
   for (const payment of data.payments || []) {
     if (payment.invoiceId !== invoice.id || !paymentIsActive(payment)) continue;

@@ -225,7 +225,7 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.53',
+      version: '1.0.54',
       buildVersion: '1.0.38',
       releaseDate: '2026-07-17'
     }
@@ -237,7 +237,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.53',
+    appVersion: '1.0.54',
     buildVersion: '1.0.38',
     releaseDate: '2026-07-17',
     loginVerificationEnabled: true
@@ -2392,8 +2392,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.53',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.53',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.54',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.54',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-17',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -2799,11 +2799,20 @@ function dailyReportSummary(report = {}, transactionCount = Number(report.transa
   return `
     <section class="daily-summary">
       ${metric('Tunai', rupiah(report.cashIncome), 'Tagihan dibayar tunai', 'positive')}
-      ${metric('Transfer', rupiah(report.transferIncome), 'Tagihan dibayar transfer', 'positive')}
-      ${metric('Total Tagihan', rupiah(report.totalIncome), 'Total tagihan harian', 'positive')}
-      ${metric('Transaksi', Number(transactionCount || 0).toLocaleString('id-ID'), report.fetchedAt ? `Update ${dateTimeText(report.fetchedAt)}` : 'Belum sinkron', '')}
+      ${metric('Transfer', rupiah(report.transferIncome), 'Transfer bank manual', 'positive')}
+      ${metric('Online', rupiah(report.onlineIncome), 'QRIS, VA, e-wallet, dan gerai', 'positive')}
+      ${metric('Total Tagihan', rupiah(report.totalIncome), `${Number(transactionCount || 0).toLocaleString('id-ID')} transaksi`, 'positive')}
     </section>
   `;
+}
+
+function reportPaymentCategory(item = {}) {
+  const explicit = String(item.paymentCategory || item.methodGroup || '').trim().toLowerCase();
+  if (['cash', 'transfer', 'online'].includes(explicit)) return explicit;
+  const method = String(item.method || item.paymentMethod || '').trim().toLowerCase();
+  if (method.includes('tunai') || method.includes('cash')) return 'cash';
+  if (/qris|virtual\s*account|e-?wallet|retail\s*outlet|qr\s*code|briva|bniva|bcava|mandiriva|permatava|muamalatva|cimbva|danamonva|maybankva|bsi(?:va)?|ovo|dana|linkaja|shopeepay|gopay|alfamart|alfamidi|indomaret|tripay|xendit|midtrans|duitku|doku|ipaymu/i.test(method)) return 'online';
+  return 'transfer';
 }
 
 function dailyAdminKey(item = {}) {
@@ -2879,6 +2888,7 @@ function dailyReportSummaryFromTransactions(report = {}, transactions = [], filt
     return {
       cashIncome: Number(report.cashIncome || 0),
       transferIncome: Number(report.transferIncome || 0),
+      onlineIncome: Number(report.onlineIncome || 0),
       totalIncome: Number(report.totalIncome || 0),
       fetchedAt: report.fetchedAt,
       transactionCount: transactions.length
@@ -2886,15 +2896,19 @@ function dailyReportSummaryFromTransactions(report = {}, transactions = [], filt
   }
 
   const cashIncome = transactions
-    .filter((item) => String(item.method || '').toLowerCase() === 'tunai')
+    .filter((item) => reportPaymentCategory(item) === 'cash')
     .reduce((sum, item) => sum + Number(item.income || 0), 0);
   const transferIncome = transactions
-    .filter((item) => String(item.method || '').toLowerCase() !== 'tunai')
+    .filter((item) => reportPaymentCategory(item) === 'transfer')
+    .reduce((sum, item) => sum + Number(item.income || 0), 0);
+  const onlineIncome = transactions
+    .filter((item) => reportPaymentCategory(item) === 'online')
     .reduce((sum, item) => sum + Number(item.income || 0), 0);
   return {
     cashIncome,
     transferIncome,
-    totalIncome: cashIncome + transferIncome,
+    onlineIncome,
+    totalIncome: cashIncome + transferIncome + onlineIncome,
     fetchedAt: report.fetchedAt,
     transactionCount: transactions.length
   };
@@ -3143,11 +3157,12 @@ function financeDailyRowsTable(rows = [], emptyText = 'Belum ada data harian.') 
   const totals = rows.reduce((acc, row) => {
     acc.incomeCash += Number(row.incomeCash || 0);
     acc.incomeTransfer += Number(row.incomeTransfer || 0);
+    acc.incomeOnline += Number(row.incomeOnline || 0);
     acc.expenseCash += Number(row.expenseCash || 0);
     acc.expenseTransfer += Number(row.expenseTransfer || 0);
     acc.incomeTotal += Number(row.incomeTotal || 0);
     return acc;
-  }, { incomeCash: 0, incomeTransfer: 0, expenseCash: 0, expenseTransfer: 0, incomeTotal: 0 });
+  }, { incomeCash: 0, incomeTransfer: 0, incomeOnline: 0, expenseCash: 0, expenseTransfer: 0, incomeTotal: 0 });
   return `
     <div class="table-wrap">
       <table>
@@ -3155,9 +3170,10 @@ function financeDailyRowsTable(rows = [], emptyText = 'Belum ada data harian.') 
           <tr>
             <th>No</th>
             <th>Tanggal</th>
-            <th class="amount">Pemasukan Cash</th>
+            <th class="amount">Pemasukan Tunai</th>
             <th class="amount">Pemasukan Transfer</th>
-            <th class="amount">Pengeluaran Cash</th>
+            <th class="amount">Pemasukan Online</th>
+            <th class="amount">Pengeluaran Tunai</th>
             <th class="amount">Pengeluaran Transfer</th>
             <th class="amount">Total Pendapatan</th>
           </tr>
@@ -3169,16 +3185,18 @@ function financeDailyRowsTable(rows = [], emptyText = 'Belum ada data harian.') 
               <td class="nowrap">${dateText(row.date)}</td>
               <td class="amount positive">${rupiah(row.incomeCash || 0)}</td>
               <td class="amount positive">${rupiah(row.incomeTransfer || 0)}</td>
+              <td class="amount positive">${rupiah(row.incomeOnline || 0)}</td>
               <td class="amount negative">${rupiah(row.expenseCash || 0)}</td>
               <td class="amount negative">${rupiah(row.expenseTransfer || 0)}</td>
               <td class="amount positive"><strong>${rupiah(row.incomeTotal || 0)}</strong></td>
             </tr>
-          `).join('') : `<tr><td colspan="7">${escapeHtml(emptyText)}</td></tr>`}
+          `).join('') : `<tr><td colspan="8">${escapeHtml(emptyText)}</td></tr>`}
           ${rows.length ? `
             <tr class="table-total-row">
               <td colspan="2"><strong>Total</strong></td>
               <td class="amount positive"><strong>${rupiah(totals.incomeCash)}</strong></td>
               <td class="amount positive"><strong>${rupiah(totals.incomeTransfer)}</strong></td>
+              <td class="amount positive"><strong>${rupiah(totals.incomeOnline)}</strong></td>
               <td class="amount negative"><strong>${rupiah(totals.expenseCash)}</strong></td>
               <td class="amount negative"><strong>${rupiah(totals.expenseTransfer)}</strong></td>
               <td class="amount positive"><strong>${rupiah(totals.incomeTotal)}</strong></td>
@@ -3378,7 +3396,7 @@ function statisticsRevenueGroupedChart(rows = []) {
             const incomeY = statisticsChartPoint(income, range, box);
             const expenseY = statisticsChartPoint(expense, range, box);
             const baseline = box.top + box.plotHeight;
-            const tooltip = `${periodLabel(row.period)}\nPendapatan: ${rupiah(income)}\nPengeluaran: ${rupiah(expense)}\nLaba bersih: ${rupiah(net)}`;
+            const tooltip = `${periodLabel(row.period)}\nPendapatan: ${rupiah(income)}\n  Tunai: ${rupiah(row.cashRevenueAmount || 0)}\n  Transfer: ${rupiah(row.transferRevenueAmount || 0)}\n  Online: ${rupiah(row.onlineRevenueAmount || 0)}\nPengeluaran: ${rupiah(expense)}\nLaba bersih: ${rupiah(net)}`;
             return `
               <rect class="statistics-bar income" x="${baseX.toFixed(2)}" y="${incomeY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(0, baseline - incomeY).toFixed(2)}" rx="4"><title>${escapeHtml(tooltip)}</title></rect>
               <rect class="statistics-bar expense" x="${(baseX + barWidth + 3).toFixed(2)}" y="${expenseY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(0, baseline - expenseY).toFixed(2)}" rx="4"><title>${escapeHtml(tooltip)}</title></rect>
@@ -3576,8 +3594,9 @@ function voucherReportOptionTags(options = [], selected = 'all', emptyLabel = 'S
 function voucherMethodOptionTags(selected = 'all') {
   const options = [
     ['all', 'Semua metode'],
-    ['cash', 'Cash'],
-    ['transfer', 'Transfer/QRIS']
+    ['cash', 'Tunai'],
+    ['transfer', 'Transfer'],
+    ['online', 'Online']
   ];
   return options.map(([value, label]) => `<option value="${value}" ${String(selected || 'all') === value ? 'selected' : ''}>${label}</option>`).join('');
 }
@@ -3643,8 +3662,9 @@ function voucherMonthlyRowsTable(rows = []) {
             <th>Tanggal</th>
             <th>Transaksi</th>
             <th>Voucher</th>
-            <th class="amount">Cash</th>
-            <th class="amount">Transfer/QRIS</th>
+            <th class="amount">Tunai</th>
+            <th class="amount">Transfer</th>
+            <th class="amount">Online</th>
             <th class="amount">Omzet</th>
             <th class="amount">Komisi</th>
             <th class="amount">Net Owner</th>
@@ -3658,11 +3678,12 @@ function voucherMonthlyRowsTable(rows = []) {
               <td>${displayNumber(row.voucherCount || 0)}</td>
               <td class="amount">${rupiah(row.cashAmount || 0)}</td>
               <td class="amount">${rupiah(row.transferAmount || 0)}</td>
+              <td class="amount">${rupiah(row.onlineAmount || 0)}</td>
               <td class="amount positive">${rupiah(row.totalAmount || 0)}</td>
               <td class="amount warning">${rupiah(row.commissionAmount || 0)}</td>
               <td class="amount positive">${rupiah(row.netAmount || 0)}</td>
             </tr>
-          `).join('') : '<tr><td colspan="8">Belum ada transaksi voucher bulan ini.</td></tr>'}
+          `).join('') : '<tr><td colspan="9">Belum ada transaksi voucher bulan ini.</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -3694,8 +3715,8 @@ async function renderReportsVoucherDaily() {
     <div class="stack">
       <section class="metrics">
         ${metric('Total Voucher', displayNumber(summary.voucherCount || 0), dateText(state.reportVoucherDailyDate))}
-        ${metric('Transaksi', displayNumber(summary.totalCount || 0), 'Paid online/manual')}
-        ${metric(scoped ? 'Omzet Saya' : 'Omzet', rupiah(summary.totalAmount || 0), 'Cash/transfer/QRIS', 'positive')}
+        ${metric('Transaksi', displayNumber(summary.totalCount || 0), `Tunai ${displayNumber(summary.cashCount || 0)} · Transfer ${displayNumber(summary.transferCount || 0)} · Online ${displayNumber(summary.onlineCount || 0)}`)}
+        ${metric(scoped ? 'Omzet Saya' : 'Omzet', rupiah(summary.totalAmount || 0), 'Tunai / Transfer / Online', 'positive')}
         ${metric(scoped ? 'Komisi Saya' : 'Komisi Reseller', rupiah(summary.commissionAmount || 0), `${displayNumber(filterOptions.commissionPercent || 0)}%`, 'warning-card')}
         ${metric('Net Owner', rupiah(summary.netAmount || 0), 'Omzet - komisi', 'positive')}
       </section>
@@ -3843,6 +3864,7 @@ function reportTransactionDateText(transaction = {}) {
 
 function reportTransactionMethodClass(method = '') {
   const normalized = String(method || '').toLowerCase();
+  if (reportPaymentCategory({ method }) === 'online') return 'active';
   if (normalized.includes('transfer')) return 'active';
   if (normalized.includes('tunai') || normalized.includes('cash')) return 'pending';
   return '';
@@ -4066,9 +4088,9 @@ async function renderReportsTransactions(options = {}) {
         ${metric('Total Mutasi', rupiah(summary.totalAmount || 0), periodLabel(state.reportTransactionsPeriod), 'positive')}
         ${metric('Tagihan', `${displayNumber(summary.billingCount || 0)} / ${rupiah(summary.billingAmount || 0)}`, 'Invoice bulanan')}
         ${metric('Voucher', `${displayNumber(summary.voucherCount || 0)} / ${rupiah(summary.voucherAmount || 0)}`, 'Voucher paid')}
-        ${metric('Payment Gateway', `${displayNumber(summary.gatewayCount || 0)} / ${rupiah(summary.gatewayAmount || 0)}`, 'Paid non-voucher')}
-        ${metric('Tunai', `${displayNumber(summary.cashCount || 0)} / ${rupiah(summary.cashAmount || 0)}`, 'Cash')}
-        ${metric('Transfer', `${displayNumber(summary.transferCount || 0)} / ${rupiah(summary.transferAmount || 0)}`, 'Non tunai')}
+        ${metric('Tunai', `${displayNumber(summary.cashCount || 0)} / ${rupiah(summary.cashAmount || 0)}`, 'Pembayaran langsung')}
+        ${metric('Transfer', `${displayNumber(summary.transferCount || 0)} / ${rupiah(summary.transferAmount || 0)}`, 'Transfer bank manual')}
+        ${metric('Online', `${displayNumber(summary.onlineCount || 0)} / ${rupiah(summary.onlineAmount || 0)}`, 'QRIS, VA, e-wallet, dan gerai')}
       </section>
 
       <div class="toolbar">
@@ -4078,6 +4100,7 @@ async function renderReportsTransactions(options = {}) {
             <option value="all" ${state.reportTransactionsMethod === 'all' ? 'selected' : ''}>Semua metode</option>
             <option value="cash" ${state.reportTransactionsMethod === 'cash' ? 'selected' : ''}>Tunai</option>
             <option value="transfer" ${state.reportTransactionsMethod === 'transfer' ? 'selected' : ''}>Transfer</option>
+            <option value="online" ${state.reportTransactionsMethod === 'online' ? 'selected' : ''}>Online</option>
           </select>
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari invoice, sumber, deskripsi, metode" autocomplete="off">
         </div>
@@ -4113,7 +4136,7 @@ async function renderReportsTransactions(options = {}) {
                     <div class="muted">${escapeHtml(transaction.externalId && transaction.externalId !== transaction.invoiceNo ? transaction.externalId : '')}</div>
                   </td>
                   <td class="nowrap">${escapeHtml(reportTransactionDateText(transaction))}</td>
-                  <td><span class="badge ${transaction.source === 'voucher' ? 'pending' : transaction.source === 'payment-gateway' ? 'active' : ''}">${escapeHtml(transaction.sourceLabel || transaction.type || '-')}</span></td>
+                  <td><span class="badge ${transaction.source === 'voucher' ? 'pending' : transaction.paymentCategory === 'online' ? 'active' : ''}">${escapeHtml(transaction.sourceLabel || transaction.type || '-')}</span></td>
                   <td>${escapeHtml(transaction.item || '-')}</td>
                   <td>${escapeHtml(transaction.description || '-')}</td>
                   <td><span class="badge ${reportTransactionMethodClass(transaction.method)}">${escapeHtml(transaction.method || '-')}</span></td>
@@ -4182,9 +4205,11 @@ async function renderReportsFinanceRecap() {
     <div class="stack">
       <section class="metrics">
         ${metric('Total Pemasukan', rupiah(summary.incomeTotal || 0), `${displayNumber(summary.incomeCount || 0)} transaksi`, 'positive')}
+        ${metric('Tunai', rupiah(summary.cashAmount || 0), `${displayNumber(summary.cashCount || 0)} transaksi`)}
+        ${metric('Transfer', rupiah(summary.transferAmount || 0), `${displayNumber(summary.transferCount || 0)} transaksi`)}
+        ${metric('Online', rupiah(summary.onlineAmount || 0), `${displayNumber(summary.onlineCount || 0)} transaksi`, 'positive')}
         ${metric('Total Pengeluaran', rupiah(summary.expenseTotal || 0), `${displayNumber(summary.expenseCount || 0)} transaksi`, 'negative')}
         ${metric('Selisih', rupiah(profit), periodLabel(state.period), profit >= 0 ? 'positive' : 'negative')}
-        ${metric('Periode', periodLabel(state.period), 'Mengikuti filter laporan')}
       </section>
 
       <section class="section">

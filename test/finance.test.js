@@ -4399,6 +4399,67 @@ test('collector reports are scoped to own collected payments', () => {
   assert.equal(row.incomeTotal, 100000);
 });
 
+test('report payment channels separate cash, manual transfer, and online settlement', async () => {
+  const data = createDefaultStore();
+  data.invoices.push(
+    { id: 'inv-channel-cash', amount: 100000, status: 'pending', period: '2026-07' },
+    { id: 'inv-channel-transfer', amount: 200000, status: 'pending', period: '2026-07' },
+    { id: 'inv-channel-online', amount: 300000, status: 'pending', period: '2026-07' }
+  );
+  markInvoicePaid(data, 'inv-channel-cash', {
+    amount: 100000,
+    paidAt: '2026-07-13T08:00:00+08:00',
+    paymentMethod: 'Tunai'
+  });
+  markInvoicePaid(data, 'inv-channel-transfer', {
+    amount: 200000,
+    paidAt: '2026-07-13T09:00:00+08:00',
+    paymentMethod: 'Transfer Bank'
+  });
+  markInvoicePaid(data, 'inv-channel-online', {
+    amount: 300000,
+    paidAt: '2026-07-13T10:00:00+08:00',
+    paymentMethod: 'BRIVA',
+    paymentCategory: 'online',
+    actorUsername: 'payment-gateway'
+  });
+
+  assert.equal(serverInternals.paymentCategoryForRecord({}, 'Tunai'), 'cash');
+  assert.equal(serverInternals.paymentCategoryForRecord({}, 'Transfer Bank'), 'transfer');
+  assert.equal(serverInternals.paymentCategoryForRecord({}, 'QRIS'), 'online');
+  assert.equal(serverInternals.paymentCategoryForRecord({ source: 'generated' }, 'First Online'), 'cash');
+  assert.equal(serverInternals.paymentCategoryForRecord({ createdByUsername: 'payment-gateway' }, 'Transfer'), 'online');
+  assert.equal(data.payments.find((payment) => payment.invoiceId === 'inv-channel-online').paymentCategory, 'online');
+
+  const dailyReport = serverInternals.localDailyReport(data, '2026-07-13', { includeDueInvoices: false });
+  assert.equal(dailyReport.cashIncome, 100000);
+  assert.equal(dailyReport.transferIncome, 200000);
+  assert.equal(dailyReport.onlineIncome, 300000);
+  assert.equal(dailyReport.totalIncome, 600000);
+
+  const billingRows = serverInternals.monthlyBillingDailyRows(data, '2026-07', { includeExpenses: false });
+  const billingRow = billingRows.find((row) => row.date === '2026-07-13');
+  assert.equal(billingRow.incomeCash, 100000);
+  assert.equal(billingRow.incomeTransfer, 200000);
+  assert.equal(billingRow.incomeOnline, 300000);
+  assert.equal(billingRow.incomeTotal, 600000);
+
+  const voucherRows = serverInternals.monthlyVoucherDailyRows(data, '2026-07', [
+    { date: '2026-07-13', amount: 5000, paymentMethod: 'First Online', source: 'generated' },
+    { date: '2026-07-13', amount: 6000, paymentMethod: 'Transfer', source: 'manual', paymentCategory: 'transfer' },
+    { date: '2026-07-13', amount: 7000, paymentMethod: 'QRIS', source: 'online', paymentProvider: 'tripay' }
+  ]);
+  const voucherRow = voucherRows.find((row) => row.date === '2026-07-13');
+  assert.equal(voucherRow.cashAmount, 5000);
+  assert.equal(voucherRow.transferAmount, 6000);
+  assert.equal(voucherRow.onlineAmount, 7000);
+
+  const statistics = await serverInternals.reportStatisticsPayload(data, '2026-07');
+  assert.equal(statistics.summary.cashRevenueAmount, 100000);
+  assert.equal(statistics.summary.transferRevenueAmount, 200000);
+  assert.equal(statistics.summary.onlineRevenueAmount, 300000);
+});
+
 test('hotspot voucher templates have editable local default rows', () => {
   const data = createDefaultStore();
   const rows = serverInternals.radiusTemplateRowsLocal(data);

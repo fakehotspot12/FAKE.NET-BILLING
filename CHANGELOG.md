@@ -7,6 +7,19 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.54] - 2026-07-17
+
+### Changed
+
+- Pemasukan pada Tagihan Harian, Tagihan Bulanan, laporan voucher, Mutasi Bulanan, Rekapitulasi, dan Statistik kini dipisahkan menjadi Tunai, Transfer, dan Online.
+- Metode QRIS, virtual account, e-wallet, serta gerai pembayaran dikelompokkan sebagai Online tanpa menghilangkan nama metode asli pada rincian transaksi.
+- Tooltip Statistik Pendapatan menampilkan rincian Tunai, Transfer, dan Online dengan tetap mempertahankan grafik utama Pendapatan dan Pengeluaran.
+
+### Fixed
+
+- Metode gerai dan virtual account tidak lagi salah terbaca sebagai pembayaran tunai atau transfer manual.
+- Data pembayaran lama tetap diklasifikasikan otomatis tanpa migrasi atau perubahan nilai transaksi.
+
 ## [1.0.53] - 2026-07-17
 
 ### Changed
