@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.51] - 2026-07-17
+
+### Changed
+
+- Field Callback URL Payment Gateway diringkas menjadi satu kolom dan dilengkapi placeholder endpoint webhook yang valid.
+- Contoh Callback URL otomatis mengikuti Public Base URL jika domain pembayaran sudah dikonfigurasi.
+
 ## [1.0.50] - 2026-07-17
 
 ### Changed

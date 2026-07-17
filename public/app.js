@@ -225,7 +225,7 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.50',
+      version: '1.0.51',
       buildVersion: '1.0.38',
       releaseDate: '2026-07-17'
     }
@@ -237,7 +237,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.50',
+    appVersion: '1.0.51',
     buildVersion: '1.0.38',
     releaseDate: '2026-07-17',
     loginVerificationEnabled: true
@@ -2392,8 +2392,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.50',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.50',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.51',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.51',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-17',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -13639,6 +13639,8 @@ async function renderPaymentGateway() {
   const settings = payload.settings || {};
   const providers = Array.isArray(payload.providers) ? payload.providers : [];
   const provider = settings.provider || 'tripay';
+  const callbackExampleBase = String(settings.publicBaseUrl || '').trim().replace(/\/+$/, '') || 'https://billing.example.net';
+  const callbackExample = `${callbackExampleBase}/payment-gateway/webhook`;
   const tabs = [
     { value: 'transactions', label: 'Transaction' },
     { value: 'balance', label: 'Balance History' },
@@ -13698,9 +13700,10 @@ async function renderPaymentGateway() {
               <span class="muted">Saldo yang tidak ikut ditarik saat withdraw.</span>
             </label>
           ` : ''}
-          <label class="field full">
+          <label class="field">
             <span>Callback URL</span>
-            <input name="callbackUrl" value="${escapeHtml(settings.callbackUrl || '')}">
+            <input name="callbackUrl" value="${escapeHtml(settings.callbackUrl || '')}" placeholder="${escapeHtml(callbackExample)}" inputmode="url" autocomplete="url">
+            <span class="muted">Format: ${escapeHtml(callbackExample)}</span>
           </label>
           ${paymentProviderFields(settings, provider)}
           ${paymentProviderNotice(provider)}
