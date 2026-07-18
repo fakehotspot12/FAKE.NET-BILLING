@@ -7,6 +7,18 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.11] - 2026-07-18
+
+### Fixed
+
+- Transaksi pada Laporan Tagihan Harian diurutkan berdasarkan waktu pembayaran sebenarnya dari terbaru ke terlama, termasuk ketika data memakai campuran zona waktu UTC dan WITA.
+
+## [1.2.10] - 2026-07-18
+
+### Fixed
+
+- Jam pembayaran manual pada laporan memakai waktu transaksi sebenarnya dari `createdAt` ketika `paidAt` hanya berisi tanggal, sehingga tidak lagi tampil keliru sebagai `08.00` WITA.
+
 ## [1.2.9] - 2026-07-18
 
 ### Fixed

@@ -3682,6 +3682,15 @@ function paymentDateKey(payment = {}) {
   return String(payment.paidAt || payment.createdAt || '').slice(0, 10);
 }
 
+function paymentReportTimestamp(payment = {}, invoice = {}) {
+  const paidAt = String(payment.paidAt || invoice.paidAt || '').trim();
+  const createdAt = String(payment.createdAt || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(paidAt) && createdAt.startsWith(`${paidAt}T`)) {
+    return createdAt;
+  }
+  return paidAt || createdAt;
+}
+
 function paymentBelongsToCollector(data = {}, payment = {}) {
   if (String(payment.createdByRole || '').toLowerCase() === 'collector') return true;
   return collectorUsers(data).some((collector) => actorMatchesDashboardUser(payment, collector));
@@ -4614,7 +4623,7 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
       const admin = payment?.admin || payment?.createdBy || payment?.createdByName || invoice.createdByName || 'Sistem';
       const storedInvoiceNo = invoice.externalId || invoice.invoiceNo || invoice.id
         || payment?.sourceInvoiceNo || payment?.invoiceNo || payment?.invoiceId || payment?.reference || payment?.id;
-      const paidAt = payment?.paidAt || payment?.createdAt || invoice.paidAt || '';
+      const paidAt = paymentReportTimestamp(payment || {}, invoice);
       return {
         id: payment?.id || invoice.id,
         invoiceId: invoice.id || payment?.invoiceId || '',
@@ -4643,7 +4652,7 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
       };
     })
     .filter(Boolean)
-    .sort((a, b) => String(a.paymentAt || a.dueDate || '').localeCompare(String(b.paymentAt || b.dueDate || '')));
+    .sort(sortReportTransactionsNewestFirst);
   const cashIncome = transactions
     .filter((item) => item.paymentCategory === 'cash')
     .reduce((sum, item) => sum + Number(item.income || 0), 0);
@@ -10384,9 +10393,9 @@ async function handleApi(req, res, url) {
           amount: Number(payment.amount || invoice.amount || 0),
           method: payment.method || invoice.paymentMethod || 'Tunai',
           paymentCategory: paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod),
-          paidAt: payment.paidAt || payment.createdAt || '',
-          submittedAt: payment.paidAt || payment.createdAt || '',
-          submittedRaw: payment.paidAt || payment.createdAt || '',
+          paidAt: paymentReportTimestamp(payment, invoice),
+          submittedAt: paymentReportTimestamp(payment, invoice),
+          submittedRaw: paymentReportTimestamp(payment, invoice),
           item: invoice.packageName || customer.packageName || 'Tagihan internet',
           description: payment.notes || customer.name || invoice.customerName || '',
           type: 'Pembayaran',
@@ -10517,7 +10526,7 @@ async function handleApi(req, res, url) {
           description: invoice.customerName || invoice.username || payment.notes || 'Pembayaran tagihan',
           amount: Number(payment.amount || invoice.amount || 0),
           paymentCategory: paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod),
-          date: payment.paidAt || payment.createdAt || ''
+          date: paymentReportTimestamp(payment, invoice)
         };
       });
     const externalIncomes = (data.externalIncomes || [])

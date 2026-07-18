@@ -1113,6 +1113,62 @@ test('standalone billing automation does not requeue suspension for an already i
   assert.equal(data.waMessages.filter((message) => message.type === 'accountSuspend').length, 0);
 });
 
+test('daily report uses payment creation time when paidAt only contains a date', () => {
+  const data = createDefaultStore();
+  data.invoices.push({
+    id: 'inv-date-only-payment',
+    customerId: 'cus-date-only-payment',
+    invoiceNo: '000777',
+    externalId: '000777',
+    amount: 150000,
+    status: 'paid',
+    paidAt: '2026-07-18'
+  });
+  data.customers.push({
+    id: 'cus-date-only-payment',
+    name: 'Pelanggan Jam Bayar'
+  });
+  data.payments.push({
+    id: 'pay-date-only-payment',
+    invoiceId: 'inv-date-only-payment',
+    customerId: 'cus-date-only-payment',
+    amount: 150000,
+    method: 'Tunai',
+    status: 'paid',
+    paidAt: '2026-07-18',
+    createdAt: '2026-07-18T09:23:08.077Z'
+  });
+  data.invoices.push({
+    id: 'inv-offset-payment',
+    customerId: 'cus-offset-payment',
+    invoiceNo: '000778',
+    externalId: '000778',
+    amount: 200000,
+    status: 'paid',
+    paidAt: '2026-07-18T14:36:43+08:00'
+  });
+  data.customers.push({ id: 'cus-offset-payment', name: 'Pelanggan Offset' });
+  data.payments.push({
+    id: 'pay-offset-payment',
+    invoiceId: 'inv-offset-payment',
+    customerId: 'cus-offset-payment',
+    amount: 200000,
+    method: 'Online',
+    status: 'paid',
+    paidAt: '2026-07-18T14:36:43+08:00',
+    createdAt: '2026-07-18T06:36:43.000Z'
+  });
+
+  const report = serverInternals.localDailyReport(data, '2026-07-18');
+
+  assert.equal(report.transactions.length, 2);
+  assert.equal(report.transactions[0].invoiceNo, '000777');
+  assert.equal(report.transactions[0].paymentAt, '2026-07-18T09:23:08.077Z');
+  assert.equal(report.transactions[0].paymentTime, '17.23');
+  assert.equal(report.transactions[1].invoiceNo, '000778');
+  assert.equal(report.transactions[1].paymentTime, '14.36');
+});
+
 test('terminating radius user keeps unpaid invoice pending and skips future invoice generation', () => {
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';
