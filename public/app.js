@@ -11786,6 +11786,12 @@ async function renderMonitoringBilling(options = {}) {
 
   const rows = invoices.length ? invoices.map((invoice, index) => {
     const customerName = invoice.customerName || invoice.accountId || invoice.username || '-';
+    const displayedStatus = customerServiceLabel(invoice) === 'Isolir'
+      ? 'Isolir'
+      : billingStatusLabel(invoice.status);
+    const displayedStatusBadge = displayedStatus === 'Isolir'
+      ? customerServiceBadge(invoice)
+      : billingStatusBadge(invoice.status);
     const customerMeta = invoice.accountId && invoice.username && invoice.accountId !== invoice.username
       ? `${invoice.accountId} / ${invoice.username}`
       : (invoice.accountId || invoice.username || '-');
@@ -11819,7 +11825,7 @@ async function renderMonitoringBilling(options = {}) {
         <td class="nowrap">${dateText(invoice.dueDate || invoice.invoiceDate)}</td>
         <td class="nowrap">${invoice.lastActiveAt ? escapeHtml(billingLastActiveText(invoice)) : '<span class="muted">-</span>'}</td>
         <td class="amount nowrap">${rupiah(invoice.amount)}</td>
-        <td class="billing-status-cell"><span class="badge ${billingStatusBadge(invoice.status)}">${escapeHtml(billingStatusLabel(invoice.status))}</span></td>
+        <td class="billing-status-cell"><span class="badge ${displayedStatusBadge}">${escapeHtml(displayedStatus)}</span></td>
         <td class="billing-action-cell">
           ${billingActionButtons(invoice, index)}
         </td>
