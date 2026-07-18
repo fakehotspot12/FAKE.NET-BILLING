@@ -7179,7 +7179,9 @@ function radiusMemberFieldsMarkup() {
       <div class="field full radius-location-field">
         <span>Lokasi Peta</span>
         <div class="row-actions">
-          <button class="ghost-button compact" id="radiusUseBrowserLocation" type="button" disabled>Ambil Lokasi Browser</button>
+          <button class="icon-button compact location-sync-button" id="radiusUseBrowserLocation" type="button" title="Sinkron Lokasi" aria-label="Sinkron Lokasi" disabled>
+            <span class="location-sync-icon" aria-hidden="true"></span>
+          </button>
           <a class="ghost-button compact button-link" id="radiusLocationMapLink" href="#" target="_blank" rel="noopener" hidden>Buka Peta</a>
         </div>
         <div class="radius-location-inputs">
@@ -7774,6 +7776,28 @@ function bindRadiusPppTypeFields() {
   sync();
 }
 
+function browserLocationErrorMessage(error = {}) {
+  if (Number(error.code) === 1) return 'Izin lokasi ditolak. Aktifkan izin lokasi browser lalu coba lagi.';
+  if (Number(error.code) === 2) return 'Lokasi perangkat belum dapat ditemukan.';
+  if (Number(error.code) === 3) return 'Pengambilan lokasi melewati batas waktu. Coba lagi di area dengan sinyal GPS lebih baik.';
+  return error.message || 'Lokasi browser tidak dapat diambil.';
+}
+
+function currentBrowserPosition() {
+  if (!navigator.geolocation) {
+    return Promise.reject(new Error('Browser tidak mendukung geolocation.'));
+  }
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, (error) => {
+      reject(new Error(browserLocationErrorMessage(error)));
+    }, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 60000
+    });
+  });
+}
+
 function bindRadiusMemberFields(options = {}) {
   const checkbox = modalBody.querySelector('#radiusAddToMember');
   const fieldsWrap = modalBody.querySelector('#radiusMemberFields');
@@ -7904,32 +7928,25 @@ function bindRadiusMemberFields(options = {}) {
   [latitudeInput, longitudeInput, accuracyInput].forEach((input) => {
     input?.addEventListener('input', updateLocationPreview);
   });
-  locationButton?.addEventListener('click', () => {
+  locationButton?.addEventListener('click', async () => {
     if (!checkbox.checked) return;
-    if (!navigator.geolocation) {
-      if (locationStatus) locationStatus.textContent = 'Browser tidak mendukung geolocation.';
-      return;
-    }
     locationButton.disabled = true;
-    if (locationStatus) locationStatus.textContent = 'Meminta izin lokasi browser...';
-    navigator.geolocation.getCurrentPosition((position) => {
+    if (locationStatus) locationStatus.textContent = 'Menyinkronkan lokasi perangkat...';
+    try {
+      const position = await currentBrowserPosition();
       const coords = position.coords || {};
       if (latitudeInput) latitudeInput.value = Number(coords.latitude || 0).toFixed(7);
       if (longitudeInput) longitudeInput.value = Number(coords.longitude || 0).toFixed(7);
       if (accuracyInput) accuracyInput.value = coords.accuracy ? String(Math.round(coords.accuracy)) : '';
-      locationButton.disabled = false;
       ensureMap();
       updateLocationPreview();
-    }, (error) => {
-      locationButton.disabled = false;
+    } catch (error) {
       if (locationStatus) {
-        locationStatus.textContent = error?.message || 'Lokasi tidak diizinkan oleh browser.';
+        locationStatus.textContent = error.message || 'Lokasi browser tidak dapat diambil.';
       }
-    }, {
-      enableHighAccuracy: true,
-      timeout: 15000,
-      maximumAge: 60000
-    });
+    } finally {
+      locationButton.disabled = !checkbox.checked;
+    }
   });
   housePhotoInput?.addEventListener('change', async () => {
     try {
@@ -11221,10 +11238,16 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
         </div>
         <div class="member-contact-preview-grid">
           <div class="member-map-preview">
-            <strong>Lokasi Peta</strong>
-            <span>${(contact.latitude || member.latitude) && (contact.longitude || member.longitude) ? 'Preview koordinat pelanggan' : 'Koordinat belum tersedia'}</span>
-            <em>${escapeHtml([contact.latitude || member.latitude, contact.longitude || member.longitude].filter(Boolean).join(', ') || '-')}</em>
+            <div class="member-map-preview-head">
+              <strong>Lokasi Peta</strong>
+              ${editable ? `<button class="icon-button compact location-sync-button" id="memberSyncLocation" type="button" title="Sinkron Lokasi" aria-label="Sinkron Lokasi">
+                <span class="location-sync-icon" aria-hidden="true"></span>
+              </button>` : ''}
+            </div>
+            <span id="memberLocationPreviewLabel">${(contact.latitude || member.latitude) && (contact.longitude || member.longitude) ? 'Preview koordinat pelanggan' : 'Koordinat belum tersedia'}</span>
+            <em id="memberLocationPreviewCoordinate">${escapeHtml([contact.latitude || member.latitude, contact.longitude || member.longitude].filter(Boolean).join(', ') || '-')}</em>
             <div class="member-leaflet-map" id="memberContactLeafletMap"></div>
+            ${editable ? '<p class="muted" id="memberLocationSyncStatus">Klik ikon lokasi atau pilih titik pada peta.</p>' : ''}
           </div>
           <div class="member-house-photo-card">
             <strong>Foto Rumah</strong>
@@ -11442,6 +11465,35 @@ function bindMemberDetailModal(detail = {}) {
       setToast(error.message);
     }
   });
+  const syncLocationButton = modalBody.querySelector('#memberSyncLocation');
+  syncLocationButton?.addEventListener('click', async () => {
+    const status = modalBody.querySelector('#memberLocationSyncStatus');
+    syncLocationButton.disabled = true;
+    if (status) status.textContent = 'Menyinkronkan lokasi perangkat...';
+    try {
+      const position = await currentBrowserPosition();
+      const coords = position.coords || {};
+      const latitude = Number(coords.latitude || 0).toFixed(7);
+      const longitude = Number(coords.longitude || 0).toFixed(7);
+      const latitudeInput = modalBody.querySelector('[name="latitude"]');
+      const longitudeInput = modalBody.querySelector('[name="longitude"]');
+      const accuracyInput = modalBody.querySelector('[name="locationAccuracy"]');
+      if (latitudeInput) latitudeInput.value = latitude;
+      if (longitudeInput) longitudeInput.value = longitude;
+      if (accuracyInput) accuracyInput.value = coords.accuracy ? String(Math.round(coords.accuracy)) : '';
+      initMemberContactMap();
+      modalBody.querySelector('#memberContactLeafletMap')?._memberSetPoint?.(latitude, longitude);
+      const label = modalBody.querySelector('#memberLocationPreviewLabel');
+      const coordinate = modalBody.querySelector('#memberLocationPreviewCoordinate');
+      if (label) label.textContent = 'Preview koordinat pelanggan';
+      if (coordinate) coordinate.textContent = `${latitude}, ${longitude}`;
+      if (status) status.textContent = `Lokasi tersinkron${coords.accuracy ? ` dengan akurasi ${Math.round(coords.accuracy)}m` : ''}.`;
+    } catch (error) {
+      if (status) status.textContent = error.message || 'Lokasi browser tidak dapat diambil.';
+    } finally {
+      syncLocationButton.disabled = false;
+    }
+  });
   const invoices = Array.isArray(detail.invoices) ? detail.invoices : [];
   modalBody.querySelectorAll('[data-member-invoice-pay]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -11464,14 +11516,54 @@ function initMemberContactMap() {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap'
   }).addTo(map);
-  let marker = hasPoint ? window.L.marker([latitude, longitude]).addTo(map) : null;
+  const latitudeInput = modalBody.querySelector('[name="latitude"]');
+  const longitudeInput = modalBody.querySelector('[name="longitude"]');
+  const editable = Boolean(latitudeInput && longitudeInput && !latitudeInput.disabled && !longitudeInput.disabled);
+  let marker = hasPoint ? window.L.marker([latitude, longitude], { draggable: editable }).addTo(map) : null;
+  const updatePreview = (lat, lng) => {
+    const label = modalBody.querySelector('#memberLocationPreviewLabel');
+    const coordinate = modalBody.querySelector('#memberLocationPreviewCoordinate');
+    if (label) label.textContent = 'Preview koordinat pelanggan';
+    if (coordinate) coordinate.textContent = `${lat}, ${lng}`;
+  };
+  const bindMarkerDrag = () => {
+    if (!editable || !marker || marker._memberDragBound) return;
+    marker._memberDragBound = true;
+    marker.on('dragend', () => {
+      const point = marker.getLatLng();
+      const lat = Number(point.lat || 0).toFixed(7);
+      const lng = Number(point.lng || 0).toFixed(7);
+      latitudeInput.value = lat;
+      longitudeInput.value = lng;
+      updatePreview(lat, lng);
+      const status = modalBody.querySelector('#memberLocationSyncStatus');
+      if (status) status.textContent = 'Titik lokasi diperbarui dari marker peta.';
+    });
+  };
   const setPoint = (lat, lng) => {
     const point = [Number(lat), Number(lng)];
     if (!Number.isFinite(point[0]) || !Number.isFinite(point[1])) return;
-    if (!marker) marker = window.L.marker(point).addTo(map);
+    if (!marker) marker = window.L.marker(point, { draggable: editable }).addTo(map);
+    bindMarkerDrag();
     marker.setLatLng(point);
     map.setView(point, 17);
+    updatePreview(Number(point[0]).toFixed(7), Number(point[1]).toFixed(7));
   };
+  mapEl._memberSetPoint = setPoint;
+  bindMarkerDrag();
+  if (editable) {
+    map.on('click', (event) => {
+      const lat = Number(event.latlng?.lat || 0).toFixed(7);
+      const lng = Number(event.latlng?.lng || 0).toFixed(7);
+      latitudeInput.value = lat;
+      longitudeInput.value = lng;
+      const accuracyInput = modalBody.querySelector('[name="locationAccuracy"]');
+      if (accuracyInput) accuracyInput.value = '';
+      setPoint(lat, lng);
+      const status = modalBody.querySelector('#memberLocationSyncStatus');
+      if (status) status.textContent = 'Titik lokasi dipilih dari peta.';
+    });
+  }
   ['latitude', 'longitude'].forEach((name) => {
     modalBody.querySelector(`[name="${name}"]`)?.addEventListener('input', () => {
       const lat = modalBody.querySelector('[name="latitude"]')?.value || '';

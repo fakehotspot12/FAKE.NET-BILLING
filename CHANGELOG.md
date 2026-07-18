@@ -7,6 +7,16 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.7] - 2026-07-18
+
+### Added
+
+- Tombol ikon `Sinkron Lokasi` tersedia konsisten pada wizard Tambah Member dan Edit Contact Member, lengkap dengan pembaruan koordinat, akurasi, serta marker peta.
+
+### Changed
+
+- Peta Edit Member mendukung pemilihan titik dan pergeseran marker secara manual sebagai alternatif geolocation browser.
+
 ## [1.2.6] - 2026-07-18
 
 ### Added
