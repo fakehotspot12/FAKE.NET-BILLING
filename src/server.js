@@ -3834,7 +3834,9 @@ function enrichVoucherOrderForReport(data = {}, order = {}) {
       ? 'Generated'
       : String(order.source || '') === 'manual'
         ? 'Manual'
-        : 'Online'
+        : String(order.source || '') === 'mikhmon-import'
+          ? 'Migrasi'
+          : 'Online'
   };
 }
 
@@ -5749,11 +5751,13 @@ function sanitizeHotspotVoucherOnlineSettings(payload = {}, current = {}, data =
     const incoming = incomingPackages[profileId] && typeof incomingPackages[profileId] === 'object' ? incomingPackages[profileId] : null;
     const previous = currentPackages[profileId] && typeof currentPackages[profileId] === 'object' ? currentPackages[profileId] : {};
     const source = incoming || previous;
+    const packageNas = radiusFindNas(data, source.nasId || previous.nasId || '');
     next.packages[profileId] = {
       enabled: incoming ? source.enabled === true : previous.enabled === true,
       label: String(source.label || profile.name || '').trim().slice(0, 80),
       maxPerOrder: clampInteger(source.maxPerOrder, 1, 50, previous.maxPerOrder || 1),
-      sort: clampInteger(source.sort, 0, 999, previous.sort || 0)
+      sort: clampInteger(source.sort, 0, 999, previous.sort || 0),
+      nasId: packageNas?.id || ''
     };
   }
   return next;
@@ -5778,6 +5782,8 @@ function publicHotspotVoucherOnlinePayload(data = {}) {
           label: online.label || profile.name || '',
           maxPerOrder: Number(online.maxPerOrder || 1),
           sort: Number(online.sort || 0),
+          nasId: online.nasId || '',
+          nasName: radiusFindNas(data, online.nasId || '')?.name || '',
           activeVouchers
         }
       };
@@ -5846,7 +5852,9 @@ function enabledHotspotVoucherPackages(data = {}) {
           enabled: online.enabled === true,
           label: online.label || profile.name || '',
           maxPerOrder: Number(online.maxPerOrder || 1),
-          sort: Number(online.sort || 0)
+          sort: Number(online.sort || 0),
+          nasId: online.nasId || '',
+          nasName: radiusFindNas(data, online.nasId || '')?.name || ''
         }
       };
     })
@@ -5854,11 +5862,14 @@ function enabledHotspotVoucherPackages(data = {}) {
     .sort((a, b) => Number(a.online.sort || 0) - Number(b.online.sort || 0) || String(a.name || '').localeCompare(String(b.name || '')));
 }
 
-function publicHotspotVoucherStorefrontPayload(data = {}) {
+function publicHotspotVoucherStorefrontPayload(data = {}, options = {}) {
   const settings = data.settings?.hotspotVoucherOnline || {};
   const paymentSettings = data.settings?.paymentGateway || {};
   const waSettings = data.settings?.waGateway || {};
-  const packages = enabledHotspotVoucherPackages(data).map((profile) => ({
+  const requestedNas = radiusFindNas(data, options.nas || options.nasId || '');
+  const packages = enabledHotspotVoucherPackages(data)
+    .filter((profile) => !requestedNas || !profile.online.nasId || profile.online.nasId === requestedNas.id)
+    .map((profile) => ({
     id: profile.id,
     name: profile.name,
     label: profile.online.label || profile.name,
@@ -5868,7 +5879,9 @@ function publicHotspotVoucherStorefrontPayload(data = {}) {
     quota: profile.quota || '',
     sharedUsers: profile.sharedUsers || 1,
     maxPerOrder: Math.max(1, Number(profile.online.maxPerOrder || 1)),
-    sort: Number(profile.online.sort || 0)
+    sort: Number(profile.online.sort || 0),
+    nasId: profile.online.nasId || '',
+    nasName: profile.online.nasName || ''
   }));
   return {
     ok: true,
@@ -5876,6 +5889,7 @@ function publicHotspotVoucherStorefrontPayload(data = {}) {
     businessName: data.settings?.businessName || 'FAKE.NET',
     logoUrl: data.settings?.logoUrl || '/fakenet-logo.png',
     title: settings.title || 'Beli Voucher Hotspot',
+    nasContext: requestedNas ? { id: requestedNas.id, name: requestedNas.name || requestedNas.id } : null,
     publicPath: settings.publicPath || '/voucher',
     paymentMethod: 'QRIS',
     paymentMethods: [{ id: 'qris', label: 'QRIS' }],
@@ -6018,7 +6032,7 @@ function createHotspotVoucherOrder(data = {}, payload = {}) {
   if (price <= 0) throw new Error('Harga profile Hotspot belum diisi');
   const baseAmount = price * quantity;
   const gatewayBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, baseAmount, 'voucher');
-  const nas = radiusFindNas(data, payload.nasId || settings.defaultNas || '');
+  const nas = radiusFindNas(data, online.nasId || payload.nasId || settings.defaultNas || '');
   const now = new Date().toISOString();
   const reference = nextHotspotVoucherOrderReference(data);
   const paymentSettings = data.settings?.paymentGateway || {};
@@ -6406,7 +6420,10 @@ async function generatedVoucherFirstOnlineMap(data = {}) {
 }
 
 function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUsername = new Map()) {
-  const onlineOrders = (data.hotspotVoucherOrders || [])
+  const onlineOrders = [
+    ...(data.hotspotVoucherOrders || []),
+    ...(data.hotspotVoucherSalesHistory || [])
+  ]
     .filter((order) => !['free', 'unpaid'].includes(String(order.paymentStatus || order.payment_status || '').toLowerCase()))
     .filter((order) => String(order.status || '').toLowerCase() === 'paid')
     .filter((order) => timestampLocalDateKey(order.paidAt || order.updatedAt || order.createdAt).slice(0, 7) === period)
@@ -9691,7 +9708,9 @@ async function handleApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/public/hotspot-voucher-online') {
     const data = await loadStore();
-    sendJson(res, 200, publicHotspotVoucherStorefrontPayload(data));
+    sendJson(res, 200, publicHotspotVoucherStorefrontPayload(data, {
+      nas: String(url.searchParams.get('nas') || '').trim()
+    }));
     return;
   }
 
@@ -9741,7 +9760,9 @@ async function handleApi(req, res, url) {
           gatewayAmountText: formatCurrencyText(order.gatewayAmount || order.totalAmount || order.amount || 0),
           message: 'Selesaikan pembayaran QRIS melalui payment gateway. Voucher otomatis dibuat setelah status paid.'
         },
-        storefront: publicHotspotVoucherStorefrontPayload(data)
+        storefront: publicHotspotVoucherStorefrontPayload(data, {
+          nas: order.nasId || order.nasName || ''
+        })
       });
     } catch (error) {
       sendJson(res, 400, {
@@ -14446,6 +14467,7 @@ module.exports = {
     isTripayRetailChannel,
     paidVoucherOrdersForReport,
     pppImportTemplateBuffer,
+    publicHotspotVoucherStorefrontPayload,
     publicPaymentGatewayInvoicePayload,
     publicMonitoringTarget,
     radiusProfileRowsLocal,
@@ -14460,6 +14482,7 @@ module.exports = {
     radiusTemplateRowsLocal,
     resellerHotspotVoucherRowVisible,
     sanitizeBillingSettings,
+    sanitizeHotspotVoucherOnlineSettings,
     stampHotspotVoucherValidityFromFirstOnline,
     syncRadiusMemberProfile,
     syncRadiusMembersForProfile,

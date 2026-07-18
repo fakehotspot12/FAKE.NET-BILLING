@@ -16,6 +16,7 @@ const CACHE_MODE = redisCache.enabled() ? 'redis' : 'none';
 const APP_MODE = String(process.env.APP_MODE || 'standalone').toLowerCase();
 const BILLING_SOURCE = String(process.env.BILLING_SOURCE || 'local').toLowerCase();
 const STORE_CACHE_KEY = process.env.REDIS_STORE_KEY || `fakenet-billing:${process.env.NODE_ENV || 'dev'}:${STORAGE_MODE}:store:main`;
+const PSQL_MAX_BUFFER_BYTES = Math.min(256, Math.max(16, Number(process.env.STORE_PSQL_MAX_BUFFER_MB || 64) || 64)) * 1024 * 1024;
 let postgresReady = false;
 
 const DEFAULT_PACKAGE_PRICES = {
@@ -238,6 +239,7 @@ function createDefaultStore() {
     payments: [],
     waMessages: [],
     hotspotVoucherOrders: [],
+    hotspotVoucherSalesHistory: [],
     paymentGatewayTransactions: [],
     expenses: [],
     users: [],
@@ -651,6 +653,7 @@ function ensureShape(data) {
     payments: Array.isArray(safe.payments) ? safe.payments : [],
     waMessages: Array.isArray(safe.waMessages) ? safe.waMessages : [],
     hotspotVoucherOrders: Array.isArray(safe.hotspotVoucherOrders) ? safe.hotspotVoucherOrders : [],
+    hotspotVoucherSalesHistory: Array.isArray(safe.hotspotVoucherSalesHistory) ? safe.hotspotVoucherSalesHistory : [],
     paymentGatewayTransactions: Array.isArray(safe.paymentGatewayTransactions) ? safe.paymentGatewayTransactions : [],
     expenses: Array.isArray(safe.expenses) ? safe.expenses : [],
     users: Array.isArray(safe.users) ? safe.users : [],
@@ -681,7 +684,7 @@ async function runPsql(args) {
   }
 
   const result = await execFileAsync('psql', ['-X', '-q', '-d', url, ...args], {
-    maxBuffer: 16 * 1024 * 1024
+    maxBuffer: PSQL_MAX_BUFFER_BYTES
   });
   return result.stdout;
 }

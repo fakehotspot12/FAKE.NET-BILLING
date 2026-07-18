@@ -232,6 +232,7 @@ const state = {
     }
   },
   hotspotVoucherTemplates: [],
+  hotspotVoucherAdminPhone: '',
   branding: {
     businessName: 'FAKE.NET Billing',
     appSubtitle: 'ISP Billing',
@@ -6491,6 +6492,45 @@ function hotspotVoucherLoginUrl() {
   return 'http://xxx';
 }
 
+function hotspotVoucherDirectLoginUrl(row = {}) {
+  const baseUrl = hotspotVoucherLoginUrl();
+  const username = String(row.username || '').trim();
+  const password = String(row.password || row.voucherPassword || username).trim();
+  if (!username || !baseUrl || baseUrl === 'http://xxx') return baseUrl;
+  try {
+    const url = new URL(baseUrl);
+    if (!url.pathname || url.pathname === '/') url.pathname = '/login';
+    url.searchParams.set('username', username);
+    url.searchParams.set('password', password);
+    return url.toString();
+  } catch {
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+  }
+}
+
+function hotspotVoucherAdminPhone() {
+  const raw = String(
+    state.hotspotVoucherAdminPhone
+    || state.settings?.publicInfo?.contactPhone
+    || ''
+  ).replace(/\D/g, '');
+  if (raw.startsWith('62')) return `0${raw.slice(2)}`;
+  return raw;
+}
+
+async function ensureHotspotVoucherAdminPhone() {
+  const fallback = hotspotVoucherAdminPhone();
+  if (state.hotspotVoucherAdminPhone) return state.hotspotVoucherAdminPhone;
+  try {
+    const payload = await api('/api/public/wa-admin-contact', { timeoutMs: 5000 });
+    state.hotspotVoucherAdminPhone = String(payload.phone || payload.waPhone || fallback || '').trim();
+  } catch {
+    state.hotspotVoucherAdminPhone = fallback;
+  }
+  return hotspotVoucherAdminPhone();
+}
+
 function hotspotVoucherTemplateFallback() {
   return {
     name: 'Voucher Standar',
@@ -6541,18 +6581,7 @@ function hotspotVoucherDateText(value) {
 }
 
 function hotspotVoucherQrText(row = {}) {
-  const dateSource = hotspotVoucherDateSource(row);
-  const voucherCode = row.username || row.password || '-';
-  return [
-    `Voucher ${hotspotVoucherBusinessName()}`,
-    hotspotVoucherAppSubtitle(),
-    `Kode: ${voucherCode}`,
-    `Paket: ${row.profile || '-'}`,
-    `Harga: ${hotspotVoucherPriceText(row.price)}`,
-    `Tanggal: ${hotspotVoucherDateText(dateSource)}`,
-    `Jam: ${timeText(dateSource)}`,
-    `Link login: ${hotspotVoucherLoginUrl()}`
-  ].join('\n');
+  return hotspotVoucherDirectLoginUrl(row);
 }
 
 function hotspotVoucherQrSrc(row = {}, size = 160) {
@@ -6576,8 +6605,9 @@ function hotspotVoucherTicket(row = {}, index = 0) {
     { label: 'Paket', value: row.profile || '-' },
     ...(template.showPrice === false ? [] : [{ label: 'Harga', value: hotspotVoucherPriceText(row.price) }])
   ];
-  const loginLine = `${template.loginLabel || 'Link login'} : ${hotspotVoucherLoginUrl()}`;
-  const footerText = [loginLine, template.footer || ''].filter(Boolean).join(' · ');
+  const loginLine = `${template.loginLabel || 'Login'} : ${hotspotVoucherLoginUrl()}`;
+  const callCenter = hotspotVoucherAdminPhone();
+  const footerText = [loginLine, callCenter ? `Call Center : ${callCenter}` : ''].filter(Boolean).join(' · ');
   const dateTimeMarkup = `
     <div class="hotspot-voucher-qr-meta">
       <span>${escapeHtml(hotspotVoucherDateText(dateSource))}</span>
@@ -6627,7 +6657,7 @@ function hotspotVoucherPrintModeLabel(mode = 'a4') {
 function hotspotVoucherPrintPageSize(mode = 'a4') {
   if (mode === 'thermal-58') return '58mm auto';
   if (mode === 'thermal-80') return '80mm auto';
-  return 'A4 portrait';
+  return 'A4 landscape';
 }
 
 function setHotspotVoucherPrintMode(mode = 'a4') {
@@ -6678,7 +6708,10 @@ async function openHotspotVoucherPrintModal(vouchers = []) {
     setToast('Pilih voucher Hotspot dulu');
     return;
   }
-  await ensureHotspotVoucherTemplates();
+  await Promise.all([
+    ensureHotspotVoucherTemplates(),
+    ensureHotspotVoucherAdminPhone()
+  ]);
   openModal('Print Voucher Hotspot', `
     <div class="hotspot-voucher-preview">
       <div class="hotspot-voucher-preview-head">
@@ -6893,6 +6926,11 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
           <input class="control compact-input" name="pkgLabel_${escapeHtml(profileId)}" value="${escapeHtml(online.label || profile.name || '')}" ${writeAllowed ? '' : 'disabled'}>
         </td>
         <td>
+          <select class="control compact-input" name="pkgNas_${escapeHtml(profileId)}" ${writeAllowed ? '' : 'disabled'}>
+            ${radiusOptionTags(nasOptions, online.nasId || '', 'Semua NAS')}
+          </select>
+        </td>
+        <td>
           <input class="control compact-input" name="pkgMax_${escapeHtml(profileId)}" type="number" min="1" max="50" value="${escapeHtml(online.maxPerOrder || 1)}" ${writeAllowed ? '' : 'disabled'}>
         </td>
         <td>
@@ -6993,12 +7031,13 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
                 <th>Status</th>
                 <th>Profile</th>
                 <th>Nama Paket</th>
+                <th>NAS Penjualan</th>
                 <th>Maks/Order</th>
                 <th>Urutan</th>
                 <th>Stok Aktif</th>
               </tr>
             </thead>
-            <tbody>${profileRows || '<tr><td colspan="6">Belum ada profile Hotspot.</td></tr>'}</tbody>
+            <tbody>${profileRows || '<tr><td colspan="7">Belum ada profile Hotspot.</td></tr>'}</tbody>
           </table>
         </div>
       </form>
@@ -8804,6 +8843,7 @@ async function renderRadiusHotspot(options = {}) {
       packages[id] = {
         enabled: raw[`pkgEnabled_${id}`] === true,
         label: raw[`pkgLabel_${id}`] || profile.name || '',
+        nasId: raw[`pkgNas_${id}`] || '',
         maxPerOrder: raw[`pkgMax_${id}`] || 1,
         sort: raw[`pkgSort_${id}`] || 0
       };

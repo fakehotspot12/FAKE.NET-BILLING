@@ -7,12 +7,27 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.4.0] - 2026-07-18
+
+### Added
+
+- Paket voucher online dapat dikunci ke NAS tertentu sehingga portal voucher dari setiap site hanya menampilkan paket yang sesuai.
+- Histori penjualan voucher hasil migrasi dapat disimpan terpisah dari order aktif agar laporan lama tetap tersedia tanpa menghidupkan kembali user Radius.
+
+### Changed
+
+- Print A4 voucher menggunakan format landscape 50 voucher berukuran ringkas, dengan Call Center yang dibaca dari akun Whatsapp Gateway aktif.
+- QR voucher berisi URL autentikasi Hotspot langsung sehingga scan dapat mengisi username dan password secara otomatis.
+
+### Fixed
+
+- Penyimpanan PostgreSQL mendukung payload aplikasi yang lebih besar setelah histori transaksi dimigrasikan tanpa menyebabkan proses baca terhenti karena batas buffer.
+
 ## [1.3.3] - 2026-07-18
 
 ### Fixed
 
 - Pembayaran online dengan waktu Unix dari provider kini tetap muncul pada Laporan Tagihan Harian, rekap bulanan, dashboard, dan statistik; metode transaksi tetap menampilkan kanal sebenarnya seperti QRIS sementara pengelompokannya tetap Pembayaran Online.
-- Layout print voucher A4 memakai ukuran tetap 5 kolom x 10 baris dengan margin cetak terukur sehingga 50 voucher muat pada satu lembar, sekaligus mempertahankan preset thermal 58 mm dan 80 mm.
 
 ### Changed
 

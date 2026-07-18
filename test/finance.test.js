@@ -5076,6 +5076,58 @@ test('free hotspot vouchers are excluded from voucher reports and statistics', a
   assert.equal(statistics.summary.voucherAmount, 5000);
 });
 
+test('migrated hotspot sales remain available in voucher reports without radius users', async () => {
+  const data = createDefaultStore();
+  data.hotspotVoucherSalesHistory.push({
+    id: 'mkh-history-001',
+    reference: 'voucher-lama-001',
+    profileName: 'V-1Hari',
+    packageLabel: 'V-1Hari',
+    nasId: 'site-fake',
+    nasName: 'FAKE.NET',
+    quantity: 1,
+    amount: 5000,
+    status: 'paid',
+    paymentStatus: 'paid',
+    paymentMethod: 'Cash',
+    source: 'mikhmon-import',
+    paidAt: '2026-07-01T10:00:00+08:00'
+  });
+
+  const orders = await serverInternals.paidVoucherOrdersForReport(data, '2026-07', new Map());
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].reference, 'voucher-lama-001');
+  assert.equal(orders[0].amount, 5000);
+  const filtered = serverInternals.filterVoucherReportOrders(data, orders, {}, { role: 'admin' });
+  assert.equal(filtered[0].sourceLabel, 'Migrasi');
+  assert.equal(filtered[0].methodGroup, 'cash');
+});
+
+test('online hotspot storefront filters packages by their assigned NAS', () => {
+  const data = createDefaultStore();
+  data.monitoringTargets.push(
+    { id: 'site-fake', name: 'FAKE.NET', host: '10.0.0.1', radius: { enabled: true, name: 'FAKE.NET', address: '10.0.0.1' } },
+    { id: 'site-kampung', name: 'KAMPUNG.NET', host: '10.0.0.2', radius: { enabled: true, name: 'KAMPUNG.NET', address: '10.0.0.2' } }
+  );
+  data.radiusProfiles.push(
+    { id: 'profile-fake', name: 'V-1Hari', serviceType: 'hotspot', price: 5000, validity: '1d', active: true },
+    { id: 'profile-kampung', name: 'Voucher-5000', serviceType: 'hotspot', price: 5000, validity: '1d', active: true }
+  );
+  data.settings.hotspotVoucherOnline = serverInternals.sanitizeHotspotVoucherOnlineSettings({
+    enabled: true,
+    packages: {
+      'profile-fake': { enabled: true, label: 'V-1Hari', nasId: 'site-fake' },
+      'profile-kampung': { enabled: true, label: 'Voucher-5000', nasId: 'site-kampung' }
+    }
+  }, {}, data);
+
+  const fake = serverInternals.publicHotspotVoucherStorefrontPayload(data, { nas: 'FAKE.NET' });
+  const kampung = serverInternals.publicHotspotVoucherStorefrontPayload(data, { nas: 'KAMPUNG.NET' });
+  assert.deepEqual(fake.packages.map((row) => row.id), ['profile-fake']);
+  assert.deepEqual(kampung.packages.map((row) => row.id), ['profile-kampung']);
+  assert.equal(fake.packages[0].nasId, 'site-fake');
+});
+
 test('online voucher order only creates payment gateway transaction after paid', () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.enabled = true;

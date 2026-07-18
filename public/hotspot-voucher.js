@@ -74,7 +74,8 @@ function show(id, visible) {
 
 async function loadStorefront() {
   if (storefront) return storefront;
-  storefront = await api('/api/public/hotspot-voucher-online');
+  const nas = new URLSearchParams(window.location.search).get('nas') || '';
+  storefront = await api(`/api/public/hotspot-voucher-online${nas ? `?nas=${encodeURIComponent(nas)}` : ''}`);
   return storefront;
 }
 
@@ -104,7 +105,10 @@ function renderOrderPackages() {
   setResponse(storefront.paymentGatewayEnabled ? '' : 'Payment Gateway QRIS belum aktif. Hubungi admin.', storefront.paymentGatewayEnabled ? '' : 'warning');
   list.innerHTML = packages.map((item) => `
     <div class="col-6 package-col">
-      <a class="voucher-product-card" href="${escapeHtml(pageUrl(BUY_PAGE, { paket: item.id }))}">
+      <a class="voucher-product-card" href="${escapeHtml(pageUrl(BUY_PAGE, {
+        paket: item.id,
+        nas: item.nasId || storefront?.nasContext?.id || ''
+      }))}">
         <span class="voucher-product-name">${escapeHtml(item.label || item.name || 'Voucher')}</span>
         <span class="voucher-product-info">${escapeHtml(packageInfo(item))}</span>
         ${packagePrice(item) ? `<strong>${escapeHtml(packagePrice(item))}</strong>` : ''}
@@ -179,6 +183,7 @@ async function initBuyPage() {
             buyerName: byId('v_nama')?.value || '',
             whatsapp: byId('v_whatsapp')?.value || '',
             paymentMethod: byId('v_rek')?.value || 'qris',
+            nasId: item.nasId || storefront?.nasContext?.id || '',
             quantity: 1
           })
         });
