@@ -7,6 +7,16 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.3.2] - 2026-07-18
+
+### Fixed
+
+- Jam transaksi Payment Gateway memakai `paidAt` atau `createdAt` asli dari provider dan ditampilkan dalam zona waktu WITA, bukan jam dari field tanggal tanpa waktu.
+
+### Added
+
+- Settings Payment Gateway menyediakan tanggal mulai riwayat provider agar transaksi uji lama dapat dihapus dan tidak diimpor kembali oleh auto-sync.
+
 ## [1.3.1] - 2026-07-18
 
 ### Added

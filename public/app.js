@@ -13689,6 +13689,11 @@ function paymentGatewayAdvancedModalBody(settings = {}) {
         <span>Masa aktif checkout</span>
         <input name="checkoutTtlMinutes" inputmode="numeric" value="${escapeHtml(settings.checkoutTtlMinutes || 60)}">
       </label>
+      <label class="field">
+        <span>Mulai riwayat provider</span>
+        <input name="historyStartDate" type="date" value="${escapeHtml(settings.historyStartDate || '')}">
+        <span class="muted">Transaksi sebelum tanggal ini tidak ditampilkan atau diimpor ulang.</span>
+      </label>
       <section class="notice field full">
         <strong>Rincian gateway</strong>
         <span>Callback URL tetap satu untuk semua provider: /payment-gateway/webhook. Fee ini hanya muncul pada pembayaran lewat payment gateway. Khusus Tripay gerai, Rp3.000 dari fee bulanan otomatis dialokasikan sebagai biaya yang dibayar di kasir. Pembayaran manual tetap memakai nominal tagihan asli.</span>
@@ -13711,7 +13716,8 @@ function openPaymentGatewaySettingsModal(settings = {}) {
         monthlyAdminFee: payload.monthlyAdminFee || 0,
         voucherAdminFee: payload.voucherAdminFee || 750,
         voucherAdminFeePercent: payload.voucherAdminFeePercent || 0.70,
-        checkoutTtlMinutes: payload.checkoutTtlMinutes || 60
+        checkoutTtlMinutes: payload.checkoutTtlMinutes || 60,
+        historyStartDate: payload.historyStartDate || ''
       })
     });
     setToast('Settings Payment Gateway tersimpan');
@@ -13755,7 +13761,7 @@ function paymentGatewayRows(rows = []) {
       <td><span class="badge ${xenditStatusBadge(row.status)}">${escapeHtml(row.status || '-')}</span></td>
       <td class="amount">${rupiah(row.amount || 0)}</td>
       <td class="amount">${Number(row.providerFee ?? row.fee ?? 0) ? rupiah(row.providerFee ?? row.fee) : '-'}</td>
-      <td>${row.date || row.createdAt ? dateTimeText(row.date || row.createdAt) : '-'}</td>
+      <td>${row.paidAt || row.paymentAt || row.createdAt || row.date ? dateTimeText(row.paidAt || row.paymentAt || row.createdAt || row.date) : '-'}</td>
     </tr>
   `).join('');
 }

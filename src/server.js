@@ -5661,6 +5661,7 @@ function decimalNumber(value = 0) {
 }
 
 function sanitizePaymentGatewaySettings(payload = {}, current = {}) {
+  const historyStartDateRaw = String(payload.historyStartDate ?? current.historyStartDate ?? '').trim();
   return {
     ...current,
     enabled: Object.prototype.hasOwnProperty.call(payload, 'enabled') ? payload.enabled === true : current.enabled === true,
@@ -5675,6 +5676,7 @@ function sanitizePaymentGatewaySettings(payload = {}, current = {}) {
     voucherAdminFee: Math.max(0, Math.round(decimalNumber(payload.voucherAdminFee ?? current.voucherAdminFee ?? 750))),
     voucherAdminFeePercent: Math.max(0, decimalNumber(payload.voucherAdminFeePercent ?? current.voucherAdminFeePercent ?? 0.70)),
     checkoutTtlMinutes: Math.max(5, Math.min(1440, Math.round(decimalNumber(payload.checkoutTtlMinutes ?? current.checkoutTtlMinutes ?? 60) || 60))),
+    historyStartDate: /^\d{4}-\d{2}-\d{2}$/.test(historyStartDateRaw) ? historyStartDateRaw : '',
     settlementReserveAmount: Math.max(0, Math.round(Number(payload.settlementReserveAmount ?? current.settlementReserveAmount ?? 10000) || 0)),
     tripay: sanitizeProviderSecrets(payload.tripay, current.tripay || {}),
     midtrans: sanitizeProviderSecrets(payload.midtrans, current.midtrans || {}),
@@ -9121,6 +9123,37 @@ function tripayHistoryStatus(value = '') {
   return status || 'pending';
 }
 
+function tripayHistoryLocalDate(row = {}) {
+  const timestamp = tripayTimestampIso(row.created_at || row.createdAt || row.paid_at || row.paidAt || row.date);
+  if (!timestamp) return '';
+  const parts = localDateParts(new Date(timestamp));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function tripayHistoryRowsFromDate(rows = [], startDate = '') {
+  const cutoff = /^\d{4}-\d{2}-\d{2}$/.test(String(startDate || '')) ? String(startDate) : '';
+  if (!cutoff) return Array.isArray(rows) ? rows : [];
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const rowDate = tripayHistoryLocalDate(row);
+    return !rowDate || rowDate >= cutoff;
+  });
+}
+
+function prunePaymentGatewayHistoryBefore(data = {}, startDate = '', provider = 'tripay') {
+  const cutoff = /^\d{4}-\d{2}-\d{2}$/.test(String(startDate || '')) ? String(startDate) : '';
+  if (!cutoff) return 0;
+  const rows = Array.isArray(data.paymentGatewayTransactions) ? data.paymentGatewayTransactions : [];
+  const targetProvider = String(provider || '').trim().toLowerCase();
+  const kept = rows.filter((row) => {
+    if (String(row.provider || '').trim().toLowerCase() !== targetProvider) return true;
+    const rowDate = tripayHistoryLocalDate(row);
+    return !rowDate || rowDate >= cutoff;
+  });
+  const removed = rows.length - kept.length;
+  data.paymentGatewayTransactions = kept;
+  return removed;
+}
+
 function tripayHistoryRows(payload = {}) {
   if (Array.isArray(payload.data)) return payload.data;
   if (Array.isArray(payload.data?.data)) return payload.data.data;
@@ -9285,7 +9318,10 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
   }
   const remote = await tripayTransactionHistory(dataSnapshot, options);
   return mutate(async (store) => {
-    const applied = applyTripayTransactionHistory(store, remote.rows, actor);
+    const historyStartDate = String(store.settings?.paymentGateway?.historyStartDate || '').trim();
+    const eligibleRows = tripayHistoryRowsFromDate(remote.rows, historyStartDate);
+    const pruned = prunePaymentGatewayHistoryBefore(store, historyStartDate, 'tripay');
+    const applied = applyTripayTransactionHistory(store, eligibleRows, actor);
     const newVouchers = applied.fulfillments.filter((item) => item.type === 'hotspot-voucher' && item.status === 'paid' && !item.reused);
     if (newVouchers.length) {
       await syncFreeradiusIfNeeded(store, actor, 'tripay-history-voucher-paid');
@@ -9298,23 +9334,28 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
     store.settings = store.settings || {};
     store.settings.paymentGateway = store.settings.paymentGateway || {};
     store.settings.paymentGateway.lastHistorySyncAt = remote.fetchedAt;
-    store.settings.paymentGateway.lastHistorySyncCount = remote.rows.length;
-    store.settings.paymentGateway.lastHistorySyncTotal = remote.totalRecords;
+    store.settings.paymentGateway.lastHistorySyncCount = eligibleRows.length;
+    store.settings.paymentGateway.lastHistorySyncTotal = eligibleRows.length;
+    store.settings.paymentGateway.lastHistoryRemoteTotal = remote.totalRecords;
     store.settings.paymentGateway.lastHistorySyncError = '';
-    if (applied.summary.inserted || applied.summary.reconciled || applied.summary.errors.length) {
-      addActivity(store, 'monitoring', `Riwayat Tripay disinkron: ${remote.rows.length} transaksi, ${applied.summary.reconciled} pembayaran direkonsiliasi`, {
+    if (applied.summary.inserted || applied.summary.reconciled || applied.summary.errors.length || pruned) {
+      addActivity(store, 'monitoring', `Riwayat Tripay disinkron: ${eligibleRows.length} transaksi, ${applied.summary.reconciled} pembayaran direkonsiliasi`, {
         action: 'tripay-history-sync',
-        fetched: remote.rows.length,
+        fetched: eligibleRows.length,
+        remoteFetched: remote.rows.length,
         inserted: applied.summary.inserted,
         updated: applied.summary.updated,
         reconciled: applied.summary.reconciled,
+        pruned,
         errors: applied.summary.errors.length,
         actor: actor.username || actor.name || 'system'
       });
     }
     return {
       ...applied.summary,
-      totalRecords: remote.totalRecords,
+      pruned,
+      remoteFetched: remote.rows.length,
+      totalRecords: eligibleRows.length,
       syncedAt: remote.fetchedAt
     };
   });
@@ -14417,7 +14458,9 @@ module.exports = {
     standaloneBillingAutomation,
     tripayCheckoutAmountBreakdown,
     tripayHistoryStatus,
+    tripayHistoryRowsFromDate,
     tripayTimestampIso,
+    prunePaymentGatewayHistoryBefore,
     tripayTransactionHistory,
     applyTripayTransactionHistory,
     syncTripayTransactionHistory,

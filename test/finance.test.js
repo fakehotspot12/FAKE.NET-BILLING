@@ -5202,6 +5202,24 @@ test('Tripay history import is idempotent and preserves provider status and fee'
   assert.equal(serverInternals.tripayTimestampIso(1784364610), '2026-07-18T08:50:10.000Z');
 });
 
+test('Tripay history cutoff removes older provider tests without affecting other providers', () => {
+  const data = createDefaultStore();
+  const rows = [
+    { reference: 'T-OLD', merchant_ref: 'OLD', created_at: '2026-07-17T10:00:00.000Z' },
+    { reference: 'T-NEW', merchant_ref: 'NEW', created_at: '2026-07-18T10:00:00.000Z' }
+  ];
+  const eligible = serverInternals.tripayHistoryRowsFromDate(rows, '2026-07-18');
+  assert.deepEqual(eligible.map((row) => row.reference), ['T-NEW']);
+
+  data.paymentGatewayTransactions = [
+    { id: 'old-tripay', provider: 'tripay', createdAt: '2026-07-17T10:00:00.000Z' },
+    { id: 'new-tripay', provider: 'tripay', createdAt: '2026-07-18T10:00:00.000Z' },
+    { id: 'old-xendit', provider: 'xendit', createdAt: '2026-07-17T10:00:00.000Z' }
+  ];
+  assert.equal(serverInternals.prunePaymentGatewayHistoryBefore(data, '2026-07-18'), 1);
+  assert.deepEqual(data.paymentGatewayTransactions.map((row) => row.id), ['new-tripay', 'old-xendit']);
+});
+
 test('unified payment gateway callback pays monthly invoice without duplicating payment', () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.enabled = true;
