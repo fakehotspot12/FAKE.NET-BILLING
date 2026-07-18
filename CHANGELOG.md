@@ -7,6 +7,20 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.3.3] - 2026-07-18
+
+### Fixed
+
+- Pembayaran online dengan waktu Unix dari provider kini tetap muncul pada Laporan Tagihan Harian, rekap bulanan, dashboard, dan statistik; metode transaksi tetap menampilkan kanal sebenarnya seperti QRIS sementara pengelompokannya tetap Pembayaran Online.
+- Layout print voucher A4 memakai ukuran tetap 5 kolom x 10 baris dengan margin cetak terukur sehingga 50 voucher muat pada satu lembar, sekaligus mempertahankan preset thermal 58 mm dan 80 mm.
+
+### Changed
+
+- Role Finance dapat membaca dan mengatur Radius tanpa memperoleh akses pengaturan sistem atau manajemen user.
+- Preset awal pratinjau voucher menggunakan A4 50 voucher agar hasil browser print konsisten.
+- Sesi login berlaku 24 jam sehingga browser dapat ditutup dan dibuka kembali tanpa login pada hari yang sama; login ulang memulai masa 24 jam baru dan selalu diarahkan ke Dashboard.
+- Rollback invoice menjadi koreksi internal, tidak lagi mengirim Whatsapp pelanggan, dan template `Payment Cancel` dihapus dari konfigurasi Whatsapp Gateway.
+
 ## [1.3.2] - 2026-07-18
 
 ### Fixed

@@ -76,6 +76,7 @@ const {
   hasPermission,
   publicUser,
   radbooxCredentialsForUser,
+  sessionCookie,
   updateUser,
   verifyPassword
 } = require('../src/auth');
@@ -4666,6 +4667,52 @@ test('daily billing report only contains completed payments by default', () => {
   assert.equal(report.transactions.some((item) => ['pending', 'overdue'].includes(item.status)), false);
 });
 
+test('online payments with Unix timestamps remain visible in daily and monthly reports', async () => {
+  const data = createDefaultStore();
+  data.customers.push({
+    id: 'cus-sepri-regression',
+    name: 'Sepri',
+    username: 'sepri@example.net'
+  });
+  data.invoices.push({
+    id: 'inv-sepri-regression',
+    customerId: 'cus-sepri-regression',
+    customerName: 'Sepri',
+    period: '2026-07',
+    amount: 150000,
+    status: 'pending',
+    dueDate: '2026-07-26'
+  });
+  const paidAt = Math.floor(Date.parse('2026-07-18T12:47:38.000Z') / 1000);
+  markInvoicePaid(data, 'inv-sepri-regression', {
+    amount: 155000,
+    paidAt,
+    paymentMethod: 'QRIS',
+    paymentCategory: 'online',
+    provider: 'tripay',
+    actorUsername: 'payment-gateway'
+  });
+
+  const daily = serverInternals.localDailyReport(data, '2026-07-18');
+  assert.equal(daily.transactionCount, 1);
+  assert.equal(daily.transactions[0].customerName, 'Sepri');
+  assert.equal(daily.transactions[0].method, 'QRIS');
+  assert.equal(daily.transactions[0].paymentCategory, 'online');
+  assert.equal(daily.transactions[0].paymentAt, '2026-07-18T12:47:38.000Z');
+  assert.equal(daily.onlineIncome, 155000);
+
+  const monthly = serverInternals.monthlyBillingDailyRows(data, '2026-07', { includeExpenses: false });
+  const monthlyRow = monthly.find((row) => row.date === '2026-07-18');
+  assert.equal(monthlyRow.incomeOnline, 155000);
+
+  const dashboard = serverInternals.dashboardBillingSummary(data, '2026-07');
+  assert.equal(dashboard.monthlyPaidCount, 1);
+  assert.equal(dashboard.monthlyPaidAmount, 155000);
+
+  const statistics = await serverInternals.reportStatisticsPayload(data, '2026-07');
+  assert.equal(statistics.summary.onlineRevenueAmount, 155000);
+});
+
 test('local billing reports use the NAS site name instead of its address', () => {
   const data = createDefaultStore();
   data.monitoringTargets.push({
@@ -5675,6 +5722,7 @@ test('auth creates default admin and protects admin role', () => {
   assert.equal(hasPermission(publicUser(data.users[0]), 'xendit:withdraw'), true);
   assert.equal(hasPermission(publicUser(data.users[0]), 'radius:read'), true);
   assert.equal(hasPermission(publicUser(data.users[0]), 'radius:write'), true);
+  assert.match(sessionCookie('session-test'), /Max-Age=86400/);
 
   const owner = createUser(data, {
     username: 'owner',
@@ -5709,8 +5757,8 @@ test('auth creates default admin and protects admin role', () => {
   assert.equal(hasPermission(publicUser(data.users[2]), 'xendit:read'), true);
   assert.equal(hasPermission(publicUser(data.users[2]), 'xendit:balance'), false);
   assert.equal(hasPermission(publicUser(data.users[2]), 'xendit:withdraw'), false);
-  assert.equal(hasPermission(publicUser(data.users[2]), 'radius:read'), false);
-  assert.equal(hasPermission(publicUser(data.users[2]), 'radius:write'), false);
+  assert.equal(hasPermission(publicUser(data.users[2]), 'radius:read'), true);
+  assert.equal(hasPermission(publicUser(data.users[2]), 'radius:write'), true);
   assert.equal(hasPermission(publicUser(data.users[2]), 'users:manage'), false);
 
   const technician = createUser(data, {

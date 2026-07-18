@@ -2581,8 +2581,8 @@ function renderLogin() {
       state.auth = payload.user;
       state.roles = payload.roles || [];
       updateBranding(payload);
-      const lastView = takeLoginReturnView();
-      state.view = canView(lastView) ? lastView : firstAvailableView();
+      takeLoginReturnView();
+      state.view = canView('dashboard') ? 'dashboard' : firstAvailableView();
       configureShell();
       startNotificationsTimer();
       setToast('Login berhasil');
@@ -6621,7 +6621,7 @@ function hotspotVoucherTicket(row = {}, index = 0) {
 function hotspotVoucherPrintModeLabel(mode = 'a4') {
   if (mode === 'thermal-58') return 'Thermal 58mm';
   if (mode === 'thermal-80') return 'Thermal 80mm';
-  return 'A4 Grid';
+  return 'A4 - 50 Voucher';
 }
 
 function hotspotVoucherPrintPageSize(mode = 'a4') {
@@ -6649,7 +6649,8 @@ function applyHotspotVoucherPrintPageStyle(mode = 'a4') {
     style.id = 'hotspotVoucherPrintPageStyle';
     document.head.appendChild(style);
   }
-  style.textContent = `@media print { @page { size: ${hotspotVoucherPrintPageSize(mode)}; margin: 0; } }`;
+  const margin = mode === 'a4' ? '9mm 3mm 3mm 7mm' : '0';
+  style.textContent = `@media print { @page { size: ${hotspotVoucherPrintPageSize(mode)}; margin: ${margin}; } }`;
 }
 
 function clearHotspotVoucherPrintPageStyle() {
@@ -6685,18 +6686,18 @@ async function openHotspotVoucherPrintModal(vouchers = []) {
         <label class="field inline-field hotspot-voucher-print-mode">
           <span>Ukuran</span>
           <select id="hotspotVoucherPrintMode">
-            <option value="thermal-80" selected>Thermal 80mm</option>
+            <option value="a4" selected>A4 - 50 Voucher</option>
+            <option value="thermal-80">Thermal 80mm</option>
             <option value="thermal-58">Thermal 58mm</option>
-            <option value="a4">A4 Grid</option>
           </select>
         </label>
-        <span class="muted" id="hotspotVoucherPrintModeLabel">Thermal 80mm</span>
+        <span class="muted" id="hotspotVoucherPrintModeLabel">A4 - 50 Voucher</span>
         <div class="row-actions hotspot-voucher-print-actions">
           <button class="ghost-button compact" data-close-modal type="button">Tutup</button>
           <button class="button compact" id="printHotspotVouchers" type="button">Print Browser</button>
         </div>
       </div>
-      <div class="hotspot-voucher-print-stack print-mode-thermal-80">
+      <div class="hotspot-voucher-print-stack print-mode-a4">
         ${chunkItems(rows, 50).map((pageRows, pageIndex) => `
           <div class="hotspot-voucher-print-page">
             ${pageRows.map((row, rowIndex) => hotspotVoucherTicket(row, (pageIndex * 50) + rowIndex)).join('')}
@@ -6707,10 +6708,10 @@ async function openHotspotVoucherPrintModal(vouchers = []) {
   `, async () => {});
   const modeInput = document.getElementById('hotspotVoucherPrintMode');
   modeInput?.addEventListener('change', () => setHotspotVoucherPrintMode(modeInput.value));
-  setHotspotVoucherPrintMode(modeInput?.value || 'thermal-80');
+  setHotspotVoucherPrintMode(modeInput?.value || 'a4');
   document.getElementById('printHotspotVouchers')?.addEventListener('click', async () => {
     await waitForImages(document.querySelector('.hotspot-voucher-print-stack'));
-    const mode = setHotspotVoucherPrintMode(modeInput?.value || 'thermal-80');
+    const mode = setHotspotVoucherPrintMode(modeInput?.value || 'a4');
     applyHotspotVoucherPrintPageStyle(mode);
     document.body.classList.add('printing-hotspot-vouchers');
     document.body.classList.add(`hotspot-voucher-print-${mode}`);
@@ -12892,7 +12893,6 @@ const WA_BILLING_TEMPLATE_DEFINITIONS = [
   { key: 'paymentReminder', label: 'Invoice Reminder' },
   { key: 'invoiceOverdue', label: 'Invoice Overdue' },
   { key: 'paymentPaid', label: 'Payment Paid' },
-  { key: 'paymentCancel', label: 'Payment Cancel' },
   { key: 'accountSuspend', label: 'Account Suspend' },
   { key: 'accountActive', label: 'Account Active' }
 ];

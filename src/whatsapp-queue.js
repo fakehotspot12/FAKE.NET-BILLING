@@ -77,7 +77,6 @@ class WhatsAppQueue {
       paymentPaid: 1,
       accountActive: 2,
       paymentReminder: 3,
-      paymentCancel: 4,
       invoiceIssued: 5,
       accountSuspend: 6,
       broadcast: 10

@@ -105,7 +105,6 @@ const DEFAULT_WA_TEMPLATES = {
   paymentReminder: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda senilai Rp. [total] belum di bayar, Mohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+[suspend_grace_days] ([suspend_grace_days] hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\nAbaikan pesan ini bila sudah membayar.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
   invoiceOverdue: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nDi informasikan, Account anda telah ditangguhkan *(ISOLIR)* oleh *System Billing* kami, dikarenakan keterlambatan dalam pembayaran.\n\nSaat ini anda tidak dapat menggunakan internet, sampai anda menyelesaikan pembayaran senilai Rp. [total]\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini*\n\nTerima kasih.',
   paymentPaid: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda telah dibayar, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nTotal: Rp [total]\nItem: [pppoe_profile]\nPeriod: [period]\nStatus: Paid\nPayment Method: [paid_method]\n\nTerima kasih.',
-  paymentCancel: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan pembayaran anda telah dibatalkan, berikut rinciannya :\nNomor Invoice: [no_invoice]\nInvoice Date: [invoice_date]\nTotal: Rp [total]\nDue Date: [due_date]\nPeriod: [period]\nStatus: Unpaid\nSegera lakukan pembayaran\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\nTerima kasih.',
   accountSuspend: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Internet Account anda dalam penangguhan (Isolir).\nSaat ini anda tidak dapat menggunakan layanan internet. Segera konfirmasi ke admin layanan kami terkait hal ini.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini*\n\nTerima kasih!',
   accountActive: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Internet Account anda telah di aktifkan, berikut rincian data account anda :\n\nID Pelanggan: [uid]\nItem: [pppoe_profile]\n\nMohon untuk mematikan dan menyalakan kembali tombol modem jika internet masih belum aktif setelah pembayaran ini. Terima kasih!\n\n*Ini adalah pesan otomatis*',
   voucherIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nPembayaran voucher Hotspot berhasil.\nReference: [reference]\nPaket: [voucher_profile]\nHarga: Rp [voucher_price]\nUsername: [voucher_user]\nPassword: [voucher_pass]\nMasa aktif: [validity]\nBerlaku sampai: [valid_until]\nLogin langsung: [login_url]\n\nSimpan voucher ini sampai masa aktif habis.\n\nTerima kasih.',
@@ -3679,17 +3678,39 @@ function collectorUsers(data = {}) {
   return (data.users || []).filter((user) => user.active !== false && userIsCollector(user));
 }
 
-function paymentDateKey(payment = {}) {
-  return String(payment.paidAt || payment.createdAt || '').slice(0, 10);
+function normalizedTimestampIso(value) {
+  if (value === null || value === undefined || value === '') return '';
+  const numeric = Number(value);
+  const timestamp = Number.isFinite(numeric) && numeric > 0
+    ? (numeric > 1_000_000_000_000 ? numeric : numeric * 1000)
+    : Date.parse(String(value));
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+}
+
+function timestampLocalDateKey(value) {
+  const timestamp = normalizedTimestampIso(value);
+  if (!timestamp) return '';
+  const parts = localDateParts(new Date(timestamp));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function paymentReportTimestamp(payment = {}, invoice = {}) {
-  const paidAt = String(payment.paidAt || invoice.paidAt || '').trim();
-  const createdAt = String(payment.createdAt || '').trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(paidAt) && createdAt.startsWith(`${paidAt}T`)) {
+  const rawPaidAt = payment.paidAt || invoice.paidAt || '';
+  const paidAt = normalizedTimestampIso(rawPaidAt) || String(rawPaidAt).trim();
+  const createdAt = normalizedTimestampIso(payment.createdAt) || String(payment.createdAt || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(rawPaidAt).trim())
+    && timestampLocalDateKey(createdAt) === String(rawPaidAt).trim()) {
     return createdAt;
   }
   return paidAt || createdAt;
+}
+
+function paymentDateKey(payment = {}, invoice = {}) {
+  return timestampLocalDateKey(paymentReportTimestamp(payment, invoice));
+}
+
+function paymentPeriodKey(payment = {}, invoice = {}) {
+  return paymentDateKey(payment, invoice).slice(0, 7);
 }
 
 function paymentBelongsToCollector(data = {}, payment = {}) {
@@ -3708,11 +3729,11 @@ function dashboardCollectorScope(data = {}, user = {}, period = currentPeriod())
   const selectedPeriod = normalizePeriod(period);
   const settings = data.settings || {};
   const rows = activePayments(data)
-    .filter((payment) => String(payment.paidAt || payment.createdAt || '').slice(0, 7) === selectedPeriod)
+    .filter((payment) => paymentPeriodKey(payment) === selectedPeriod)
     .filter((payment) => actorMatchesDashboardUser(payment, user));
   const teamDailyTotals = new Map();
   activePayments(data)
-    .filter((payment) => String(payment.paidAt || payment.createdAt || '').slice(0, 7) === selectedPeriod)
+    .filter((payment) => paymentPeriodKey(payment) === selectedPeriod)
     .filter((payment) => paymentBelongsToCollector(data, payment))
     .forEach((payment) => {
       const date = paymentDateKey(payment);
@@ -4599,7 +4620,7 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
   const payments = Array.isArray(options.payments) ? options.payments : activePayments(data);
   const includeDueInvoices = options.includeDueInvoices === true;
   const transactionSources = payments
-    .filter((payment) => String(payment.paidAt || payment.createdAt || '').slice(0, 10) === date)
+    .filter((payment) => paymentDateKey(payment, invoices.get(payment.invoiceId) || {}) === date)
     .map((payment) => ({ invoiceId: payment.invoiceId || '', payment }));
   if (includeDueInvoices) {
     const paidInvoiceIds = new Set(transactionSources.map((item) => item.invoiceId).filter(Boolean));
@@ -4996,7 +5017,6 @@ function sanitizeWaGatewaySettings(payload = {}, current = {}) {
       paymentReminder: templateText('paymentReminder'),
       invoiceOverdue: templateText('invoiceOverdue'),
       paymentPaid: templateText('paymentPaid'),
-      paymentCancel: templateText('paymentCancel'),
       accountSuspend: templateText('accountSuspend'),
       accountActive: templateText('accountActive'),
       voucherIssued: templateText('voucherIssued'),
@@ -6074,7 +6094,7 @@ function upsertPaidHotspotVoucherPaymentGatewayTransaction(data = {}, order = {}
     paidByRole: order.paidByRole || existing?.paidByRole || '',
     createdAt: existing?.createdAt || order.createdAt || now,
     updatedAt: now,
-    date: String(order.paidAt || now).slice(0, 10)
+    date: timestampLocalDateKey(order.paidAt || now)
   };
   if (existing) {
     Object.assign(existing, next);
@@ -6342,7 +6362,7 @@ function monthlyBillingDailyRows(data = {}, period = currentPeriod(), options = 
   const payments = Array.isArray(options.payments) ? options.payments : activePayments(data);
   for (const payment of payments) {
     const invoice = invoices.get(payment.invoiceId) || {};
-    const date = String(payment.paidAt || payment.createdAt || invoice.paidAt || '').slice(0, 10);
+    const date = paymentDateKey(payment, invoice);
     if (date.slice(0, 7) !== period) continue;
     const method = paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod);
     const amount = Number(payment.amount || invoice.amount || 0);
@@ -6389,10 +6409,10 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
   const onlineOrders = (data.hotspotVoucherOrders || [])
     .filter((order) => !['free', 'unpaid'].includes(String(order.paymentStatus || order.payment_status || '').toLowerCase()))
     .filter((order) => String(order.status || '').toLowerCase() === 'paid')
-    .filter((order) => String(order.paidAt || order.updatedAt || order.createdAt || '').slice(0, 7) === period)
+    .filter((order) => timestampLocalDateKey(order.paidAt || order.updatedAt || order.createdAt).slice(0, 7) === period)
     .map((order) => ({
       ...order,
-      date: String(order.paidAt || order.updatedAt || order.createdAt || '').slice(0, 10),
+      date: timestampLocalDateKey(order.paidAt || order.updatedAt || order.createdAt),
       amount: Number(order.amount || 0),
       paymentMethod: order.paymentMethod || 'QRIS',
       createdByName: order.createdByName || order.paidByName || '',
@@ -6450,7 +6470,7 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
           profileName: profile.name || '',
           nasName: nas.name || ''
         }],
-        date: String(paidAt).slice(0, 10),
+        date: timestampLocalDateKey(paidAt),
         paidAt,
         createdAt: user.createdAt || '',
         updatedAt: user.updatedAt || ''
@@ -6761,7 +6781,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
   for (const payment of activePayments(data)) {
     const invoice = invoices.get(payment.invoiceId) || {};
-    const date = String(payment.paidAt || payment.createdAt || invoice.paidAt || '').slice(0, 10);
+    const date = paymentDateKey(payment, invoice);
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     const category = paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod);
     addRevenueRow(date, 'billingRevenueAmount', Number(payment.amount || invoice.amount || 0), 1, category);
@@ -6786,7 +6806,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   for (const monthPeriod of monthPeriods) {
     const voucherOrders = await paidVoucherOrdersForReport(data, monthPeriod, firstOnlineByUsername);
     for (const order of voucherOrders) {
-      const date = String(order.date || order.paidAt || order.updatedAt || order.createdAt || '').slice(0, 10);
+      const date = timestampLocalDateKey(order.date || order.paidAt || order.updatedAt || order.createdAt);
       if (date.slice(0, 7) !== monthPeriod) continue;
       addRow(date, 'voucherBuyerCount', 1);
       addRow(date, 'voucherCount', Number(order.quantity || order.vouchers?.length || 0));
@@ -6885,7 +6905,7 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     && String(invoice.period || '').slice(0, 7) === selectedPeriod
   ));
   const monthlyPayments = activePayments(data).filter((payment) => (
-    String(payment.paidAt || payment.createdAt || '').slice(0, 7) === selectedPeriod
+    paymentPeriodKey(payment) === selectedPeriod
   ));
   const unpaidRows = rows.filter((invoice) => ['unpaid', 'pending', 'overdue'].includes(String(invoice.status || '').toLowerCase()));
   const overdueRows = unpaidRows.filter((invoice) => {
@@ -7458,7 +7478,7 @@ function queueInvoiceWaMessage(data = {}, invoice = {}, type = 'paymentReminder'
   const billingSettings = data.settings?.billing || {};
   const notificationAllowed = type === 'paymentReminder'
     || (type === 'invoiceIssued' && billingSettings.notifyInvoiceIssued !== false)
-    || (['paymentPaid', 'paymentCancel'].includes(type) && billingSettings.notifyPaymentStatus !== false)
+    || (type === 'paymentPaid' && billingSettings.notifyPaymentStatus !== false)
     || (['accountSuspend', 'accountActive'].includes(type) && billingSettings.notifyMemberStatus !== false);
   if (!notificationAllowed) return null;
 
@@ -8841,7 +8861,7 @@ function upsertPaidBillingPaymentGatewayTransaction(data = {}, invoice = {}, pay
     paidByRole: actor.role || existing?.paidByRole || '',
     createdAt: existing?.createdAt || invoice.createdAt || now,
     updatedAt: now,
-    date: String(payment.paidAt || now).slice(0, 10)
+    date: timestampLocalDateKey(payment.paidAt || now)
   };
   if (existing) {
     Object.assign(existing, next);
@@ -9105,12 +9125,7 @@ async function tripayPaymentChannels(data = {}, options = {}) {
 }
 
 function tripayTimestampIso(value) {
-  if (value === null || value === undefined || value === '') return '';
-  const numeric = Number(value);
-  const timestamp = Number.isFinite(numeric) && numeric > 0
-    ? (numeric > 1_000_000_000_000 ? numeric : numeric * 1000)
-    : Date.parse(String(value));
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+  return normalizedTimestampIso(value);
 }
 
 function tripayHistoryStatus(value = '') {
@@ -9262,7 +9277,7 @@ function upsertTripayHistoryTransaction(data = {}, row = {}) {
     paymentAt: paidAt || existing?.paymentAt || '',
     createdAt,
     updatedAt: new Date().toISOString(),
-    date: String(paidAt || createdAt).slice(0, 10),
+    date: timestampLocalDateKey(paidAt || createdAt),
     historySource: 'tripay-api'
   };
   if (existing) Object.assign(existing, next);
@@ -10584,7 +10599,7 @@ async function handleApi(req, res, url) {
     const collectorReport = userIsCollector(authContext.user);
     const reportPayments = collectorReportPayments(data, authContext.user);
     const periodPaymentInvoiceIds = new Set(reportPayments
-      .filter((payment) => String(payment.paidAt || payment.createdAt || '').slice(0, 7) === period)
+      .filter((payment) => paymentPeriodKey(payment) === period)
       .map((payment) => String(payment.invoiceId || ''))
       .filter(Boolean));
     let invoices = localBillingInvoiceRows(data, period).filter((invoice) => invoice.status !== 'cancelled');
@@ -10733,7 +10748,7 @@ async function handleApi(req, res, url) {
           notes: payment.notes || invoice.notes || ''
         };
       })
-      .filter((transaction) => String(transaction.paidAt || '').slice(0, 7) === period);
+      .filter((transaction) => timestampLocalDateKey(transaction.paidAt).slice(0, 7) === period);
     const voucherOrders = filterVoucherReportOrders(data, await paidVoucherOrdersForReport(data, period), {}, authContext.user);
     const voucherTransactions = voucherOrders.map((order) => ({
       id: `voucher-${order.id || order.reference}`,
@@ -10764,7 +10779,7 @@ async function handleApi(req, res, url) {
     ]).map((value) => String(value || '').trim()).filter(Boolean));
     const paymentGatewayTransactions = (paymentGatewayReportPayload(data, { kind: 'all' }).transactions || [])
       .filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()))
-      .filter((row) => String(row.paidAt || row.paymentAt || row.date || row.createdAt || '').slice(0, 7) === period)
+      .filter((row) => timestampLocalDateKey(row.paidAt || row.paymentAt || row.date || row.createdAt).slice(0, 7) === period)
       .filter((row) => {
         const kind = paymentGatewayTransactionKind(row);
         const references = [
@@ -10847,7 +10862,7 @@ async function handleApi(req, res, url) {
     const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
     const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
     const payments = activePayments(data)
-      .filter((payment) => String(payment.paidAt || payment.createdAt || '').slice(0, 7) === period)
+      .filter((payment) => paymentPeriodKey(payment, invoices.get(payment.invoiceId) || {}) === period)
       .map((payment) => {
         const invoice = invoices.get(payment.invoiceId) || {};
         return {
@@ -11074,11 +11089,7 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'invoices:manage');
     if (!authContext) return;
     const invoiceId = decodeURIComponent(unpayMatch[1]);
-    const { result } = await mutate((data) => {
-      const invoice = markInvoiceUnpaid(data, invoiceId);
-      if (invoice) queueInvoiceWaMessage(data, invoice, 'paymentCancel', authContext.user);
-      return invoice;
-    });
+    const { result } = await mutate((data) => markInvoiceUnpaid(data, invoiceId));
     if (!result) {
       notFound(res);
       return;
@@ -12713,9 +12724,7 @@ async function handleApi(req, res, url) {
             ...actorPayload(authContext.user)
           });
         }
-        const rollback = markInvoiceUnpaid(data, invoice.id);
-        if (rollback) queueInvoiceWaMessage(data, rollback, 'paymentCancel', authContext.user);
-        return rollback;
+        return markInvoiceUnpaid(data, invoice.id);
       }).catch((error) => ({ error }));
 
       if (result.error) {

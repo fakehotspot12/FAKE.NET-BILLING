@@ -5,7 +5,8 @@ const { createId } = require('./store');
 const secureSecrets = require('./secure-secrets');
 
 const SESSION_COOKIE = 'isp_finance_session';
-const SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
+const SESSION_DEFAULT_HOURS = Math.min(72, Math.max(1, Number(process.env.APP_SESSION_HOURS || 24)));
+const SESSION_DEFAULT_AGE_SECONDS = SESSION_DEFAULT_HOURS * 60 * 60;
 const PASSWORD_MIN_LENGTH = 6;
 
 const ROLE_DEFINITIONS = {
@@ -80,7 +81,7 @@ const ROLE_DEFINITIONS = {
   },
   finance: {
     label: 'Finance',
-    description: 'Kelola pemasukan, pengeluaran, laporan tagihan, dan transaksi billing.',
+    description: 'Kelola pemasukan, pengeluaran, laporan tagihan, transaksi billing, dan Radius.',
     permissions: [
       'dashboard:read',
       'external-incomes:read',
@@ -95,7 +96,9 @@ const ROLE_DEFINITIONS = {
       'billing-settings:manage',
       'wa-gateway:manage',
       'payment-gateway:manage',
-      'xendit:read'
+      'xendit:read',
+      'radius:read',
+      'radius:write'
     ]
   },
   technician: {
@@ -293,11 +296,17 @@ function getSessionId(req) {
   return cookies[SESSION_COOKIE] || '';
 }
 
+function sessionMaxAgeSeconds() {
+  return SESSION_DEFAULT_AGE_SECONDS;
+}
+
 function createSession(user) {
   const sessionId = crypto.randomBytes(32).toString('hex');
+  const maxAgeSeconds = sessionMaxAgeSeconds();
   sessions.set(sessionId, {
     userId: user.id,
-    expiresAt: Date.now() + SESSION_MAX_AGE_SECONDS * 1000
+    maxAgeSeconds,
+    expiresAt: Date.now() + maxAgeSeconds * 1000
   });
   return sessionId;
 }
@@ -314,7 +323,7 @@ function sessionCookie(sessionId) {
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
-    `Max-Age=${SESSION_MAX_AGE_SECONDS}`
+    `Max-Age=${sessionMaxAgeSeconds()}`
   ].join('; ');
 }
 
@@ -340,7 +349,7 @@ function requestUser(req, data) {
     return null;
   }
 
-  session.expiresAt = Date.now() + SESSION_MAX_AGE_SECONDS * 1000;
+  session.expiresAt = Date.now() + Number(session.maxAgeSeconds || SESSION_DEFAULT_AGE_SECONDS) * 1000;
   return userWithSession(user);
 }
 
@@ -497,6 +506,7 @@ module.exports = {
   publicUser,
   radbooxCredentialsForUser,
   requestUser,
+  sessionMaxAgeSeconds,
   sessionCookie,
   updateUser,
   verifyPassword
