@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.3] - 2026-07-18
+
+### Fixed
+
+- Cleanup updater selalu mengembalikan exit code sukses setelah update selesai, termasuk ketika folder temporer archive tidak digunakan.
+- Transient systemd unit tidak lagi ditandai gagal setelah log, health check, restart aplikasi, dan pembersihan lock sebenarnya berhasil.
+
 ## [1.2.2] - 2026-07-18
 
 ### Fixed

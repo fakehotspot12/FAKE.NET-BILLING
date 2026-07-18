@@ -68,8 +68,13 @@ tmp_backup_dir=""
 tmpdir=""
 cleanup_update() {
   release_update_lock
-  [ -n "$tmp_backup_dir" ] && rm -rf "$tmp_backup_dir"
-  [ -n "$tmpdir" ] && rm -rf "$tmpdir"
+  if [ -n "$tmp_backup_dir" ]; then
+    rm -rf "$tmp_backup_dir"
+  fi
+  if [ -n "$tmpdir" ]; then
+    rm -rf "$tmpdir"
+  fi
+  return 0
 }
 
 acquire_update_lock
