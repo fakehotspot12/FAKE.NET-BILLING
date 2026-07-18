@@ -87,6 +87,8 @@ const WA_GATEWAY_HTTP_TIMEOUT_MS = Math.max(5_000, Number(process.env.WA_GATEWAY
 const WAHA_ENV_FILE = process.env.WAHA_ENV_FILE || '/etc/fakenet-billing-waha.env';
 const APP_UPDATE_COMMAND = process.env.FAKENET_UPDATE_COMMAND || '/usr/local/bin/fakenet-billing-update';
 const APP_UPDATE_LOG = process.env.FAKENET_UPDATE_LOG || '/var/log/fakenet-billing/update.log';
+const APP_UPDATE_LOCK = process.env.FAKENET_UPDATE_LOCK || '/tmp/fakenet-billing-update.lock';
+const APP_UPDATE_LOCK_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.FAKENET_UPDATE_LOCK_MAX_AGE_SECONDS || 3600) * 1000 || 3600 * 1000);
 const APP_UPDATE_REMOTE_TIMEOUT_MS = Math.max(2000, Number(process.env.FAKENET_UPDATE_REMOTE_TIMEOUT_MS || 5000) || 5000);
 const APP_UPDATE_STATUS_TTL_MS = Math.max(60_000, Number(process.env.FAKENET_UPDATE_STATUS_TTL_MS || 300_000) || 300_000);
 const CHANGELOG_PATH = path.join(APP_ROOT, 'CHANGELOG.md');
@@ -326,9 +328,70 @@ async function updateLogTail(limitBytes = 12_000) {
   }
 }
 
-function startUpdateProcess() {
+function activeUpdateLock() {
+  if (!fsSync.existsSync(APP_UPDATE_LOCK)) return null;
+  let pid = 0;
+  let ageMs = Number.POSITIVE_INFINITY;
+  let command = '';
+  try {
+    pid = Number(fsSync.readFileSync(APP_UPDATE_LOCK, 'utf8').trim()) || 0;
+    ageMs = Math.max(0, Date.now() - fsSync.statSync(APP_UPDATE_LOCK).mtimeMs);
+    if (pid > 0) {
+      command = fsSync.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+    }
+  } catch {
+    command = '';
+  }
+  const running = pid > 0 && (() => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  const updaterProcess = running && /fakenet-billing-update/.test(command);
+  return {
+    pid,
+    ageMs,
+    command,
+    active: updaterProcess && ageMs < APP_UPDATE_LOCK_MAX_AGE_MS,
+    stale: !updaterProcess || ageMs >= APP_UPDATE_LOCK_MAX_AGE_MS
+  };
+}
+
+function clearStaleUpdateLock() {
+  const lock = activeUpdateLock();
+  if (!lock) return { cleared: false };
+  if (lock.active) {
+    throw new Error(`Update lain masih berjalan (PID ${lock.pid})`);
+  }
+  fsSync.rmSync(APP_UPDATE_LOCK, { force: true });
+  return { cleared: true, pid: lock.pid };
+}
+
+async function startUpdateProcess() {
   if (!fsSync.existsSync(APP_UPDATE_COMMAND)) {
     throw new Error(`Command update tidak ditemukan: ${APP_UPDATE_COMMAND}`);
+  }
+  clearStaleUpdateLock();
+  const systemdRun = ['/usr/bin/systemd-run', '/bin/systemd-run'].find((candidate) => fsSync.existsSync(candidate));
+  if (systemdRun && fsSync.existsSync('/run/systemd/system')) {
+    const unit = `fakenet-billing-update-${Date.now()}`;
+    await execFileAsync(systemdRun, [
+      '--unit', unit,
+      '--collect',
+      '--no-block',
+      '--property=Type=exec',
+      `--setenv=APP_DIR=${APP_ROOT}`,
+      `--setenv=FAKENET_UPDATE_LOCK=${APP_UPDATE_LOCK}`,
+      `--setenv=FAKENET_UPDATE_LOG=${APP_UPDATE_LOG}`,
+      APP_UPDATE_COMMAND
+    ], {
+      timeout: 10_000,
+      env: process.env
+    });
+    return { pid: 0, unit };
   }
   const child = spawn(APP_UPDATE_COMMAND, [], {
     detached: true,
@@ -339,7 +402,7 @@ function startUpdateProcess() {
     }
   });
   child.unref();
-  return child.pid;
+  return { pid: child.pid, unit: '' };
 }
 
 const loginVerificationChallenges = new Map();
@@ -13575,18 +13638,20 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'settings:write');
     if (!authContext) return;
     try {
-      const pid = startUpdateProcess();
+      const updateProcess = await startUpdateProcess();
       const { data } = await mutate((store) => {
         addActivity(store, 'settings', `Update aplikasi dijalankan oleh ${authContext.user.name || authContext.user.username}`, {
           action: 'system-update-start',
-          pid,
+          pid: updateProcess.pid,
+          unit: updateProcess.unit,
           command: APP_UPDATE_COMMAND
         });
       });
       sendJson(res, 202, {
         ok: true,
         message: 'Update aplikasi dimulai. Service akan restart otomatis setelah update selesai.',
-        pid,
+        pid: updateProcess.pid,
+        unit: updateProcess.unit,
         settings: publicAppSettings(data.settings)
       });
     } catch (error) {

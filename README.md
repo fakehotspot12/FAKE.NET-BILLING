@@ -82,6 +82,7 @@ Update aplikasi:
 
 ```bash
 fakenet-billing-stack update
+fakenet-billing-stack clear-update-lock
 ```
 
 Repair konfigurasi service/FreeRADIUS tanpa hapus data:
@@ -408,22 +409,31 @@ Terpasang: 374268b | GitHub: ef02779 | Branch: main
 Tombol update web tetap bisa dipakai selama proses updater tidak terkunci. Jika setelah klik update versi tidak berubah, jalankan perbaikan sekali dari terminal server:
 
 ```bash
-sudo rm -f /tmp/fakenet-billing-update.lock
+sudo fakenet-billing-stack clear-update-lock
 sudo fakenet-billing-stack update
 ```
 
 Setelah server berhasil naik ke versi baru, updater sudah otomatis membersihkan lock basi dan update berikutnya bisa dilakukan dari web.
 
-#### Clean Lock Update
-
-Gunakan ini jika halaman update menampilkan update tersedia, tetapi versi tidak berubah setelah tombol `Update Aplikasi` dipencet, atau log berisi `Update lain masih berjalan`.
+Khusus instalasi `v1.1.2` atau lebih lama yang belum memiliki command `clear-update-lock`, lakukan bootstrap satu kali:
 
 ```bash
 sudo rm -f /tmp/fakenet-billing-update.lock
 sudo fakenet-billing-stack update
 ```
 
-Perintah pertama hanya menghapus lock proses update yang tertinggal. Perintah kedua menjalankan update normal, tetap membuat backup pre-update, lalu restart service aplikasi.
+Mulai `v1.2.1`, update dari web berjalan pada transient systemd unit sehingga tetap hidup ketika service aplikasi direstart dan lock dibersihkan saat proses selesai.
+
+#### Clean Lock Update
+
+Gunakan ini jika halaman update menampilkan update tersedia, tetapi versi tidak berubah setelah tombol `Update Aplikasi` dipencet, atau log berisi `Update lain masih berjalan`.
+
+```bash
+sudo fakenet-billing-stack clear-update-lock
+sudo fakenet-billing-stack update
+```
+
+Perintah pertama hanya menghapus lock stale dan akan menolak bila updater masih benar-benar aktif. Perintah kedua menjalankan update normal, tetap membuat backup pre-update, lalu restart service aplikasi.
 
 Untuk audit cepat:
 

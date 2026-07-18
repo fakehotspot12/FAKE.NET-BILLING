@@ -7,6 +7,24 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.1] - 2026-07-18
+
+### Fixed
+
+- Update dari web dijalankan melalui transient systemd unit agar proses updater tidak ikut terbunuh saat `fakenet-billing.service` melakukan restart.
+- Lock update divalidasi berdasarkan PID, command line proses, dan umur lock; lock invalid, PID yang sudah mati, PID milik proses lain, atau lock terlalu lama dibersihkan otomatis.
+- Pembuatan lock memakai operasi atomic noclobber dan hanya pemilik lock yang boleh menghapusnya saat proses selesai.
+- Trap cleanup updater tidak lagi tertimpa pada mode update archive.
+
+### Added
+
+- Command `fakenet-billing-stack clear-update-lock` membersihkan lock stale secara aman dan menolak penghapusan ketika updater masih aktif.
+- Update web mencatat nama transient unit untuk memudahkan audit melalui systemd journal.
+
+### Notes
+
+- Server yang masih memakai `v1.1.2` dan sudah telanjur memiliki lock lama mungkin memerlukan satu kali penghapusan lock manual sebelum patch ini dapat ditarik.
+
 ## [1.2.0] - 2026-07-18
 
 ### Added

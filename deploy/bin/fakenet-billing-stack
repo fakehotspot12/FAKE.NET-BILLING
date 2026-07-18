@@ -29,6 +29,26 @@ SYSTEMD_BASE_GROUPS=(
 )
 
 OPENRC_BASE_SERVICES=(redis postgresql freeradius radiusd docker)
+UPDATE_LOCK_FILE="${FAKENET_UPDATE_LOCK:-/tmp/fakenet-billing-update.lock}"
+
+clear_stale_update_lock() {
+  local pid command
+  [ -e "$UPDATE_LOCK_FILE" ] || {
+    echo "Lock update tidak ada."
+    return 0
+  }
+  pid="$(cat "$UPDATE_LOCK_FILE" 2>/dev/null || true)"
+  command=""
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    command="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+  fi
+  if printf '%s' "$command" | grep -q 'fakenet-billing-update'; then
+    echo "Update masih aktif pada PID $pid; lock tidak dihapus." >&2
+    return 1
+  fi
+  rm -f "$UPDATE_LOCK_FILE"
+  echo "Lock update stale sudah dihapus: $UPDATE_LOCK_FILE"
+}
 
 systemd_unit_exists() {
   systemctl list-unit-files "$1" --no-legend >/dev/null 2>&1
@@ -100,8 +120,11 @@ run_systemd() {
     update)
       /usr/local/bin/fakenet-billing-update
       ;;
+    clear-update-lock)
+      clear_stale_update_lock
+      ;;
     *)
-      echo "Usage: fakenet-billing-stack {start|restart|stop|status|update}" >&2
+      echo "Usage: fakenet-billing-stack {start|restart|stop|status|update|clear-update-lock}" >&2
       exit 2
       ;;
   esac
@@ -129,8 +152,11 @@ run_openrc() {
     update)
       /usr/local/bin/fakenet-billing-update
       ;;
+    clear-update-lock)
+      clear_stale_update_lock
+      ;;
     *)
-      echo "Usage: fakenet-billing-stack {start|restart|stop|status|update}" >&2
+      echo "Usage: fakenet-billing-stack {start|restart|stop|status|update|clear-update-lock}" >&2
       exit 2
       ;;
   esac

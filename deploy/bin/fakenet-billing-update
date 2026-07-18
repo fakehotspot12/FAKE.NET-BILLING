@@ -6,6 +6,7 @@ BACKUP_DIR="${FAKENET_BACKUP_DIR:-/var/backups/fakenet-billing}"
 LOG_DIR="${FAKENET_LOG_DIR:-/var/log/fakenet-billing}"
 LOG_FILE="${FAKENET_UPDATE_LOG:-$LOG_DIR/update.log}"
 LOCK_FILE="${FAKENET_UPDATE_LOCK:-/tmp/fakenet-billing-update.lock}"
+LOCK_MAX_AGE_SECONDS="${FAKENET_UPDATE_LOCK_MAX_AGE_SECONDS:-3600}"
 STACK_CMD="${FAKENET_STACK_CMD:-/usr/local/bin/fakenet-billing-stack}"
 ARCHIVE_URL="${FAKENET_UPDATE_ARCHIVE_URL:-}"
 BRANCH="${FAKENET_UPDATE_BRANCH:-}"
@@ -18,17 +19,61 @@ exec >>"$LOG_FILE" 2>&1
 echo
 echo "[$(date -Is)] Update dimulai"
 
-if [ -e "$LOCK_FILE" ]; then
-  lock_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
-  if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-    echo "Update lain masih berjalan: $LOCK_FILE (pid $lock_pid)"
-    exit 1
+lock_age_seconds() {
+  local modified now
+  modified="$(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0)"
+  now="$(date +%s)"
+  if [ "$modified" -gt 0 ] 2>/dev/null; then
+    echo $((now - modified))
+  else
+    echo "$LOCK_MAX_AGE_SECONDS"
   fi
-  echo "Lock update lama ditemukan dan dibersihkan: $LOCK_FILE"
-  rm -f "$LOCK_FILE"
-fi
-trap 'rm -f "$LOCK_FILE"; [ -n "${tmp_backup_dir:-}" ] && rm -rf "$tmp_backup_dir"' EXIT
-echo "$$" > "$LOCK_FILE"
+}
+
+lock_process_is_updater() {
+  local pid="$1" command
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  command="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+  printf '%s' "$command" | grep -q 'fakenet-billing-update'
+}
+
+acquire_update_lock() {
+  local attempt lock_pid lock_age
+  for attempt in 1 2 3; do
+    if (set -o noclobber; printf '%s\n' "$$" > "$LOCK_FILE") 2>/dev/null; then
+      return 0
+    fi
+    lock_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
+    lock_age="$(lock_age_seconds)"
+    if lock_process_is_updater "$lock_pid" && [ "$lock_age" -lt "$LOCK_MAX_AGE_SECONDS" ]; then
+      echo "Update lain masih berjalan: $LOCK_FILE (pid $lock_pid)"
+      return 1
+    fi
+    echo "Lock update stale ditemukan dan dibersihkan: $LOCK_FILE (pid ${lock_pid:-tidak-valid}, umur ${lock_age}s)"
+    rm -f "$LOCK_FILE"
+  done
+  echo "Lock update tidak bisa dibuat: $LOCK_FILE" >&2
+  return 1
+}
+
+release_update_lock() {
+  local lock_pid
+  lock_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
+  if [ "$lock_pid" = "$$" ]; then
+    rm -f "$LOCK_FILE"
+  fi
+}
+
+tmp_backup_dir=""
+tmpdir=""
+cleanup_update() {
+  release_update_lock
+  [ -n "$tmp_backup_dir" ] && rm -rf "$tmp_backup_dir"
+  [ -n "$tmpdir" ] && rm -rf "$tmpdir"
+}
+
+acquire_update_lock
+trap cleanup_update EXIT
 
 if [ ! -d "$APP_DIR" ]; then
   echo "APP_DIR tidak ditemukan: $APP_DIR"
@@ -146,7 +191,6 @@ if [ -d "$APP_DIR/.git" ]; then
 elif [ -n "$ARCHIVE_URL" ]; then
   echo "Update via archive $ARCHIVE_URL"
   tmpdir="$(mktemp -d)"
-  trap 'rm -f "$LOCK_FILE"; [ -n "${tmp_backup_dir:-}" ] && rm -rf "$tmp_backup_dir"; rm -rf "$tmpdir"' EXIT
   curl -fsSL "$ARCHIVE_URL" -o "$tmpdir/source.tar.gz"
   mkdir -p "$tmpdir/source"
   tar -xzf "$tmpdir/source.tar.gz" -C "$tmpdir/source" --strip-components=1
