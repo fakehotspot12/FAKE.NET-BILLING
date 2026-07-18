@@ -1074,6 +1074,45 @@ test('standalone billing automation isolates unpaid overdue and reactivates full
   assert.equal(result.activatedUsers.some((user) => user.id === 'rad-paid'), true);
 });
 
+test('standalone billing automation does not requeue suspension for an already isolated member', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = true;
+  data.settings.billing.suspendGraceDays = 0;
+  data.settings.billing.autoSuspendTime = '00:00';
+  data.customers.push({
+    id: 'cus-already-isolated',
+    username: 'isolated@ppp.test',
+    name: 'Already Isolated',
+    phone: '081234567890',
+    status: 'isolir'
+  });
+  data.radiusUsers.push({
+    id: 'rad-already-isolated',
+    serviceType: 'pppoe',
+    username: 'isolated@ppp.test',
+    customerId: 'cus-already-isolated',
+    status: 'isolated'
+  });
+  data.invoices.push({
+    id: 'inv-already-isolated',
+    customerId: 'cus-already-isolated',
+    customerName: 'Already Isolated',
+    username: 'isolated@ppp.test',
+    period: '2000-01',
+    amount: 100000,
+    status: 'pending',
+    dueDate: '2000-01-01',
+    invoiceNo: '000009'
+  });
+
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' });
+
+  assert.equal(result.isolatedUsers.length, 0);
+  assert.equal(data.waMessages.filter((message) => message.type === 'accountSuspend').length, 0);
+});
+
 test('terminating radius user keeps unpaid invoice pending and skips future invoice generation', () => {
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';

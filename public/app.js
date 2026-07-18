@@ -12096,7 +12096,8 @@ async function renderMonitoringBilling(options = {}) {
         body: JSON.stringify({
           invoiceId: billingReminderId(invoice),
           invoiceNo: billingInvoiceNo(invoice),
-          customerName: invoice.customerName || invoice.accountId || invoice.username || ''
+          customerName: invoice.customerName || invoice.accountId || invoice.username || '',
+          bulk: true
         })
       });
       sent += 1;
@@ -12114,7 +12115,8 @@ async function renderMonitoringBilling(options = {}) {
         body: JSON.stringify({
           action: 'pay',
           invoiceNo: billingInvoiceNo(invoice),
-          customerName: invoice.customerName || invoice.accountId || invoice.username || ''
+          customerName: invoice.customerName || invoice.accountId || invoice.username || '',
+          bulk: true
         })
       });
       paid += 1;

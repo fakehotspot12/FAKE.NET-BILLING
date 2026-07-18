@@ -5500,7 +5500,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       const reminderStart = addDaysIso(invoice.dueDate, -reminderDays);
       if (today < reminderStart || today > invoice.dueDate) continue;
       if (invoice.paymentReminderDueDate === invoice.dueDate && invoice.paymentReminderSentAt) continue;
-      const queued = queueInvoiceWaMessage(data, invoice, 'paymentReminder', actor);
+      const queued = queueInvoiceWaMessage(data, invoice, 'paymentReminder', actor, { bulk: true });
       if (!queued) continue;
       invoice.paymentReminderDueDate = invoice.dueDate;
       invoice.paymentReminderSentAt = new Date().toISOString();
@@ -5528,6 +5528,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       if (!customer || normalizeCustomerStatusLocal(customer.status) === 'terminate') continue;
       const user = (data.radiusUsers || []).find((item) => item.customerId === customer.id || item.id === customer.radiusUserId || String(item.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase());
       if (!user || user.status === 'terminated') continue;
+      if (normalizeCustomerStatusLocal(customer.status) === 'isolated' && radiusStatusForCustomer(user) === 'isolated') continue;
       user.status = 'isolated';
       user.isolatedAt = user.isolatedAt || today;
       user.isolationSource = 'billing';
@@ -5551,7 +5552,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
 
   if (waAutomationEnabled) {
     for (const invoice of created) {
-      queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+      queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor, { bulk: true });
     }
   }
   if (waAutomationEnabled) {
@@ -5567,7 +5568,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
           && invoiceUncoveredPeriods(item, paidCoverage).length;
       })
         || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: unpaidByCustomer.get(customer.id)?.amount || 0, dueDate: unpaidByCustomer.get(customer.id)?.dueDate || '', period };
-      queueInvoiceWaMessage(data, invoice, 'accountSuspend', actor);
+      queueInvoiceWaMessage(data, invoice, 'accountSuspend', actor, { bulk: true });
     }
   }
   if (waAutomationEnabled) {
@@ -5579,7 +5580,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       }) || {};
       const invoice = (data.invoices || []).find((item) => item.customerId === customer.id && invoiceRuntimeStatus(item, today) === 'paid')
         || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: customer.price || 0, dueDate: customer.dueDate || '', period };
-      queueInvoiceWaMessage(data, invoice, 'accountActive', actor);
+      queueInvoiceWaMessage(data, invoice, 'accountActive', actor, { bulk: true });
     }
   }
 
@@ -7362,23 +7363,42 @@ function queueWaGatewayMessage(data = {}, payload = {}) {
   data.waMessages = Array.isArray(data.waMessages) ? data.waMessages : [];
   const settings = data.settings?.waGateway || {};
   const now = Date.now();
-  const queuedCount = data.waMessages.filter((message) => message.status === 'queued').length;
-  const delayMs = queuedCount * Math.max(15, Number(settings.minDelaySeconds || 45)) * 1000;
-  const batchDelayMs = Math.floor(queuedCount / Math.max(1, Number(settings.maxPerBatch || 20))) * 30 * 60 * 1000;
+  const type = String(payload.type || 'paymentReminder').trim() || 'paymentReminder';
+  const phone = normalizeLocalPhone(payload.phone);
+  const text = String(payload.text || '');
   const invoiceNo = displayBillingInvoiceNo(payload.invoiceNo || '') || String(payload.invoiceNo || '').replace(/^payment\s+inv\s*#?/i, '').replace(/^#/, '').trim();
+  const invoiceId = String(payload.invoiceId || '').trim();
+  const duplicate = data.waMessages.find((message) => {
+    return String(message.status || '') === 'queued'
+      && String(message.type || '') === type
+      && String(message.invoiceId || '') === invoiceId
+      && normalizeLocalPhone(message.phone) === phone
+      && String(message.text || '') === text;
+  });
+  if (duplicate) return duplicate;
+
+  const bulk = payload.bulk === true || type === 'broadcast';
+  const queuedCount = bulk
+    ? data.waMessages.filter((message) => message.status === 'queued' && (message.deliveryMode === 'bulk' || message.type === 'broadcast')).length
+    : 0;
+  const delayMs = bulk ? queuedCount * Math.max(15, Number(settings.minDelaySeconds || 45)) * 1000 : 0;
+  const batchDelayMs = bulk
+    ? Math.floor(queuedCount / Math.max(1, Number(settings.maxPerBatch || 20))) * 30 * 60 * 1000
+    : 0;
   const message = {
     id: createId('wa'),
-    type: payload.type || 'paymentReminder',
+    type,
     provider: settings.provider || 'waha',
     sessionKey: settings.sender || settings.provider || 'default',
-    phone: normalizeLocalPhone(payload.phone),
+    phone,
     recipientName: payload.recipientName || '',
     subject: String(payload.subject || (invoiceNo ? `Payment INV #${invoiceNo}` : payload.type || 'Pesan WA')).trim(),
-    invoiceId: payload.invoiceId || '',
+    invoiceId,
     invoiceNo: invoiceNo || payload.invoiceNo || '',
-    text: payload.text || '',
+    text,
+    deliveryMode: bulk ? 'bulk' : 'transactional',
     status: settings.enabled ? 'queued' : 'draft',
-    scheduledAt: new Date(now + delayMs + batchDelayMs).toISOString(),
+    scheduledAt: payload.scheduledAt || new Date(now + delayMs + batchDelayMs).toISOString(),
     attempts: 0,
     queueRevision: 0,
     queueJobId: '',
@@ -7402,7 +7422,7 @@ function customerForInvoice(data = {}, invoice = {}) {
     || {};
 }
 
-function queueInvoiceWaMessage(data = {}, invoice = {}, type = 'paymentReminder', actor = {}) {
+function queueInvoiceWaMessage(data = {}, invoice = {}, type = 'paymentReminder', actor = {}, options = {}) {
   const settings = data.settings?.waGateway || {};
   const billingSettings = data.settings?.billing || {};
   const notificationAllowed = type === 'paymentReminder'
@@ -7427,6 +7447,7 @@ function queueInvoiceWaMessage(data = {}, invoice = {}, type = 'paymentReminder'
     invoiceId: invoice.id,
     invoiceNo,
     text,
+    bulk: options.bulk === true,
     actorName: actor.name || actor.username || ''
   });
 }
@@ -12241,6 +12262,7 @@ async function handleApi(req, res, url) {
           invoiceId: invoice.id,
           invoiceNo: invoiceNumber,
           text: message,
+          bulk: payload.bulk === true,
           actorName: authContext.user.name || authContext.user.username
         });
         addActivity(data, 'monitoring', `Reminder WA invoice ${invoiceNumber} disiapkan`, {
@@ -12328,10 +12350,10 @@ async function handleApi(req, res, url) {
             ...actorPayload(authContext.user)
           });
           if (paid) {
-            queueInvoiceWaMessage(data, paid, 'paymentPaid', authContext.user);
+            queueInvoiceWaMessage(data, paid, 'paymentPaid', authContext.user, { bulk: payload.bulk === true });
             const activation = reactivateCustomerAfterPaidInvoice(data, paid, authContext.user);
             if (activation.activatedUser) {
-              queueInvoiceWaMessage(data, paid, 'accountActive', authContext.user);
+              queueInvoiceWaMessage(data, paid, 'accountActive', authContext.user, { bulk: payload.bulk === true });
               await finalizePaidInvoiceRadiusActivation(data, activation, authContext.user, 'monitoring-invoice-paid');
             } else if (activation.requiresAdmin) {
               addActivity(data, 'invoice', `Pembayaran ${paid.customerName || paid.username || paid.invoiceNo} tercatat, aktivasi pelanggan terminated menunggu validasi admin`, {

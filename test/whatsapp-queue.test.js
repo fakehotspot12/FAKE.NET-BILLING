@@ -49,3 +49,47 @@ test('Whatsapp outbox never drops queued messages above history limit', () => {
   assert.equal(data.waMessages.every((message) => message.status === 'queued'), true);
   assert.equal(data.waMessages.every((message) => message.queueRevision === 0), true);
 });
+
+test('transactional Whatsapp messages are immediate and pending duplicates are reused', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  data.settings.waGateway.minDelaySeconds = 45;
+  const before = Date.now();
+
+  const first = serverInternals.queueWaGatewayMessage(data, {
+    type: 'paymentPaid',
+    phone: '081234567890',
+    invoiceId: 'inv-paid-1',
+    invoiceNo: '000001',
+    text: 'Pembayaran diterima'
+  });
+  const duplicate = serverInternals.queueWaGatewayMessage(data, {
+    type: 'paymentPaid',
+    phone: '081234567890',
+    invoiceId: 'inv-paid-1',
+    invoiceNo: '000001',
+    text: 'Pembayaran diterima'
+  });
+
+  assert.equal(first.id, duplicate.id);
+  assert.equal(data.waMessages.length, 1);
+  assert.equal(first.deliveryMode, 'transactional');
+  assert.ok(new Date(first.scheduledAt).getTime() - before < 1000);
+});
+
+test('bulk Whatsapp messages retain safe staggered delivery', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  data.settings.waGateway.minDelaySeconds = 45;
+
+  const first = serverInternals.queueWaGatewayMessage(data, {
+    type: 'paymentReminder', phone: '081234567891', text: 'Reminder satu', bulk: true
+  });
+  const second = serverInternals.queueWaGatewayMessage(data, {
+    type: 'paymentReminder', phone: '081234567892', text: 'Reminder dua', bulk: true
+  });
+
+  assert.equal(first.deliveryMode, 'bulk');
+  assert.equal(second.deliveryMode, 'bulk');
+  assert.ok(new Date(second.scheduledAt).getTime() - new Date(first.scheduledAt).getTime() >= 44000);
+});

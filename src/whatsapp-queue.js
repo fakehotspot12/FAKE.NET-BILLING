@@ -73,12 +73,23 @@ class WhatsAppQueue {
     const attemptsMade = Math.max(0, Number(message.attempts) || 0);
     const attempts = Math.max(1, 3 - Math.min(attemptsMade, 2));
     const backoffDelay = Math.max(15, Number(settings.minDelaySeconds) || 45) * 1000;
+    const priorityByType = {
+      paymentPaid: 1,
+      accountActive: 2,
+      paymentReminder: 3,
+      paymentCancel: 4,
+      invoiceIssued: 5,
+      accountSuspend: 6,
+      broadcast: 10
+    };
+    const priority = Math.max(1, Number(message.priority || priorityByType[message.type] || 8) || 8);
     const job = await this.queue.add('send-whatsapp', {
       messageId: message.id,
       revision
     }, {
       jobId,
       delay,
+      priority,
       attempts,
       backoff: {
         type: 'fixed',

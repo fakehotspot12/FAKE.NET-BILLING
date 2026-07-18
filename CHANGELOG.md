@@ -7,6 +7,18 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.8] - 2026-07-18
+
+### Fixed
+
+- Scheduler tidak lagi membuat notifikasi suspend baru untuk pelanggan yang status member dan akun Radius-nya sudah isolir.
+- Pesan dengan jenis, invoice, penerima, dan isi yang sama tidak lagi diduplikasi selama pesan sebelumnya masih mengantre.
+
+### Changed
+
+- Notifikasi transaksi satuan seperti pembayaran lunas dan reminder langsung masuk antrean prioritas tanpa penundaan berdasarkan panjang antrean.
+- Broadcast dan aksi batch tetap memakai jeda serta pembagian batch, sementara BullMQ mempertahankan jeda aman antar-pesan.
+
 ## [1.2.7] - 2026-07-18
 
 ### Added
