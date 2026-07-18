@@ -504,7 +504,7 @@ button {
 
 .user-chip {
   width: auto;
-  max-width: 142px;
+  max-width: min(320px, 32vw);
   min-height: 34px;
   display: inline-flex;
   align-items: center;
@@ -517,7 +517,7 @@ button {
 }
 
 .user-chip strong {
-  max-width: 122px;
+  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7091,8 +7091,9 @@ dialog::backdrop {
   }
 
   .user-chip {
-    width: max-content;
+    width: 100%;
     justify-self: end;
+    justify-content: flex-end;
     flex: none;
     max-width: 100%;
     min-width: 0;
@@ -7100,6 +7101,11 @@ dialog::backdrop {
 
   .user-chip strong {
     max-width: 100%;
+    overflow: visible;
+    text-align: right;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .logout-button {
