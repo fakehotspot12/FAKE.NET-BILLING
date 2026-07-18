@@ -7,6 +7,20 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.4] - 2026-07-18
+
+### Added
+
+- `bootstrap-update.sh` menyediakan jalur pemulihan satu kali untuk instalasi `v1.1.2` atau lebih lama yang masih tertahan lock updater lama.
+
+### Changed
+
+- Dokumentasi pemulihan versi lama memakai updater terbaru langsung dari repository, bukan menjalankan helper lama setelah lock dihapus.
+
+### Security
+
+- Bootstrap menolak menghapus lock jika proses updater yang sah masih aktif, memvalidasi file updater yang diunduh, dan tidak menyimpan credential repository.
+
 ## [1.2.3] - 2026-07-18
 
 ### Fixed

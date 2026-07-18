@@ -418,14 +418,13 @@ sudo fakenet-billing-stack update
 
 Setelah server berhasil naik ke versi baru, updater sudah otomatis membersihkan lock basi dan update berikutnya bisa dilakukan dari web.
 
-Khusus instalasi `v1.1.2` atau lebih lama yang belum memiliki command `clear-update-lock`, lakukan bootstrap satu kali:
+Khusus instalasi `v1.1.2` atau lebih lama yang belum memiliki perbaikan updater, lakukan bootstrap satu kali dari terminal:
 
 ```bash
-sudo rm -f /tmp/fakenet-billing-update.lock
-sudo fakenet-billing-stack update
+curl -fsSL https://raw.githubusercontent.com/fakehotspot12/FAKE.NET-BILLING/main/bootstrap-update.sh | sudo bash
 ```
 
-Mulai `v1.2.1`, update dari web berjalan pada transient systemd unit sehingga tetap hidup ketika service aplikasi direstart dan lock dibersihkan saat proses selesai.
+Bootstrap memvalidasi lock, menghapus lock stale, lalu mengambil updater terkini tanpa memakai helper lama. Mulai `v1.2.1`, update dari web berjalan pada transient systemd unit sehingga tetap hidup ketika service aplikasi direstart dan lock dibersihkan saat proses selesai.
 
 #### Clean Lock Update
 
