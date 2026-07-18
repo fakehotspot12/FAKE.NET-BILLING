@@ -75,6 +75,7 @@ const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-18');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
+const PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS = Math.max(60_000, Number(process.env.PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS || 120_000) || 120_000);
 const RADBOOX_AUTO_SYNC_DEFAULT_SECONDS = 120;
 const RADBOOX_DASHBOARD_MEMBER_TTL_MS = 5 * 60 * 1000;
 const RADBOOX_DASHBOARD_MEMBER_MAX_PAGES = 1;
@@ -9277,12 +9278,12 @@ function applyTripayTransactionHistory(data = {}, rows = [], actor = {}) {
   return { summary, fulfillments };
 }
 
-async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}) {
+async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, options = {}) {
   const settings = dataSnapshot.settings?.paymentGateway || {};
   if (settings.enabled !== true || String(settings.provider || '').toLowerCase() !== 'tripay') {
     throw new Error('Sinkron riwayat hanya tersedia saat Tripay aktif');
   }
-  const remote = await tripayTransactionHistory(dataSnapshot);
+  const remote = await tripayTransactionHistory(dataSnapshot, options);
   return mutate(async (store) => {
     const applied = applyTripayTransactionHistory(store, remote.rows, actor);
     const newVouchers = applied.fulfillments.filter((item) => item.type === 'hotspot-voucher' && item.status === 'paid' && !item.reused);
@@ -9317,6 +9318,56 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}) {
       syncedAt: remote.fetchedAt
     };
   });
+}
+
+let paymentGatewayHistorySyncRunning = false;
+let paymentGatewayHistorySyncTimer = null;
+
+async function runPaymentGatewayHistorySync(reason = 'interval') {
+  if (MIGRATION_MODE || paymentGatewayHistorySyncRunning) return null;
+  paymentGatewayHistorySyncRunning = true;
+  try {
+    const data = await loadStore();
+    const settings = data.settings?.paymentGateway || {};
+    if (settings.enabled !== true || String(settings.provider || '').toLowerCase() !== 'tripay') {
+      return { skipped: true, reason: 'tripay-inactive' };
+    }
+    const lastSyncAt = Date.parse(settings.lastHistorySyncAt || '');
+    if (Number.isFinite(lastSyncAt) && Date.now() - lastSyncAt < PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS - 5_000) {
+      return { skipped: true, reason: 'not-due' };
+    }
+    const synced = await syncTripayTransactionHistory(data, {
+      username: 'tripay-auto-sync',
+      name: 'Tripay Auto Sync',
+      role: 'system'
+    }, {
+      perPage: 100,
+      maxPages: 3
+    });
+    if (synced.result.inserted || synced.result.reconciled) {
+      console.log(`Tripay auto-sync ${reason}: ${synced.result.inserted} baru, ${synced.result.reconciled} pembayaran direkonsiliasi`);
+    }
+    return synced.result;
+  } finally {
+    paymentGatewayHistorySyncRunning = false;
+  }
+}
+
+function startPaymentGatewayHistorySync() {
+  if (MIGRATION_MODE) {
+    console.log('Tripay auto-sync dinonaktifkan selama migration mode');
+    return;
+  }
+  const run = (reason) => {
+    runPaymentGatewayHistorySync(reason).catch((error) => {
+      console.error(`Tripay auto-sync gagal: ${error.message || error}`);
+    });
+  };
+  const initialTimer = setTimeout(() => run('startup'), 20_000);
+  initialTimer.unref?.();
+  paymentGatewayHistorySyncTimer = setInterval(() => run('interval'), PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS);
+  paymentGatewayHistorySyncTimer.unref?.();
+  console.log(`Tripay auto-sync aktif setiap ${Math.round(PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS / 1000)} detik`);
 }
 
 async function paymentGatewayChannels(data = {}, options = {}) {
@@ -13864,7 +13915,7 @@ async function handleApi(req, res, url) {
     const lastSyncAt = Date.parse(currentSettings.lastHistorySyncAt || '');
     const syncDue = currentSettings.enabled === true
       && String(currentSettings.provider || '').toLowerCase() === 'tripay'
-      && (!Number.isFinite(lastSyncAt) || Date.now() - lastSyncAt >= 120_000);
+      && (!Number.isFinite(lastSyncAt) || Date.now() - lastSyncAt >= PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS);
     let historySync = {
       ok: true,
       syncedAt: currentSettings.lastHistorySyncAt || '',
@@ -14287,6 +14338,7 @@ if (require.main === module) {
     });
     startStandaloneBillingAutomation();
     startWaGatewaySender();
+    startPaymentGatewayHistorySync();
   });
 
   let shuttingDown = false;
@@ -14295,6 +14347,8 @@ if (require.main === module) {
     shuttingDown = true;
     console.log(`${signal}: menghentikan FAKE.NET Billing dan BullMQ Whatsapp worker`);
     if (waGatewaySenderTimer) clearInterval(waGatewaySenderTimer);
+    if (billingAutomationTimer) clearInterval(billingAutomationTimer);
+    if (paymentGatewayHistorySyncTimer) clearInterval(paymentGatewayHistorySyncTimer);
     server.close();
     await waGatewayQueue?.close().catch((error) => {
       console.error(`BullMQ Whatsapp gagal ditutup: ${error.message || error}`);

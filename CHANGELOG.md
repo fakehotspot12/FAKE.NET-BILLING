@@ -7,6 +7,17 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.3.1] - 2026-07-18
+
+### Added
+
+- Worker latar belakang menyinkron riwayat Tripay otomatis setiap dua menit tanpa harus membuka halaman Payment Gateway.
+
+### Changed
+
+- Webhook tetap memproses pembayaran secara real-time, sedangkan auto-sync menjadi jalur pemulihan idempoten untuk callback yang terlambat atau terlewat.
+- Sinkron berkala dibatasi pada 300 transaksi terbaru agar tetap ringan; tombol Sinkron Tripay tetap dapat mengambil riwayat lebih lengkap.
+
 ## [1.3.0] - 2026-07-18
 
 ### Added
