@@ -13754,7 +13754,7 @@ function paymentGatewayRows(rows = []) {
       <td>${escapeHtml(row.method || row.paymentMethod || '-')}</td>
       <td><span class="badge ${xenditStatusBadge(row.status)}">${escapeHtml(row.status || '-')}</span></td>
       <td class="amount">${rupiah(row.amount || 0)}</td>
-      <td class="amount">${row.fee ? rupiah(row.fee) : '-'}</td>
+      <td class="amount">${Number(row.providerFee ?? row.fee ?? 0) ? rupiah(row.providerFee ?? row.fee) : '-'}</td>
       <td>${row.date || row.createdAt ? dateTimeText(row.date || row.createdAt) : '-'}</td>
     </tr>
   `).join('');
@@ -13810,6 +13810,10 @@ async function renderPaymentGateway() {
   const offset = (state.paymentGatewayPage - 1) * effectiveLimit;
   const pageRows = tabRows.slice(offset, offset + effectiveLimit);
   const summary = payload.summary || {};
+  const historySync = payload.historySync || {};
+  const historySyncText = historySync.syncedAt
+    ? `Sinkron terakhir ${dateTimeText(historySync.syncedAt)}`
+    : 'Riwayat Tripay belum disinkron';
   app.innerHTML = `
     <div class="stack">
       <section class="metrics">
@@ -13821,6 +13825,15 @@ async function renderPaymentGateway() {
       <section class="form-panel">
         <div class="section-head">
           <h2>Payment Gateway</h2>
+          <div class="section-actions">
+            <span class="muted">${escapeHtml(historySyncText)}</span>
+            ${provider === 'tripay' ? `
+              <button class="ghost-button compact" id="syncPaymentGatewayHistory" type="button">
+                <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+                Sinkron Tripay
+              </button>
+            ` : ''}
+          </div>
         </div>
         <form id="paymentGatewayForm" class="form-grid">
           <label class="field checkbox-field">
@@ -13894,7 +13907,7 @@ async function renderPaymentGateway() {
                 <th>Method</th>
                 <th>Status</th>
                 <th class="amount">Amount</th>
-                <th class="amount">Fee</th>
+                <th class="amount">Provider Fee</th>
                 <th>Tanggal</th>
               </tr>
             </thead>
@@ -13907,6 +13920,17 @@ async function renderPaymentGateway() {
   `;
   document.getElementById('paymentGatewayAdvancedButton')?.addEventListener('click', () => {
     openPaymentGatewaySettingsModal(settings);
+  });
+  document.getElementById('syncPaymentGatewayHistory')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api('/api/payment-gateway/sync', { method: 'POST' });
+      setToast(result.message || 'Riwayat Tripay berhasil disinkron');
+      await renderPaymentGateway();
+    } finally {
+      button.disabled = false;
+    }
   });
   document.getElementById('paymentGatewayProvider')?.addEventListener('change', async (event) => {
     const raw = formData(document.getElementById('paymentGatewayForm'));

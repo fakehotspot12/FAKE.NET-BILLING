@@ -7,6 +7,18 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.3.0] - 2026-07-18
+
+### Added
+
+- Riwayat transaksi Tripay dapat disinkron otomatis saat halaman Payment Gateway dibuka dan secara manual melalui tombol Sinkron Tripay.
+- Transaksi Tripay berstatus paid yang callback-nya terlewat direkonsiliasi secara idempoten ke invoice bulanan atau order voucher tanpa menggandakan pembayaran.
+
+### Changed
+
+- Pesan voucher memakai tautan login Hotspot langsung yang sudah membawa username dan password voucher.
+- Laporan Payment Gateway menampilkan provider fee dari Tripay dan tetap menyimpan riwayat expired maupun pending sebagai rekam jejak provider.
+
 ## [1.2.11] - 2026-07-18
 
 ### Fixed

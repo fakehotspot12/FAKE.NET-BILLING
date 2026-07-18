@@ -107,7 +107,7 @@ const DEFAULT_WA_TEMPLATES = {
   paymentCancel: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan pembayaran anda telah dibatalkan, berikut rinciannya :\nNomor Invoice: [no_invoice]\nInvoice Date: [invoice_date]\nTotal: Rp [total]\nDue Date: [due_date]\nPeriod: [period]\nStatus: Unpaid\nSegera lakukan pembayaran\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\nTerima kasih.',
   accountSuspend: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Internet Account anda dalam penangguhan (Isolir).\nSaat ini anda tidak dapat menggunakan layanan internet. Segera konfirmasi ke admin layanan kami terkait hal ini.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini*\n\nTerima kasih!',
   accountActive: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Internet Account anda telah di aktifkan, berikut rincian data account anda :\n\nID Pelanggan: [uid]\nItem: [pppoe_profile]\n\nMohon untuk mematikan dan menyalakan kembali tombol modem jika internet masih belum aktif setelah pembayaran ini. Terima kasih!\n\n*Ini adalah pesan otomatis*',
-  voucherIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nPembayaran voucher Hotspot berhasil.\nReference: [reference]\nPaket: [voucher_profile]\nHarga: Rp [voucher_price]\nUsername: [voucher_user]\nPassword: [voucher_pass]\nMasa aktif: [validity]\nBerlaku sampai: [valid_until]\nLink login: [login_url]\n\nSimpan voucher ini sampai masa aktif habis.\n\nTerima kasih.',
+  voucherIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nPembayaran voucher Hotspot berhasil.\nReference: [reference]\nPaket: [voucher_profile]\nHarga: Rp [voucher_price]\nUsername: [voucher_user]\nPassword: [voucher_pass]\nMasa aktif: [validity]\nBerlaku sampai: [valid_until]\nLogin langsung: [login_url]\n\nSimpan voucher ini sampai masa aktif habis.\n\nTerima kasih.',
   voucherExpired: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nMasa aktif voucher Hotspot anda sudah habis.\nUsername: [voucher_user]\nPaket: [voucher_profile]\nBerlaku sampai: [valid_until]\n\nSilakan beli voucher baru jika ingin menggunakan layanan kembali.\nLink login: [login_url]\n\nTerima kasih.',
   memberStatus: 'Halo *[fullname]*, status layanan internet Anda saat ini [status].\n\n[footer]'
 };
@@ -5176,6 +5176,23 @@ function hotspotVoucherOrderForUser(data = {}, user = {}) {
     || {};
 }
 
+function hotspotVoucherDirectLoginUrl(baseUrl = '', voucher = {}) {
+  const raw = String(baseUrl || '').trim();
+  const username = String(voucher.username || '').trim();
+  const password = String(voucher.password || voucher.voucherPassword || username).trim();
+  if (!raw || !username) return raw || '-';
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
+    if (!url.pathname || url.pathname === '/') url.pathname = '/login';
+    url.searchParams.set('username', username);
+    url.searchParams.set('password', password);
+    return url.toString();
+  } catch {
+    const separator = raw.includes('?') ? '&' : '?';
+    return `${raw}${separator}username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+  }
+}
+
 function hotspotVoucherTemplateValues(data = {}, order = {}, vouchers = [], user = {}) {
   const rows = (Array.isArray(vouchers) && vouchers.length ? vouchers : [user])
     .filter((voucher) => voucher && (voucher.username || voucher.id));
@@ -5187,11 +5204,13 @@ function hotspotVoucherTemplateValues(data = {}, order = {}, vouchers = [], user
   const fullName = order.buyerName || customer.name || customer.username || first.voucherBuyerName || first.username || 'Pelanggan';
   const validity = profile.validity || (profile.validitySeconds ? `${Math.round(Number(profile.validitySeconds) / 3600)} jam` : '-');
   const validUntil = first.validUntil || user.validUntil || order.validUntil || '';
+  const baseLoginUrl = String(data.settings?.voucherLoginUrl || data.settings?.hotspotVoucherOnline?.loginUrl || '').trim();
   const voucherList = rows.map((voucher, index) => {
     const password = voucher.password || voucher.voucherPassword || voucher.username || '';
-    return `${index + 1}. ${voucher.username || ''}${password ? ` / ${password}` : ''}`;
+    const directLoginUrl = hotspotVoucherDirectLoginUrl(baseLoginUrl, voucher);
+    return `${index + 1}. ${voucher.username || ''}${password ? ` / ${password}` : ''}${directLoginUrl && directLoginUrl !== '-' ? `\n   ${directLoginUrl}` : ''}`;
   }).join('\n');
-  const loginUrl = String(data.settings?.voucherLoginUrl || data.settings?.hotspotVoucherOnline?.loginUrl || '').trim() || '-';
+  const loginUrl = hotspotVoucherDirectLoginUrl(baseLoginUrl, first);
   const amount = Number(order.amount || first.amount || user.amount || profile.price || 0);
   return {
     full_name: fullName,
@@ -8046,13 +8065,14 @@ function paymentGatewayReportPayload(data = {}, query = {}) {
   });
   rows = sortByDateDesc(rows, 'createdAt');
   const pending = rows.filter((row) => ['pending', 'waiting', 'unpaid'].includes(String(row.status || '').toLowerCase()));
-  const fees = rows.reduce((sum, row) => sum + Number(row.fee || 0), 0);
   const paid = rows.filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()));
+  const fees = paid.reduce((sum, row) => sum + Number(row.providerFee ?? row.fee ?? 0), 0);
   return {
     transactions: rows,
     balanceHistory: rows.filter((row) => row.kind === 'balance'),
     pending,
-    reports: rows.filter((row) => Number(row.fee || 0) > 0 || row.kind === 'fee'),
+    reports: rows.filter((row) => row.kind === 'fee')
+      .concat(paid.filter((row) => row.kind !== 'fee' && Number(row.providerFee ?? row.fee ?? 0) > 0)),
     summary: {
       total: rows.length,
       totalAmount: rows.reduce((sum, row) => sum + Number(row.amount || 0), 0),
@@ -9079,6 +9099,224 @@ async function tripayPaymentChannels(data = {}, options = {}) {
   return rows
     .map((channel) => tripayChannelPayload(channel, amount, options))
     .filter((channel) => channel.code && channel.active && channel.available);
+}
+
+function tripayTimestampIso(value) {
+  if (value === null || value === undefined || value === '') return '';
+  const numeric = Number(value);
+  const timestamp = Number.isFinite(numeric) && numeric > 0
+    ? (numeric > 1_000_000_000_000 ? numeric : numeric * 1000)
+    : Date.parse(String(value));
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+}
+
+function tripayHistoryStatus(value = '') {
+  const status = String(value || '').trim().toLowerCase();
+  if (['paid', 'success', 'settled', 'completed'].includes(status)) return 'paid';
+  if (['unpaid', 'pending', 'waiting'].includes(status)) return 'pending';
+  if (status === 'expired') return 'expired';
+  if (['failed', 'deny', 'error'].includes(status)) return 'failed';
+  if (['cancel', 'cancelled', 'canceled'].includes(status)) return 'cancelled';
+  return status || 'pending';
+}
+
+function tripayHistoryRows(payload = {}) {
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.data?.data)) return payload.data.data;
+  return [];
+}
+
+async function tripayTransactionHistory(data = {}, options = {}) {
+  const settings = data.settings?.paymentGateway || {};
+  const apiKey = String(settings.tripay?.apiKey || '').trim();
+  if (!apiKey) throw new Error('API Key Tripay belum lengkap');
+  const perPage = Math.max(10, Math.min(100, Number(options.perPage || 100) || 100));
+  const maxPages = Math.max(1, Math.min(50, Number(options.maxPages || 20) || 20));
+  const rows = [];
+  let page = 1;
+  let totalRecords = 0;
+  while (page <= maxPages) {
+    const endpoint = new URL(`${tripayApiBase(settings)}/merchant/transactions`);
+    endpoint.searchParams.set('page', String(page));
+    endpoint.searchParams.set('per_page', String(perPage));
+    endpoint.searchParams.set('sort', 'desc');
+    const response = await fetch(endpoint, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json'
+      }
+    });
+    const bodyText = await response.text();
+    let body = {};
+    try {
+      body = bodyText ? JSON.parse(bodyText) : {};
+    } catch {
+      body = { message: bodyText };
+    }
+    if (!response.ok || body.success === false) {
+      throw new Error(body.message || body.error || `Tripay transaksi HTTP ${response.status}`);
+    }
+    const pageRows = tripayHistoryRows(body);
+    rows.push(...pageRows);
+    const pagination = body.pagination || body.data?.pagination || {};
+    totalRecords = Number(pagination.total_records || totalRecords || rows.length) || rows.length;
+    if (!pagination.next_page || !pageRows.length) break;
+    page = Number(pagination.next_page) || page + 1;
+  }
+  return { rows, totalRecords, fetchedAt: new Date().toISOString() };
+}
+
+function tripayHistoryTransactionKind(data = {}, row = {}) {
+  const merchantReference = String(row.merchant_ref || row.merchantRef || '').trim();
+  if (findHotspotVoucherOrder(data, merchantReference) || /^vo-/i.test(merchantReference)) return 'hotspot-voucher';
+  if (findBillingInvoiceByReference(data, merchantReference)) return 'monthly-package';
+  if (/^(?:payment\s+inv\s*#?)?\d{4,}$/i.test(merchantReference) || /^inv-/i.test(merchantReference)) return 'monthly-package';
+  return 'other';
+}
+
+function upsertTripayHistoryTransaction(data = {}, row = {}) {
+  data.paymentGatewayTransactions = Array.isArray(data.paymentGatewayTransactions) ? data.paymentGatewayTransactions : [];
+  const externalReference = String(row.reference || row.transaction_id || row.id || '').trim();
+  const merchantReference = String(row.merchant_ref || row.merchantRef || '').trim();
+  if (!externalReference && !merchantReference) return { transaction: null, inserted: false };
+  const invoice = findBillingInvoiceByReference(data, merchantReference);
+  const voucherOrder = findHotspotVoucherOrder(data, merchantReference);
+  const existing = data.paymentGatewayTransactions.find((item) => {
+    return externalReference && [item.externalId, item.providerReference, item.gatewayReference]
+      .some((value) => String(value || '').trim() === externalReference);
+  }) || (tripayHistoryStatus(row.status) === 'paid' && data.paymentGatewayTransactions.find((item) => {
+    return String(item.reference || '').trim() === merchantReference
+      && ['paid', 'settled', 'success'].includes(String(item.status || '').toLowerCase());
+  }));
+  const kind = tripayHistoryTransactionKind(data, row);
+  const createdAt = tripayTimestampIso(row.created_at || row.createdAt) || existing?.createdAt || new Date().toISOString();
+  const paidAt = tripayTimestampIso(row.paid_at || row.paidAt);
+  const providerFee = Math.max(0, Math.round(Number(row.total_fee ?? row.totalFee ?? row.fee_merchant ?? row.feeMerchant ?? 0) || 0));
+  const amount = Math.max(0, Math.round(Number(row.amount ?? row.total_amount ?? row.totalAmount ?? 0) || 0));
+  const method = String(row.payment_name || row.paymentName || row.payment_method || row.paymentMethod || '-').trim() || '-';
+  const customerName = String(row.customer_name || row.customerName || invoice?.customerName || voucherOrder?.buyerName || '').trim();
+  const next = {
+    ...(existing || {}),
+    id: existing?.id || createId('pg'),
+    kind: existing?.kind || (kind === 'hotspot-voucher' ? 'voucher-online' : kind === 'monthly-package' ? 'billing-online' : 'provider-history'),
+    transactionKind: kind,
+    sourceType: kind === 'hotspot-voucher' ? 'hotspot' : kind === 'monthly-package' ? 'billing' : 'provider-history',
+    provider: 'tripay',
+    method,
+    paymentMethod: method,
+    reference: merchantReference || existing?.reference || externalReference,
+    invoiceNo: kind === 'monthly-package' ? (merchantReference || existing?.invoiceNo || '') : (existing?.invoiceNo || ''),
+    description: existing?.description || (kind === 'hotspot-voucher'
+      ? `Voucher Hotspot ${voucherOrder?.packageLabel || voucherOrder?.profileName || merchantReference}`
+      : kind === 'monthly-package'
+        ? `Paket Bulanan ${invoice?.packageName || customerName || merchantReference}`
+        : `Transaksi Tripay ${customerName || merchantReference || externalReference}`),
+    customerId: existing?.customerId || invoice?.customerId || '',
+    invoiceId: existing?.invoiceId || invoice?.id || '',
+    voucherOrderId: existing?.voucherOrderId || voucherOrder?.id || '',
+    customerName,
+    amount,
+    baseAmount: Number(existing?.baseAmount ?? invoice?.amount ?? voucherOrder?.baseAmount ?? amount),
+    fee: Number(existing?.fee ?? providerFee),
+    providerFee,
+    feeMerchant: Math.max(0, Math.round(Number(row.fee_merchant ?? row.feeMerchant ?? 0) || 0)),
+    feeCustomer: Math.max(0, Math.round(Number(row.fee_customer ?? row.feeCustomer ?? 0) || 0)),
+    status: tripayHistoryStatus(row.status),
+    externalId: externalReference || existing?.externalId || '',
+    providerReference: externalReference || existing?.providerReference || '',
+    paidAt: paidAt || existing?.paidAt || '',
+    paymentAt: paidAt || existing?.paymentAt || '',
+    createdAt,
+    updatedAt: new Date().toISOString(),
+    date: String(paidAt || createdAt).slice(0, 10),
+    historySource: 'tripay-api'
+  };
+  if (existing) Object.assign(existing, next);
+  else data.paymentGatewayTransactions.push(next);
+  return { transaction: existing || next, inserted: !existing };
+}
+
+function applyTripayTransactionHistory(data = {}, rows = [], actor = {}) {
+  const summary = { fetched: rows.length, inserted: 0, updated: 0, reconciled: 0, errors: [] };
+  const ordered = [...rows].sort((a, b) => {
+    return parseLocalTransactionTime(a.created_at || a.createdAt) - parseLocalTransactionTime(b.created_at || b.createdAt);
+  });
+  const fulfillments = [];
+  for (const row of ordered) {
+    const merchantReference = String(row.merchant_ref || row.merchantRef || '').trim();
+    if (tripayHistoryStatus(row.status) === 'paid'
+      && (findHotspotVoucherOrder(data, merchantReference) || findBillingInvoiceByReference(data, merchantReference))) {
+      try {
+        const fulfilled = fulfillPaymentGatewayCallback(data, {
+          merchant_ref: merchantReference,
+          reference: row.reference,
+          status: row.status,
+          total_amount: row.amount ?? row.total_amount,
+          payment_method: row.payment_method,
+          payment_name: row.payment_name,
+          total_fee: row.total_fee,
+          fee_merchant: row.fee_merchant,
+          fee_customer: row.fee_customer,
+          paid_at: tripayTimestampIso(row.paid_at || row.paidAt)
+        }, actor);
+        fulfillments.push(fulfilled);
+        if (!fulfilled.reused) summary.reconciled += 1;
+      } catch (error) {
+        summary.errors.push({ reference: merchantReference, error: error.message || String(error) });
+      }
+    }
+    const result = upsertTripayHistoryTransaction(data, row);
+    if (result.transaction) {
+      if (result.inserted) summary.inserted += 1;
+      else summary.updated += 1;
+    }
+  }
+  data.paymentGatewayTransactions = (data.paymentGatewayTransactions || [])
+    .sort((a, b) => parseLocalTransactionTime(b.createdAt) - parseLocalTransactionTime(a.createdAt))
+    .slice(0, 5000);
+  return { summary, fulfillments };
+}
+
+async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}) {
+  const settings = dataSnapshot.settings?.paymentGateway || {};
+  if (settings.enabled !== true || String(settings.provider || '').toLowerCase() !== 'tripay') {
+    throw new Error('Sinkron riwayat hanya tersedia saat Tripay aktif');
+  }
+  const remote = await tripayTransactionHistory(dataSnapshot);
+  return mutate(async (store) => {
+    const applied = applyTripayTransactionHistory(store, remote.rows, actor);
+    const newVouchers = applied.fulfillments.filter((item) => item.type === 'hotspot-voucher' && item.status === 'paid' && !item.reused);
+    if (newVouchers.length) {
+      await syncFreeradiusIfNeeded(store, actor, 'tripay-history-voucher-paid');
+    }
+    for (const fulfilled of applied.fulfillments) {
+      if (fulfilled.type === 'monthly-package' && fulfilled.status === 'paid' && fulfilled.activatedUser) {
+        fulfilled.radiusActivation = await finalizePaidInvoiceRadiusActivation(store, fulfilled, actor, 'tripay-history-billing-paid');
+      }
+    }
+    store.settings = store.settings || {};
+    store.settings.paymentGateway = store.settings.paymentGateway || {};
+    store.settings.paymentGateway.lastHistorySyncAt = remote.fetchedAt;
+    store.settings.paymentGateway.lastHistorySyncCount = remote.rows.length;
+    store.settings.paymentGateway.lastHistorySyncTotal = remote.totalRecords;
+    store.settings.paymentGateway.lastHistorySyncError = '';
+    if (applied.summary.inserted || applied.summary.reconciled || applied.summary.errors.length) {
+      addActivity(store, 'monitoring', `Riwayat Tripay disinkron: ${remote.rows.length} transaksi, ${applied.summary.reconciled} pembayaran direkonsiliasi`, {
+        action: 'tripay-history-sync',
+        fetched: remote.rows.length,
+        inserted: applied.summary.inserted,
+        updated: applied.summary.updated,
+        reconciled: applied.summary.reconciled,
+        errors: applied.summary.errors.length,
+        actor: actor.username || actor.name || 'system'
+      });
+    }
+    return {
+      ...applied.summary,
+      totalRecords: remote.totalRecords,
+      syncedAt: remote.fetchedAt
+    };
+  });
 }
 
 async function paymentGatewayChannels(data = {}, options = {}) {
@@ -13621,7 +13859,32 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/payment-gateway') {
     const authContext = await requirePermission(req, res, 'payment-gateway:manage');
     if (!authContext) return;
-    const report = paymentGatewayReportPayload(authContext.data, {
+    let reportData = authContext.data;
+    const currentSettings = reportData.settings?.paymentGateway || {};
+    const lastSyncAt = Date.parse(currentSettings.lastHistorySyncAt || '');
+    const syncDue = currentSettings.enabled === true
+      && String(currentSettings.provider || '').toLowerCase() === 'tripay'
+      && (!Number.isFinite(lastSyncAt) || Date.now() - lastSyncAt >= 120_000);
+    let historySync = {
+      ok: true,
+      syncedAt: currentSettings.lastHistorySyncAt || '',
+      count: Number(currentSettings.lastHistorySyncCount || 0)
+    };
+    if (syncDue) {
+      try {
+        const synced = await syncTripayTransactionHistory(reportData, authContext.user);
+        reportData = synced.data;
+        historySync = { ok: true, ...synced.result };
+      } catch (error) {
+        historySync = {
+          ok: false,
+          syncedAt: currentSettings.lastHistorySyncAt || '',
+          count: Number(currentSettings.lastHistorySyncCount || 0),
+          error: error.message || 'Riwayat Tripay gagal disinkron'
+        };
+      }
+    }
+    const report = paymentGatewayReportPayload(reportData, {
       from: url.searchParams.get('from') || '',
       to: url.searchParams.get('to') || '',
       method: url.searchParams.get('method') || 'all',
@@ -13630,7 +13893,8 @@ async function handleApi(req, res, url) {
     });
     sendJson(res, 200, {
       ok: true,
-      settings: publicPaymentGatewaySettings(authContext.data.settings?.paymentGateway || {}),
+      settings: publicPaymentGatewaySettings(reportData.settings?.paymentGateway || {}),
+      historySync,
       providers: [
         { value: 'tripay', label: 'Tripay' },
         { value: 'midtrans', label: 'Midtrans' },
@@ -13642,6 +13906,25 @@ async function handleApi(req, res, url) {
       ],
       ...report
     });
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/payment-gateway/sync') {
+    const authContext = await requirePermission(req, res, 'payment-gateway:manage');
+    if (!authContext) return;
+    try {
+      const synced = await syncTripayTransactionHistory(authContext.data, authContext.user);
+      sendJson(res, 200, {
+        ok: true,
+        message: `${synced.result.fetched} riwayat Tripay disinkron`,
+        sync: synced.result
+      });
+    } catch (error) {
+      sendJson(res, 502, {
+        ok: false,
+        error: error.message || 'Riwayat Tripay gagal disinkron'
+      });
+    }
     return;
   }
 
@@ -14038,6 +14321,7 @@ module.exports = {
     deleteOrphanRadiusMembers,
     fulfillHotspotVoucherOrder,
     fulfillPaymentGatewayCallback,
+    hotspotVoucherDirectLoginUrl,
     hotspotFreeUserWritable,
     customerInvoiceGenerationDue,
     invoiceGenerationDue,
@@ -14078,6 +14362,11 @@ module.exports = {
     syncRadiusCustomerStatus,
     standaloneBillingAutomation,
     tripayCheckoutAmountBreakdown,
+    tripayHistoryStatus,
+    tripayTimestampIso,
+    tripayTransactionHistory,
+    applyTripayTransactionHistory,
+    syncTripayTransactionHistory,
     updateAvailableFallbackSummary
   }
 };

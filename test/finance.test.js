@@ -5164,6 +5164,44 @@ test('tripay webhook path and callback signature are accepted', () => {
   }, JSON.parse(raw), data.settings.paymentGateway, raw), /Signature callback/);
 });
 
+test('voucher Whatsapp login URL opens the hotspot login endpoint with voucher credentials', () => {
+  const direct = serverInternals.hotspotVoucherDirectLoginUrl('http://fake.hotspot/', {
+    username: 'voucher-01',
+    password: 'Rahasia 01'
+  });
+  const url = new URL(direct);
+  assert.equal(url.pathname, '/login');
+  assert.equal(url.searchParams.get('username'), 'voucher-01');
+  assert.equal(url.searchParams.get('password'), 'Rahasia 01');
+});
+
+test('Tripay history import is idempotent and preserves provider status and fee', () => {
+  const data = createDefaultStore();
+  const rows = [{
+    reference: 'T-HISTORY-001',
+    merchant_ref: 'INV-LEGACY-001',
+    customer_name: 'Pelanggan History',
+    payment_method: 'QRIS2',
+    payment_name: 'QRIS',
+    amount: 155000,
+    fee_merchant: 1835,
+    total_fee: 1835,
+    status: 'EXPIRED',
+    created_at: 1784364610
+  }];
+
+  const first = serverInternals.applyTripayTransactionHistory(data, rows, { username: 'admin' });
+  const second = serverInternals.applyTripayTransactionHistory(data, rows, { username: 'admin' });
+
+  assert.equal(first.summary.inserted, 1);
+  assert.equal(second.summary.updated, 1);
+  assert.equal(data.paymentGatewayTransactions.length, 1);
+  assert.equal(data.paymentGatewayTransactions[0].externalId, 'T-HISTORY-001');
+  assert.equal(data.paymentGatewayTransactions[0].status, 'expired');
+  assert.equal(data.paymentGatewayTransactions[0].providerFee, 1835);
+  assert.equal(serverInternals.tripayTimestampIso(1784364610), '2026-07-18T08:50:10.000Z');
+});
+
 test('unified payment gateway callback pays monthly invoice without duplicating payment', () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.enabled = true;
