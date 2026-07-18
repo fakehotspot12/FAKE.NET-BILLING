@@ -5105,6 +5105,7 @@ test('migrated hotspot sales remain available in voucher reports without radius 
 
 test('online hotspot storefront filters packages by their assigned NAS', () => {
   const data = createDefaultStore();
+  data.settings.voucherLoginUrl = 'http://login.example.net/login';
   data.monitoringTargets.push(
     { id: 'site-fake', name: 'FAKE.NET', host: '10.0.0.1', radius: { enabled: true, name: 'FAKE.NET', address: '10.0.0.1' } },
     { id: 'site-kampung', name: 'KAMPUNG.NET', host: '10.0.0.2', radius: { enabled: true, name: 'KAMPUNG.NET', address: '10.0.0.2' } }
@@ -5126,6 +5127,7 @@ test('online hotspot storefront filters packages by their assigned NAS', () => {
   assert.deepEqual(fake.packages.map((row) => row.id), ['profile-fake']);
   assert.deepEqual(kampung.packages.map((row) => row.id), ['profile-kampung']);
   assert.equal(fake.packages[0].nasId, 'site-fake');
+  assert.equal(fake.loginUrl, 'http://login.example.net/login');
 });
 
 test('online voucher order only creates payment gateway transaction after paid', () => {

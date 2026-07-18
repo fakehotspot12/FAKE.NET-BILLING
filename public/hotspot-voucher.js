@@ -26,12 +26,64 @@ function rupiah(value) {
 
 function pageUrl(file, params = {}) {
   const url = new URL(file, window.location.href);
-  Object.entries(params).forEach(([key, value]) => {
+  const current = new URLSearchParams(window.location.search);
+  const context = {
+    nas: current.get('nas') || '',
+    return: current.get('return') || current.get('returnUrl') || ''
+  };
+  Object.entries({ ...context, ...params }).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') {
       url.searchParams.set(key, value);
     }
   });
   return `${url.pathname}${url.search}`;
+}
+
+function safeHttpUrl(value = '') {
+  try {
+    const url = new URL(String(value || '').trim());
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+function voucherReturnStorageKey() {
+  const nas = new URLSearchParams(window.location.search).get('nas') || 'default';
+  return `fakenet-voucher-return:${nas}`;
+}
+
+function hotspotLoginReturnUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const explicit = safeHttpUrl(params.get('return') || params.get('returnUrl') || '');
+  if (explicit) {
+    window.sessionStorage?.setItem(voucherReturnStorageKey(), explicit);
+    return explicit;
+  }
+  const stored = safeHttpUrl(window.sessionStorage?.getItem(voucherReturnStorageKey()) || '');
+  if (stored) return stored;
+  const referrer = safeHttpUrl(document.referrer || '');
+  if (referrer && new URL(referrer).origin !== window.location.origin && currentPage() === 'order') {
+    window.sessionStorage?.setItem(voucherReturnStorageKey(), referrer);
+    return referrer;
+  }
+  return safeHttpUrl(storefront?.loginUrl || '');
+}
+
+function configureVoucherNavigation() {
+  const pages = { order: ORDER_PAGE, status: STATUS_PAGE, buy: BUY_PAGE };
+  document.querySelectorAll('[data-voucher-nav]').forEach((link) => {
+    const target = pages[link.dataset.voucherNav];
+    if (target) link.href = pageUrl(target);
+  });
+  const loginUrl = hotspotLoginReturnUrl();
+  document.querySelectorAll('[data-voucher-login]').forEach((link) => {
+    link.href = loginUrl || '#';
+    link.onclick = loginUrl ? null : (event) => {
+      event.preventDefault();
+      window.history.back();
+    };
+  });
 }
 
 async function api(path, options = {}) {
@@ -122,6 +174,7 @@ async function initOrderPage() {
   try {
     await loadStorefront();
     applyStorefrontBranding();
+    configureVoucherNavigation();
     setTitle(storefront.title || 'Beli Voucher Online');
     renderOrderPackages();
   } catch (error) {
@@ -155,6 +208,7 @@ async function initBuyPage() {
   try {
     await loadStorefront();
     applyStorefrontBranding();
+    configureVoucherNavigation();
     setTitle('Order Voucher');
     renderPaymentMethods();
     const item = selectedPackageFromQuery();
@@ -290,7 +344,7 @@ function renderVoucherInfo(order = {}) {
     password.innerHTML = vouchers.map((voucher) => `<div class="voucher-line"><b>${escapeHtml(voucher.password || '-')}</b></div>`).join('');
   }
   const login = byId('os_link_login');
-  if (login) login.href = 'login';
+  if (login) configureVoucherNavigation();
 }
 
 function renderOrderStatus(order = {}) {
@@ -342,6 +396,7 @@ async function loadOrderStatus(orderNo, silent = false) {
 async function initStatusPage() {
   setTitle('Cek Status Pemesanan');
   await loadStorefront().then(applyStorefrontBranding).catch(() => null);
+  configureVoucherNavigation();
   const params = new URLSearchParams(window.location.search);
   const orderNo = params.get('id') || params.get('order') || params.get('reference') || '';
   const form = byId('statusCheckForm');
@@ -364,6 +419,7 @@ function currentPage() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  configureVoucherNavigation();
   const page = currentPage();
   if (page === 'buy') initBuyPage();
   else if (page === 'status') initStatusPage();

@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.4.1] - 2026-07-18
+
+### Fixed
+
+- Tombol Kembali dan Login pada portal voucher mempertahankan konteks NAS dan kembali ke captive portal Hotspot asal, bukan membuka path `login` pada server voucher.
+
 ## [1.4.0] - 2026-07-18
 
 ### Added

@@ -5889,6 +5889,7 @@ function publicHotspotVoucherStorefrontPayload(data = {}, options = {}) {
     businessName: data.settings?.businessName || 'FAKE.NET',
     logoUrl: data.settings?.logoUrl || '/fakenet-logo.png',
     title: settings.title || 'Beli Voucher Hotspot',
+    loginUrl: sanitizePublicUrl(data.settings?.voucherLoginUrl || settings.loginUrl || ''),
     nasContext: requestedNas ? { id: requestedNas.id, name: requestedNas.name || requestedNas.id } : null,
     publicPath: settings.publicPath || '/voucher',
     paymentMethod: 'QRIS',
