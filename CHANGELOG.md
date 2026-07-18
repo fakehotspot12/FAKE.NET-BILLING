@@ -7,6 +7,23 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.2] - 2026-07-18
+
+### Fixed
+
+- Updater hanya me-restart service aplikasi melalui `restart-app`; Redis, PostgreSQL, Docker, dan FreeRADIUS tidak lagi ikut direstart saat update source.
+- Mode repair yang dipanggil updater tidak lagi menulis ulang konfigurasi atau me-restart FreeRADIUS.
+- Installer dapat membaca host, port, nama database, user, dan password Radius dari `FREERADIUS_DATABASE_URL` pada instalasi lama.
+- Konfigurasi FreeRADIUS SQL tidak disentuh bila password database Radius tidak tersedia, sehingga credential aktif tidak dapat tertimpa menjadi kosong.
+
+### Added
+
+- Aksi stack `restart-app` tersedia untuk restart seluruh komponen aplikasi tanpa mengganggu service database dan autentikasi jaringan.
+
+### Notes
+
+- Patch ini melengkapi perbaikan lock `v1.2.1` setelah pengujian update end-to-end pada dev.
+
 ## [1.2.1] - 2026-07-18
 
 ### Fixed

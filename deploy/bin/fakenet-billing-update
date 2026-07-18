@@ -223,19 +223,19 @@ if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
 fi
 
 if [ -f "$APP_DIR/install.sh" ]; then
-  APP_DIR="$APP_DIR" bash "$APP_DIR/install.sh" repair || true
+  APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 bash "$APP_DIR/install.sh" repair || true
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
   if [ -x "$STACK_CMD" ]; then
-    "$STACK_CMD" restart
+    "$STACK_CMD" restart-app
   else
     systemctl restart fakenet-billing.service
   fi
 elif command -v rc-service >/dev/null 2>&1; then
   if [ -x "$STACK_CMD" ]; then
-    "$STACK_CMD" restart
+    "$STACK_CMD" restart-app
   else
     rc-service fakenet-billing restart || true
     rc-service fakenet-billing-isolir restart || true

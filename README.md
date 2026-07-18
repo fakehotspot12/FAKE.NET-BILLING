@@ -76,6 +76,7 @@ Restart semua service:
 
 ```bash
 fakenet-billing-stack restart
+fakenet-billing-stack restart-app
 ```
 
 Update aplikasi:
@@ -378,9 +379,11 @@ Updater akan:
 4. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
 5. Menjalankan `npm ci --omit=dev` atau `npm install --omit=dev`.
 6. Memverifikasi modul BullMQ sebelum service direstart.
-7. Restart service stack.
+7. Restart service aplikasi tanpa me-restart Redis, PostgreSQL, Docker, atau FreeRADIUS.
 8. Menjalankan repair ringan untuk menyelaraskan helper command, systemd unit, dan konfigurasi FreeRADIUS tanpa menghapus data.
 9. Memastikan health check aplikasi dan worker BullMQ berhasil sebelum update dinyatakan selesai.
+
+Updater memakai aksi internal `restart-app`, sehingga Redis, PostgreSQL, Docker, dan FreeRADIUS tidak direstart saat pembaruan source. Perintah `restart` tetap tersedia untuk restart penuh ketika memang diperlukan oleh administrator.
 
 Data aplikasi di `data/` tidak dihapus oleh updater. Untuk install PostgreSQL, file backup berisi:
 

@@ -354,6 +354,30 @@ psql_superuser() {
   fi
 }
 
+hydrate_radius_database_settings() {
+  [ -n "${RADIUS_DATABASE_PASSWORD:-}" ] && return 0
+  local radius_url parsed host port database username password
+  radius_url="${FREERADIUS_DATABASE_URL:-${FREERADIUS_DB_URL:-}}"
+  [ -n "$radius_url" ] || return 0
+  parsed="$(RADIUS_URL_TO_PARSE="$radius_url" node -e '
+    const url = new URL(process.env.RADIUS_URL_TO_PARSE);
+    process.stdout.write([
+      url.hostname || "127.0.0.1",
+      url.port || "5432",
+      decodeURIComponent((url.pathname || "/radius").replace(/^\//, "")) || "radius",
+      decodeURIComponent(url.username || "radius"),
+      decodeURIComponent(url.password || "")
+    ].join("\t"));
+  ' 2>/dev/null || true)"
+  [ -n "$parsed" ] || return 0
+  IFS=$'\t' read -r host port database username password <<< "$parsed"
+  export RADIUS_DATABASE_HOST="${host:-127.0.0.1}"
+  export RADIUS_DATABASE_PORT="${port:-5432}"
+  export RADIUS_DATABASE_NAME="${database:-radius}"
+  export RADIUS_DATABASE_USER="${username:-radius}"
+  export RADIUS_DATABASE_PASSWORD="${password:-}"
+}
+
 postgres_exec_file() {
   local file="$1" database="${2:-postgres}"
   psql_superuser -X -q -v ON_ERROR_STOP=1 -d "$database" -f "$file"
@@ -366,6 +390,7 @@ init_postgres_databases() {
   fi
 
   load_billing_env
+  hydrate_radius_database_settings
   local app_db app_user app_pass radius_db radius_user radius_pass sql_file
   app_db="${APP_DATABASE_NAME:-fakenet_billing}"
   app_user="${APP_DATABASE_USER:-fakenet_billing}"
@@ -441,8 +466,8 @@ configure_freeradius_sql_file() {
   backup_freeradius_config_file "$sql_file"
   sed -i -E 's/^[[:space:]]*dialect = .*/        dialect = "postgresql"/' "$sql_file" || true
   sed -i -E 's/^[[:space:]]*driver = .*/        driver = "rlm_sql_postgresql"/' "$sql_file" || true
-  sed -i -E 's/^[[:space:]]*server = .*/        server = "127.0.0.1"/' "$sql_file" || true
-  sed -i -E 's/^[[:space:]]*port = .*/        port = 5432/' "$sql_file" || true
+  sed -i -E "s/^[[:space:]]*server = .*/        server = \"${RADIUS_DATABASE_HOST:-127.0.0.1}\"/" "$sql_file" || true
+  sed -i -E "s/^[[:space:]]*port = .*/        port = ${RADIUS_DATABASE_PORT:-5432}/" "$sql_file" || true
   sed -i -E "s/^[[:space:]]*login = .*/        login = \"${RADIUS_DATABASE_USER:-radius}\"/" "$sql_file" || true
   sed -i -E "s/^[[:space:]]*password = .*/        password = \"${RADIUS_DATABASE_PASSWORD:-}\"/" "$sql_file" || true
   sed -i -E "s#^[[:space:]]*radius_db = .*#        radius_db = \"$radius_db_conn\"#" "$sql_file" || true
@@ -485,8 +510,13 @@ configure_freeradius_site_file() {
 
 configure_freeradius_sql() {
   load_billing_env
+  hydrate_radius_database_settings
+  if [ -z "${RADIUS_DATABASE_PASSWORD:-}" ]; then
+    echo "Lewati konfigurasi FreeRADIUS SQL: password database Radius tidak tersedia." >&2
+    return 0
+  fi
   local candidate mods_base mods_enabled sites_default sites_inner radius_db_conn configured
-  radius_db_conn="host=127.0.0.1 port=5432 dbname=${RADIUS_DATABASE_NAME:-radius} user=${RADIUS_DATABASE_USER:-radius} password=${RADIUS_DATABASE_PASSWORD:-} sslmode=disable"
+  radius_db_conn="host=${RADIUS_DATABASE_HOST:-127.0.0.1} port=${RADIUS_DATABASE_PORT:-5432} dbname=${RADIUS_DATABASE_NAME:-radius} user=${RADIUS_DATABASE_USER:-radius} password=${RADIUS_DATABASE_PASSWORD:-} sslmode=disable"
   configured=0
 
   for candidate in \
@@ -646,12 +676,14 @@ repair_install() {
     write_openrc_waha_service
   fi
 
-  if [ -f /etc/fakenet-billing.env ]; then
+  if [ -f /etc/fakenet-billing.env ] && [ "${REPAIR_FREERADIUS:-1}" != "0" ]; then
     configure_freeradius_sql
     validate_freeradius_config
   fi
 
-  if command -v systemctl >/dev/null 2>&1; then
+  if [ "${REPAIR_FREERADIUS:-1}" = "0" ]; then
+    :
+  elif command -v systemctl >/dev/null 2>&1; then
     restart_systemd_unit_group "freeradius.service radiusd.service"
   elif command -v rc-service >/dev/null 2>&1; then
     rc-service freeradius restart >/dev/null 2>&1 || rc-service radiusd restart >/dev/null 2>&1 || true

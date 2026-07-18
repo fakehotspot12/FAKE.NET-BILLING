@@ -111,6 +111,13 @@ run_systemd() {
       done
       return "$failed"
       ;;
+    restart-app)
+      failed=0
+      for unit in "${APP_UNITS[@]}"; do
+        restart_unit "$unit" || failed=1
+      done
+      return "$failed"
+      ;;
     stop)
       systemctl stop "${APP_UNITS[@]}" || true
       ;;
@@ -124,7 +131,7 @@ run_systemd() {
       clear_stale_update_lock
       ;;
     *)
-      echo "Usage: fakenet-billing-stack {start|restart|stop|status|update|clear-update-lock}" >&2
+      echo "Usage: fakenet-billing-stack {start|restart|restart-app|stop|status|update|clear-update-lock}" >&2
       exit 2
       ;;
   esac
@@ -143,6 +150,14 @@ run_openrc() {
       done
       return "$failed"
       ;;
+    restart-app)
+      failed=0
+      for service in "${APP_SERVICES[@]}"; do
+        openrc_service_exists "$service" || continue
+        rc-service "$service" restart || rc-service "$service" start || failed=1
+      done
+      return "$failed"
+      ;;
     stop)
       for service in "${APP_SERVICES[@]}"; do openrc_service_exists "$service" && rc-service "$service" stop || true; done
       ;;
@@ -156,7 +171,7 @@ run_openrc() {
       clear_stale_update_lock
       ;;
     *)
-      echo "Usage: fakenet-billing-stack {start|restart|stop|status|update|clear-update-lock}" >&2
+      echo "Usage: fakenet-billing-stack {start|restart|restart-app|stop|status|update|clear-update-lock}" >&2
       exit 2
       ;;
   esac
