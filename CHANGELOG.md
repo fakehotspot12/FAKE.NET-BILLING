@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.6] - 2026-07-18
+
+### Added
+
+- Filter NAS pada menu GenieACS tersedia setelah filter status dan dapat digabungkan dengan pencarian, filter redaman, serta pagination.
+
 ## [1.2.5] - 2026-07-18
 
 ### Fixed

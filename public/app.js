@@ -169,6 +169,7 @@ const state = {
   genieAcsPage: 1,
   genieAcsLimit: 10,
   genieAcsStatus: 'all',
+  genieAcsNas: 'all',
   genieAcsRedaman: 'all',
   dailyReportDate: todayInput(),
   dailyReportAdmin: 'all',
@@ -1466,6 +1467,7 @@ function setView(view) {
     state.radiusSettingsPage = 1;
     state.genieAcsPage = 1;
     state.genieAcsStatus = 'all';
+    state.genieAcsNas = 'all';
     state.xenditPage = 1;
     state.xenditNextId = '';
     state.xenditCursorStack = [''];
@@ -9849,11 +9851,13 @@ async function renderGenieAcs(options = {}) {
     page: state.genieAcsPage,
     limit: state.genieAcsLimit,
     status: state.genieAcsStatus,
+    nas: state.genieAcsNas,
     redaman: state.genieAcsRedaman,
     search: state.search,
     refresh: options.refresh ? '1' : ''
   })}`);
   const rows = payload.rows || [];
+  const nasOptions = Array.isArray(payload.nasOptions) ? payload.nasOptions : [];
   const summary = payload.summary || {};
   const writeAllowed = can('genieacs:write');
   const startNo = ((Number(payload.pagination?.page || state.genieAcsPage || 1) - 1) * Number(payload.pagination?.limit || state.genieAcsLimit || 10)) + 1;
@@ -9874,6 +9878,10 @@ async function renderGenieAcs(options = {}) {
             <option value="all" ${state.genieAcsStatus === 'all' ? 'selected' : ''}>Semua Status</option>
             <option value="online" ${state.genieAcsStatus === 'online' ? 'selected' : ''}>Online</option>
             <option value="offline" ${state.genieAcsStatus === 'offline' ? 'selected' : ''}>Offline</option>
+          </select>
+          <select class="control" id="genieAcsNasFilter" title="Filter NAS">
+            <option value="all" ${state.genieAcsNas === 'all' ? 'selected' : ''}>Semua NAS</option>
+            ${nasOptions.map((option) => `<option value="${escapeHtml(option.value)}" ${state.genieAcsNas === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
           </select>
           <select class="control" id="genieAcsRedamanFilter" title="Filter kualitas redaman">
             <option value="all" ${state.genieAcsRedaman === 'all' ? 'selected' : ''}>${genieAcsRedamanLabel('all')}</option>
@@ -9982,6 +9990,11 @@ async function renderGenieAcs(options = {}) {
   });
   document.getElementById('genieAcsStatusFilter')?.addEventListener('change', (event) => {
     state.genieAcsStatus = event.target.value || 'all';
+    state.genieAcsPage = 1;
+    renderGenieAcs();
+  });
+  document.getElementById('genieAcsNasFilter')?.addEventListener('change', (event) => {
+    state.genieAcsNas = event.target.value || 'all';
     state.genieAcsPage = 1;
     renderGenieAcs();
   });

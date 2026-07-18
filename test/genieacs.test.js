@@ -221,3 +221,15 @@ test('normalizes positive CMCC/CT XPON raw RX power when virtual value is absent
   assert.equal(device.rxPowerText, '-22,21 dBm');
   assert.equal(device.rxPowerParameter, 'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower');
 });
+
+test('filters enriched GenieACS devices by NAS id, name, or address', () => {
+  const rows = [
+    { id: 'device-1', nasId: 'site-fake', nasName: 'FAKE.NET', nasIpAddress: '10.1.13.14' },
+    { id: 'device-2', nasId: 'site-kampung', nasName: 'KAMPUNG.NET', nasIpAddress: '10.2.13.14' }
+  ];
+
+  assert.deepEqual(genieAcs.filterRowsByNas(rows, 'all'), rows);
+  assert.deepEqual(genieAcs.filterRowsByNas(rows, 'SITE-FAKE').map((row) => row.id), ['device-1']);
+  assert.deepEqual(genieAcs.filterRowsByNas(rows, 'kampung.net').map((row) => row.id), ['device-2']);
+  assert.deepEqual(genieAcs.filterRowsByNas(rows, '10.1.13.14').map((row) => row.id), ['device-1']);
+});

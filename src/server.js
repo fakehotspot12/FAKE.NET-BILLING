@@ -1417,6 +1417,7 @@ async function enrichGenieAcsRowsWithLocalData(data = {}, rows = [], period = cu
       address: customer.address || '',
       radiusStatus: radiusUser.status || customer.status || '',
       packageName: customer.packageName || '',
+      nasId: nas.id || radiusUser.nasId || row.nasId || '',
       nasName: nas.name || radiusUser.nasName || row.nasName || '',
       nasIpAddress: nas.address || row.nasIpAddress || '',
       ipAddress: acsIpAddress,
@@ -10741,18 +10742,38 @@ async function handleApi(req, res, url) {
     const search = String(url.searchParams.get('search') || '').trim();
     const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
     const redaman = String(url.searchParams.get('redaman') || 'all').trim().toLowerCase();
+    const nas = String(url.searchParams.get('nas') || 'all').trim();
     try {
       const payload = await genieAcs.listDevices(authContext.data.settings || {}, {
-        page,
-        limit,
+        page: 1,
+        limit: 'all',
         search,
         status,
         redaman
       });
-      const rows = await enrichGenieAcsRowsWithLocalData(authContext.data, payload.rows || [], currentPeriod());
+      const enrichedRows = await enrichGenieAcsRowsWithLocalData(authContext.data, payload.rows || [], currentPeriod());
+      const filteredRows = genieAcs.filterRowsByNas(enrichedRows, nas);
+      const pagination = paginationPayload(page, limit, filteredRows.length);
+      const offset = limit === Number.MAX_SAFE_INTEGER ? 0 : (pagination.page - 1) * limit;
+      const rows = limit === Number.MAX_SAFE_INTEGER
+        ? filteredRows
+        : filteredRows.slice(offset, offset + limit);
+      const nasOptions = freeradius.radiusNasEntries(authContext.data, { includeUnconfigured: true })
+        .filter((item) => item.active !== false)
+        .map((item) => ({
+          value: item.id,
+          label: item.name || item.address || item.id
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label, 'id'));
       sendJson(res, 200, {
         ...payload,
         rows,
+        nasOptions,
+        summary: {
+          ...(payload.summary || {}),
+          filtered: filteredRows.length
+        },
+        pagination,
         settings: genieAcs.normalizeSettings(authContext.data.settings || {})
       });
     } catch (error) {
@@ -10761,6 +10782,7 @@ async function handleApi(req, res, url) {
         enabled: genieAcs.normalizeSettings(authContext.data.settings || {}).enabled,
         configured: genieAcs.configured(authContext.data.settings || {}),
         rows: [],
+        nasOptions: [],
         summary: {
           total: 0,
           online: 0,

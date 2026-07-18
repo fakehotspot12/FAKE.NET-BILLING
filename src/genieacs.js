@@ -560,6 +560,13 @@ function searchQuery(search = '') {
   };
 }
 
+function filterRowsByNas(rows = [], selectedNas = 'all') {
+  const selected = cleanText(selectedNas).toLowerCase();
+  if (!selected || selected === 'all') return rows;
+  return rows.filter((row) => [row.nasId, row.nasName, row.nasIpAddress]
+    .some((value) => cleanText(value).toLowerCase() === selected));
+}
+
 async function listDevices(settings = {}, options = {}) {
   const cfg = normalizeSettings(settings);
   const query = searchQuery(options.search || '');
@@ -817,6 +824,7 @@ module.exports = {
   configured,
   deleteDevice,
   findDevice,
+  filterRowsByNas,
   getDevice,
   listDevices,
   normalizeDevice,
