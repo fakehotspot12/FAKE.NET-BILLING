@@ -59,6 +59,7 @@ const freeradiusSql = require('./freeradius-sql');
 const genieAcs = require('./genieacs');
 const license = require('./license');
 const secureSecrets = require('./secure-secrets');
+const { WhatsAppQueue } = require('./whatsapp-queue');
 const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, publicSettings, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
 
 const PORT = Number(process.env.PORT || 8891);
@@ -70,7 +71,7 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-16');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-18');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
@@ -7315,12 +7316,19 @@ function queueWaGatewayMessage(data = {}, payload = {}) {
     status: settings.enabled ? 'queued' : 'draft',
     scheduledAt: new Date(now + delayMs + batchDelayMs).toISOString(),
     attempts: 0,
+    queueRevision: 0,
+    queueJobId: '',
     createdBy: payload.actorName || '',
     createdAt: new Date(now).toISOString(),
     updatedAt: new Date(now).toISOString()
   };
   data.waMessages.unshift(message);
-  data.waMessages = data.waMessages.slice(0, 500);
+  let historyCount = 0;
+  data.waMessages = data.waMessages.filter((item) => {
+    if (['queued', 'failed'].includes(String(item.status || ''))) return true;
+    historyCount += 1;
+    return historyCount <= 500;
+  });
   return message;
 }
 
@@ -7695,8 +7703,137 @@ async function deliverWaMessage(settings = {}, message = {}) {
   };
 }
 
+let waGatewayQueue = null;
+let waGatewayQueueStartPromise = null;
 let waGatewaySenderRunning = false;
 let waGatewaySenderTimer = null;
+let waGatewayLastDeliveryAt = 0;
+
+async function waitForWaGatewayDeliverySlot(settings = {}) {
+  const minimumDelayMs = Math.max(15, Number(settings.minDelaySeconds || 45)) * 1000;
+  const waitMs = Math.max(0, waGatewayLastDeliveryAt + minimumDelayMs - Date.now());
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  waGatewayLastDeliveryAt = Date.now();
+}
+
+async function processWaGatewayQueueJob(job) {
+  const messageId = String(job.data?.messageId || '');
+  const revision = Math.max(0, Number(job.data?.revision) || 0);
+  const data = await loadStore();
+  const message = (data.waMessages || []).find((item) => item.id === messageId);
+  if (!message || Math.max(0, Number(message.queueRevision) || 0) !== revision) {
+    return { skipped: true, reason: 'stale-message' };
+  }
+  if (message.status !== 'queued') {
+    return { skipped: true, reason: `message-${message.status || 'unknown'}` };
+  }
+
+  const settings = data.settings?.waGateway || {};
+  const provider = normalizeWaProvider(settings.provider || 'waha');
+  if (!settings.enabled || provider !== 'waha' || !withinWaSendWindow(settings, new Date())) {
+    await mutate((store) => {
+      const current = (store.waMessages || []).find((item) => item.id === messageId);
+      if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision || current.status !== 'queued') return;
+      current.queueRevision = revision + 1;
+      current.queueJobId = '';
+      current.scheduledAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      current.updatedAt = new Date().toISOString();
+    });
+    return {
+      skipped: true,
+      reason: !settings.enabled ? 'gateway-disabled' : provider !== 'waha' ? 'provider-disabled' : 'outside-send-window'
+    };
+  }
+
+  try {
+    await waitForWaGatewayDeliverySlot(settings);
+    const delivery = await deliverWaMessage(settings, message);
+    const sentAt = new Date().toISOString();
+    await mutate((store) => {
+      const current = (store.waMessages || []).find((item) => item.id === messageId);
+      if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision) return;
+      Object.assign(current, {
+        provider,
+        status: 'sent',
+        providerMessageId: delivery.providerMessageId,
+        sentAt,
+        updatedAt: sentAt,
+        lastError: ''
+      });
+      addActivity(store, 'settings', `Whatsapp Gateway BullMQ: ${current.subject || current.invoiceNo || current.id} terkirim`, {
+        action: 'wa-gateway-send',
+        messageId: current.id,
+        queueJobId: job.id
+      });
+    });
+    return {
+      sent: true,
+      providerMessageId: delivery.providerMessageId || ''
+    };
+  } catch (error) {
+    const attemptNumber = Math.max(1, Number(job.attemptsMade || 0) + 1);
+    const maximumAttempts = Math.max(1, Number(job.opts?.attempts || 1));
+    const finalAttempt = attemptNumber >= maximumAttempts;
+    const retryDelaySeconds = Math.max(15, Number(settings.minDelaySeconds || 45));
+    await mutate((store) => {
+      const current = (store.waMessages || []).find((item) => item.id === messageId);
+      if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision) return;
+      current.provider = provider;
+      current.status = finalAttempt ? 'failed' : 'queued';
+      current.attempts = Math.max(0, Number(current.attempts) || 0) + 1;
+      current.scheduledAt = new Date(Date.now() + retryDelaySeconds * 1000).toISOString();
+      current.lastError = error.message || 'Whatsapp Gateway gagal mengirim';
+      current.updatedAt = new Date().toISOString();
+    });
+    throw error;
+  }
+}
+
+async function ensureWaGatewayQueue() {
+  if (waGatewayQueue) return waGatewayQueue;
+  if (waGatewayQueueStartPromise) return waGatewayQueueStartPromise;
+  waGatewayQueueStartPromise = (async () => {
+    const queue = new WhatsAppQueue();
+    await queue.start(processWaGatewayQueueJob);
+    waGatewayQueue = queue;
+    console.log('BullMQ Whatsapp worker aktif dengan concurrency 1');
+    return queue;
+  })().catch((error) => {
+    waGatewayQueueStartPromise = null;
+    throw error;
+  });
+  return waGatewayQueueStartPromise;
+}
+
+async function waGatewayQueueStatus(timeoutMs = 1500) {
+  if (!waGatewayQueue) {
+    return { backend: 'bullmq', available: false };
+  }
+  let timeout;
+  try {
+    return await Promise.race([
+      waGatewayQueue.counts(),
+      new Promise((resolve) => {
+        timeout = setTimeout(() => resolve({
+          backend: 'bullmq',
+          available: false,
+          error: 'Status BullMQ timeout'
+        }), Math.max(250, Number(timeoutMs) || 1500));
+        timeout.unref?.();
+      })
+    ]);
+  } catch (error) {
+    return {
+      backend: 'bullmq',
+      available: false,
+      error: error.message || 'Status BullMQ tidak tersedia'
+    };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 async function runWaGatewaySender(reason = 'interval', options = {}) {
   if (MIGRATION_MODE) {
@@ -7710,40 +7847,32 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
     const settings = data.settings?.waGateway || {};
     const provider = normalizeWaProvider(settings.provider || 'waha');
     if (!settings.enabled || provider !== 'waha' || (!options.ignoreWindow && !withinWaSendWindow(settings, now))) {
-      return { sent: 0, skipped: true };
+      return { queued: 0, skipped: true };
     }
-    const maxPerBatch = Math.max(1, Math.min(20, Number(settings.maxPerBatch || 20) || 20));
+    const queue = await ensureWaGatewayQueue();
+    const maxPerBatch = Math.max(1, Math.min(200, Number(settings.maxPerBatch || 20) || 20));
     const dueMessages = (data.waMessages || [])
       .filter((message) => {
         if (options.messageId && message.id !== options.messageId) return false;
-        if (!['queued', 'failed'].includes(String(message.status || ''))) return false;
+        if (String(message.status || '') !== 'queued') return false;
         if (options.messageId) return true;
         return !message.scheduledAt || new Date(message.scheduledAt).getTime() <= now.getTime();
       })
       .slice(0, maxPerBatch);
-    if (!dueMessages.length) return { sent: 0 };
+    if (!dueMessages.length) return { queued: 0 };
 
     const results = [];
     for (const message of dueMessages) {
       try {
-        const delivery = await deliverWaMessage(settings, message);
+        const queued = await queue.enqueue(message, settings);
         results.push({
           id: message.id,
-          status: 'sent',
-          providerMessageId: delivery.providerMessageId,
-          sentAt: new Date().toISOString(),
-          lastError: ''
+          revision: Math.max(0, Number(message.queueRevision) || 0),
+          jobId: queued.jobId,
+          enqueuedAt: new Date().toISOString()
         });
       } catch (error) {
-        const attempts = Number(message.attempts || 0) + 1;
-        const retryDelaySeconds = Math.max(15, Number(settings.minDelaySeconds || 45)) * Math.min(attempts, 10);
-        results.push({
-          id: message.id,
-          status: attempts >= 3 ? 'failed' : 'queued',
-          attempts,
-          scheduledAt: new Date(Date.now() + retryDelaySeconds * 1000).toISOString(),
-          lastError: error.message || 'Whatsapp Gateway gagal mengirim'
-        });
+        console.error(`BullMQ gagal menerima pesan ${message.id}: ${error.message || error}`);
       }
     }
 
@@ -7751,23 +7880,17 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
       const byId = new Map(results.map((item) => [item.id, item]));
       for (const message of store.waMessages || []) {
         const update = byId.get(message.id);
-        if (!update) continue;
-        Object.assign(message, update, {
-          provider,
-          updatedAt: new Date().toISOString()
-        });
-      }
-      if (results.length) {
-        addActivity(store, 'settings', `Whatsapp Gateway ${reason}: ${results.filter((item) => item.status === 'sent').length} terkirim`, {
-          action: 'wa-gateway-send',
-          attempted: results.length
-        });
+        if (!update || message.status !== 'queued' || Math.max(0, Number(message.queueRevision) || 0) !== update.revision) continue;
+        message.queueJobId = update.jobId;
+        message.enqueuedAt = update.enqueuedAt;
+        message.provider = provider;
+        message.updatedAt = new Date().toISOString();
       }
     });
     return {
-      sent: results.filter((item) => item.status === 'sent').length,
-      failed: results.filter((item) => item.status === 'failed').length,
-      retried: results.filter((item) => item.status === 'queued').length
+      queued: results.length,
+      backend: 'bullmq',
+      reason
     };
   } finally {
     waGatewaySenderRunning = false;
@@ -7779,6 +7902,9 @@ function startWaGatewaySender() {
     console.log('Whatsapp Gateway sender dinonaktifkan selama migration mode');
     return;
   }
+  ensureWaGatewayQueue().catch((error) => {
+    console.error(`BullMQ Whatsapp gagal diinisialisasi: ${error.message || error}`);
+  });
   const run = (reason) => {
     runWaGatewaySender(reason).catch((error) => {
       console.error(`Whatsapp Gateway sender gagal: ${error.message || error}`);
@@ -7788,7 +7914,7 @@ function startWaGatewaySender() {
   initialTimer.unref?.();
   waGatewaySenderTimer = setInterval(() => run('interval'), WA_GATEWAY_SEND_INTERVAL_MS);
   waGatewaySenderTimer.unref?.();
-  console.log(`Whatsapp Gateway sender aktif setiap ${Math.round(WA_GATEWAY_SEND_INTERVAL_MS / 1000)} detik`);
+  console.log(`Whatsapp Gateway BullMQ relay aktif setiap ${Math.round(WA_GATEWAY_SEND_INTERVAL_MS / 1000)} detik`);
 }
 
 function paymentGatewayReportPayload(data = {}, query = {}) {
@@ -9052,12 +9178,14 @@ async function handleApi(req, res, url) {
   const pathname = url.pathname;
 
   if (method === 'GET' && pathname === '/api/health') {
+    const whatsappQueue = await waGatewayQueueStatus();
     sendJson(res, 200, {
       ok: true,
       app: 'fakenet-billing',
       storage: STORAGE_MODE,
       cache: CACHE_MODE,
       redis: redisStatus(),
+      whatsappQueue,
       storePath: STORE_PATH
     });
     return;
@@ -13077,11 +13205,13 @@ async function handleApi(req, res, url) {
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
     const pagination = paginationPayload(page, limit, messages.length);
     const offset = (pagination.page - 1) * limit;
+    const queue = await waGatewayQueueStatus();
     sendJson(res, 200, {
       ok: true,
       settings: publicWaGatewaySettings(authContext.data.settings?.waGateway || {}),
       messages: messages.slice(offset, offset + limit),
       pagination,
+      queue,
       summary: {
         total: messages.length,
         queued: messages.filter((message) => message.status === 'queued').length,
@@ -13115,6 +13245,8 @@ async function handleApi(req, res, url) {
           message.status = 'queued';
           message.scheduledAt = now;
           message.lastError = '';
+          message.queueRevision = Math.max(0, Number(message.queueRevision) || 0) + 1;
+          message.queueJobId = '';
           message.updatedAt = now;
           message.retriedBy = authContext.user.name || authContext.user.username;
           queued += 1;
@@ -13194,6 +13326,8 @@ async function handleApi(req, res, url) {
         message.status = 'queued';
         message.scheduledAt = new Date().toISOString();
         message.lastError = '';
+        message.queueRevision = Math.max(0, Number(message.queueRevision) || 0) + 1;
+        message.queueJobId = '';
         message.updatedAt = new Date().toISOString();
         message.retriedBy = authContext.user.name || authContext.user.username;
         addActivity(store, 'settings', `Pesan WA ${message.subject || message.invoiceNo || message.id} dikirim ulang oleh ${authContext.user.name || authContext.user.username}`, {
@@ -13751,6 +13885,21 @@ if (require.main === module) {
     startStandaloneBillingAutomation();
     startWaGatewaySender();
   });
+
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal}: menghentikan FAKE.NET Billing dan BullMQ Whatsapp worker`);
+    if (waGatewaySenderTimer) clearInterval(waGatewaySenderTimer);
+    server.close();
+    await waGatewayQueue?.close().catch((error) => {
+      console.error(`BullMQ Whatsapp gagal ditutup: ${error.message || error}`);
+    });
+    process.exit(0);
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 }
 
 module.exports = {
@@ -13783,6 +13932,7 @@ module.exports = {
     paymentCategoryForRecord,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
+    queueWaGatewayMessage,
     reactivateCustomerAfterPaidInvoice,
     finalizePaidInvoiceRadiusActivation,
     isTripayRetailChannel,

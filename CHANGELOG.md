@@ -7,6 +7,31 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.0] - 2026-07-18
+
+### Added
+
+- Pengiriman Whatsapp Gateway memakai BullMQ di Redis dengan worker tunggal, delayed job, retry tiga kali, dan job ID idempotent.
+- `uninstall.sh` tersedia sebagai wrapper uninstall total dan ikut membersihkan key BullMQ milik aplikasi.
+- API Whatsapp Gateway menyertakan status antrean BullMQ untuk kebutuhan diagnosis tanpa membuka credential Redis.
+
+### Changed
+
+- PostgreSQL tetap menjadi outbox dan sumber status pesan pada UI; pesan lama berstatus queued otomatis diteruskan ke BullMQ setelah update.
+- Billing Setting tetap menentukan penerbitan invoice, reminder, isolir, aktivasi, dan notifikasi. Jeda, batch, jam kirim, serta template tetap mengikuti menu Whatsapp Gateway.
+- Instalasi dan update memverifikasi dependency BullMQ sebelum service stack dijalankan kembali.
+
+### Fixed
+
+- Antrean lebih dari 500 pesan tidak lagi membuang pesan pending atau failed; batas 500 hanya diterapkan pada riwayat final.
+- Resend satuan maupun batch memakai revisi job baru sehingga tidak berbenturan dengan job BullMQ yang sudah completed atau failed.
+- Worker menghormati jeda minimum dan jam kirim yang tersimpan, serta menutup koneksi Redis secara teratur saat service dihentikan.
+
+### Notes
+
+- Update tidak mengubah atau menghapus data aplikasi, invoice, pelanggan, template, maupun konfigurasi Whatsapp Gateway yang sudah tersimpan.
+- WAHA tetap menjadi transport WhatsApp. BullMQ mengatur antrean dan retry, tetapi tidak menjamin akun WhatsApp bebas pembatasan platform.
+
 ## [1.1.2] - 2026-07-18
 
 ### Changed

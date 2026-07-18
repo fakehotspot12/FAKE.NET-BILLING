@@ -186,6 +186,23 @@ install_node_deps() {
   else
     npm install --omit=dev
   fi
+  node -e "require('bullmq'); require('./src/whatsapp-queue')" >/dev/null
+}
+
+verify_billing_health() {
+  local attempt payload
+  for attempt in $(seq 1 30); do
+    payload="$(curl -fsS --max-time 3 http://127.0.0.1:8891/api/health 2>/dev/null || true)"
+    if printf '%s' "$payload" | grep -q '"ok":true' \
+      && printf '%s' "$payload" | grep -q '"backend":"bullmq"' \
+      && printf '%s' "$payload" | grep -q '"available":true'; then
+      echo "Health check Billing dan BullMQ berhasil."
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Health check Billing/BullMQ gagal setelah 30 detik." >&2
+  return 1
 }
 
 replace_or_append_env() {
@@ -680,6 +697,17 @@ DROP ROLE IF EXISTS :"role";
 SQL
 }
 
+cleanup_bullmq_redis() {
+  command -v redis-cli >/dev/null 2>&1 || return 0
+  local redis_url prefix key
+  redis_url="${REDIS_URL:-redis://127.0.0.1:6379/0}"
+  prefix="${WA_BULLMQ_PREFIX:-fakenet-billing:bullmq}"
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    redis-cli -u "$redis_url" UNLINK "$key" >/dev/null 2>&1 || true
+  done < <(redis-cli -u "$redis_url" --scan --pattern "${prefix}:*" 2>/dev/null || true)
+}
+
 uninstall_total() {
   confirm_uninstall "${1:-}"
 
@@ -718,6 +746,8 @@ uninstall_total() {
   if command -v docker >/dev/null 2>&1; then
     docker rm -f fakenet-billing-waha >/dev/null 2>&1 || true
   fi
+
+  cleanup_bullmq_redis
 
   drop_database_if_exists "$app_db"
   drop_database_if_exists "$radius_db"
@@ -770,6 +800,7 @@ main() {
   else
     echo "Service manager tidak dikenali. Source sudah dipasang di $APP_DIR." >&2
   fi
+  verify_billing_health
   echo "Install selesai."
   echo "Billing: http://SERVER-IP:8891"
   echo "Isolir: http://SERVER-IP:8892/isolir"

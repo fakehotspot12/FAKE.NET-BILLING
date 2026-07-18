@@ -168,6 +168,7 @@ if command -v npm >/dev/null 2>&1; then
   else
     npm install --omit=dev
   fi
+  node -e "require('bullmq'); require('./src/whatsapp-queue')" >/dev/null
 fi
 
 if [ -f "$APP_DIR/deploy/bin/fakenet-billing-update" ]; then
@@ -200,5 +201,22 @@ elif command -v rc-service >/dev/null 2>&1; then
     rc-service fakenet-billing-waha restart || true
   fi
 fi
+
+health_ok=0
+for attempt in $(seq 1 30); do
+  health_payload="$(curl -fsS --max-time 3 http://127.0.0.1:8891/api/health 2>/dev/null || true)"
+  if printf '%s' "$health_payload" | grep -q '"ok":true' \
+    && printf '%s' "$health_payload" | grep -q '"backend":"bullmq"' \
+    && printf '%s' "$health_payload" | grep -q '"available":true'; then
+    health_ok=1
+    break
+  fi
+  sleep 1
+done
+if [ "$health_ok" -ne 1 ]; then
+  echo "Health check Billing/BullMQ gagal setelah update." >&2
+  exit 1
+fi
+echo "Health check Billing dan BullMQ berhasil"
 
 echo "[$(date -Is)] Update selesai"

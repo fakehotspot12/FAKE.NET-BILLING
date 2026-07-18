@@ -1,6 +1,6 @@
 {
   "name": "fakenet-billing",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "FAKE.NET Billing and Office ISP dan RT/RW Net solution",
   "main": "src/server.js",
   "scripts": {
@@ -18,6 +18,7 @@
   "author": "",
   "license": "UNLICENSED",
   "dependencies": {
+    "bullmq": "^5.80.7",
     "exceljs": "^4.4.0",
     "qrcode": "^1.5.4"
   },

@@ -271,7 +271,7 @@ Minimal setara Ubuntu 22.04:
 - Node.js 18+
 - npm
 - PostgreSQL
-- Redis
+- Redis sebagai cache dan backend antrean BullMQ
 - FreeRADIUS
 - Docker untuk WAHA
 - Git, curl, rsync, tar, gzip
@@ -304,6 +304,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Jika Node.js bawaan distro terlalu lama, installer mencoba memasang Node.js 20 dari repository NodeSource.
 - Copy source aplikasi ke `/opt/fakenet-billing` tanpa membawa data runtime.
 - Install dependency Node dari `package-lock.json`.
+- Memasang dan memverifikasi BullMQ; antrean WhatsApp memakai Redis yang sama tanpa field konfigurasi tambahan di UI.
 - Membuat `/etc/fakenet-billing.env` dan `/etc/fakenet-billing-waha.env`.
 - Membuat password random untuk database aplikasi, database Radius, dan WAHA.
 - Membuat database PostgreSQL `fakenet_billing` dan `radius`.
@@ -312,6 +313,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Memasang service Billing, Isolir, Voucher, WifiKu, Radius Connector, dan WAHA.
 - Memasang command stack `fakenet-billing-stack`.
 - Menyesuaikan unit systemd atau OpenRC sesuai distro yang dipakai.
+- Menjalankan health check aplikasi dan worker BullMQ sebelum instalasi dinyatakan selesai.
 
 Yang tetap perlu diatur setelah install:
 
@@ -349,6 +351,10 @@ Service utama:
 - `fakenet-billing-radius-connector.service`
 - `fakenet-billing-waha.service`
 
+Worker BullMQ Whatsapp berjalan di dalam `fakenet-billing.service`. Billing Setting tetap menentukan kapan invoice, reminder, isolir, aktivasi, dan notifikasi dibuat. Menu Whatsapp Gateway tetap menjadi pengendali enable, jeda minimum, maksimum per batch, jam kirim, serta template. WAHA berfungsi sebagai pengirim, sedangkan BullMQ menyimpan jadwal dan retry di Redis dengan concurrency satu.
+
+BullMQ membantu menjaga urutan, retry, dan laju pengiriman. BullMQ maupun WAHA tidak menjamin akun WhatsApp bebas pembatasan; gunakan nomor yang memiliki persetujuan penerima, hindari pesan berulang, dan pertahankan jeda serta jam kirim yang wajar.
+
 ## Update Aman
 
 Update dari web:
@@ -370,8 +376,10 @@ Updater akan:
 3. Mengambil source terbaru via Git jika folder punya `.git`.
 4. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
 5. Menjalankan `npm ci --omit=dev` atau `npm install --omit=dev`.
-6. Restart service stack.
-7. Menjalankan repair ringan untuk menyelaraskan helper command, systemd unit, dan konfigurasi FreeRADIUS tanpa menghapus data.
+6. Memverifikasi modul BullMQ sebelum service direstart.
+7. Restart service stack.
+8. Menjalankan repair ringan untuk menyelaraskan helper command, systemd unit, dan konfigurasi FreeRADIUS tanpa menghapus data.
+9. Memastikan health check aplikasi dan worker BullMQ berhasil sebelum update dinyatakan selesai.
 
 Data aplikasi di `data/` tidak dihapus oleh updater. Untuk install PostgreSQL, file backup berisi:
 
@@ -455,6 +463,13 @@ Atau:
 sudo bash install.sh uninstall --yes
 ```
 
+Wrapper khusus dengan hasil yang sama juga tersedia:
+
+```bash
+sudo bash /opt/fakenet-billing/uninstall.sh
+sudo bash /opt/fakenet-billing/uninstall.sh --yes
+```
+
 Yang dihapus:
 
 - `/opt/fakenet-billing`
@@ -467,6 +482,7 @@ Yang dihapus:
 - Role PostgreSQL aplikasi dan Radius
 - Service `fakenet-billing*`
 - Helper `/usr/local/bin/fakenet-billing-stack` dan `/usr/local/bin/fakenet-billing-update`
+- Seluruh key antrean Redis dengan prefix khusus `fakenet-billing:bullmq`; key Redis aplikasi lain tidak disentuh
 
 Paket OS seperti PostgreSQL, Redis, FreeRADIUS, Docker, Node.js, Git, dan curl tidak dihapus karena bisa dipakai aplikasi lain.
 
