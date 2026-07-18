@@ -5075,6 +5075,7 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
 
   assert.equal(first.type, 'monthly-package');
   assert.equal(first.reference, '000321');
+  assert.equal(first.activatedUser.username, 'pppoe-gateway');
   assert.equal(data.invoices[0].status, 'paid');
   assert.equal(data.invoices[0].paymentMethod, 'BRIVA');
   assert.equal(data.customers[0].status, 'active');

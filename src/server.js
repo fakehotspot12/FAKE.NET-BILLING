@@ -8727,6 +8727,7 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
     status: billing.status,
     invoice: billing.invoice,
     transaction: billing.transaction,
+    activatedUser: billing.activatedUser || null,
     reused: billing.reused
   };
 }
