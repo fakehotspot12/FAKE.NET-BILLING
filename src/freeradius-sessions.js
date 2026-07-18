@@ -168,6 +168,60 @@ FROM (
 ) active_sessions`;
 }
 
+function closeSupersededSessionsQuery() {
+  const staleSeconds = sessionStaleSeconds();
+  if (staleSeconds <= 0) return '';
+  const identity = `
+        lower(COALESCE(radacct.username, '')),
+        COALESCE(radacct.nasipaddress::text, ''),
+        COALESCE(NULLIF(radacct.framedipaddress::text, ''), '__no_ip__'),
+        COALESCE(NULLIF(radacct.callingstationid, ''), '__no_calling__'),
+        COALESCE(NULLIF(radacct.calledstationid, ''), '__no_called__'),
+        COALESCE(NULLIF(radacct.servicetype, ''), '__no_service__'),
+        COALESCE(NULLIF(radacct.framedprotocol, ''), '__no_protocol__')`;
+  const order = 'COALESCE(radacct.acctupdatetime, radacct.acctstarttime) DESC, radacct.acctstarttime DESC, radacct.radacctid DESC';
+  return `
+WITH active_ranked AS (
+  SELECT
+    radacct.radacctid,
+    radacct.acctstarttime,
+    COALESCE(radacct.acctupdatetime, radacct.acctstarttime) AS updated_at,
+    ROW_NUMBER() OVER (PARTITION BY ${identity} ORDER BY ${order}) AS active_rank,
+    FIRST_VALUE(radacct.radacctid) OVER (PARTITION BY ${identity} ORDER BY ${order}) AS replacement_id,
+    FIRST_VALUE(radacct.acctstarttime) OVER (PARTITION BY ${identity} ORDER BY ${order}) AS replacement_started_at,
+    FIRST_VALUE(COALESCE(radacct.acctupdatetime, radacct.acctstarttime)) OVER (PARTITION BY ${identity} ORDER BY ${order}) AS replacement_updated_at
+  FROM radacct
+  WHERE radacct.acctstoptime IS NULL
+), closed AS (
+  UPDATE radacct previous
+  SET
+    acctstoptime = GREATEST(previous.acctstarttime, ranked.replacement_started_at),
+    acctsessiontime = GREATEST(EXTRACT(EPOCH FROM (GREATEST(previous.acctstarttime, ranked.replacement_started_at) - previous.acctstarttime))::bigint, 0),
+    acctterminatecause = COALESCE(NULLIF(previous.acctterminatecause, ''), 'Stale-Replaced')
+  FROM active_ranked ranked
+  WHERE previous.radacctid = ranked.radacctid
+    AND ranked.active_rank > 1
+    AND ranked.replacement_id <> ranked.radacctid
+    AND ranked.replacement_started_at > ranked.acctstarttime
+    AND ranked.replacement_updated_at >= (now() - (${staleSeconds} * interval '1 second'))
+    AND ranked.updated_at < (now() - (${staleSeconds} * interval '1 second'))
+  RETURNING previous.radacctid
+)
+SELECT json_build_object('closed', COUNT(*))::text FROM closed`;
+}
+
+async function closeSupersededActiveSessions() {
+  if (!enabled() || !configured() || sessionStaleSeconds() <= 0) {
+    return { ok: true, closed: 0 };
+  }
+  try {
+    const payload = await psqlJson(closeSupersededSessionsQuery());
+    return { ok: true, closed: numberValue(payload.closed) };
+  } catch (error) {
+    return { ok: false, closed: 0, error: error.message || 'Session stale FreeRADIUS tidak bisa ditutup' };
+  }
+}
+
 function firstOnlineQuery(usernames = []) {
   const values = [...new Set(usernames.map((username) => cleanText(username).toLowerCase()).filter(Boolean))]
     .slice(0, 5000);
@@ -639,9 +693,13 @@ async function usageHistoryByUsername(username = '', period = normalizedPeriod()
 module.exports = {
   activeSessions,
   cacheKey: SESSION_CACHE_KEY,
+  closeSupersededActiveSessions,
   configured,
   enabled,
   firstOnlineByUsernames,
   monthlyUsageByUsernames,
-  usageHistoryByUsername
+  usageHistoryByUsername,
+  __test: {
+    closeSupersededSessionsQuery
+  }
 };

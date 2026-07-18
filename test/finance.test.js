@@ -4472,6 +4472,150 @@ test('collector reports are scoped to own collected payments', () => {
   assert.equal(row.incomeTotal, 100000);
 });
 
+test('daily billing report only contains completed payments by default', () => {
+  const data = createDefaultStore();
+  data.customers.push(
+    { id: 'cus-daily-paid', name: 'Pelanggan Lunas', username: 'paid@example.net' },
+    { id: 'cus-daily-unpaid', name: 'Pelanggan Belum Bayar', username: 'unpaid@example.net' }
+  );
+  data.invoices.push(
+    {
+      id: 'inv-daily-paid',
+      customerId: 'cus-daily-paid',
+      customerName: 'Pelanggan Lunas',
+      period: '2026-07',
+      amount: 150000,
+      status: 'pending',
+      dueDate: '2026-07-18'
+    },
+    {
+      id: 'inv-daily-unpaid',
+      customerId: 'cus-daily-unpaid',
+      customerName: 'Pelanggan Belum Bayar',
+      period: '2026-07',
+      amount: 200000,
+      status: 'pending',
+      dueDate: '2026-07-18'
+    }
+  );
+  markInvoicePaid(data, 'inv-daily-paid', {
+    amount: 155000,
+    paidAt: '2026-07-18T09:00:00+08:00',
+    paymentMethod: 'Online',
+    paymentCategory: 'online'
+  });
+
+  const report = serverInternals.localDailyReport(data, '2026-07-18');
+
+  assert.equal(report.transactionCount, 1);
+  assert.equal(report.totalIncome, 155000);
+  assert.equal(report.transactions[0].invoiceId, 'inv-daily-paid');
+  assert.equal(report.transactions[0].amount, 155000);
+  assert.equal(report.transactions[0].method, 'Online');
+  assert.equal(report.transactions[0].paymentCategory, 'online');
+  assert.equal(report.transactions.some((item) => item.invoiceId === 'inv-daily-unpaid'), false);
+  assert.equal(report.transactions.some((item) => ['pending', 'overdue'].includes(item.status)), false);
+});
+
+test('local billing reports use the NAS site name instead of its address', () => {
+  const data = createDefaultStore();
+  data.monitoringTargets.push({
+    id: 'site-utama',
+    name: 'SITE-UTAMA',
+    location: 'Lokasi Site',
+    host: '192.0.2.10',
+    status: 'up',
+    radius: { name: 'SITE-UTAMA', address: '192.0.2.10' }
+  });
+  data.customers.push({
+    id: 'cus-site-label',
+    name: 'Pelanggan Site',
+    username: 'site@example.net',
+    nas: 'SITE-UTAMA',
+    site: 'Lokasi Site',
+    siteName: 'Lokasi Site'
+  });
+  data.invoices.push({
+    id: 'inv-site-label',
+    customerId: 'cus-site-label',
+    customerName: 'Pelanggan Site',
+    period: '2026-07',
+    amount: 150000,
+    status: 'pending',
+    dueDate: '2026-07-18'
+  });
+  markInvoicePaid(data, 'inv-site-label', {
+    amount: 150000,
+    paidAt: '2026-07-18T09:00:00+08:00',
+    paymentMethod: 'Tunai'
+  });
+
+  const site = serverInternals.localBillingSite(data, data.customers[0], data.invoices[0]);
+  const report = serverInternals.localDailyReport(data, '2026-07-18');
+
+  assert.deepEqual(site, { id: 'site-utama', name: 'SITE-UTAMA', location: 'Lokasi Site' });
+  assert.equal(report.transactions[0].siteId, 'site-utama');
+  assert.equal(report.transactions[0].siteName, 'SITE-UTAMA');
+});
+
+test('daily billing report includes migrated payments without an invoice relation', () => {
+  const data = createDefaultStore();
+  data.payments.push({
+    id: 'pay-migrated-orphan',
+    invoiceId: '',
+    customerId: '',
+    sourceInvoiceNo: '009889',
+    customerName: 'Pelanggan Migrasi',
+    description: 'Payment #009889 - Pelanggan Migrasi',
+    amount: 75000,
+    paidAt: '2026-07-15T17:40:08+08:00',
+    method: 'Cash',
+    status: 'paid',
+    migrationSource: 'radboox'
+  });
+
+  const report = serverInternals.localDailyReport(data, '2026-07-15');
+
+  assert.equal(report.transactionCount, 1);
+  assert.equal(report.totalIncome, 75000);
+  assert.equal(report.transactions[0].status, 'paid');
+  assert.equal(report.transactions[0].legacyInvoiceNo, '009889');
+  assert.equal(report.transactions[0].customerName, 'Pelanggan Migrasi');
+});
+
+test('dashboard monthly invoice counts issued invoices while monthly paid uses actual transactions', () => {
+  const data = createDefaultStore();
+  data.invoices.push(
+    {
+      id: 'inv-issued-june',
+      period: '2026-06',
+      coveredPeriods: ['2026-06', '2026-07'],
+      amount: 150000,
+      status: 'pending'
+    },
+    {
+      id: 'inv-issued-july',
+      period: '2026-07',
+      coveredPeriods: ['2026-07'],
+      amount: 200000,
+      status: 'pending'
+    }
+  );
+  markInvoicePaid(data, 'inv-issued-june', {
+    amount: 155000,
+    paidAt: '2026-07-18T09:00:00+08:00',
+    paymentMethod: 'Online',
+    paymentCategory: 'online'
+  });
+
+  const summary = serverInternals.dashboardBillingSummary(data, '2026-07');
+
+  assert.equal(summary.monthlyInvoiceCount, 1);
+  assert.equal(summary.monthlyInvoiceAmount, 200000);
+  assert.equal(summary.monthlyPaidCount, 1);
+  assert.equal(summary.monthlyPaidAmount, 155000);
+});
+
 test('report payment channels separate cash, manual transfer, and online settlement', async () => {
   const data = createDefaultStore();
   data.invoices.push(
@@ -4787,6 +4931,61 @@ test('online voucher order only creates payment gateway transaction after paid',
   assert.equal(data.paymentGatewayTransactions[0].fee, 820);
 });
 
+test('Tripay voucher checkout resolves QRIS before creating the transaction', async () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.paymentGateway.provider = 'tripay';
+  data.settings.paymentGateway.mode = 'production';
+  data.settings.paymentGateway.tripay = {
+    merchantCode: 'T0001',
+    apiKey: 'api-key',
+    privateKey: 'private-key'
+  };
+  const calls = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith('/merchant/payment-channel')) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          success: true,
+          data: [{ code: 'QRIS', name: 'QRIS', active: true }]
+        })
+      };
+    }
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        success: true,
+        data: { reference: 'TRIPAY-001', checkout_url: 'https://example.test/checkout' }
+      })
+    };
+  };
+
+  try {
+    const result = await serverInternals.createTripayCheckout(data, {
+      kind: 'hotspot-voucher',
+      reference: 'VO-20260718-001',
+      amount: 10820,
+      baseAmount: 10000,
+      adminFee: 820,
+      customerName: 'Pembeli Voucher',
+      customerPhone: '081234567890',
+      itemName: 'Voucher Hotspot'
+    });
+    const requestBody = JSON.parse(calls[1].options.body);
+
+    assert.equal(calls.length, 2);
+    assert.equal(requestBody.method, 'QRIS');
+    assert.equal(requestBody.amount, 10820);
+    assert.equal(result.method, 'QRIS');
+    assert.equal(result.checkoutUrl, 'https://example.test/checkout');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('tripay webhook path and callback signature are accepted', () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.provider = 'tripay';
@@ -4881,7 +5080,11 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   assert.equal(data.customers[0].status, 'active');
   assert.equal(data.radiusUsers[0].status, 'active');
   assert.equal(data.payments.length, 1);
-  assert.equal(data.payments[0].amount, 100000);
+  assert.equal(data.payments[0].amount, 102500);
+  assert.equal(data.payments[0].baseAmount, 100000);
+  assert.equal(data.payments[0].fee, 2500);
+  assert.equal(data.payments[0].gatewayAmount, 102500);
+  assert.equal(data.payments[0].paymentCategory, 'online');
   assert.equal(data.paymentGatewayTransactions.length, 1);
   assert.equal(data.paymentGatewayTransactions[0].transactionKind, 'monthly-package');
   assert.equal(data.paymentGatewayTransactions[0].reference, '000321');
@@ -5000,6 +5203,11 @@ test('Tripay retail callback accepts checkout amount and records full flat custo
   assert.equal(data.paymentGatewayTransactions[0].fee, 5000);
   assert.equal(data.paymentGatewayTransactions[0].providerFee, 3500);
   assert.equal(data.paymentGatewayTransactions[0].cashierFee, 3000);
+  assert.equal(data.payments[0].amount, 155000);
+  assert.equal(data.payments[0].baseAmount, 150000);
+  assert.equal(data.payments[0].fee, 5000);
+  assert.equal(data.payments[0].gatewayAmount, 152000);
+  assert.equal(data.payments[0].cashierFee, 3000);
 });
 
 test('payment gateway payment does not auto activate manually terminated customer', () => {

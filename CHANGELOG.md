@@ -7,6 +7,22 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.56] - 2026-07-18
+
+### Changed
+
+- Tagihan Harian hanya memuat pembayaran yang benar-benar selesai dan tetap mendukung transaksi migrasi yang tidak memiliki relasi invoice lokal.
+- Monthly Paid dihitung dari transaksi pembayaran pada bulan terpilih, sedangkan Monthly Invoice dihitung dari invoice yang diterbitkan pada bulan tersebut.
+- Pembayaran online mencatat total yang benar-benar dibayar pelanggan sebagai pemasukan, sementara nominal pokok invoice, fee, biaya provider, dan biaya kasir tetap tersimpan terpisah.
+- Nama site pada laporan, monitoring tagihan, tambah member, dan import member mengikuti nama NAS; alamat site disimpan terpisah sebagai lokasi.
+
+### Fixed
+
+- Pembayaran Radboox hasil migrasi dengan tambahan fee tetap terbaca sebagai Online dan memakai nominal transaksi aktual.
+- Pembagian gerai Tripay mempertahankan total fee pelanggan tanpa menghitung kembali biaya Rp3.000 yang dibayar di kasir.
+- Pemilihan QRIS voucher Tripay menggunakan nominal pokok dan fee yang benar saat membaca channel tersedia.
+- Radius Connector menutup session lama yang benar-benar tergantikan oleh session baru, sehingga duplicate session tidak terus membanjiri monitoring.
+
 ## [1.0.55] - 2026-07-18
 
 ### Added

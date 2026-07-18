@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const freeradius = require('../src/freeradius-core');
+const freeradiusSessions = require('../src/freeradius-sessions');
 const { createDefaultStore } = require('../src/store');
 
 test('hotspot radius users always use username as password', () => {
@@ -81,4 +82,14 @@ test('ppp static IP must be a usable host address', () => {
     serviceType: 'pppoe',
     staticIp: '172.16.7.0'
   }, { username: 'admin', name: 'Admin' }), /IP static tidak valid/);
+});
+
+test('stale session cleanup only closes an older duplicate with a fresh replacement', () => {
+  const query = freeradiusSessions.__test.closeSupersededSessionsQuery();
+
+  assert.match(query, /active_rank > 1/);
+  assert.match(query, /replacement_started_at > ranked\.acctstarttime/);
+  assert.match(query, /replacement_updated_at >=/);
+  assert.match(query, /ranked\.updated_at </);
+  assert.match(query, /Stale-Replaced/);
 });

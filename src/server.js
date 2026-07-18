@@ -1390,6 +1390,44 @@ function reconcileRadiusCustomerStatuses(data = {}) {
   return data;
 }
 
+function localBillingSite(data = {}, customer = {}, invoice = {}) {
+  const targets = (data.monitoringTargets || []).filter((target) => target.status !== 'inactive');
+  const candidates = [
+    customer.nasId,
+    customer.nas,
+    customer.siteName,
+    customer.site,
+    invoice.siteId,
+    invoice.siteName,
+    invoice.site
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  const target = targets.find((item) => {
+    const aliases = [
+      item.id,
+      item.name,
+      item.host,
+      item.location,
+      item.radius?.name,
+      item.radius?.address
+    ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+    return candidates.some((candidate) => aliases.includes(candidate));
+  });
+  if (target) {
+    return {
+      id: String(target.id),
+      name: String(target.name || target.id),
+      location: String(target.location || '')
+    };
+  }
+  const name = String(customer.nas || customer.siteName || customer.site || invoice.siteName || invoice.site || '').trim();
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || name || 'default';
+  return {
+    id,
+    name,
+    location: String(customer.siteLocation || '')
+  };
+}
+
 function localBillingSites(data = {}) {
   const sites = new Map();
   (data.monitoringTargets || [])
@@ -1402,11 +1440,10 @@ function localBillingSites(data = {}) {
       });
     });
   (data.customers || []).forEach((customer) => {
-    const siteName = String(customer.site || customer.siteName || customer.nas || '').trim();
-    if (!siteName) return;
-    const id = siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || siteName;
-    if (!sites.has(id)) {
-      sites.set(id, { id, name: siteName, location: '' });
+    const site = localBillingSite(data, customer);
+    if (!site.name) return;
+    if (!sites.has(site.id)) {
+      sites.set(site.id, site);
     }
   });
   return [...sites.values()];
@@ -1444,8 +1481,7 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
       const publicInvoiceNo = displayBillingInvoiceNo(storedInvoiceNo);
       const runtimeStatus = invoiceRuntimeStatus(invoice);
       const customerStatus = resolver.statusForInvoice(invoice, customer);
-      const siteName = customer.site || customer.siteName || customer.nas || invoice.siteName || '';
-      const siteId = String(siteName || 'default').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'default';
+      const site = localBillingSite(data, customer, invoice);
       return {
         ...invoice,
         period: selectedPeriod,
@@ -1464,8 +1500,8 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
         address: customer.address || '',
         item: invoice.packageName || invoice.notes || customer.packageName || '',
         subscribe: invoice.packageName || customer.packageName || '',
-        siteId,
-        siteName,
+        siteId: site.id,
+        siteName: site.name,
         nas: customer.nas || '',
         amount: Number(invoice.amount || 0),
         status: runtimeStatus === 'pending' ? 'unpaid' : runtimeStatus,
@@ -3079,8 +3115,9 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     dueDate: nextDue,
     radiusUserId: radiusUser.id || '',
     nas: nas.name || '',
-    site: nas.site || '',
-    siteName: nas.site || nas.name || '',
+    site: nas.name || '',
+    siteName: nas.name || '',
+    siteLocation: nas.site || '',
     latitude,
     longitude,
     locationAccuracy,
@@ -3137,8 +3174,9 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   customer.radiusUserId = radiusUser.id || customer.radiusUserId || '';
   customer.username = radiusUser.username || customer.username || '';
   customer.nas = nas.name || customer.nas || '';
-  customer.site = nas.site || customer.site || '';
-  customer.siteName = nas.site || nas.name || customer.siteName || '';
+  customer.site = nas.name || customer.site || '';
+  customer.siteName = nas.name || customer.siteName || '';
+  customer.siteLocation = nas.site || customer.siteLocation || '';
   if (activeDate) customer.activeDate = activeDate;
   if (payload.memberCountsAsPsb !== undefined) {
     customer.countsAsPsb = payloadEnabled(payload.memberCountsAsPsb);
@@ -4481,60 +4519,58 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const sites = localBillingSites(data);
   const payments = Array.isArray(options.payments) ? options.payments : activePayments(data);
-  const includeDueInvoices = options.includeDueInvoices !== false;
-  const paymentsForDate = new Map();
-  for (const payment of payments) {
-    const paidDate = String(payment.paidAt || payment.createdAt || '').slice(0, 10);
-    if (paidDate !== date) continue;
-    paymentsForDate.set(payment.invoiceId, payment);
+  const includeDueInvoices = options.includeDueInvoices === true;
+  const transactionSources = payments
+    .filter((payment) => String(payment.paidAt || payment.createdAt || '').slice(0, 10) === date)
+    .map((payment) => ({ invoiceId: payment.invoiceId || '', payment }));
+  if (includeDueInvoices) {
+    const paidInvoiceIds = new Set(transactionSources.map((item) => item.invoiceId).filter(Boolean));
+    transactionSources.push(...(data.invoices || [])
+      .filter((invoice) => (
+        String(invoice.dueDate || '').slice(0, 10) === date
+        && String(invoice.status || '').toLowerCase() !== 'cancelled'
+        && !paidInvoiceIds.has(invoice.id)
+      ))
+      .map((invoice) => ({ invoiceId: invoice.id, payment: null })));
   }
-  const invoiceIds = new Set([
-    ...[...paymentsForDate.keys()].filter(Boolean),
-    ...(includeDueInvoices
-      ? (data.invoices || [])
-        .filter((invoice) => String(invoice.dueDate || '').slice(0, 10) === date && String(invoice.status || '').toLowerCase() !== 'cancelled')
-        .map((invoice) => invoice.id)
-      : [])
-  ]);
-  const transactions = [...invoiceIds]
-    .map((invoiceId) => {
+  const transactions = transactionSources
+    .map(({ invoiceId, payment }) => {
       const invoice = invoices.get(invoiceId) || {};
-      const payment = paymentsForDate.get(invoiceId) || null;
       const customer = customers.get(payment?.customerId || invoice.customerId) || {};
-      const siteName = customer.site || customer.siteName || customer.nas || invoice.siteName || '';
-      const site = sites.find((item) => item.name === siteName || item.id === siteName) || {};
+      const site = localBillingSite(data, customer, invoice);
       const method = payment?.method || invoice.paymentMethod || 'Tunai';
       const paymentCategory = payment
         ? paymentCategoryForRecord({ ...invoice, ...payment }, method)
         : '';
       const status = invoiceRuntimeStatus(invoice);
       const admin = payment?.admin || payment?.createdBy || payment?.createdByName || invoice.createdByName || 'Sistem';
-      const storedInvoiceNo = invoice.externalId || invoice.invoiceNo || invoice.id || payment?.invoiceId || payment?.id;
-      const paidAt = payment?.createdAt || payment?.paidAt || invoice.paidAt || '';
+      const storedInvoiceNo = invoice.externalId || invoice.invoiceNo || invoice.id
+        || payment?.sourceInvoiceNo || payment?.invoiceNo || payment?.invoiceId || payment?.reference || payment?.id;
+      const paidAt = payment?.paidAt || payment?.createdAt || invoice.paidAt || '';
       return {
         id: payment?.id || invoice.id,
-        invoiceId: invoice.id || '',
+        invoiceId: invoice.id || payment?.invoiceId || '',
         invoiceNo: displayBillingInvoiceNo(storedInvoiceNo),
         externalId: displayBillingInvoiceNo(storedInvoiceNo),
         legacyInvoiceNo: storedInvoiceNo,
-        info: customer.name || invoice.customerName || invoice.username || payment?.id || invoice.id,
-        customerName: customer.name || invoice.customerName || '',
-        username: customer.username || invoice.username || '',
+        info: customer.name || invoice.customerName || payment?.customerName || invoice.username || payment?.description || payment?.id || invoice.id,
+        customerName: customer.name || invoice.customerName || payment?.customerName || '',
+        username: customer.username || invoice.username || payment?.username || '',
         phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
-        item: invoice.packageName || customer.packageName || 'Tagihan internet',
+        item: invoice.packageName || customer.packageName || payment?.item || payment?.notes || 'Tagihan internet',
         method: payment ? method : '-',
         paymentCategory,
-        status,
+        status: payment ? 'paid' : status,
         admin,
         adminName: admin,
         adminId: admin,
         siteId: site.id || '',
-        siteName: site.name || siteName || '',
+        siteName: site.name || '',
         dueDate: invoice.dueDate || '',
         paymentAt: paidAt,
         paymentRaw: paidAt,
         paymentTime: paidAt ? new Date(paidAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Makassar' }) : '',
-        amount: Number(invoice.amount || payment?.amount || 0),
+        amount: Number(payment?.amount || invoice.amount || 0),
         income: payment ? Number(payment.amount || invoice.amount || 0) : 0
       };
     })
@@ -6706,25 +6742,27 @@ function localManualInvoiceMembers(data = {}, query = {}) {
 function dashboardBillingSummary(data = {}, period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period);
   const rows = localBillingInvoiceRows(data, selectedPeriod).filter((invoice) => invoice.status !== 'cancelled');
+  const monthlyInvoices = (data.invoices || []).filter((invoice) => (
+    String(invoice.status || '').toLowerCase() !== 'cancelled'
+    && String(invoice.period || '').slice(0, 7) === selectedPeriod
+  ));
+  const monthlyPayments = activePayments(data).filter((payment) => (
+    String(payment.paidAt || payment.createdAt || '').slice(0, 7) === selectedPeriod
+  ));
   const unpaidRows = rows.filter((invoice) => ['unpaid', 'pending', 'overdue'].includes(String(invoice.status || '').toLowerCase()));
   const overdueRows = unpaidRows.filter((invoice) => {
     const customerStatus = normalizeCustomerStatusLocal(invoice.customerStatus || invoice.serviceStatus);
     return customerStatus === 'isolated' || customerStatus === 'terminate';
-  });
-  const paidRows = rows.filter((invoice) => {
-    if (String(invoice.status || '').toLowerCase() !== 'paid') return false;
-    const paidPeriod = String(invoice.paidAt || invoice.updatedAt || invoice.createdAt || '').slice(0, 7);
-    return paidPeriod ? paidPeriod === selectedPeriod : true;
   });
   return {
     totalUnpaidCount: unpaidRows.length,
     totalUnpaidAmount: unpaidRows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
     overdueCount: overdueRows.length,
     overdueAmount: overdueRows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
-    monthlyPaidCount: paidRows.length,
-    monthlyPaidAmount: paidRows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
-    monthlyInvoiceCount: rows.length,
-    monthlyInvoiceAmount: rows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0)
+    monthlyPaidCount: monthlyPayments.length,
+    monthlyPaidAmount: monthlyPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+    monthlyInvoiceCount: monthlyInvoices.length,
+    monthlyInvoiceAmount: monthlyInvoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0)
   };
 }
 
@@ -8558,7 +8596,14 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
     : markInvoicePaid(data, invoice.id, {
       paymentMethod: payment.method || 'Payment Gateway',
       paymentCategory: 'online',
-      amount: invoice.amount,
+      amount: checkoutBreakdown.customerAmount,
+      baseAmount: gatewayBreakdown.baseAmount,
+      fee: gatewayBreakdown.adminFee,
+      adminFee: gatewayBreakdown.adminFee,
+      gatewayAmount: amount || checkoutBreakdown.gatewayAmount,
+      providerFee: payment.fee || 0,
+      cashierFee: checkoutBreakdown.cashierFee,
+      provider,
       paidAt: payment.paidAt || localTodayIso(),
       notes: payment.externalId ? `Payment Gateway ${payment.externalId}` : 'Payment Gateway',
       createdByName: actor.name || actor.username || 'Payment Gateway',
@@ -8799,7 +8844,12 @@ async function createTripayCheckout(data = {}, params = {}) {
   const kind = String(params.kind || '').trim().toLowerCase();
   let method = '';
   if (kind.includes('voucher')) {
-    const channels = await tripayPaymentChannels(data, { amount, kind });
+    const channels = await tripayPaymentChannels(data, {
+      amount: requestedAmount,
+      baseAmount: params.baseAmount,
+      adminFee: params.adminFee,
+      kind
+    });
     method = firstTripayQrisChannel(channels)?.code || '';
     if (!method) throw new Error('Channel QRIS Tripay untuk voucher belum aktif');
   } else {
@@ -9799,7 +9849,7 @@ async function handleApi(req, res, url) {
       const collectorReport = userIsCollector(authContext.user);
       const report = dailyReportResponse(localDailyReport(data, date, {
         payments: collectorReport ? collectorReportPayments(data, authContext.user) : undefined,
-        includeDueInvoices: !collectorReport
+        includeDueInvoices: false
       }));
       sendJson(res, 200, {
         source: 'local',
@@ -13654,8 +13704,10 @@ module.exports = {
     changelogSummaryFromText,
     commitLogSummaryFromText,
     collectorReportPayments,
+    createTripayCheckout,
     createLocalManualInvoice,
     createHotspotVoucherOrder,
+    dashboardBillingSummary,
     dashboardRadiusServiceSummary,
     dashboardCollectorScope,
     deleteRadiusLinkedMember,
@@ -13669,6 +13721,7 @@ module.exports = {
     isPaymentGatewayWebhookPath,
     invoiceWaTemplateValues,
     localDailyReport,
+    localBillingSite,
     localManualInvoicePreview,
     monthlyBillingDailyRows,
     monthlyVoucherDailyRows,

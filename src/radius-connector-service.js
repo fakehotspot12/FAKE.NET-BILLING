@@ -26,6 +26,10 @@ async function poll(reason = 'interval') {
   if (running || stopping) return;
   running = true;
   try {
+    const cleanup = await freeradiusSessions.closeSupersededActiveSessions();
+    if (!cleanup.ok) {
+      console.error(`Pembersihan session stale gagal: ${cleanup.error}`);
+    }
     const result = await freeradiusSessions.activeSessions({
       limit: LIMIT,
       allowCache: false
@@ -41,7 +45,8 @@ async function poll(reason = 'interval') {
       error: result.error || ''
     });
     if (result.ok) {
-      console.log(`Radius connector OK ${rows.length} session dari ${result.source}${suppressedDuplicates ? `, ${suppressedDuplicates} duplicate disembunyikan` : ''}`);
+      const cleanupNote = cleanup.closed ? `, ${cleanup.closed} session stale ditutup` : '';
+      console.log(`Radius connector OK ${rows.length} session dari ${result.source}${suppressedDuplicates ? `, ${suppressedDuplicates} duplicate disembunyikan` : ''}${cleanupNote}`);
     } else {
       console.error(`Radius connector gagal: ${result.error || 'FreeRADIUS tidak terbaca'}`);
     }
