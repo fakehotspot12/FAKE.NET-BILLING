@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.2.9] - 2026-07-18
+
+### Fixed
+
+- Setiap checkout Tripay kini mengirim `callback_url` yang tersimpan di Pengaturan Payment Gateway sehingga transaksi baru tidak bergantung pada callback default lama di dashboard merchant.
+
 ## [1.2.8] - 2026-07-18
 
 ### Fixed

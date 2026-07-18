@@ -9146,6 +9146,8 @@ async function createTripayCheckout(data = {}, params = {}) {
     expired_time: Math.floor(Date.now() / 1000) + (Math.max(5, Number(settings.checkoutTtlMinutes || 60) || 60) * 60),
     signature
   };
+  const callbackUrl = String(params.callbackUrl || settings.callbackUrl || '').trim();
+  if (callbackUrl) payload.callback_url = callbackUrl;
   payload.method = method;
   const response = await fetch(`${tripayApiBase(settings)}/transaction/create`, {
     method: 'POST',

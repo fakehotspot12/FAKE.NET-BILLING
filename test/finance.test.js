@@ -5029,6 +5029,7 @@ test('Tripay voucher checkout resolves QRIS before creating the transaction', as
   data.settings.paymentGateway.enabled = true;
   data.settings.paymentGateway.provider = 'tripay';
   data.settings.paymentGateway.mode = 'production';
+  data.settings.paymentGateway.callbackUrl = 'https://billing.example.test/payment-gateway/webhook';
   data.settings.paymentGateway.tripay = {
     merchantCode: 'T0001',
     apiKey: 'api-key',
@@ -5072,6 +5073,7 @@ test('Tripay voucher checkout resolves QRIS before creating the transaction', as
     assert.equal(calls.length, 2);
     assert.equal(requestBody.method, 'QRIS');
     assert.equal(requestBody.amount, 10820);
+    assert.equal(requestBody.callback_url, 'https://billing.example.test/payment-gateway/webhook');
     assert.equal(result.method, 'QRIS');
     assert.equal(result.checkoutUrl, 'https://example.test/checkout');
   } finally {
