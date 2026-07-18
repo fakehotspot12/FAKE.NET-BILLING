@@ -5327,6 +5327,132 @@ test('payment gateway payment auto activates billing-terminated customer after a
   assert.equal(data.radiusUsers[0].status, 'active');
 });
 
+test('cash, transfer, and online payments reactivate PPP or Hotspot through Radius sync then CoA', async () => {
+  const cases = [
+    { method: 'Tunai', category: 'cash', serviceType: 'pppoe', staticIp: '172.16.7.10' },
+    { method: 'Transfer', category: 'transfer', serviceType: 'pppoe', staticIp: '' },
+    { method: 'QRIS', category: 'online', serviceType: 'hotspot', staticIp: '' }
+  ];
+
+  for (const [index, paymentCase] of cases.entries()) {
+    const data = createDefaultStore();
+    const customerId = `cus-paid-reactivation-${index}`;
+    const username = `paid-reactivation-${index}`;
+    data.customers.push({
+      id: customerId,
+      username,
+      name: `Pelanggan ${index}`,
+      status: 'isolir',
+      isolationSource: 'billing',
+      price: 100000
+    });
+    data.radiusUsers.push({
+      id: `rad-paid-reactivation-${index}`,
+      customerId,
+      username,
+      serviceType: paymentCase.serviceType,
+      staticIp: paymentCase.staticIp,
+      status: 'isolated',
+      isolationSource: 'billing'
+    });
+    data.invoices.push({
+      id: `inv-paid-reactivation-${index}`,
+      customerId,
+      customerName: `Pelanggan ${index}`,
+      username,
+      period: '2026-07',
+      coveredPeriods: ['2026-07'],
+      amount: 100000,
+      dueDate: '2026-07-10',
+      status: 'pending'
+    });
+
+    const paid = markInvoicePaid(data, `inv-paid-reactivation-${index}`, {
+      paymentMethod: paymentCase.method,
+      paymentCategory: paymentCase.category,
+      amount: 100000
+    });
+    const activation = serverInternals.reactivateCustomerAfterPaidInvoice(data, paid, {
+      username: 'finance',
+      name: 'Finance'
+    });
+    const calls = [];
+    const network = await serverInternals.finalizePaidInvoiceRadiusActivation(
+      data,
+      activation,
+      { username: 'finance', name: 'Finance' },
+      'test-payment-reactivation',
+      {
+        sync: async () => {
+          calls.push('sync');
+          return { ok: true };
+        },
+        disconnect: async (_store, user) => {
+          calls.push(`disconnect:${user.username}`);
+          return { ok: true };
+        }
+      }
+    );
+
+    assert.equal(paid.status, 'paid');
+    assert.equal(data.payments[0].method, paymentCase.method);
+    assert.equal(data.payments[0].paymentCategory, paymentCase.category);
+    assert.equal(data.customers[0].status, 'active');
+    assert.equal(data.radiusUsers[0].status, 'active');
+    assert.equal(data.radiusUsers[0].serviceType, paymentCase.serviceType);
+    assert.equal(data.radiusUsers[0].staticIp, paymentCase.staticIp);
+    assert.deepEqual(calls, ['sync', `disconnect:${username}`]);
+    assert.equal(network.synced, true);
+    assert.equal(network.disconnects[0].ok, true);
+  }
+});
+
+test('manual termination stays terminated after cash payment and skips Radius activation', async () => {
+  const data = createDefaultStore();
+  data.customers.push({
+    id: 'cus-manual-term-cash',
+    username: 'manual-term-cash',
+    status: 'terminate',
+    terminationSource: 'manual'
+  });
+  data.radiusUsers.push({
+    id: 'rad-manual-term-cash',
+    customerId: 'cus-manual-term-cash',
+    username: 'manual-term-cash',
+    serviceType: 'pppoe',
+    status: 'terminated',
+    terminationSource: 'manual'
+  });
+  data.invoices.push({
+    id: 'inv-manual-term-cash',
+    customerId: 'cus-manual-term-cash',
+    username: 'manual-term-cash',
+    period: '2026-07',
+    coveredPeriods: ['2026-07'],
+    amount: 100000,
+    dueDate: '2026-07-10',
+    status: 'pending'
+  });
+  const paid = markInvoicePaid(data, 'inv-manual-term-cash', { paymentMethod: 'Tunai' });
+  const activation = serverInternals.reactivateCustomerAfterPaidInvoice(data, paid, { username: 'finance' });
+  let called = false;
+  const network = await serverInternals.finalizePaidInvoiceRadiusActivation(data, activation, {}, 'test-manual-terminated', {
+    sync: async () => {
+      called = true;
+    },
+    disconnect: async () => {
+      called = true;
+      return { ok: true };
+    }
+  });
+
+  assert.equal(activation.requiresAdmin, true);
+  assert.equal(data.customers[0].status, 'terminate');
+  assert.equal(data.radiusUsers[0].status, 'terminated');
+  assert.equal(network.synced, false);
+  assert.equal(called, false);
+});
+
 test('auth creates default admin and protects admin role', () => {
   const data = createDefaultStore();
 

@@ -7,6 +7,26 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.1.0] - 2026-07-18
+
+### Changed
+
+- Profil PPP-DHCP dan Hotspot yang ditautkan ke profil MikroTik kini sepenuhnya mewarisi rate-limit, queue type, pool, dan atribut lain dari profil RouterOS tanpa override limit dari RADIUS.
+- Pembayaran Tunai, Transfer, dan Online memakai satu alur reaktivasi: invoice lunas, status pelanggan aktif, sinkron FreeRADIUS, lalu CoA hanya untuk username terkait.
+- Automasi billing melakukan CoA terarah pada pelanggan yang baru diisolir atau diaktifkan agar sesi lama tidak mempertahankan profil sebelumnya.
+
+### Fixed
+
+- Pembayaran manual dari Monitoring Tagihan dan endpoint invoice sekarang benar-benar memperbarui akses RADIUS, bukan hanya status di aplikasi.
+- Status user RADIUS yang masih isolir/terminated tidak lagi tertutup oleh status member yang keliru masih aktif.
+- Profil Hotspot tertaut MikroTik tidak lagi menghasilkan queue `0/0`; profil Hotspot manual tetap mengirim limit RADIUS sesuai konfigurasi.
+- IP statis yang diatur pada user billing tetap dipertahankan saat sinkron profil dan reaktivasi pembayaran.
+
+### Notes
+
+- Akun yang terminated manual tetap membutuhkan aktivasi oleh admin meskipun pembayarannya sudah lunas.
+- Update hanya memperbarui source dan struktur aplikasi; database serta data pelanggan tidak diganti atau dihapus.
+
 ## [1.0.57] - 2026-07-18
 
 ### Fixed

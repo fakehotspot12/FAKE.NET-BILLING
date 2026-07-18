@@ -5075,7 +5075,7 @@ function radiusUserForCustomer(data = {}, customer = {}) {
 
 function customerAutoReactivationState(data = {}, customer = {}) {
   const user = radiusUserForCustomer(data, customer) || {};
-  const status = normalizeCustomerStatusLocal(customer.status || radiusStatusForCustomer(user));
+  const status = strongestCustomerStatus(customer.status, radiusStatusForCustomer(user));
   if (status === 'isolated') {
     return { eligible: true, requiresAdmin: false, status, source: customer.isolationSource || user.isolationSource || '', user };
   }
@@ -5350,6 +5350,44 @@ function reactivateCustomerAfterPaidInvoice(data = {}, invoice = {}, actor = {})
     source: state.source,
     status: state.status
   };
+}
+
+async function disconnectChangedRadiusUsers(data = {}, users = [], actor = {}, action = 'radius-state-change', runtime = {}) {
+  const disconnect = runtime.disconnect || freeradiusCoa.disconnectUser;
+  const uniqueUsers = [...new Map((users || [])
+    .filter((user) => user?.username)
+    .map((user) => [String(user.username).trim().toLowerCase(), user])).values()];
+  const results = [];
+  for (const user of uniqueUsers) {
+    try {
+      const coa = await disconnect(data, user);
+      results.push({ username: user.username, ok: coa?.ok === true, coa });
+    } catch (error) {
+      results.push({ username: user.username, ok: false, error: error.message || 'CoA disconnect gagal' });
+    }
+  }
+  if (results.length) {
+    addActivity(data, 'monitoring', `CoA perubahan status Radius: ${results.filter((item) => item.ok).length}/${results.length} session diputus`, {
+      action,
+      count: results.length,
+      ok: results.filter((item) => item.ok).length,
+      failed: results.filter((item) => !item.ok).length,
+      actor: actor.name || actor.username || ''
+    });
+  }
+  return results;
+}
+
+async function finalizePaidInvoiceRadiusActivation(data = {}, activation = {}, actor = {}, action = 'billing-payment-reactivation', runtime = {}) {
+  const activatedUser = activation?.activatedUser || null;
+  if (!activatedUser) return { synced: false, disconnects: [] };
+  const sync = runtime.sync || syncFreeradiusIfNeeded;
+  if (!runtime.sync && !freeradiusSql.enabled()) {
+    return { synced: false, skipped: true, disconnects: [] };
+  }
+  const syncResult = await sync(data, actor, action);
+  const disconnects = await disconnectChangedRadiusUsers(data, [activatedUser], actor, `${action}-coa`, runtime);
+  return { synced: true, syncResult, disconnects };
 }
 
 function standaloneBillingAutomation(data = {}, actor = { username: 'billing-auto', name: 'Billing Auto' }) {
@@ -7936,6 +7974,14 @@ async function runStandaloneBillingAutomation(reason = 'interval') {
       if (automation.created.length || automation.isolatedUsers.length || automation.activatedUsers.length || expiredVouchers) {
         await syncFreeradiusIfNeeded(data, actor, `billing-automation-${reason}`);
       }
+      if (freeradiusSql.enabled() && (automation.isolatedUsers.length || automation.activatedUsers.length)) {
+        automation.radiusStateDisconnects = await disconnectChangedRadiusUsers(
+          data,
+          [...automation.isolatedUsers, ...automation.activatedUsers],
+          actor,
+          `billing-automation-${reason}-coa`
+        );
+      }
       if (expiredVouchers) {
         automation.expiredVoucherDisconnects = await disconnectExpiredVoucherSessions(data, automation.voucherExpirations, actor);
       }
@@ -8976,7 +9022,7 @@ async function handlePaymentGatewayWebhook(req, res, url) {
         await syncFreeradiusIfNeeded(store, actor, 'hotspot-voucher-online-paid');
       }
       if (fulfilled.type === 'monthly-package' && fulfilled.status === 'paid' && fulfilled.activatedUser) {
-        await syncFreeradiusIfNeeded(store, actor, 'payment-gateway-billing-paid');
+        fulfilled.radiusActivation = await finalizePaidInvoiceRadiusActivation(store, fulfilled, actor, 'payment-gateway-billing-paid');
       }
       return fulfilled;
     });
@@ -10434,9 +10480,10 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const payload = await readBody(req);
     const invoiceId = decodeURIComponent(payMatch[1]);
-    const { result } = await mutate((data) => {
+    const { result } = await mutate(async (data) => {
       const invoice = markInvoicePaid(data, invoiceId, {
         ...payload,
+        paymentCategory: paymentCategoryForRecord(payload, payload.paymentMethod || payload.method || 'Tunai'),
         ...actorPayload(authContext.user)
       });
       if (invoice) {
@@ -10444,6 +10491,7 @@ async function handleApi(req, res, url) {
         const activation = reactivateCustomerAfterPaidInvoice(data, invoice, authContext.user);
         if (activation.activatedUser) {
           queueInvoiceWaMessage(data, invoice, 'accountActive', authContext.user);
+          await finalizePaidInvoiceRadiusActivation(data, activation, authContext.user, 'invoice-manual-paid');
         } else if (activation.requiresAdmin) {
           addActivity(data, 'invoice', `Pembayaran ${invoice.customerName || invoice.username || invoice.invoiceNo} tercatat, aktivasi pelanggan terminated menunggu validasi admin`, {
             action: 'terminated-payment-awaiting-admin',
@@ -12043,7 +12091,7 @@ async function handleApi(req, res, url) {
     }
 
     if (standaloneMode(authContext.data)) {
-      const result = await mutate((data) => {
+      const result = await mutate(async (data) => {
         const invoice = (data.invoices || []).find((item) => {
           return item.id === invoiceNo
             || item.externalId === invoiceNo
@@ -12054,8 +12102,10 @@ async function handleApi(req, res, url) {
           throw new Error('Invoice tidak ditemukan');
         }
         if (action === 'pay') {
+          const paymentMethod = payload.paymentMethod || payload.method || 'Tunai';
           const paid = markInvoicePaid(data, invoice.id, {
-            paymentMethod: payload.paymentMethod || payload.method || 'Tunai',
+            paymentMethod,
+            paymentCategory: paymentCategoryForRecord(payload, paymentMethod),
             amount: payload.amount || invoice.amount,
             notes: payload.notes || `Dibayar oleh ${authContext.user.name || authContext.user.username}`,
             ...actorPayload(authContext.user)
@@ -12065,6 +12115,7 @@ async function handleApi(req, res, url) {
             const activation = reactivateCustomerAfterPaidInvoice(data, paid, authContext.user);
             if (activation.activatedUser) {
               queueInvoiceWaMessage(data, paid, 'accountActive', authContext.user);
+              await finalizePaidInvoiceRadiusActivation(data, activation, authContext.user, 'monitoring-invoice-paid');
             } else if (activation.requiresAdmin) {
               addActivity(data, 'invoice', `Pembayaran ${paid.customerName || paid.username || paid.invoiceNo} tercatat, aktivasi pelanggan terminated menunggu validasi admin`, {
                 action: 'terminated-payment-awaiting-admin',
@@ -13728,6 +13779,8 @@ module.exports = {
     paymentCategoryForRecord,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
+    reactivateCustomerAfterPaidInvoice,
+    finalizePaidInvoiceRadiusActivation,
     isTripayRetailChannel,
     paidVoucherOrdersForReport,
     pppImportTemplateBuffer,

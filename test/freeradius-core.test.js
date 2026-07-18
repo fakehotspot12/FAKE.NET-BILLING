@@ -121,6 +121,40 @@ test('linked MikroTik profile inherits RouterOS rate limit without Radius overri
   )), false);
 });
 
+test('linked Hotspot profile inherits RouterOS profile while manual Hotspot keeps Radius limit', () => {
+  const data = createDefaultStore();
+  const linked = freeradius.addProfile(data, {
+    name: 'Hotspot RouterOS',
+    serviceType: 'hotspot',
+    useMikrotikProfile: true,
+    mikrotikGroup: 'Hotspot RouterOS',
+    rateLimit: 'unlimited unlimited'
+  });
+  const manual = freeradius.addProfile(data, {
+    name: 'Hotspot Manual 10M',
+    serviceType: 'hotspot',
+    useMikrotikProfile: false,
+    rateLimit: '10M/10M'
+  });
+
+  const rows = freeradius.freeradiusRows(data).radgroupreply;
+  const linkedGroup = freeradius.profileGroupName(linked);
+  const manualGroup = freeradius.profileGroupName(manual);
+  assert.ok(rows.some((row) => (
+    row.groupname === linkedGroup
+      && row.attribute === 'Mikrotik-Group'
+      && row.value === 'Hotspot RouterOS'
+  )));
+  assert.equal(rows.some((row) => (
+    row.groupname === linkedGroup && row.attribute === 'Mikrotik-Rate-Limit'
+  )), false);
+  assert.ok(rows.some((row) => (
+    row.groupname === manualGroup
+      && row.attribute === 'Mikrotik-Rate-Limit'
+      && row.value.startsWith('10M/10M')
+  )));
+});
+
 test('stale session cleanup only closes an older duplicate with a fresh replacement', () => {
   const query = freeradiusSessions.__test.closeSupersededSessionsQuery();
 
