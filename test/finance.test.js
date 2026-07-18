@@ -694,11 +694,65 @@ test('PPP member price follows selected profile instead of stale form payload', 
     memberPhone: '085200000001',
     memberActiveDate: '2026-07-15',
     memberInvoiceStatus: 'paid',
+    memberCode: '123456789',
     memberPrice: 300
   }, radiusUser, { name: 'Admin', username: 'admin' });
 
   assert.equal(member.price, 150000);
   assert.equal(data.customers[0].price, 150000);
+  assert.match(member.code, /^22\d{9}$/);
+  assert.notEqual(member.code, '123456789');
+});
+
+test('legacy 9 digit Member ID migrates to Radboox pattern without breaking linked records', () => {
+  const oldCode = '718456321';
+  const data = ensureShape({
+    settings: {},
+    customers: [{
+      id: 'cus-member-code-migration',
+      code: oldCode,
+      accountId: oldCode,
+      username: 'member-code@test'
+    }],
+    radiusUsers: [{
+      id: 'rad-member-code-migration',
+      customerId: 'cus-member-code-migration',
+      username: 'member-code@test',
+      memberCode: oldCode
+    }],
+    invoices: [{
+      id: 'inv-member-code-migration',
+      customerId: 'cus-member-code-migration',
+      accountId: oldCode,
+      amount: 150000
+    }],
+    payments: [{
+      id: 'pay-member-code-migration',
+      invoiceId: 'inv-member-code-migration',
+      customerId: 'cus-member-code-migration',
+      memberId: oldCode,
+      amount: 150000
+    }],
+    waMessages: [{
+      id: 'wa-member-code-migration',
+      payload: { uid: oldCode }
+    }]
+  });
+
+  assert.equal(data.customers[0].code, `22${oldCode}`);
+  assert.equal(data.customers[0].accountId, `22${oldCode}`);
+  assert.equal(data.radiusUsers[0].memberCode, `22${oldCode}`);
+  assert.equal(data.invoices[0].accountId, `22${oldCode}`);
+  assert.equal(data.payments[0].memberId, `22${oldCode}`);
+  assert.equal(data.waMessages[0].payload.uid, `22${oldCode}`);
+  assert.equal(data.invoices[0].customerId, 'cus-member-code-migration');
+  assert.equal(data.payments[0].invoiceId, 'inv-member-code-migration');
+  assert.equal(data.payments[0].customerId, 'cus-member-code-migration');
+  assert.equal(data.radiusSyncState.memberIdPatternMigratedCount, 1);
+
+  const shapedAgain = ensureShape(data);
+  assert.equal(shapedAgain.customers[0].code, `22${oldCode}`);
+  assert.equal(shapedAgain.radiusSyncState.memberIdPatternMigratedCount, 1);
 });
 
 test('PPP postpaid billing cycle member next due follows billing setting day', () => {

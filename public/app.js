@@ -3409,35 +3409,63 @@ function statisticsRevenueGroupedChart(rows = []) {
   `;
 }
 
-function statisticsDailyRowsTable(rows = []) {
+function statisticsAnnualSummary(rows = []) {
+  const totals = (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
+    acc.newInstallCount += Number(row.newInstallCount || 0);
+    acc.removedCount += Number(row.removedCount || 0);
+    acc.voucherCount += Number(row.voucherCount || 0);
+    acc.voucherAmount += Number(row.voucherAmount || 0);
+    acc.revenueAmount += Number(row.revenueAmount || 0);
+    acc.expenseAmount += Number(row.expenseAmount || 0);
+    return acc;
+  }, {
+    newInstallCount: 0,
+    removedCount: 0,
+    voucherCount: 0,
+    voucherAmount: 0,
+    revenueAmount: 0,
+    expenseAmount: 0
+  });
+  totals.netGrowth = totals.newInstallCount - totals.removedCount;
+  totals.profitAmount = totals.revenueAmount - totals.expenseAmount;
+  totals.activeCustomerCount = Number(rows.at(-1)?.activeCustomerCount || 0);
+  return totals;
+}
+
+function statisticsAnnualSummaryMarkup(rows = []) {
+  const totals = statisticsAnnualSummary(rows);
   return `
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Tanggal</th>
-            <th>Pasang Baru</th>
-            <th>Cabut</th>
-            <th>Selisih</th>
-            <th>Pembeli Voucher</th>
-            <th>Voucher</th>
-            <th class="amount">Omzet Voucher</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.length ? rows.map((row) => `
-            <tr>
-              <td><strong>${escapeHtml(dateText(row.date))}</strong></td>
-              <td>${displayNumber(row.newInstallCount || 0)}</td>
-              <td>${displayNumber(row.removedCount || 0)}</td>
-              <td><span class="badge ${statisticsNetTone(row.netGrowth)}">${escapeHtml(statisticsNetText(row.netGrowth || 0))}</span></td>
-              <td>${displayNumber(row.voucherBuyerCount || 0)}</td>
-              <td>${displayNumber(row.voucherCount || 0)}</td>
-              <td class="amount positive">${rupiah(row.voucherAmount || 0)}</td>
-            </tr>
-          `).join('') : '<tr><td colspan="7">Belum ada data statistik bulan ini.</td></tr>'}
-        </tbody>
-      </table>
+    <div class="statistics-annual-summary">
+      <div class="statistics-annual-item">
+        <span>Pelanggan Aktif</span>
+        <strong>${displayNumber(totals.activeCustomerCount)}</strong>
+        <small>Akhir periode</small>
+      </div>
+      <div class="statistics-annual-item ${statisticsNetTone(totals.netGrowth)}">
+        <span>Pertumbuhan Bersih</span>
+        <strong>${escapeHtml(statisticsNetText(totals.netGrowth))}</strong>
+        <small>PSB ${displayNumber(totals.newInstallCount)} / Cabut ${displayNumber(totals.removedCount)}</small>
+      </div>
+      <div class="statistics-annual-item voucher">
+        <span>Voucher Terjual</span>
+        <strong>${displayNumber(totals.voucherCount)}</strong>
+        <small>${rupiah(totals.voucherAmount)}</small>
+      </div>
+      <div class="statistics-annual-item positive">
+        <span>Pendapatan</span>
+        <strong>${statisticsCompactRupiah(totals.revenueAmount)}</strong>
+        <small>Akumulasi 12 bulan</small>
+      </div>
+      <div class="statistics-annual-item negative">
+        <span>Pengeluaran</span>
+        <strong>${statisticsCompactRupiah(totals.expenseAmount)}</strong>
+        <small>Akumulasi 12 bulan</small>
+      </div>
+      <div class="statistics-annual-item ${statisticsNetTone(totals.profitAmount)}">
+        <span>Laba Bersih</span>
+        <strong>${statisticsCompactRupiah(totals.profitAmount)}</strong>
+        <small>Pendapatan dikurangi pengeluaran</small>
+      </div>
     </div>
   `;
 }
@@ -3447,7 +3475,6 @@ async function renderReportsStatistics() {
   const period = state.reportStatisticsPeriod || state.period || todayInput().slice(0, 7);
   const payload = await api(`/api/reports/statistics?${queryString({ period })}`);
   const summary = payload.summary || {};
-  const rows = Array.isArray(payload.dailyRows) ? payload.dailyRows : [];
   const monthlyRows = Array.isArray(payload.monthlyRows) ? payload.monthlyRows : [];
   state.reportStatisticsPeriod = payload.period || period;
   state.period = state.reportStatisticsPeriod;
@@ -3491,10 +3518,10 @@ async function renderReportsStatistics() {
 
       <section class="section">
         <div class="section-head">
-          <h2>Rincian Harian</h2>
-          <span>${displayNumber(rows.length)} hari</span>
+          <h2>Ringkasan 12 Bulan</h2>
+          <span>${escapeHtml(`${periodShortLabel(firstMonth)} - ${periodShortLabel(lastMonth)}`)}</span>
         </div>
-        ${statisticsDailyRowsTable(rows)}
+        ${statisticsAnnualSummaryMarkup(monthlyRows)}
       </section>
     </div>
   `;
@@ -7122,17 +7149,11 @@ function radiusNasIpForRow(row = {}, nasOptions = []) {
   return match ? match.ip : '';
 }
 
-function generatedMemberCode() {
-  const random = Math.floor(Math.random() * 1_000_000_000);
-  return String(random).padStart(9, '0');
-}
-
 function radiusMemberFieldsMarkup() {
-  const memberCode = generatedMemberCode();
   return `
     <section class="form-grid radius-wizard-panel compact-wizard-panel" id="radiusMemberFields" data-radius-wizard-panel="member" data-member-wizard-fields hidden>
       <div class="field full radius-wizard-title"><strong>Member</strong><span>Identitas, kontak, alamat, lokasi, dan dokumentasi pelanggan.</span></div>
-      <input type="hidden" name="memberCode" value="${escapeHtml(memberCode)}" data-member-field disabled>
+      <input type="hidden" name="memberCode" value="" data-member-field disabled>
       <label class="field">
         <span>Nama Member</span>
         <input name="memberName" data-member-field autocomplete="off" disabled>
@@ -7758,7 +7779,6 @@ function bindRadiusMemberFields(options = {}) {
   const memberFields = [...modalBody.querySelectorAll('[data-member-field]')];
   const usernameInput = modalBody.querySelector('input[name="username"]');
   const nameInput = modalBody.querySelector('[name="memberName"]');
-  const codeInput = modalBody.querySelector('[name="memberCode"]');
   const priceInput = modalBody.querySelector('[name="memberPrice"]');
   const paymentTypeSelect = modalBody.querySelector('[name="memberPaymentType"]');
   const billingPeriodSelect = modalBody.querySelector('#radiusMemberBillingPeriod');
@@ -7837,10 +7857,6 @@ function bindRadiusMemberFields(options = {}) {
   };
   const fillDefaults = () => {
     const username = usernameInput?.value.trim() || '';
-    if (codeInput && !codeInput.value) {
-      codeInput.value = generatedMemberCode();
-      codeInput.dataset.autoFilled = '1';
-    }
     if (nameInput && !nameInput.value) {
       nameInput.value = username;
       nameInput.dataset.autoFilled = '1';
@@ -7872,16 +7888,11 @@ function bindRadiusMemberFields(options = {}) {
   checkbox.addEventListener('change', sync);
   usernameInput?.addEventListener('input', () => {
     if (!checkbox.checked) return;
-    if (codeInput && (!codeInput.value || codeInput.dataset.autoFilled === '1')) {
-      codeInput.value = codeInput.value || generatedMemberCode();
-      codeInput.dataset.autoFilled = '1';
-    }
     if (nameInput && (!nameInput.value || nameInput.dataset.autoFilled === '1')) {
       nameInput.value = usernameInput.value.trim();
       nameInput.dataset.autoFilled = '1';
     }
   });
-  codeInput?.addEventListener('input', () => { codeInput.dataset.autoFilled = '0'; });
   nameInput?.addEventListener('input', () => { nameInput.dataset.autoFilled = '0'; });
   paymentTypeSelect?.addEventListener('change', syncBillingPeriod);
   profileSelect?.addEventListener('change', () => {

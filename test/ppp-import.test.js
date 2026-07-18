@@ -99,7 +99,7 @@ test('imports Radboox PPP-DHCP XLSX header and active date', async () => {
   assert.equal(data.customers[0].billingPeriod, 'fixed');
   assert.equal(data.customers[0].firstInvoiceStatus, 'paid');
   assert.equal(data.customers[0].ppn, '11');
-  assert.match(data.customers[0].code, /^\d{9}$/);
+  assert.match(data.customers[0].code, /^22\d{9}$/);
   assert.notEqual(data.customers[0].code, 'bejo@kampung.net');
   assert.equal(data.customers[0].countsAsPsb, false);
   assert.equal(data.customers[0].recordOrigin, 'import');

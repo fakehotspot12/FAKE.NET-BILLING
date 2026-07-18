@@ -7,6 +7,24 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.1.2] - 2026-07-18
+
+### Changed
+
+- Member ID baru memakai prefix `22` diikuti 9 digit numerik unik, contohnya `22096501095`.
+- Pembuatan Member ID dipindahkan dari browser ke server agar tidak bergantung pada random client dan mencegah benturan ID.
+- Tabel `Rincian Harian` pada Laporan Statistik diganti panel ringkas 12 bulan berisi pelanggan aktif, pertumbuhan, voucher, pendapatan, pengeluaran, dan laba bersih.
+
+### Fixed
+
+- Member ID lama buatan billing yang masih 9 digit otomatis dimigrasikan ke format baru tanpa mengubah primary key internal pelanggan, invoice, atau transaksi.
+- Salinan Member ID pada data RADIUS, invoice, pembayaran, pesan WA, dan catatan terkait ikut diperbarui secara idempotent sehingga relasi tetap utuh.
+
+### Notes
+
+- Member ID hasil import yang sudah memakai format `22xxxxxxxxx` tetap dipertahankan.
+- Migrasi hanya menambah prefix pada ID lama yang tepat 9 digit; Member ID yang sudah memakai format baru tidak berubah.
+
 ## [1.1.1] - 2026-07-18
 
 ### Fixed
@@ -52,7 +70,7 @@ Format versi memakai pola `major.minor.patch`:
 
 ### Fixed
 
-- Pembayaran Radboox hasil migrasi dengan tambahan fee tetap terbaca sebagai Online dan memakai nominal transaksi aktual.
+- Pembayaran hasil migrasi sistem lama dengan tambahan fee tetap terbaca sebagai Online dan memakai nominal transaksi aktual.
 - Pembagian gerai Tripay mempertahankan total fee pelanggan tanpa menghitung kembali biaya Rp3.000 yang dibayar di kasir.
 - Pemilihan QRIS voucher Tripay menggunakan nominal pokok dan fee yang benar saat membaca channel tersedia.
 - Radius Connector menutup session lama yang benar-benar tergantikan oleh session baru, sehingga duplicate session tidak terus membanjiri monitoring.
@@ -411,7 +429,7 @@ Format versi memakai pola `major.minor.patch`:
 
 ### Changed
 
-- Periode billing member sekarang mengikuti tipe pembayaran seperti Radboox: `Postpaid` hanya `Fixed Date/Billing Cycle`, sedangkan `Prepaid` hanya `Fixed Date/Renewal`.
+- Periode billing member mengikuti tipe pembayaran: `Postpaid` hanya `Fixed Date/Billing Cycle`, sedangkan `Prepaid` hanya `Fixed Date/Renewal`.
 - `Postpaid + Billing Cycle` memakai `Due date postpaid` dari Billing Setting sebagai tanggal jatuh tempo global.
 
 ### Fixed

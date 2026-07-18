@@ -2971,10 +2971,10 @@ function generateMemberCode(data = {}) {
     customer.userId
   ]).map((value) => String(value || '').trim()).filter(Boolean));
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const code = String(crypto.randomInt(0, 1_000_000_000)).padStart(9, '0');
+    const code = `22${String(crypto.randomInt(0, 1_000_000_000)).padStart(9, '0')}`;
     if (!used.has(code)) return code;
   }
-  return String(Date.now()).slice(-9).padStart(9, '0');
+  return `22${String(Date.now()).slice(-9).padStart(9, '0')}`;
 }
 
 function radiusProfileMemberPrice(profile = {}, payload = {}, fallback = 0) {
@@ -3067,7 +3067,10 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
   if (!memberName) {
     throw new Error('Nama Member wajib diisi');
   }
-  const memberCode = String(payload.memberCode || payload.accountId || generateMemberCode(data)).trim();
+  const requestedMemberCode = String(payload.memberCode || payload.accountId || '').trim();
+  const preserveImportedMemberCode = String(payload.memberRecordOrigin || payload.recordOrigin || '').trim().toLowerCase() === 'import'
+    && /^22\d{9}$/.test(requestedMemberCode);
+  const memberCode = preserveImportedMemberCode ? requestedMemberCode : generateMemberCode(data);
   const latitude = String(payload.memberLatitude || payload.latitude || '').trim();
   const longitude = String(payload.memberLongitude || payload.longitude || '').trim();
   const locationAccuracy = String(payload.memberLocationAccuracy || payload.locationAccuracy || '').trim();

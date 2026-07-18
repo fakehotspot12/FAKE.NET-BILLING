@@ -1622,6 +1622,58 @@ input[type="checkbox"] {
   gap: 12px;
 }
 
+.statistics-annual-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.statistics-annual-item {
+  min-width: 0;
+  padding: 14px;
+  background: var(--surface);
+}
+
+.statistics-annual-item span,
+.statistics-annual-item small {
+  display: block;
+  color: var(--muted);
+}
+
+.statistics-annual-item span {
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.statistics-annual-item strong {
+  display: block;
+  margin: 5px 0 3px;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.statistics-annual-item small {
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.statistics-annual-item.positive strong {
+  color: var(--success);
+}
+
+.statistics-annual-item.negative strong {
+  color: var(--danger);
+}
+
+.statistics-annual-item.voucher strong {
+  color: var(--warning);
+}
+
 .statistics-chart-card {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -6750,6 +6802,10 @@ dialog::backdrop {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .statistics-annual-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .statistics-chart-head {
     display: grid;
   }
@@ -6834,6 +6890,10 @@ dialog::backdrop {
 
   .statistics-chart-grid {
     grid-template-columns: 1fr;
+  }
+
+  .statistics-annual-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .statistics-svg-wrap svg {

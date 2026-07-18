@@ -176,7 +176,7 @@ Monitoring member PPP-DHCP memuat status pelanggan, status pembayaran, NAS, kont
 
 ## Metode Pembayaran Member
 
-Billing member mengikuti pola umum ISP seperti Radboox, yaitu kombinasi `Payment Type` dan `Billing Period`. Pilihan periode billing dibatasi berdasarkan tipe pembayaran agar skema tagihan tidak rancu.
+Billing member memakai kombinasi `Payment Type` dan `Billing Period`. Pilihan periode billing dibatasi berdasarkan tipe pembayaran agar skema tagihan tidak rancu.
 
 | Payment Type | Billing Period | Sumber jatuh tempo | Cara kerja invoice | Cocok untuk |
 | --- | --- | --- | --- | --- |

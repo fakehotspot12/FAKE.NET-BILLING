@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 const fs = require('fs/promises');
 const path = require('path');
@@ -418,6 +419,92 @@ function normalizeWaGatewayTemplates(templates = {}) {
   );
 }
 
+const MEMBER_CODE_REFERENCE_FIELDS = new Set([
+  'code',
+  'accountId',
+  'account_id',
+  'memberCode',
+  'member_code',
+  'memberId',
+  'member_id',
+  'customerCode',
+  'customer_code',
+  'uid',
+  'userId',
+  'user_id'
+]);
+
+const MEMBER_CODE_REFERENCE_COLLECTIONS = [
+  'customers',
+  'radiusUsers',
+  'radiusRemovedRecords',
+  'radiusVoucherRecords',
+  'invoices',
+  'payments',
+  'dailyReports',
+  'monthlyEarnings',
+  'waMessages',
+  'paymentGatewayTransactions',
+  'activity'
+];
+
+function uniqueStandardMemberCode(usedCodes = new Set(), preferred = '') {
+  const preferredCode = String(preferred || '').trim();
+  if (/^22\d{9}$/.test(preferredCode) && !usedCodes.has(preferredCode)) return preferredCode;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const code = `22${String(crypto.randomInt(0, 1_000_000_000)).padStart(9, '0')}`;
+    if (!usedCodes.has(code)) return code;
+  }
+  return `22${String(Date.now()).slice(-9).padStart(9, '0')}`;
+}
+
+function replaceMemberCodeReferences(value, replacements = new Map()) {
+  if (Array.isArray(value)) {
+    value.forEach((item) => replaceMemberCodeReferences(item, replacements));
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, current] of Object.entries(value)) {
+    if (MEMBER_CODE_REFERENCE_FIELDS.has(key)) {
+      const replacement = replacements.get(String(current || '').trim());
+      if (replacement) value[key] = replacement;
+    }
+    if (current && typeof current === 'object') {
+      replaceMemberCodeReferences(current, replacements);
+    }
+  }
+}
+
+function migrateLegacyMemberCodes(data = {}) {
+  const customers = Array.isArray(data.customers) ? data.customers : [];
+  const usedCodes = new Set(customers.flatMap((customer) => [
+    customer.code,
+    customer.accountId,
+    customer.memberCode,
+    customer.userId
+  ]).map((value) => String(value || '').trim()).filter(Boolean));
+  const replacements = new Map();
+
+  for (const customer of customers) {
+    const current = [customer.code, customer.accountId, customer.memberCode, customer.userId]
+      .map((value) => String(value || '').trim())
+      .find((value) => /^\d{9}$/.test(value));
+    if (!current || replacements.has(current)) continue;
+    const replacement = uniqueStandardMemberCode(usedCodes, `22${current}`);
+    replacements.set(current, replacement);
+    usedCodes.add(replacement);
+  }
+  if (!replacements.size) return data;
+
+  for (const collection of MEMBER_CODE_REFERENCE_COLLECTIONS) {
+    replaceMemberCodeReferences(data[collection], replacements);
+  }
+  data.radiusSyncState = data.radiusSyncState && typeof data.radiusSyncState === 'object' ? data.radiusSyncState : {};
+  data.radiusSyncState.memberIdPatternMigratedAt = data.radiusSyncState.memberIdPatternMigratedAt || new Date().toISOString();
+  data.radiusSyncState.memberIdPatternMigratedCount = replacements.size;
+  return data;
+}
+
 function ensureShape(data) {
   const base = createDefaultStore();
   const safe = data && typeof data === 'object' ? data : {};
@@ -568,7 +655,7 @@ function ensureShape(data) {
     users: Array.isArray(safe.users) ? safe.users : [],
     activity: Array.isArray(safe.activity) ? safe.activity : []
   };
-  return syncLinkedRadiusMemberProfiles(cancelInvalidPaidInitialProrataInvoices(restoreTerminatedPendingInvoices(shaped)));
+  return syncLinkedRadiusMemberProfiles(cancelInvalidPaidInitialProrataInvoices(restoreTerminatedPendingInvoices(migrateLegacyMemberCodes(shaped))));
 }
 
 function postgresEnabled() {
