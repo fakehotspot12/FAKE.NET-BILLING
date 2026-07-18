@@ -7,6 +7,22 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.4.3] - 2026-07-19
+
+### Added
+
+- Status pesan Whatsapp menerima ACK resmi WAHA: satu centang saat terkirim, dua centang abu-abu saat diterima, dan dua centang biru saat dibaca.
+- Installer mengaktifkan webhook ACK internal yang dilindungi HMAC dan tetap tersedia setelah update aplikasi.
+
+### Fixed
+
+- Notifikasi invoice, reminder, isolir, dan aktivasi otomatis diproses sebagai pesan transaksional agar tidak tertunda seperti broadcast.
+- Pesan pembayaran menampilkan kanal pembayaran sebenarnya, misalnya QRIS, Indomaret, atau BRI Virtual Account.
+
+### Changed
+
+- Instalasi baru mengaktifkan Whatsapp Gateway dan jendela pengiriman 24 jam secara default; setelah scan QR, notifikasi dapat langsung berjalan tanpa mengatur jam kirim.
+
 ## [1.4.2] - 2026-07-18
 
 ### Fixed

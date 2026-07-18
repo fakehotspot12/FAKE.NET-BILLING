@@ -216,8 +216,13 @@ replace_or_append_env() {
   fi
 }
 
+append_env_if_missing() {
+  local file="$1" key="$2" value="$3"
+  grep -q "^${key}=" "$file" || printf '%s=%s\n' "$key" "$value" >> "$file"
+}
+
 install_env() {
-  local app_db_password radius_db_password waha_api_key waha_password
+  local app_db_password radius_db_password waha_api_key waha_password waha_webhook_secret
   if [ ! -f /etc/fakenet-billing.env ]; then
     cp "$APP_DIR/deploy/fakenet-billing.env" /etc/fakenet-billing.env
   fi
@@ -244,12 +249,22 @@ install_env() {
   fi
   waha_api_key="$(random_hex 32)"
   waha_password="$(random_hex 24)"
+  waha_webhook_secret="$(random_hex 32)"
   if grep -q 'CHANGE_ME_LONG_RANDOM_API_KEY' /etc/fakenet-billing-waha.env; then
     sed -i "s/CHANGE_ME_LONG_RANDOM_API_KEY/$waha_api_key/g" /etc/fakenet-billing-waha.env
   fi
   if grep -q 'CHANGE_ME_LONG_RANDOM_PASSWORD' /etc/fakenet-billing-waha.env; then
     sed -i "s/CHANGE_ME_LONG_RANDOM_PASSWORD/$waha_password/g" /etc/fakenet-billing-waha.env
   fi
+  if grep -q 'CHANGE_ME_LONG_RANDOM_WEBHOOK_HMAC' /etc/fakenet-billing-waha.env; then
+    sed -i "s/CHANGE_ME_LONG_RANDOM_WEBHOOK_HMAC/$waha_webhook_secret/g" /etc/fakenet-billing-waha.env
+  fi
+  append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_URL http://host.docker.internal:8891/api/webhooks/waha
+  append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_EVENTS message.ack
+  append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_HMAC_KEY "$waha_webhook_secret"
+  append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_RETRIES_POLICY exponential
+  append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_RETRIES_DELAY_SECONDS 2
+  append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_RETRIES_ATTEMPTS 5
 }
 
 load_billing_env() {
@@ -607,7 +622,7 @@ supervisor=supervise-daemon
 command="/usr/bin/docker"
 [ -f /etc/fakenet-billing-waha.env ] && . /etc/fakenet-billing-waha.env
 WAHA_PORT="\${WAHA_PORT:-8895}"
-command_args="run --name fakenet-billing-waha --rm --shm-size=1g --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:\${WAHA_PORT}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha"
+command_args="run --name fakenet-billing-waha --rm --shm-size=1g --add-host=host.docker.internal:host-gateway --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:\${WAHA_PORT}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha"
 pidfile="/run/fakenet-billing-waha.pid"
 output_log="/var/log/fakenet-billing-waha.log"
 error_log="/var/log/fakenet-billing-waha.err"
@@ -653,6 +668,7 @@ install_openrc() {
 
 repair_install() {
   mkdir -p /var/log/fakenet-billing
+  install_env
 
   if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
     install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack

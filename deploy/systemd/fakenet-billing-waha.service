@@ -9,7 +9,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=-/etc/fakenet-billing-waha.env
 ExecStartPre=-/usr/bin/docker rm -f fakenet-billing-waha
-ExecStart=/usr/bin/docker run --name fakenet-billing-waha --rm --shm-size=1g --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:${WAHA_PORT}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha
+ExecStart=/usr/bin/docker run --name fakenet-billing-waha --rm --shm-size=1g --add-host=host.docker.internal:host-gateway --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:${WAHA_PORT}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha
 ExecStop=/usr/bin/docker stop fakenet-billing-waha
 Restart=always
 RestartSec=10

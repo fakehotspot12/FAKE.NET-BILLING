@@ -4156,8 +4156,8 @@ dialog:has(.changelog-preview) {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: rgba(43, 139, 217, 0.12);
-  color: var(--primary);
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
 }
 
 .wa-status-icon::before,
@@ -4186,13 +4186,18 @@ dialog:has(.changelog-preview) {
 }
 
 .wa-status-icon.read {
-  color: #0b6fae;
-  background: rgba(43, 139, 217, 0.16);
+  color: #1689d5;
+  background: rgba(22, 137, 213, 0.14);
 }
 
 [data-theme="dark"] .wa-status-icon {
-  color: #bfe5ff;
-  background: rgba(98, 182, 247, 0.15);
+  color: #a8b3c2;
+  background: rgba(148, 163, 184, 0.14);
+}
+
+[data-theme="dark"] .wa-status-icon.read {
+  color: #54b9ff;
+  background: rgba(84, 185, 255, 0.16);
 }
 
 @keyframes soft-pulse {

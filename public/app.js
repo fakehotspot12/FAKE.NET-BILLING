@@ -12822,14 +12822,17 @@ function waMessageSubject(message = {}) {
 function waMessageStatusLabel(status = '') {
   const normalized = String(status || '').toLowerCase();
   if (['queued', 'failed', 'draft', 'pending'].includes(normalized)) return 'Pending';
-  if (normalized === 'sent') return 'Sent';
+  if (normalized === 'sent') return 'Terkirim';
+  if (normalized === 'delivered') return 'Diterima';
+  if (['read', 'seen'].includes(normalized)) return 'Dibaca';
   return status || '-';
 }
 
 function waMessageStatusIcon(status = '') {
   const normalized = String(status || '').toLowerCase();
   if (['read', 'seen'].includes(normalized)) return '<span class="wa-status-icon read" title="Dibaca" aria-label="Dibaca"></span>';
-  if (['sent', 'delivered'].includes(normalized)) return '<span class="wa-status-icon sent" title="Terkirim" aria-label="Terkirim"></span>';
+  if (normalized === 'delivered') return '<span class="wa-status-icon delivered" title="Diterima" aria-label="Diterima"></span>';
+  if (normalized === 'sent') return '<span class="wa-status-icon sent" title="Terkirim" aria-label="Terkirim"></span>';
   return '<span class="badge pending">Pending</span>';
 }
 
@@ -13379,11 +13382,11 @@ async function renderWaGateway() {
           </label>
           <label class="field">
             <span>Jam kirim mulai</span>
-            <input name="quietStart" type="time" value="${escapeHtml(settings.quietStart || '08:00')}">
+            <input name="quietStart" type="time" value="${escapeHtml(settings.quietStart || '00:00')}">
           </label>
           <label class="field">
             <span>Jam kirim akhir</span>
-            <input name="quietEnd" type="time" value="${escapeHtml(settings.quietEnd || '20:00')}">
+            <input name="quietEnd" type="time" value="${escapeHtml(settings.quietEnd || '23:59')}">
           </label>
           <div class="field full">
             <span>Template pesan</span>

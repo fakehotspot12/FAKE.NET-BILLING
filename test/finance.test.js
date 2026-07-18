@@ -1572,6 +1572,7 @@ test('standalone billing automation queues payment reminder once before due date
   assert.equal(first.reminderInvoices.length, 1);
   assert.equal(second.reminderInvoices.length, 0);
   assert.equal(data.waMessages.filter((message) => message.type === 'paymentReminder').length, 1);
+  assert.equal(data.waMessages.find((message) => message.type === 'paymentReminder').deliveryMode, 'transactional');
   assert.equal(data.invoices[0].paymentReminderDueDate, dueDate);
 });
 
@@ -5385,7 +5386,7 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   assert.equal(first.reference, '000321');
   assert.equal(first.activatedUser.username, 'pppoe-gateway');
   assert.equal(data.invoices[0].status, 'paid');
-  assert.equal(data.invoices[0].paymentMethod, 'BRIVA');
+  assert.equal(data.invoices[0].paymentMethod, 'BRI Virtual Account');
   assert.equal(data.customers[0].status, 'active');
   assert.equal(data.radiusUsers[0].status, 'active');
   assert.equal(data.payments.length, 1);
@@ -5400,6 +5401,7 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   assert.equal(data.paymentGatewayTransactions[0].externalId, 'T-GATEWAY-1');
   assert.equal(data.paymentGatewayTransactions[0].amount, 102500);
   assert.equal(data.paymentGatewayTransactions[0].fee, 2500);
+  assert.equal(data.waMessages.find((message) => message.type === 'paymentPaid').text.includes('Payment Method: BRI Virtual Account'), true);
   const publicInvoice = serverInternals.publicPaymentGatewayInvoicePayload(data, data.invoices[0]);
   assert.equal(publicInvoice.gatewayAmount, 102500);
   assert.equal(publicInvoice.adminFee, 2500);

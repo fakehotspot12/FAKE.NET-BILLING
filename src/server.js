@@ -71,7 +71,7 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-18');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-19');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
@@ -5011,8 +5011,8 @@ function sanitizeWaGatewaySettings(payload = {}, current = {}) {
     sender: provider === 'waha' ? 'default' : String(payload.sender || current.sender || '').trim(),
     minDelaySeconds: clampInteger(payload.minDelaySeconds, 15, 3600, current.minDelaySeconds || 45),
     maxPerBatch: clampInteger(payload.maxPerBatch, 1, 200, current.maxPerBatch || 20),
-    quietStart: sanitizeTime(payload.quietStart, current.quietStart || '08:00'),
-    quietEnd: sanitizeTime(payload.quietEnd, current.quietEnd || '20:00'),
+    quietStart: sanitizeTime(payload.quietStart, current.quietStart || '00:00'),
+    quietEnd: sanitizeTime(payload.quietEnd, current.quietEnd || '23:59'),
     templates: {
       ...templateBase,
       invoiceIssued: templateText('invoiceIssued'),
@@ -5551,7 +5551,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       const reminderStart = addDaysIso(invoice.dueDate, -reminderDays);
       if (today < reminderStart || today > invoice.dueDate) continue;
       if (invoice.paymentReminderDueDate === invoice.dueDate && invoice.paymentReminderSentAt) continue;
-      const queued = queueInvoiceWaMessage(data, invoice, 'paymentReminder', actor, { bulk: true });
+      const queued = queueInvoiceWaMessage(data, invoice, 'paymentReminder', actor);
       if (!queued) continue;
       invoice.paymentReminderDueDate = invoice.dueDate;
       invoice.paymentReminderSentAt = new Date().toISOString();
@@ -5603,7 +5603,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
 
   if (waAutomationEnabled) {
     for (const invoice of created) {
-      queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor, { bulk: true });
+      queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
     }
   }
   if (waAutomationEnabled) {
@@ -5619,7 +5619,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
           && invoiceUncoveredPeriods(item, paidCoverage).length;
       })
         || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: unpaidByCustomer.get(customer.id)?.amount || 0, dueDate: unpaidByCustomer.get(customer.id)?.dueDate || '', period };
-      queueInvoiceWaMessage(data, invoice, 'accountSuspend', actor, { bulk: true });
+      queueInvoiceWaMessage(data, invoice, 'accountSuspend', actor);
     }
   }
   if (waAutomationEnabled) {
@@ -5631,7 +5631,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       }) || {};
       const invoice = (data.invoices || []).find((item) => item.customerId === customer.id && invoiceRuntimeStatus(item, today) === 'paid')
         || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: customer.price || 0, dueDate: customer.dueDate || '', period };
-      queueInvoiceWaMessage(data, invoice, 'accountActive', actor, { bulk: true });
+      queueInvoiceWaMessage(data, invoice, 'accountActive', actor);
     }
   }
 
@@ -7359,6 +7359,36 @@ function radiusUserForInvoice(data = {}, invoice = {}, customer = {}) {
   }) || {};
 }
 
+function paymentMethodDisplayLabel(value = '', provider = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '-';
+  const code = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const labels = {
+    QRIS: 'QRIS',
+    QRIS2: 'QRIS',
+    BRIVA: 'BRI Virtual Account',
+    BCAVA: 'BCA Virtual Account',
+    BNIVA: 'BNI Virtual Account',
+    MANDIRIVA: 'Mandiri Virtual Account',
+    PERMATAVA: 'Permata Virtual Account',
+    CIMBVA: 'CIMB Niaga Virtual Account',
+    SAMPOERNAVA: 'Bank Sampoerna Virtual Account',
+    ALFAMART: 'Alfamart',
+    ALFAMIDI: 'Alfamidi',
+    INDOMARET: 'Indomaret',
+    OVO: 'OVO',
+    DANA: 'DANA',
+    SHOPEEPAY: 'ShopeePay',
+    LINKAJA: 'LinkAja'
+  };
+  if (labels[code]) return labels[code];
+  if (code === 'ONLINE' || code === 'PAYMENTGATEWAY') return code === 'ONLINE' ? 'Online' : 'Payment Gateway';
+  if (provider && code === String(provider).toUpperCase().replace(/[^A-Z0-9]/g, '')) {
+    return raw;
+  }
+  return raw;
+}
+
 function invoiceWaTemplateValues(data = {}, invoice = {}) {
   const customer = customerForInvoice(data, invoice);
   const radiusUser = radiusUserForInvoice(data, invoice, customer);
@@ -7382,7 +7412,10 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
   const latestPayment = activePayments(data)
     .filter((payment) => payment.invoiceId === invoice.id)
     .sort((a, b) => String(b.createdAt || b.paidAt || '').localeCompare(String(a.createdAt || a.paidAt || '')))[0] || {};
-  const paidMethod = invoice.paymentMethod || latestPayment.method || latestPayment.paymentMethod || '-';
+  const paidMethod = paymentMethodDisplayLabel(
+    latestPayment.method || latestPayment.paymentMethod || invoice.paymentMethod || '-',
+    latestPayment.provider || invoice.paymentProvider || ''
+  );
   const businessName = data.settings?.businessName || data.settings?.receiptBusinessCode || 'ISP Billing';
   const gatewayLink = invoicePaymentGatewayLink(data, invoice);
   const gatewayBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, totalNumber, 'monthly');
@@ -7566,8 +7599,8 @@ function queueBroadcastMessages(data = {}, payload = {}, actor = {}) {
 }
 
 function withinWaSendWindow(settings = {}, now = new Date()) {
-  const start = sanitizeTime(settings.quietStart, '08:00');
-  const end = sanitizeTime(settings.quietEnd, '20:00');
+  const start = sanitizeTime(settings.quietStart, '00:00');
+  const end = sanitizeTime(settings.quietEnd, '23:59');
   const current = localTimeText(now);
   if (start === end) return true;
   if (start < end) return current >= start && current <= end;
@@ -7603,6 +7636,105 @@ function wahaInternalApiKey(settings = {}) {
     || readEnvFileValue(path.join(__dirname, '..', 'deploy', 'fakenet-billing-waha.env'), 'WAHA_API_KEY')
     || '';
   return wahaApiKeyCache;
+}
+
+function wahaWebhookHmacKey() {
+  return process.env.WHATSAPP_HOOK_HMAC_KEY
+    || readEnvFileValue(WAHA_ENV_FILE, 'WHATSAPP_HOOK_HMAC_KEY')
+    || '';
+}
+
+function verifyWahaWebhookSignature(headers = {}, raw = '', secret = wahaWebhookHmacKey()) {
+  if (!secret) throw new Error('HMAC webhook WAHA belum dikonfigurasi');
+  const algorithm = String(headers['x-webhook-hmac-algorithm'] || 'sha512').trim().toLowerCase();
+  if (algorithm !== 'sha512') throw new Error('Algoritma HMAC webhook WAHA tidak didukung');
+  const signature = String(headers['x-webhook-hmac'] || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{128}$/.test(signature)) throw new Error('Signature webhook WAHA tidak valid');
+  const expected = crypto.createHmac('sha512', secret).update(String(raw || ''), 'utf8').digest('hex');
+  const actualBuffer = Buffer.from(signature, 'hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) {
+    throw new Error('Signature webhook WAHA tidak cocok');
+  }
+  return true;
+}
+
+function wahaProviderMessageId(payload = {}) {
+  if (typeof payload === 'string') return payload.trim();
+  if (!payload || typeof payload !== 'object') return '';
+  const direct = [payload.providerMessageId, payload.messageId, payload._serialized]
+    .find((value) => typeof value === 'string' && value.trim());
+  if (direct) return direct.trim();
+  const idValue = payload.id;
+  if (typeof idValue === 'string' && idValue.trim()) return idValue.trim();
+  const key = payload.key || (idValue && typeof idValue === 'object' ? idValue : null) || payload._data?.key || payload._data?.id;
+  if (!key) return '';
+  if (typeof key === 'string') return key.trim();
+  if (typeof key._serialized === 'string' && key._serialized.trim()) return key._serialized.trim();
+  const id = String(key.id || '').trim();
+  const remoteJid = String(key.remoteJid || key.remote || key.chatId || '').trim();
+  if (id && remoteJid) return `${key.fromMe === false ? 'false' : 'true'}_${remoteJid}_${id}`;
+  return id;
+}
+
+function wahaMessageIdsEqual(left = '', right = '') {
+  const first = String(left || '').trim();
+  const second = String(right || '').trim();
+  if (!first || !second) return false;
+  if (first === second) return true;
+  const firstTail = first.split('_').pop() || '';
+  const secondTail = second.split('_').pop() || '';
+  return firstTail.length >= 12 && firstTail === secondTail;
+}
+
+function wahaAckStatus(payload = {}) {
+  const ack = Number(payload.ack);
+  const name = String(payload.ackName || '').trim().toUpperCase();
+  if (ack >= 3 || ['READ', 'PLAYED'].includes(name)) return 'read';
+  if (ack === 2 || name === 'DEVICE') return 'delivered';
+  if (ack === 1 || name === 'SERVER') return 'sent';
+  if (ack < 0 || name === 'ERROR') return 'failed';
+  return '';
+}
+
+function applyWahaAckEvent(data = {}, event = {}) {
+  if (String(event.event || '').trim().toLowerCase() !== 'message.ack') {
+    return { matched: false, ignored: true, reason: 'unsupported-event' };
+  }
+  const expectedSession = wahaSessionName(data.settings?.waGateway || {});
+  if (event.session && String(event.session) !== expectedSession) {
+    return { matched: false, ignored: true, reason: 'session-mismatch' };
+  }
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : event;
+  const providerMessageId = wahaProviderMessageId(payload);
+  const nextStatus = wahaAckStatus(payload);
+  if (!providerMessageId || !nextStatus) {
+    return { matched: false, ignored: true, reason: 'incomplete-ack' };
+  }
+  const message = (data.waMessages || []).find((item) => wahaMessageIdsEqual(item.providerMessageId, providerMessageId));
+  if (!message) return { matched: false, providerMessageId, status: nextStatus };
+
+  const ranks = { draft: 0, queued: 0, failed: 0, sent: 1, delivered: 2, read: 3, seen: 3 };
+  const currentRank = ranks[String(message.status || '').toLowerCase()] || 0;
+  const nextRank = ranks[nextStatus] || 0;
+  if (nextStatus !== 'failed' && nextRank < currentRank) {
+    return { matched: true, unchanged: true, messageId: message.id, status: message.status };
+  }
+  if (nextStatus === 'failed' && currentRank >= ranks.delivered) {
+    return { matched: true, unchanged: true, messageId: message.id, status: message.status };
+  }
+
+  const acknowledgedAt = new Date().toISOString();
+  message.status = nextStatus;
+  message.ack = Number.isFinite(Number(payload.ack)) ? Number(payload.ack) : message.ack;
+  message.ackName = String(payload.ackName || nextStatus).toUpperCase();
+  message.acknowledgedAt = acknowledgedAt;
+  message.updatedAt = acknowledgedAt;
+  if (nextRank >= ranks.sent) message.sentAt = message.sentAt || acknowledgedAt;
+  if (nextRank >= ranks.delivered) message.deliveredAt = message.deliveredAt || acknowledgedAt;
+  if (nextRank >= ranks.read) message.readAt = message.readAt || acknowledgedAt;
+  if (nextStatus === 'failed') message.lastError = 'WAHA menerima ACK error dari WhatsApp';
+  return { matched: true, messageId: message.id, providerMessageId, status: nextStatus };
 }
 
 function wahaHeaders(settings = {}, extra = {}) {
@@ -7852,7 +7984,7 @@ async function deliverWaMessage(settings = {}, message = {}) {
     })
   });
   return {
-    providerMessageId: payload.id || payload.messageId || payload._data?.id || '',
+    providerMessageId: wahaProviderMessageId(payload),
     response: payload
   };
 }
@@ -8787,17 +8919,20 @@ function paymentGatewayPayloadFee(payload = {}) {
 }
 
 function paymentGatewayPayloadMethod(payload = {}, fallback = 'Payment Gateway') {
-  return String(
-    payload.payment_method
+  return paymentMethodDisplayLabel(
+    payload.payment_name
+      || payload.paymentName
+      || payload.channel_name
+      || payload.channelName
+      || payload.payment_method
       || payload.paymentMethod
       || payload.method
       || payload.payment_channel
       || payload.paymentChannel
-      || payload.payment_name
-      || payload.paymentName
       || payload.channel
-      || fallback
-  ).trim() || fallback;
+      || fallback,
+    payload.provider || ''
+  );
 }
 
 function paymentGatewayPayloadPaidAt(payload = {}) {
@@ -9567,6 +9702,29 @@ async function createPaymentGatewayCheckout(data = {}, params = {}) {
     return createTripayCheckout(data, params);
   }
   throw new Error(`Provider ${provider} belum mendukung checkout otomatis`);
+}
+
+function isWahaWebhookPath(pathname = '') {
+  return String(pathname || '').replace(/\/+$/, '') === '/api/webhooks/waha';
+}
+
+async function handleWahaWebhook(req, res) {
+  if ((req.method || 'GET') !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'Webhook WAHA hanya menerima POST' });
+    return;
+  }
+  try {
+    const { payload, raw } = await readBodyWithRaw(req);
+    verifyWahaWebhookSignature(req.headers || {}, raw);
+    const { result } = await mutate((store) => applyWahaAckEvent(store, payload));
+    sendJson(res, 200, { ok: true, ...result });
+  } catch (error) {
+    const unauthorizedWebhook = /HMAC|Signature/i.test(String(error.message || ''));
+    sendJson(res, unauthorizedWebhook ? 401 : 400, {
+      ok: false,
+      error: error.message || 'Webhook WAHA gagal diproses'
+    });
+  }
 }
 
 async function handlePaymentGatewayWebhook(req, res, url) {
@@ -14391,6 +14549,10 @@ const server = http.createServer(async (req, res) => {
       await handlePaymentGatewayWebhook(req, res, url);
       return;
     }
+    if (isWahaWebhookPath(url.pathname)) {
+      await handleWahaWebhook(req, res);
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       await handleApi(req, res, url);
       return;
@@ -14454,6 +14616,7 @@ module.exports = {
     importPppUsers,
     isPaymentGatewayWebhookPath,
     invoiceWaTemplateValues,
+    paymentMethodDisplayLabel,
     localDailyReport,
     localBillingSite,
     localManualInvoicePreview,
@@ -14478,6 +14641,9 @@ module.exports = {
     requireRadiusUserProfile,
     renderWaTemplate,
     verifyPaymentGatewayCallback,
+    verifyWahaWebhookSignature,
+    wahaProviderMessageId,
+    applyWahaAckEvent,
     filterVoucherReportOrders,
     radiusPayloadLocal,
     radiusTemplateRowsLocal,

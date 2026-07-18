@@ -2,10 +2,20 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 const { messageJobId, redisConnectionOptions } = require('../src/whatsapp-queue');
 const { createDefaultStore } = require('../src/store');
 const { __test: serverInternals } = require('../src/server');
+
+test('new installations enable the local Whatsapp gateway for 24-hour delivery', () => {
+  const data = createDefaultStore();
+  assert.equal(data.settings.waGateway.enabled, true);
+  assert.equal(data.settings.waGateway.provider, 'waha');
+  assert.equal(data.settings.waGateway.sender, 'default');
+  assert.equal(data.settings.waGateway.quietStart, '00:00');
+  assert.equal(data.settings.waGateway.quietEnd, '23:59');
+});
 
 test('BullMQ Whatsapp job ID is deterministic per message revision', () => {
   const first = messageJobId('wa-message-1', 0);
@@ -92,4 +102,51 @@ test('bulk Whatsapp messages retain safe staggered delivery', () => {
   assert.equal(first.deliveryMode, 'bulk');
   assert.equal(second.deliveryMode, 'bulk');
   assert.ok(new Date(second.scheduledAt).getTime() - new Date(first.scheduledAt).getTime() >= 44000);
+});
+
+test('WAHA provider response ID is normalized and ACK advances to read', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.sender = 'default';
+  const providerMessageId = serverInternals.wahaProviderMessageId({
+    key: {
+      remoteJid: '6281234567890@c.us',
+      fromMe: true,
+      id: 'AABBCCDDEEFF00112233445566778899'
+    }
+  });
+  data.waMessages.push({
+    id: 'wa-ack-1',
+    providerMessageId,
+    status: 'sent',
+    sentAt: '2026-07-19T00:00:00.000Z'
+  });
+
+  const result = serverInternals.applyWahaAckEvent(data, {
+    event: 'message.ack',
+    session: 'default',
+    payload: {
+      id: providerMessageId,
+      ack: 3,
+      ackName: 'READ'
+    }
+  });
+
+  assert.equal(result.matched, true);
+  assert.equal(data.waMessages[0].status, 'read');
+  assert.ok(data.waMessages[0].deliveredAt);
+  assert.ok(data.waMessages[0].readAt);
+});
+
+test('WAHA webhook signature only accepts the raw body HMAC', () => {
+  const raw = JSON.stringify({ event: 'message.ack', payload: { id: 'message-1', ack: 2 } });
+  const secret = 'test-webhook-secret';
+  const signature = crypto.createHmac('sha512', secret).update(raw).digest('hex');
+
+  assert.equal(serverInternals.verifyWahaWebhookSignature({
+    'x-webhook-hmac': signature,
+    'x-webhook-hmac-algorithm': 'sha512'
+  }, raw, secret), true);
+  assert.throws(() => serverInternals.verifyWahaWebhookSignature({
+    'x-webhook-hmac': `${signature.slice(0, -1)}0`
+  }, raw, secret), /tidak cocok/);
 });
