@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.4.5] - 2026-07-19
+
+### Fixed
+
+- Nama user topbar tidak lagi memakai ellipsis pada desktop maupun mobile; nama lengkap membungkus di dalam ruang yang tersedia.
+
 ## [1.4.4] - 2026-07-19
 
 ### Fixed

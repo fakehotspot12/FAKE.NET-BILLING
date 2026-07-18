@@ -504,12 +504,12 @@ button {
 
 .user-chip {
   width: auto;
-  max-width: min(320px, 32vw);
+  max-width: min(420px, 40vw);
   min-height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   padding: 7px 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -517,10 +517,12 @@ button {
 }
 
 .user-chip strong {
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 100%;
+  overflow: visible;
+  text-align: center;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
   font-size: 13px;
   line-height: 1.15;
 }
