@@ -104,7 +104,7 @@ class WhatsAppQueue {
 
   async counts() {
     if (!this.queue) return null;
-    const counts = await this.queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed', 'paused');
+    const counts = await this.queue.getJobCounts('waiting', 'prioritized', 'active', 'delayed', 'failed', 'completed', 'paused');
     return {
       backend: 'bullmq',
       available: true,

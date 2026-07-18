@@ -150,3 +150,30 @@ test('WAHA webhook signature only accepts the raw body HMAC', () => {
     'x-webhook-hmac': `${signature.slice(0, -1)}0`
   }, raw, secret), /tidak cocok/);
 });
+
+test('enabling Whatsapp recovers only relevant invoice drafts automatically', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  data.invoices.push(
+    { id: 'inv-draft-pending', status: 'pending', amount: 100000, dueDate: '2099-07-20' },
+    { id: 'inv-draft-paid', status: 'paid', amount: 100000, paidAt: '2026-07-19' }
+  );
+  data.waMessages.push(
+    {
+      id: 'wa-draft-relevant', status: 'draft', type: 'paymentReminder', invoiceId: 'inv-draft-pending',
+      phone: '081234567890', text: 'Tagihan belum dibayar', queueRevision: 0
+    },
+    {
+      id: 'wa-draft-obsolete', status: 'draft', type: 'paymentReminder', invoiceId: 'inv-draft-paid',
+      phone: '081234567891', text: 'Tagihan belum dibayar', queueRevision: 0
+    }
+  );
+
+  const recovered = serverInternals.recoverRelevantWaGatewayDrafts(data);
+
+  assert.deepEqual(recovered.map((message) => message.id), ['wa-draft-relevant']);
+  assert.equal(data.waMessages[0].status, 'queued');
+  assert.equal(data.waMessages[0].deliveryMode, 'transactional');
+  assert.equal(data.waMessages[0].queueRevision, 1);
+  assert.equal(data.waMessages[1].status, 'draft');
+});

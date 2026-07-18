@@ -12821,7 +12821,9 @@ function waMessageSubject(message = {}) {
 
 function waMessageStatusLabel(status = '') {
   const normalized = String(status || '').toLowerCase();
-  if (['queued', 'failed', 'draft', 'pending'].includes(normalized)) return 'Pending';
+  if (normalized === 'queued') return 'Dalam Antrean';
+  if (normalized === 'draft') return 'Draft';
+  if (['failed', 'pending'].includes(normalized)) return 'Pending';
   if (normalized === 'sent') return 'Terkirim';
   if (normalized === 'delivered') return 'Diterima';
   if (['read', 'seen'].includes(normalized)) return 'Dibaca';
@@ -12833,6 +12835,8 @@ function waMessageStatusIcon(status = '') {
   if (['read', 'seen'].includes(normalized)) return '<span class="wa-status-icon read" title="Dibaca" aria-label="Dibaca"></span>';
   if (normalized === 'delivered') return '<span class="wa-status-icon delivered" title="Diterima" aria-label="Diterima"></span>';
   if (normalized === 'sent') return '<span class="wa-status-icon sent" title="Terkirim" aria-label="Terkirim"></span>';
+  if (normalized === 'queued') return '<span class="badge pending">Antrean</span>';
+  if (normalized === 'draft') return '<span class="badge">Draft</span>';
   return '<span class="badge pending">Pending</span>';
 }
 

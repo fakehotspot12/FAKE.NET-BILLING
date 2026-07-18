@@ -8121,6 +8121,44 @@ async function waGatewayQueueStatus(timeoutMs = 1500) {
   }
 }
 
+function waGatewayDraftIsRecoverable(data = {}, message = {}, messages = data.waMessages || []) {
+  if (data.settings?.waGateway?.enabled !== true) return false;
+  if (String(message.status || '').toLowerCase() !== 'draft') return false;
+  if (!message.invoiceId || !message.phone || !String(message.text || '').trim()) return false;
+  const invoice = (data.invoices || []).find((item) => item.id === message.invoiceId);
+  if (!invoice) return false;
+  const invoiceStatus = invoiceRuntimeStatus(invoice);
+  const relevant = ['paymentPaid', 'accountActive'].includes(message.type)
+    ? invoiceStatus === 'paid'
+    : ['invoiceIssued', 'paymentReminder', 'invoiceOverdue', 'accountSuspend'].includes(message.type)
+      && ['pending', 'overdue'].includes(invoiceStatus);
+  if (!relevant) return false;
+  return !messages.some((other) => {
+    return other.id !== message.id
+      && other.invoiceId === message.invoiceId
+      && other.type === message.type
+      && ['queued', 'sent', 'delivered', 'read', 'seen'].includes(String(other.status || '').toLowerCase());
+  });
+}
+
+function recoverRelevantWaGatewayDrafts(data = {}) {
+  const messages = Array.isArray(data.waMessages) ? data.waMessages : [];
+  const recovered = [];
+  const now = new Date().toISOString();
+  for (const message of messages) {
+    if (!waGatewayDraftIsRecoverable(data, message, messages)) continue;
+    message.status = 'queued';
+    message.deliveryMode = 'transactional';
+    message.scheduledAt = now;
+    message.queueRevision = Math.max(0, Number(message.queueRevision) || 0) + 1;
+    message.queueJobId = '';
+    message.enqueuedAt = '';
+    message.updatedAt = now;
+    recovered.push(message);
+  }
+  return recovered;
+}
+
 async function runWaGatewaySender(reason = 'interval', options = {}) {
   if (MIGRATION_MODE) {
     return { sent: 0, failed: 0, retried: 0, skipped: true, reason: 'migration-mode' };
@@ -8129,11 +8167,22 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
   waGatewaySenderRunning = true;
   const now = new Date();
   try {
-    const data = await loadStore();
-    const settings = data.settings?.waGateway || {};
-    const provider = normalizeWaProvider(settings.provider || 'waha');
+    let data = await loadStore();
+    let settings = data.settings?.waGateway || {};
+    let provider = normalizeWaProvider(settings.provider || 'waha');
     if (!settings.enabled || provider !== 'waha' || (!options.ignoreWindow && !withinWaSendWindow(settings, now))) {
       return { queued: 0, skipped: true };
+    }
+    const hasRecoverableDraft = (data.waMessages || []).some((message) => {
+      return waGatewayDraftIsRecoverable(data, message, data.waMessages || []);
+    });
+    if (hasRecoverableDraft) {
+      const recovered = await mutate((store) => recoverRelevantWaGatewayDrafts(store));
+      if (recovered.result.length) {
+        data = recovered.data;
+        settings = data.settings?.waGateway || {};
+        provider = normalizeWaProvider(settings.provider || 'waha');
+      }
     }
     const queue = await ensureWaGatewayQueue();
     const maxPerBatch = Math.max(1, Math.min(200, Number(settings.maxPerBatch || 20) || 20));
@@ -14626,6 +14675,7 @@ module.exports = {
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
     queueWaGatewayMessage,
+    recoverRelevantWaGatewayDrafts,
     reactivateCustomerAfterPaidInvoice,
     finalizePaidInvoiceRadiusActivation,
     isTripayRetailChannel,
