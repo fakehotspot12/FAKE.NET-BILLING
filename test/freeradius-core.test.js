@@ -84,6 +84,43 @@ test('ppp static IP must be a usable host address', () => {
   }, { username: 'admin', name: 'Admin' }), /IP static tidak valid/);
 });
 
+test('linked MikroTik profile inherits RouterOS rate limit without Radius override', () => {
+  const data = createDefaultStore();
+  const profile = freeradius.addProfile(data, {
+    name: 'Paket RouterOS',
+    serviceType: 'pppoe',
+    useMikrotikProfile: true,
+    mikrotikGroup: 'Paket RouterOS',
+    rateLimit: 'unlimited unlimited',
+    burstLimit: 'unlimited unlimited'
+  });
+  freeradius.addRadiusUser(data, {
+    username: 'linked-profile-user',
+    password: 'secret',
+    serviceType: 'pppoe',
+    profileId: profile.id
+  }, { username: 'admin', name: 'Admin' });
+
+  assert.equal(profile.rateLimit, '');
+  assert.equal(profile.burstLimit, '');
+  const rows = freeradius.freeradiusRows(data);
+  const groupName = freeradius.profileGroupName(profile);
+  assert.ok(rows.radgroupreply.some((row) => (
+    row.groupname === groupName
+      && row.attribute === 'Mikrotik-Group'
+      && row.value === 'Paket RouterOS'
+  )));
+  assert.equal(rows.radgroupreply.some((row) => (
+    row.groupname === groupName && row.attribute === 'Mikrotik-Rate-Limit'
+  )), false);
+
+  profile.rateLimit = 'unlimited unlimited';
+  assert.equal(freeradius.mikrotikRateLimit(profile), '');
+  assert.equal(freeradius.freeradiusRows(data).radgroupreply.some((row) => (
+    row.groupname === groupName && row.attribute === 'Mikrotik-Rate-Limit'
+  )), false);
+});
+
 test('stale session cleanup only closes an older duplicate with a fresh replacement', () => {
   const query = freeradiusSessions.__test.closeSupersededSessionsQuery();
 

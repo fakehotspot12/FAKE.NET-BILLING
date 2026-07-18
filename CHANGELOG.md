@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.0.57] - 2026-07-18
+
+### Fixed
+
+- Profil PPP-DHCP yang ditautkan ke profil MikroTik hanya mengirim `Mikrotik-Group` dan tidak lagi mengirim `Mikrotik-Rate-Limit` bernilai unlimited.
+- Queue dinamis PPPoE kembali mewarisi rate-limit, queue type, dan pengaturan lain dari profil PPP RouterOS yang dipilih.
+- Nilai limit manual otomatis dibersihkan ketika profil diubah ke mode Link ke profil MikroTik agar dua sumber limit tidak saling menimpa.
+
 ## [1.0.56] - 2026-07-18
 
 ### Changed

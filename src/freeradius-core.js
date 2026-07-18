@@ -117,6 +117,8 @@ function clampPriority(value) {
 }
 
 function mikrotikRateLimit(profile = {}) {
+  // RouterOS must inherit rate-limit from Mikrotik-Group when the profile is linked.
+  if (profile.useMikrotikProfile === true) return '';
   const rateLimit = text(profile.rateLimit);
   if (!rateLimit) return '';
   const burstLimit = text(profile.burstLimit);
@@ -296,18 +298,19 @@ function addProfile(data, input, actor) {
   const name = text(input.name);
   if (!name) throw new Error('Nama profile wajib diisi');
   const now = new Date().toISOString();
+  const useMikrotikProfile = input.useMikrotikProfile === true;
   const item = {
     id: createId('rpf'),
     name,
     groupName: text(input.groupName || input.group) || name,
-    useMikrotikProfile: input.useMikrotikProfile === true,
+    useMikrotikProfile,
     mikrotikGroup: text(input.mikrotikGroup || input.routerProfile),
     serviceType: normalizeServiceType(input.serviceType),
-    rateLimit: text(input.rateLimit),
-    burstLimit: text(input.burstLimit),
-    burstThreshold: text(input.burstThreshold),
-    burstTime: text(input.burstTime),
-    minRate: text(input.minRate),
+    rateLimit: useMikrotikProfile ? '' : text(input.rateLimit),
+    burstLimit: useMikrotikProfile ? '' : text(input.burstLimit),
+    burstThreshold: useMikrotikProfile ? '' : text(input.burstThreshold),
+    burstTime: useMikrotikProfile ? '' : text(input.burstTime),
+    minRate: useMikrotikProfile ? '' : text(input.minRate),
     priority: clampPriority(input.priority),
     validity: text(input.validity),
     validitySeconds: parseDurationSeconds(input.validitySeconds || input.validity),
@@ -336,11 +339,11 @@ function updateProfile(data, id, input, actor) {
   item.useMikrotikProfile = input.useMikrotikProfile === true;
   item.mikrotikGroup = text(input.mikrotikGroup || input.routerProfile);
   item.serviceType = normalizeServiceType(input.serviceType || item.serviceType);
-  item.rateLimit = text(input.rateLimit);
-  item.burstLimit = text(input.burstLimit);
-  item.burstThreshold = text(input.burstThreshold);
-  item.burstTime = text(input.burstTime);
-  item.minRate = text(input.minRate);
+  item.rateLimit = item.useMikrotikProfile ? '' : text(input.rateLimit);
+  item.burstLimit = item.useMikrotikProfile ? '' : text(input.burstLimit);
+  item.burstThreshold = item.useMikrotikProfile ? '' : text(input.burstThreshold);
+  item.burstTime = item.useMikrotikProfile ? '' : text(input.burstTime);
+  item.minRate = item.useMikrotikProfile ? '' : text(input.minRate);
   item.priority = clampPriority(input.priority);
   item.validity = text(input.validity);
   item.validitySeconds = parseDurationSeconds(input.validitySeconds || input.validity);
