@@ -7,6 +7,22 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.0.0] - 2026-07-20
+
+### Added
+
+- Pengaturan Akun Saya untuk setiap user: ubah identitas pribadi, ID Karyawan/NIK, jabatan, email, nomor HP/WA, alamat, foto profil, dan password sendiri.
+- Upload gambar aplikasi disimpan sebagai file di `data/uploads/profile` dan `data/uploads/member-house`, bukan sebagai base64 di data utama.
+- Migrasi startup otomatis memindahkan foto profil/foto rumah lama berbasis base64 ke folder upload tanpa menyentuh inventory, transaksi, voucher, atau logo.
+- Avatar default tampil ketika user belum memiliki foto profil.
+
+### Changed
+
+- Menu akun topbar memakai foto/avatar user, sapaan nama, menu Akun Saya, dan Logout dalam satu dropdown.
+- Unit/Divisi user mengikuti role agar konsisten sebagai dasar pengembangan absensi.
+- Template voucher Hotspot A4, Thermal 58 mm, Thermal 80 mm, Small, dan editor HTML/CSS disesuaikan dengan pola Mikhmon.
+- Preview dan print voucher diperbaiki agar QR lebih jelas, layout tidak memanjang, teks tidak menumpuk, dan laporan voucher harian memuat informasi penting.
+
 ## [1.6.3] - 2026-07-19
 
 ### Changed
