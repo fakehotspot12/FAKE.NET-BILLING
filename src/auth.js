@@ -8,6 +8,7 @@ const SESSION_COOKIE = 'isp_finance_session';
 const SESSION_DEFAULT_HOURS = Math.min(72, Math.max(1, Number(process.env.APP_SESSION_HOURS || 24)));
 const SESSION_DEFAULT_AGE_SECONDS = SESSION_DEFAULT_HOURS * 60 * 60;
 const PASSWORD_MIN_LENGTH = 6;
+const PROFILE_PHOTO_URL_MAX_LENGTH = 240;
 
 const ROLE_DEFINITIONS = {
   admin: {
@@ -174,6 +175,10 @@ function normalizeRole(role) {
   return ROLE_DEFINITIONS[role] ? role : 'viewer';
 }
 
+function roleUnitLabel(role) {
+  return ROLE_DEFINITIONS[normalizeRole(role)].label;
+}
+
 function permissionsForRole(role) {
   return ROLE_DEFINITIONS[normalizeRole(role)].permissions;
 }
@@ -215,10 +220,22 @@ function publicUser(user) {
 
   const role = normalizeRole(user.role);
   const lockedNasId = String(user.lockedNasId || user.resellerNasId || user.voucherNasId || '').trim();
+  const employeeId = user.employeeId || user.nik || user.nip || '';
+  const photoUrl = user.photoUrl || user.avatarUrl || '';
   return {
     id: user.id,
     username: user.username,
     name: user.name || user.username,
+    employeeId,
+    nik: employeeId,
+    position: user.position || user.jobTitle || '',
+    unit: roleUnitLabel(role),
+    department: roleUnitLabel(role),
+    email: user.email || '',
+    phone: user.phone || user.whatsapp || user.mobile || '',
+    address: user.address || '',
+    photoUrl,
+    avatarUrl: photoUrl,
     role,
     roleLabel: ROLE_DEFINITIONS[role].label,
     active: user.active !== false,
@@ -379,6 +396,86 @@ function validatePassword(password, required = true) {
   return normalized;
 }
 
+function cleanText(value, maxLength = 120) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanMultilineText(value, maxLength = 320) {
+  return String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function validateEmail(value) {
+  const email = cleanText(value, 120);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error('Format email tidak valid');
+  }
+  return email;
+}
+
+function sanitizeProfilePhotoUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw.length > PROFILE_PHOTO_URL_MAX_LENGTH) {
+    throw new Error('URL foto profil terlalu panjang');
+  }
+  if (raw.startsWith('/uploads/profile/') && !raw.includes('..')) {
+    return raw;
+  }
+  throw new Error('Foto profil harus diupload dari aplikasi');
+}
+
+function updateOwnProfile(data, userId, payload = {}) {
+  const user = (data.users || []).find((item) => item.id === userId);
+  if (!user) {
+    return null;
+  }
+
+  if (typeof payload.name === 'string') {
+    user.name = cleanText(payload.name, 80) || user.username;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'employeeId') || Object.prototype.hasOwnProperty.call(payload, 'nik')) {
+    user.employeeId = cleanText(payload.employeeId ?? payload.nik, 60);
+    user.nik = user.employeeId;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'position')) {
+    user.position = cleanText(payload.position, 80);
+  }
+  user.unit = roleUnitLabel(user.role);
+  user.department = user.unit;
+  if (Object.prototype.hasOwnProperty.call(payload, 'email')) {
+    user.email = validateEmail(payload.email);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'phone')) {
+    user.phone = cleanText(payload.phone, 40);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'address')) {
+    user.address = cleanMultilineText(payload.address, 320);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'photoUrl')) {
+    user.photoUrl = sanitizeProfilePhotoUrl(payload.photoUrl);
+    delete user.avatarUrl;
+  }
+
+  const nextPassword = validatePassword(payload.newPassword, false);
+  if (nextPassword) {
+    if (!verifyPassword(payload.currentPassword, user.passwordHash)) {
+      throw new Error('Password lama tidak sesuai');
+    }
+    user.passwordHash = hashPassword(nextPassword);
+  }
+
+  user.updatedAt = new Date().toISOString();
+  return publicUser(user);
+}
+
 function createUser(data, payload = {}) {
   const username = validateUsername(payload.username);
   if (findUserByUsername(data, username)) {
@@ -393,6 +490,8 @@ function createUser(data, payload = {}) {
     username,
     name: String(payload.name || username).trim(),
     role,
+    unit: roleUnitLabel(role),
+    department: roleUnitLabel(role),
     active: payload.active !== false && payload.active !== 'false',
     passwordHash: hashPassword(validatePassword(payload.password)),
     radbooxUsername: String(payload.radbooxUsername || '').trim(),
@@ -427,9 +526,31 @@ function updateUser(data, userId, payload = {}) {
   if (typeof payload.name === 'string') {
     user.name = payload.name.trim() || user.username;
   }
+  if (Object.prototype.hasOwnProperty.call(payload, 'employeeId') || Object.prototype.hasOwnProperty.call(payload, 'nik')) {
+    user.employeeId = cleanText(payload.employeeId ?? payload.nik, 60);
+    user.nik = user.employeeId;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'position')) {
+    user.position = cleanText(payload.position, 80);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'email')) {
+    user.email = validateEmail(payload.email);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'phone')) {
+    user.phone = cleanText(payload.phone, 40);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'address')) {
+    user.address = cleanMultilineText(payload.address, 320);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'photoUrl')) {
+    user.photoUrl = sanitizeProfilePhotoUrl(payload.photoUrl);
+    delete user.avatarUrl;
+  }
   if (typeof payload.role === 'string') {
     user.role = normalizeRole(payload.role);
   }
+  user.unit = roleUnitLabel(user.role);
+  user.department = user.unit;
   if (user.role === 'reseller_voucher') {
     user.lockedNasId = String(payload.lockedNasId || payload.resellerNasId || payload.voucherNasId || user.lockedNasId || '').trim();
     user.lockedNasName = String(payload.lockedNasName || user.lockedNasName || '').trim();
@@ -508,6 +629,7 @@ module.exports = {
   requestUser,
   sessionMaxAgeSeconds,
   sessionCookie,
+  updateOwnProfile,
   updateUser,
   verifyPassword
 };

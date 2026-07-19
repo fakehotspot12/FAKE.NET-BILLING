@@ -1,6 +1,9 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -82,7 +85,7 @@ test('Hotspot user NAS falls back to package assignment and active session addre
     { id: 'site-b', name: 'SITE-B', host: '10.0.0.2', radius: { enabled: true, name: 'SITE-B', address: '10.0.0.2' } }
   );
   data.radiusProfiles.push(
-    { id: 'profile-a', name: 'Voucher A', serviceType: 'hotspot' },
+    { id: 'profile-a', name: 'Voucher A', serviceType: 'hotspot', validity: '12h', validitySeconds: 43200, quota: '1G', sharedUsers: 1 },
     { id: 'profile-b', name: 'Voucher B', serviceType: 'hotspot' }
   );
   data.settings.hotspotVoucherOnline.packages = {
@@ -98,6 +101,8 @@ test('Hotspot user NAS falls back to package assignment and active session addre
 
   const rows = serverInternals.radiusUserRowsLocal(data, 'hotspot', sessions);
   assert.equal(rows.find((row) => row.id === 'user-a').nas, 'SITE-A');
+  assert.equal(rows.find((row) => row.id === 'user-a').validity, '12h');
+  assert.equal(rows.find((row) => row.id === 'user-a').quota, '1G');
   assert.equal(rows.find((row) => row.id === 'user-b').nas, 'SITE-B');
   assert.equal(rows.find((row) => row.id === 'user-b').nasId, 'site-b');
 });
@@ -109,6 +114,7 @@ const {
   publicUser,
   radbooxCredentialsForUser,
   sessionCookie,
+  updateOwnProfile,
   updateUser,
   verifyPassword
 } = require('../src/auth');
@@ -4970,10 +4976,11 @@ test('hotspot voucher templates have editable local default rows', () => {
   const data = createDefaultStore();
   const rows = serverInternals.radiusTemplateRowsLocal(data);
 
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].id, 'default');
-  assert.equal(rows[0].editable, true);
-  assert.equal(rows[0].active, true);
+  assert.deepEqual(rows.map((row) => row.id), ['default', 'thermal', 'small']);
+  assert.equal(rows.every((row) => row.editable), true);
+  assert.equal(rows.find((row) => row.id === 'default').active, true);
+  assert.equal(rows.find((row) => row.id === 'thermal').layout, 'thermal');
+  assert.equal(rows.find((row) => row.id === 'small').layout, 'small');
 });
 
 test('reseller voucher visibility only allows own generated hotspot vouchers', () => {
@@ -5194,6 +5201,38 @@ test('migrated hotspot sales remain available in voucher reports without radius 
   const filtered = serverInternals.filterVoucherReportOrders(data, orders, {}, { role: 'admin' });
   assert.equal(filtered[0].sourceLabel, 'Migrasi');
   assert.equal(filtered[0].methodGroup, 'cash');
+});
+
+test('voucher reports normalize unix second paidAt and expose voucher usernames', async () => {
+  const data = createDefaultStore();
+  const paidAt = Math.floor(Date.parse('2026-07-19T16:12:39.000Z') / 1000);
+  data.hotspotVoucherOrders.push({
+    id: 'order-unix-paidat',
+    reference: 'VO-20260720-002',
+    status: 'paid',
+    amount: 3000,
+    quantity: 1,
+    paymentMethod: 'QRIS',
+    paidAt,
+    createdAt: '2026-07-19T16:12:21.407Z',
+    voucherUserIds: ['voucher-user-unix']
+  });
+  data.radiusUsers.push({
+    id: 'voucher-user-unix',
+    serviceType: 'hotspot',
+    username: 'A1B2C3',
+    onlineOrderId: 'order-unix-paidat',
+    onlineOrderReference: 'VO-20260720-002'
+  });
+
+  const orders = await serverInternals.paidVoucherOrdersForReport(data, '2026-07', new Map());
+  const order = serverInternals.filterVoucherReportOrders(data, orders, {}, { role: 'admin' })
+    .find((row) => row.reference === 'VO-20260720-002');
+
+  assert.equal(order.date, '2026-07-20');
+  assert.equal(order.paidAt, '2026-07-19T16:12:39.000Z');
+  assert.equal(order.voucherUsernames, 'A1B2C3');
+  assert.equal(order.vouchers[0].username, 'A1B2C3');
 });
 
 test('online hotspot storefront filters packages by their assigned NAS', () => {
@@ -6111,4 +6150,94 @@ test('auth creates default admin and protects admin role', () => {
   assert.equal(hasPermission(publicUser(collector), 'settings:write'), false);
   assert.throws(() => updateUser(data, data.users[0].id, { active: false }), /admin aktif/);
   assert.throws(() => deleteUser(data, data.users[0].id, data.users[1].id), /admin aktif/);
+});
+
+test('auth lets any active user update own profile without changing role', () => {
+  const data = createDefaultStore();
+  const technician = createUser(data, {
+    username: 'teknisi-profil',
+    name: 'Teknisi Lama',
+    role: 'technician',
+    password: 'rahasia2'
+  });
+  const stored = data.users.find((user) => user.id === technician.id);
+  const beforeRole = stored.role;
+
+  const updated = updateOwnProfile(data, technician.id, {
+    name: 'Teknisi Lapangan',
+    employeeId: '6171010101010001',
+    position: 'Teknisi Lapangan',
+    unit: 'Operasional',
+    email: 'teknisi@example.net',
+    phone: '081234567890',
+    address: 'Jl. Contoh No. 10',
+    photoUrl: '/uploads/profile/profil-test.jpg',
+    role: 'admin',
+    active: false
+  });
+
+  assert.equal(updated.name, 'Teknisi Lapangan');
+  assert.equal(updated.employeeId, '6171010101010001');
+  assert.equal(updated.nik, '6171010101010001');
+  assert.equal(updated.position, 'Teknisi Lapangan');
+  assert.equal(updated.unit, 'Teknisi');
+  assert.equal(updated.email, 'teknisi@example.net');
+  assert.equal(updated.phone, '081234567890');
+  assert.equal(updated.address, 'Jl. Contoh No. 10');
+  assert.equal(updated.photoUrl, '/uploads/profile/profil-test.jpg');
+  assert.equal(stored.role, beforeRole);
+  assert.equal(stored.active, true);
+  assert.throws(() => updateOwnProfile(data, technician.id, {
+    photoUrl: 'data:image/png;base64,aGVsbG8='
+  }), /diupload/);
+  assert.throws(() => updateOwnProfile(data, technician.id, {
+    photoUrl: 'https://cdn.example.test/profile.jpg'
+  }), /diupload/);
+
+  assert.throws(() => updateOwnProfile(data, technician.id, {
+    currentPassword: 'salah',
+    newPassword: 'password-baru'
+  }), /Password lama/);
+
+  updateOwnProfile(data, technician.id, {
+    currentPassword: 'rahasia2',
+    newPassword: 'password-baru'
+  });
+  assert.equal(verifyPassword('password-baru', stored.passwordHash), true);
+});
+
+test('startup migration moves legacy base64 user and house photos to upload folders only', async () => {
+  const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'fakenet-upload-migration-'));
+  const legacyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+  const data = createDefaultStore();
+  data.settings.logoUrl = legacyPng;
+  data.users.push({
+    id: 'usr-photo',
+    username: 'photo-user',
+    name: 'Photo User',
+    role: 'technician',
+    active: true,
+    passwordHash: 'hash',
+    photoUrl: legacyPng
+  });
+  data.customers.push({
+    id: 'cus-photo',
+    username: 'member-photo',
+    name: 'Member Photo',
+    housePhotoUrl: legacyPng,
+    note: 'jangan berubah'
+  });
+
+  const result = await serverInternals.migrateLegacyInlineImages(data, { uploadRoot });
+
+  assert.equal(result.migrated, 2);
+  assert.match(data.users[0].photoUrl, /^\/uploads\/profile\/migrated-/);
+  assert.match(data.customers[0].housePhotoUrl, /^\/uploads\/member-house\/migrated-/);
+  assert.equal(data.customers[0].note, 'jangan berubah');
+  assert.equal(data.settings.logoUrl, legacyPng);
+  await assert.doesNotReject(fs.stat(path.join(uploadRoot, data.users[0].photoUrl.replace('/uploads/', ''))));
+  await assert.doesNotReject(fs.stat(path.join(uploadRoot, data.customers[0].housePhotoUrl.replace('/uploads/', ''))));
+
+  const secondRun = await serverInternals.migrateLegacyInlineImages(data, { uploadRoot });
+  assert.equal(secondRun.migrated, 0);
 });

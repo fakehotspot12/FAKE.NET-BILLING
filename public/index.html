@@ -37,10 +37,17 @@
               <div class="notification-list" id="notificationList"></div>
             </div>
           </div>
-          <div class="user-chip" aria-label="User login">
-            <strong id="currentUserName">-</strong>
+          <div class="account-menu" id="accountMenu">
+            <button class="user-chip account-button" id="profileButton" type="button" title="Akun Saya" aria-label="Buka menu akun" aria-haspopup="menu" aria-expanded="false">
+              <span class="user-chip-avatar" id="currentUserAvatar" aria-hidden="true">-</span>
+              <strong class="sr-only" id="currentUserName">-</strong>
+            </button>
+            <div class="account-panel" id="accountPanel" role="menu" hidden>
+              <div class="account-panel-head" id="accountGreeting">Hi, -</div>
+              <button class="is-selected" type="button" id="accountProfileMenu" role="menuitem">Akun Saya</button>
+              <button type="button" id="accountLogoutMenu" role="menuitem">Logout</button>
+            </div>
           </div>
-          <button class="ghost-button compact logout-button" id="logoutButton" type="button">Logout</button>
         </div>
       </header>
 

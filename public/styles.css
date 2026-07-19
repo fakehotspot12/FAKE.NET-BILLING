@@ -73,6 +73,15 @@
   box-sizing: border-box;
 }
 
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+}
+
 html {
   min-width: 320px;
   overflow-x: hidden;
@@ -175,6 +184,67 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.account-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.account-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  min-width: 190px;
+  max-width: calc(100vw - 24px);
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18);
+}
+
+.account-panel-head {
+  overflow: hidden;
+  padding: 8px 10px 7px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-panel[hidden] {
+  display: none;
+}
+
+.account-panel button {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.account-panel button:hover {
+  background: var(--surface-soft);
+}
+
+.account-panel button.is-selected {
+  color: var(--primary);
+  background: rgba(43, 139, 217, 0.1);
 }
 
 .notification-menu {
@@ -504,16 +574,66 @@ button {
 
 .user-chip {
   width: auto;
-  max-width: min(420px, 40vw);
-  min-height: 34px;
+  max-width: none;
+  min-width: 44px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  padding: 7px 9px;
+  padding: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+button.user-chip {
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+button.user-chip:hover {
+  border-color: rgba(43, 139, 217, 0.45);
+  background: #f6fbff;
+}
+
+[data-theme="dark"] button.user-chip:hover {
+  background: var(--surface-soft);
+}
+
+.user-chip-avatar,
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--primary);
+  background-position: center;
+  background-size: cover;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.user-chip-avatar.has-photo {
+  color: transparent;
+}
+
+.user-chip-avatar img,
+.user-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.user-chip-avatar.is-default {
+  background: #e2e8f0;
 }
 
 .user-chip strong {
@@ -527,7 +647,7 @@ button {
   line-height: 1.15;
 }
 
-.user-chip span {
+.user-chip span:not(.user-chip-avatar) {
   display: none;
 }
 
@@ -3748,6 +3868,104 @@ dialog:has(.changelog-preview) {
   gap: 12px;
 }
 
+.account-settings-modal {
+  display: grid;
+  gap: 14px;
+  min-width: min(680px, calc(100vw - 48px));
+}
+
+.account-profile-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.account-photo-preview {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: #fff;
+  background: var(--primary);
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.account-photo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.account-profile-title {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.account-profile-title strong,
+.account-profile-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-profile-title span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.account-photo-upload {
+  position: relative;
+  overflow: hidden;
+}
+
+.account-photo-upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.account-readonly-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.account-readonly-grid > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.account-readonly-grid strong {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .radius-wizard-section {
   align-items: start;
 }
@@ -5068,6 +5286,22 @@ dialog:has(.hotspot-voucher-preview) #modalBody {
   gap: 12px;
 }
 
+.hotspot-voucher-print-isolated {
+  background: #fff;
+  border: 1px dashed #d1d5db;
+  height: min(74vh, 940px);
+  min-height: 460px;
+  overflow: hidden;
+}
+
+.hotspot-voucher-print-isolated iframe {
+  background: #fff;
+  border: 0;
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
 .hotspot-voucher-print-page {
   background: #fff;
   display: grid;
@@ -5076,7 +5310,7 @@ dialog:has(.hotspot-voucher-preview) #modalBody {
 }
 
 .hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-print-page {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .hotspot-voucher-print-stack.print-mode-thermal-58,
@@ -5118,6 +5352,8 @@ dialog:has(.hotspot-voucher-preview) #modalBody {
   border: 1px solid #d1d5db;
   border-radius: 8px;
   display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
   padding: 5px;
 }
@@ -5140,24 +5376,18 @@ dialog:has(.hotspot-voucher-preview) #modalBody {
   width: 28px;
 }
 
-.hotspot-voucher-brand > div {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
 .hotspot-voucher-body {
   align-items: start;
   display: grid;
   gap: 6px;
-  grid-template-columns: minmax(0, 1fr) 70px;
+  grid-template-columns: minmax(0, 1fr) 76px;
 }
 
 .hotspot-voucher-body.no-qr {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) 76px;
 }
 
-.hotspot-voucher-head strong {
+.hotspot-voucher-brand strong {
   color: #111827;
   display: block;
   font-size: 12.5px;
@@ -5167,13 +5397,354 @@ dialog:has(.hotspot-voucher-preview) #modalBody {
   white-space: normal;
 }
 
-.hotspot-voucher-head span:not(.badge),
+.hotspot-voucher-price {
+  align-items: baseline;
+  color: var(--voucher-accent, #0277bd);
+  display: flex;
+  font-family: Tahoma, Arial, sans-serif;
+  font-weight: 900;
+  gap: 1px;
+  justify-content: end;
+  line-height: 1;
+  min-width: 0;
+  text-align: right;
+}
+
+.hotspot-voucher-price span {
+  color: var(--voucher-accent, #0277bd);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.hotspot-voucher-price strong {
+  color: var(--voucher-accent, #0277bd);
+  display: block;
+  font-size: 20px;
+  line-height: .95;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .hotspot-voucher-footer {
   color: #374151;
   font-size: 10.5px;
   font-weight: 800;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.hotspot-voucher-main,
+.hotspot-voucher-side {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.hotspot-voucher-code-box {
+  border-bottom: 1px solid var(--voucher-accent, #0277bd);
+  display: grid;
+  gap: 1px;
+  text-align: center;
+}
+
+.hotspot-voucher-code-box span,
+.hotspot-voucher-validity span {
+  color: var(--voucher-accent, #0277bd);
+  display: block;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.hotspot-voucher-code-box strong {
+  color: #111827;
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.08;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.hotspot-voucher-activation {
+  color: #374151;
+  font-size: 8.5px;
+  font-weight: 800;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+  text-align: center;
+  text-shadow: 0 0 2px #fff;
+}
+
+.hotspot-voucher-side {
+  justify-items: center;
+}
+
+.hotspot-voucher-validity {
+  color: #ff9100;
+  display: grid;
+  gap: 1px;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.hotspot-voucher-validity span {
+  color: #ff9100;
+  font-size: 7.5px;
+}
+
+.hotspot-voucher-validity strong {
+  color: #ff9100;
+  display: block;
+  font-size: 10px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.hotspot-voucher-mikhmon {
+  --voucher-accent: #0277bd;
+  border-color: #111;
+  border-radius: 0;
+  box-shadow: none;
+  gap: 2px;
+  overflow: hidden;
+  padding: 2px;
+  position: relative;
+}
+
+.hotspot-voucher-mikhmon::before {
+  border-left: 15mm solid transparent;
+  border-right: 42mm solid #b0bec5;
+  border-top: 62mm solid transparent;
+  content: "";
+  height: 0;
+  left: 0;
+  opacity: .45;
+  pointer-events: none;
+  position: absolute;
+  top: -30mm;
+  width: 0;
+  z-index: 0;
+}
+
+.hotspot-voucher-mikhmon > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-head {
+  border: 0;
+  border-bottom: 1px solid #111827;
+  border-radius: 0;
+  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  min-height: 22px;
+  padding: 2px 3px 1px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-brand {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-brand img {
+  border: 0;
+  border-radius: 0;
+  display: block;
+  height: 21px;
+  max-width: 96px;
+  padding: 0;
+  width: 96px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-brand strong {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-body {
+  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) 70px;
+  min-height: 62px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-body.no-qr {
+  grid-template-columns: minmax(0, 1fr) 70px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-main {
+  align-content: start;
+  gap: 2px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-code-box {
+  border-bottom-color: var(--voucher-accent, #0277bd);
+  gap: 0;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-code-box span {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-code-box strong {
+  font-size: 15px;
+  line-height: 1.08;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-activation {
+  color: #374151;
+  display: -webkit-box;
+  font-size: 7px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.12;
+  max-height: 16px;
+  overflow: hidden;
+  text-shadow: 0 0 2px #fff;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-side {
+  align-content: start;
+  gap: 1px;
+  justify-items: end;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-validity {
+  color: #ff9100;
+  justify-items: end;
+  text-align: right;
+  width: 100%;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-validity span,
+.hotspot-voucher-mikhmon .hotspot-voucher-validity strong {
+  color: #ff9100;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-validity span {
+  font-size: 7px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-validity strong {
+  font-size: 8px;
+  line-height: 1;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-qr {
+  border: 0;
+  border-radius: 0;
+  height: 62px;
+  padding: 0;
+  width: 62px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-footer {
+  background: var(--voucher-accent, #0277bd);
+  color: #f8fafc;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1.05;
+  overflow: hidden;
+  padding: 2px 3px;
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.35);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-head {
+  min-height: 19px;
+  padding: 1px 3px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-brand img {
+  height: 18px;
+  max-width: 88px;
+  width: 88px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-body {
+  grid-template-columns: minmax(0, 1fr) 58px;
+  min-height: 54px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-code-box strong {
+  font-size: 13px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-activation {
+  font-size: 6.4px;
+  max-height: 14px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-validity span {
+  font-size: 6.4px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-validity strong {
+  font-size: 7.4px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-qr {
+  height: 54px;
+  width: 54px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-footer {
+  font-size: 7px;
+  padding: 1px 3px;
+}
+
+.hotspot-voucher-template-thermal {
+  justify-items: stretch;
+  min-height: 136px;
+}
+
+.hotspot-voucher-template-thermal .hotspot-voucher-head {
+  justify-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  text-align: center;
+}
+
+.hotspot-voucher-template-thermal .hotspot-voucher-price {
+  justify-content: center;
+}
+
+.hotspot-voucher-template-thermal .hotspot-voucher-body {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+}
+
+.hotspot-voucher-template-thermal .hotspot-voucher-side {
+  justify-items: center;
+}
+
+.hotspot-voucher-template-thermal .hotspot-voucher-validity {
+  justify-items: center;
+  text-align: center;
+}
+
+.hotspot-voucher-template-thermal .hotspot-voucher-qr {
+  height: 76px;
+  width: 76px;
+}
+
+.hotspot-voucher-custom {
+  --voucher-accent: #0277bd;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+  padding: 1mm;
+}
+
+.hotspot-voucher-custom .hotspot-voucher-logo {
+  display: block;
+  height: 100%;
+  max-width: 100%;
+  object-fit: contain;
 }
 
 .hotspot-voucher-lines {
@@ -7256,7 +7827,7 @@ dialog::backdrop {
     align-items: center;
     flex-wrap: wrap;
     gap: 10px;
-    padding: 12px;
+    padding: 12px 64px 12px 12px;
     position: fixed;
     top: 0;
     right: 0;
@@ -7284,7 +7855,7 @@ dialog::backdrop {
   .top-actions {
     width: 100%;
     display: grid;
-    grid-template-columns: 38px 38px 38px minmax(0, 1fr) max-content;
+    grid-template-columns: 38px 38px 38px;
     align-items: center;
     flex-shrink: 0;
     gap: 7px;
@@ -7302,12 +7873,15 @@ dialog::backdrop {
     grid-column: 3;
   }
 
-  .top-actions .user-chip {
-    grid-column: 4;
-  }
-
-  .top-actions .logout-button {
-    grid-column: 5;
+  .top-actions .account-menu {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    grid-column: auto;
+    justify-self: auto;
+    min-width: 44px;
+    width: 44px;
+    z-index: 61;
   }
 
   .period-picker {
@@ -7338,12 +7912,19 @@ dialog::backdrop {
   }
 
   .user-chip {
-    width: 100%;
+    width: 44px;
     justify-self: end;
-    justify-content: flex-end;
+    justify-content: center;
     flex: none;
-    max-width: 100%;
-    min-width: 0;
+    max-width: none;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .user-chip-avatar {
+    width: 36px;
+    height: 36px;
+    font-size: 10px;
   }
 
   .user-chip strong {
@@ -7964,7 +8545,7 @@ dialog::backdrop {
 
 @media (max-width: 420px) {
   body.is-authenticated .app-shell {
-    padding-top: 172px;
+    padding-top: 126px;
   }
 
   .topbar {
@@ -7972,7 +8553,7 @@ dialog::backdrop {
   }
 
   .top-actions {
-    grid-template-columns: 38px 38px 38px minmax(0, 1fr) max-content;
+    grid-template-columns: 38px 38px 38px;
     gap: 6px;
   }
 
@@ -8006,6 +8587,19 @@ dialog::backdrop {
   .top-actions .ghost-button {
     width: auto;
     flex: 0 0 auto;
+  }
+
+  .account-settings-modal {
+    min-width: 0;
+  }
+
+  .account-profile-head,
+  .account-readonly-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-profile-head {
+    justify-items: start;
   }
 
   .row-actions .button,
@@ -8770,8 +9364,8 @@ dialog::backdrop {
     box-sizing: border-box;
     display: grid;
     gap: .8mm 1mm;
-    grid-template-columns: repeat(5, 37mm);
-    grid-template-rows: repeat(10, 27mm);
+    grid-template-columns: repeat(4, 49.4mm);
+    grid-template-rows: repeat(11, 25.18mm);
     height: 297mm;
     justify-content: center;
     overflow: hidden;
@@ -8791,13 +9385,13 @@ dialog::backdrop {
     border-radius: 0;
     box-sizing: border-box;
     box-shadow: none;
-    gap: .55mm;
-    height: 27mm;
+    gap: .35mm;
+    height: 25.18mm;
     min-height: 0;
     overflow: hidden;
-    padding: 1mm;
+    padding: .6mm;
     page-break-inside: avoid;
-    width: 37mm;
+    width: 49.4mm;
   }
 
   body.printing-hotspot-vouchers .hotspot-voucher-head {
@@ -8823,11 +9417,7 @@ dialog::backdrop {
     width: 4.6mm;
   }
 
-  body.printing-hotspot-vouchers .hotspot-voucher-brand > div {
-    gap: 0;
-  }
-
-  body.printing-hotspot-vouchers .hotspot-voucher-head strong {
+  body.printing-hotspot-vouchers .hotspot-voucher-brand strong {
     color: #07111f;
     font-size: 5.6pt;
     font-weight: 900;
@@ -8836,13 +9426,12 @@ dialog::backdrop {
     white-space: normal;
   }
 
-  body.printing-hotspot-vouchers .hotspot-voucher-head span:not(.badge) {
-    color: #5c6f84;
-    font-size: 4.4pt;
-    font-weight: 800;
-    line-height: 1.05;
-    overflow-wrap: anywhere;
-    white-space: normal;
+  body.printing-hotspot-vouchers .hotspot-voucher-price span {
+    font-size: 3.9pt;
+  }
+
+  body.printing-hotspot-vouchers .hotspot-voucher-price strong {
+    font-size: 8.8pt;
   }
 
   body.printing-hotspot-vouchers .hotspot-voucher-body {
@@ -8851,7 +9440,35 @@ dialog::backdrop {
   }
 
   body.printing-hotspot-vouchers .hotspot-voucher-body.no-qr {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) 11.4mm;
+  }
+
+  body.printing-hotspot-vouchers .hotspot-voucher-main,
+  body.printing-hotspot-vouchers .hotspot-voucher-side {
+    gap: .45mm;
+  }
+
+  body.printing-hotspot-vouchers .hotspot-voucher-code-box {
+    border-bottom: .2mm solid var(--voucher-accent, #0277bd);
+    gap: 0;
+  }
+
+  body.printing-hotspot-vouchers .hotspot-voucher-code-box span,
+  body.printing-hotspot-vouchers .hotspot-voucher-validity span {
+    font-size: 3.4pt;
+  }
+
+  body.printing-hotspot-vouchers .hotspot-voucher-code-box strong {
+    font-size: 6.2pt;
+  }
+
+  body.printing-hotspot-vouchers .hotspot-voucher-activation {
+    font-size: 3.9pt;
+    line-height: 1.1;
+  }
+
+  body.printing-hotspot-vouchers .hotspot-voucher-validity strong {
+    font-size: 4.4pt;
   }
 
   body.printing-hotspot-vouchers .hotspot-voucher-lines {
@@ -8884,9 +9501,9 @@ dialog::backdrop {
 
   body.printing-hotspot-vouchers .hotspot-voucher-qr {
     border-radius: .7mm;
-    height: 10.8mm;
+    height: 16mm;
     padding: .25mm;
-    width: 10.8mm;
+    width: 16mm;
   }
 
   body.printing-hotspot-vouchers .hotspot-voucher-qr-meta {
@@ -8914,8 +9531,8 @@ dialog::backdrop {
 
   html:has(body.printing-hotspot-vouchers.hotspot-voucher-print-a4),
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 {
-    min-height: 198mm !important;
-    width: 287mm !important;
+    min-height: 285mm !important;
+    width: 200mm !important;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4,
@@ -8923,58 +9540,102 @@ dialog::backdrop {
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .modal-frame,
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 #modalBody,
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-stack {
-    width: 287mm !important;
+    width: 200mm !important;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-page {
-    gap: 1mm .7mm;
-    grid-template-columns: repeat(5, 56.8mm);
-    grid-template-rows: repeat(10, 18.9mm);
-    height: 198mm;
+    gap: .8mm;
+    grid-template-columns: repeat(4, 49.4mm);
+    grid-template-rows: repeat(11, 25.18mm);
+    height: 285mm;
     justify-content: start;
     padding: 0;
-    width: 287mm;
+    width: 200mm;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-ticket {
-    gap: .3mm;
-    height: 18.9mm;
-    padding: .55mm;
-    width: 56.8mm;
+    gap: .25mm;
+    height: 25.18mm;
+    padding: .45mm;
+    width: 49.4mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-mikhmon::before {
+    border-left-width: 8mm;
+    border-right-width: 29mm;
+    border-top-width: 42mm;
+    top: -20mm;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-head {
     border: 0;
     border-bottom: .2mm solid #111827;
     border-radius: 0;
-    min-height: 3.5mm;
-    padding: .25mm .35mm;
+    gap: .7mm;
+    min-height: 5mm;
+    padding: .2mm .35mm .3mm;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-brand {
     gap: .7mm;
-    grid-template-columns: 3.4mm minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-brand img {
     border: 0;
     border-radius: 0;
-    height: 3.4mm;
+    height: 5.1mm;
     padding: 0;
-    width: 3.4mm;
+    width: 22.5mm;
   }
 
-  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-head strong {
-    font-size: 5.2pt;
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-brand strong {
+    font-size: 4.8pt;
+    line-height: 1;
   }
 
-  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-head span:not(.badge) {
-    font-size: 3.8pt;
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price span {
+    font-size: 4.4pt;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price strong {
+    font-size: 10.5pt;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-body {
-    gap: .45mm;
-    grid-template-columns: minmax(0, 1fr) 10.6mm;
+    gap: .6mm;
+    grid-template-columns: minmax(0, 1fr) 16.6mm;
+    min-height: 16.3mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-body.no-qr {
+    grid-template-columns: minmax(0, 1fr) 16.6mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-main,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-side {
+    gap: .25mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box span,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity span {
+    font-size: 3.6pt;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box strong {
+    font-size: 7.8pt;
+    line-height: 1.06;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-activation {
+    font-size: 3.9pt;
+    line-height: 1.08;
+    max-height: 2.3em;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity strong {
+    font-size: 4.8pt;
+    line-height: 1;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-lines {
@@ -9000,9 +9661,32 @@ dialog::backdrop {
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-qr {
     border: 0;
     border-radius: 0;
-    height: 9.8mm;
+    height: 16mm;
     padding: 0;
-    width: 9.8mm;
+    width: 16mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-head {
+    min-height: 4.4mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-brand img {
+    height: 4.4mm;
+    width: 20.8mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-body {
+    grid-template-columns: minmax(0, 1fr) 14.2mm;
+    min-height: 14mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-code-box strong {
+    font-size: 6.8pt;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-qr {
+    height: 14mm;
+    width: 14mm;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-qr-meta span {
@@ -9014,8 +9698,12 @@ dialog::backdrop {
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-footer {
-    font-size: 3.6pt;
+    background: var(--voucher-accent, #0277bd);
+    color: #ff9100;
+    font-size: 4.2pt;
+    font-weight: 800;
     line-height: 1;
+    padding: .32mm .55mm;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -9070,20 +9758,36 @@ dialog::backdrop {
     width: 100%;
   }
 
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal {
+    min-height: 45mm;
+  }
+
   body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-body,
   body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-body {
     grid-template-columns: minmax(0, 1fr) 16mm;
   }
 
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-body,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-body.no-qr,
   body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-body.no-qr {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) 16mm;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-qr,
   body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-qr {
     height: 16mm;
     width: 16mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-qr,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-qr {
+    height: 24mm;
+    width: 24mm;
   }
 
   body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-qr-meta span,
@@ -9118,4 +9822,1599 @@ dialog::backdrop {
   body.printing-hotspot-vouchers .hotspot-voucher-preview-head {
     display: none !important;
   }
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-print-page {
+  align-items: start;
+  gap: 0;
+  grid-template-columns: repeat(4, 196px);
+  justify-content: start;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-ticket {
+  margin: 2px;
+}
+
+.hotspot-voucher-mikhmon {
+  background: #fff;
+  border: 1px solid #000;
+  border-radius: 0;
+  box-shadow: none;
+  color: #000;
+  display: grid;
+  font-family: Helvetica, Arial, sans-serif;
+  gap: 0;
+  margin: 2px;
+  min-height: 92px;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  width: 190px;
+}
+
+.hotspot-voucher-mikhmon::before {
+  border-left: 50px solid transparent;
+  border-right: 140px solid #b0bec5;
+  border-top: 230px solid transparent;
+  content: "";
+  height: 0;
+  left: 0;
+  opacity: .42;
+  pointer-events: none;
+  position: absolute;
+  top: -100px;
+  width: 0;
+  z-index: 0;
+}
+
+.hotspot-voucher-mikhmon > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-head {
+  align-items: start;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  display: grid;
+  gap: 0;
+  grid-template-columns: 75px minmax(0, 1fr);
+  min-height: 30px;
+  padding: 0;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-brand {
+  display: block;
+  min-width: 0;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-brand img {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  display: block;
+  height: 20px;
+  margin: 5px 0 0 5px;
+  max-width: 85px;
+  object-fit: contain;
+  padding: 0;
+  width: 85px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-price {
+  color: var(--voucher-accent, #0277bd);
+  display: block;
+  font-family: Tahoma, Arial, sans-serif;
+  font-weight: 900;
+  line-height: 1;
+  margin: -6px 0 0;
+  min-width: 0;
+  padding-left: 17px;
+  text-align: right;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-price span {
+  color: var(--voucher-accent, #0277bd);
+  font-size: 10px;
+  line-height: 1;
+  margin-left: -17px;
+  position: absolute;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-price strong {
+  color: var(--voucher-accent, #0277bd);
+  display: block;
+  font-family: Tahoma, Arial, sans-serif;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-body {
+  align-items: start;
+  display: grid;
+  gap: 0;
+  grid-template-columns: 95px minmax(0, 1fr);
+  min-height: 48px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-body.no-qr {
+  grid-template-columns: 95px minmax(0, 1fr);
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-main {
+  align-content: start;
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-code-box {
+  border: 0;
+  display: grid;
+  gap: 0;
+  margin: 2px 0 2.5px;
+  padding: 0;
+  text-align: center;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-code-box span {
+  border-bottom: 1px solid var(--voucher-accent, #0277bd);
+  color: var(--voucher-accent, #0277bd);
+  display: block;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.1;
+  padding: 0;
+  text-transform: uppercase;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-code-box strong {
+  border-bottom: 1px solid var(--voucher-accent, #0277bd);
+  color: #000;
+  display: block;
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.08;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-activation {
+  color: #374151;
+  display: block;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1.1;
+  max-height: 25px;
+  overflow: hidden;
+  padding: 2.5px;
+  text-align: center;
+  text-shadow: 0 0 2px #fff;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-side {
+  align-content: start;
+  display: grid;
+  gap: 0;
+  justify-items: end;
+  min-width: 0;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-validity {
+  color: #ff9100;
+  display: block;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1.05;
+  min-height: 15px;
+  overflow: hidden;
+  padding: 0 2.5px;
+  text-align: right;
+  width: 100%;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-validity span,
+.hotspot-voucher-mikhmon .hotspot-voucher-validity strong {
+  color: #ff9100;
+  display: inline;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-qr {
+  background: #fff;
+  border: 0;
+  border-radius: 0;
+  display: block;
+  height: 60px;
+  margin: 0 5px -20px 0;
+  padding: 0;
+  width: 60px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-footer {
+  align-self: end;
+  background: var(--voucher-accent, #0277bd);
+  color: #f8fafc;
+  display: block;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.05;
+  margin: 0;
+  overflow: hidden;
+  padding: 2.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-template-small {
+  min-height: 84px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-head {
+  min-height: 24px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-brand img {
+  height: 17px;
+  max-width: 78px;
+  width: 78px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-body {
+  grid-template-columns: 102px minmax(0, 1fr);
+  min-height: 43px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-code-box span {
+  font-size: 8px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-code-box strong {
+  font-size: 12px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-activation {
+  font-size: 6px;
+  max-height: 18px;
+  padding: 1.5px;
+}
+
+.hotspot-voucher-template-small .hotspot-voucher-qr {
+  height: 52px;
+  width: 52px;
+}
+
+.hotspot-voucher-template-thermal {
+  min-height: 150px;
+  padding: 4px;
+}
+
+@media print {
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-page {
+    gap: .55mm;
+    grid-template-columns: repeat(4, 49.25mm);
+    grid-template-rows: repeat(11, 23.8mm);
+    height: 267mm;
+    justify-content: start;
+    padding: 0;
+    width: 200mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-ticket {
+    border: .25mm solid #000;
+    display: grid;
+    gap: 0;
+    height: 23.8mm;
+    margin: 0;
+    overflow: hidden;
+    padding: 0;
+    width: 49.25mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-mikhmon::before {
+    border-left-width: 13.2mm;
+    border-right-width: 36.6mm;
+    border-top-width: 60.8mm;
+    top: -26.5mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-head {
+    border: 0;
+    gap: 0;
+    grid-template-columns: 19.8mm minmax(0, 1fr);
+    min-height: 7.2mm;
+    padding: 0;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-brand img {
+    height: 5.25mm;
+    margin: 1.3mm 0 0 1.3mm;
+    max-width: 22.5mm;
+    width: 22.5mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price {
+    margin-top: -1.6mm;
+    padding-left: 4.5mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price span {
+    font-size: 7.4pt;
+    margin-left: -4.5mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price strong {
+    font-size: 14.8pt;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-body {
+    gap: 0;
+    grid-template-columns: 25.1mm minmax(0, 1fr);
+    min-height: 12.5mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-body.no-qr {
+    grid-template-columns: 25.1mm minmax(0, 1fr);
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box {
+    margin: .55mm 0 .65mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box span {
+    border-bottom-width: .2mm;
+    font-size: 7.4pt;
+    line-height: 1.1;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box strong {
+    border-bottom-width: .2mm;
+    font-size: 10.4pt;
+    line-height: 1.08;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-activation {
+    font-size: 5.2pt;
+    line-height: 1.08;
+    max-height: 6.4mm;
+    padding: .65mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity {
+    font-size: 5.2pt;
+    line-height: 1.05;
+    min-height: 3.9mm;
+    padding: 0 .65mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity span,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity strong {
+    font-size: 5.2pt;
+    line-height: 1.05;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-qr {
+    height: 15.9mm;
+    margin: 0 1.3mm -5.3mm 0;
+    width: 15.9mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-footer {
+    font-size: 6.7pt;
+    line-height: 1.05;
+    padding: .65mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small {
+    height: 21.8mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-head {
+    min-height: 6mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-body {
+    grid-template-columns: 27mm minmax(0, 1fr);
+    min-height: 11.2mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-code-box strong {
+    font-size: 9pt;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-template-small .hotspot-voucher-qr {
+    height: 13.8mm;
+    width: 13.8mm;
+  }
+}
+
+.hotspot-voucher-mikhmon {
+  grid-template-rows: 30px minmax(48px, 1fr) 14px;
+  min-height: 96px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-body {
+  grid-template-columns: minmax(0, 1fr) 64px;
+  min-height: 48px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-body.no-qr {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-validity {
+  color: #ff9100;
+  display: block;
+  font-size: 6.5px;
+  font-weight: 900;
+  line-height: 1;
+  min-height: 8px;
+  overflow: hidden;
+  padding: 1px 2.5px 0;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-validity span,
+.hotspot-voucher-mikhmon .hotspot-voucher-validity strong {
+  color: #ff9100;
+  display: inline;
+  font-size: 6.5px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-activation {
+  line-height: 1;
+  max-height: 10px;
+  min-height: 10px;
+  overflow: hidden;
+  padding: 1px 2.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-side {
+  align-content: start;
+  min-height: 0;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-qr {
+  height: 54px;
+  margin: 1px 5px 0 0;
+  width: 54px;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-footer {
+  align-self: stretch;
+  min-height: 14px;
+  padding: 2.5px;
+}
+
+@media print {
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-page {
+    gap: .45mm;
+    grid-template-columns: repeat(4, 49.25mm);
+    grid-template-rows: repeat(11, 24.4mm);
+    height: 285mm;
+    justify-content: start;
+    padding: 0;
+    width: 200mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-ticket {
+    display: grid;
+    gap: 0;
+    grid-template-rows: 6.2mm 15.1mm 3.1mm;
+    height: 24.4mm;
+    margin: 0;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+    width: 49.25mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-head {
+    min-height: 6.2mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-brand img {
+    height: 5mm;
+    margin: .9mm 0 0 1.2mm;
+    max-width: 22mm;
+    width: 22mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price {
+    margin-top: -1.25mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price span {
+    font-size: 6.8pt;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price strong {
+    font-size: 13.8pt;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-body {
+    gap: 0;
+    grid-template-columns: minmax(0, 1fr) 15.8mm;
+    min-height: 15.1mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-body.no-qr {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box {
+    margin: .25mm 0 .25mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box span {
+    font-size: 6.6pt;
+    line-height: 1;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box strong {
+    font-size: 9.3pt;
+    line-height: 1;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity {
+    font-size: 4.7pt;
+    line-height: 1;
+    min-height: 2.2mm;
+    padding: .25mm .65mm 0;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity span,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity strong {
+    display: inline;
+    font-size: 4.7pt;
+    line-height: 1;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-activation {
+    font-size: 4.8pt;
+    line-height: 1;
+    max-height: 2.4mm;
+    min-height: 2.4mm;
+    overflow: hidden;
+    padding: .25mm .65mm;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-qr {
+    height: 14.4mm;
+    margin: .35mm .7mm 0 0;
+    width: 14.4mm;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-footer {
+    align-self: stretch;
+    display: block !important;
+    font-size: 6pt;
+    line-height: 1;
+    min-height: 3.1mm;
+    padding: .55mm .65mm;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 {
+  display: block;
+  font-family: Helvetica, Arial, sans-serif;
+  text-align: left;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-print-page {
+  background: #fff;
+  display: block;
+  line-height: 0;
+  width: 100%;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-ticket {
+  display: inline-grid;
+  line-height: normal;
+  vertical-align: top;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon {
+  border: 1px solid #000;
+  grid-template-rows: 28px 66px 14px;
+  height: 108px;
+  margin: 2px;
+  min-height: 0;
+  width: 190px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon::before {
+  border-left-width: 50px;
+  border-right-width: 140px;
+  border-top-width: 230px;
+  top: -100px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-head {
+  grid-template-columns: 75px minmax(0, 1fr);
+  min-height: 28px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-brand img {
+  height: 20px;
+  margin: 5px 0 0 5px;
+  max-width: 85px;
+  width: 85px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-price {
+  margin-top: -6px;
+  padding-left: 17px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-price span {
+  font-size: 10px;
+  margin-left: -17px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-price strong {
+  font-size: 20px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-body {
+  grid-template-columns: minmax(0, 1fr) 64px;
+  min-height: 66px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-code-box {
+  margin: 2px 0 1px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-code-box span {
+  font-size: 10px;
+  line-height: 1.05;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-code-box strong {
+  font-size: 14px;
+  line-height: 1.05;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-validity,
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-validity span,
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-validity strong {
+  font-size: 7px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-activation {
+  font-size: 7px;
+  line-height: 1.1;
+  max-height: 34px;
+  min-height: 31px;
+  padding: 2.5px;
+  white-space: normal;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-qr {
+  height: 58px;
+  margin: 0 5px 0 0;
+  width: 58px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-footer {
+  font-size: 9px;
+  line-height: 1;
+  min-height: 14px;
+  padding: 2.5px;
+}
+
+@media print {
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-stack {
+    display: block !important;
+    width: 200mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-page {
+    break-after: auto !important;
+    display: block !important;
+    grid-template-columns: none !important;
+    grid-template-rows: none !important;
+    height: auto !important;
+    line-height: 0 !important;
+    overflow: visible !important;
+    page-break-after: auto !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-ticket {
+    border: 1px solid #000 !important;
+    display: inline-grid !important;
+    grid-template-rows: 28px 66px 14px !important;
+    height: 108px !important;
+    line-height: normal !important;
+    margin: 2px !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    vertical-align: top !important;
+    width: 190px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-mikhmon::before {
+    border-left-width: 50px !important;
+    border-right-width: 140px !important;
+    border-top-width: 230px !important;
+    top: -100px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-head {
+    grid-template-columns: 75px minmax(0, 1fr) !important;
+    min-height: 28px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-brand img {
+    height: 20px !important;
+    margin: 5px 0 0 5px !important;
+    max-width: 85px !important;
+    width: 85px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price {
+    margin-top: -6px !important;
+    padding-left: 17px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price span {
+    font-size: 10px !important;
+    margin-left: -17px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-price strong {
+    font-size: 20px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-body {
+    gap: 0 !important;
+    grid-template-columns: minmax(0, 1fr) 64px !important;
+    min-height: 66px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box {
+    margin: 2px 0 1px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box span {
+    font-size: 10px !important;
+    line-height: 1.05 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box strong {
+    font-size: 14px !important;
+    line-height: 1.05 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity span,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity strong {
+    font-size: 7px !important;
+    line-height: 1 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-activation {
+    font-size: 7px !important;
+    line-height: 1.1 !important;
+    max-height: 34px !important;
+    min-height: 31px !important;
+    padding: 2.5px !important;
+    white-space: normal !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-qr {
+    height: 58px !important;
+    margin: 0 5px 0 0 !important;
+    width: 58px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-footer {
+    font-size: 9px !important;
+    line-height: 1 !important;
+    min-height: 14px !important;
+    padding: 2.5px !important;
+  }
+}
+
+.hotspot-voucher-print-stack.print-mode-a4,
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-print-page {
+  white-space: normal;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-ticket {
+  display: inline-block;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon {
+  box-sizing: border-box;
+  display: inline-block;
+  height: 108px;
+  line-height: normal;
+  vertical-align: top;
+  width: 190px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-head {
+  box-sizing: border-box;
+  height: 28px;
+  min-height: 0;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-body {
+  box-sizing: border-box;
+  grid-template-columns: 95px minmax(0, 1fr);
+  height: 65px;
+  min-height: 0;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-code-box {
+  margin: 2px 0 1px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-code-box span {
+  font-size: 10px;
+  line-height: 1.05;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-code-box strong {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.05;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-activation {
+  box-sizing: border-box;
+  color: #374151;
+  font-size: 7px;
+  font-weight: 900;
+  height: 35px;
+  line-height: 1.08;
+  max-height: 35px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1.8px 2.5px 0;
+  text-align: center;
+  text-shadow: 0 0 2px #fff;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-validity {
+  box-sizing: border-box;
+  height: 8px;
+  min-height: 0;
+  padding: 0 2.5px;
+  text-align: right;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-validity,
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-validity span,
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-validity strong {
+  font-size: 7px;
+  line-height: 1;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-qr {
+  display: block;
+  height: 56px;
+  margin: 1px 5px 0 auto;
+  padding: 0;
+  width: 56px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-footer {
+  box-sizing: border-box;
+  display: block;
+  font-size: 9px;
+  height: 13px;
+  line-height: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 2px 2.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media print {
+  html:has(body.printing-hotspot-vouchers.hotspot-voucher-print-a4),
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 {
+    min-height: auto !important;
+    width: auto !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 dialog,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .modal-frame,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 #modalBody,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-preview,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-stack,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-page {
+    max-width: none !important;
+    min-width: 0 !important;
+    width: auto !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-stack,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-print-page {
+    display: block !important;
+    line-height: 0 !important;
+    text-align: left !important;
+    white-space: normal !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-ticket {
+    box-sizing: border-box !important;
+    display: inline-block !important;
+    height: 108px !important;
+    line-height: normal !important;
+    margin: 2px !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    vertical-align: top !important;
+    width: 190px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-head {
+    box-sizing: border-box !important;
+    height: 28px !important;
+    min-height: 0 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-body {
+    box-sizing: border-box !important;
+    grid-template-columns: 95px minmax(0, 1fr) !important;
+    height: 65px !important;
+    min-height: 0 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box {
+    margin: 2px 0 1px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box span {
+    font-size: 10px !important;
+    line-height: 1.05 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-code-box strong {
+    font-family: Helvetica, Arial, sans-serif !important;
+    font-size: 14px !important;
+    line-height: 1.05 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-activation {
+    box-sizing: border-box !important;
+    color: #374151 !important;
+    font-size: 7px !important;
+    height: 35px !important;
+    line-height: 1.08 !important;
+    max-height: 35px !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 1.8px 2.5px 0 !important;
+    text-shadow: 0 0 2px #fff !important;
+    white-space: normal !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity {
+    box-sizing: border-box !important;
+    height: 8px !important;
+    min-height: 0 !important;
+    padding: 0 2.5px !important;
+    text-align: right !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity span,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-validity strong {
+    font-size: 7px !important;
+    line-height: 1 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-qr {
+    display: block !important;
+    height: 56px !important;
+    margin: 1px 5px 0 auto !important;
+    padding: 0 !important;
+    width: 56px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-footer {
+    box-sizing: border-box !important;
+    display: block !important;
+    font-size: 9px !important;
+    height: 13px !important;
+    line-height: 1 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 2px 2.5px !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon-table {
+  border: 1px solid #000000;
+  border-collapse: collapse;
+  box-shadow: none;
+  box-sizing: content-box;
+  display: inline-block;
+  font-family: Helvetica, Arial, sans-serif;
+  height: auto;
+  line-height: normal;
+  margin: 2px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  vertical-align: top;
+  width: 190px;
+}
+
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon-table .hotspot-voucher-qr {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-sizing: content-box;
+  height: 60px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  width: 60px;
+}
+
+@media print {
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-mikhmon-table {
+    border: 1px solid #000000 !important;
+    border-collapse: collapse !important;
+    box-shadow: none !important;
+    box-sizing: content-box !important;
+    display: inline-block !important;
+    font-family: Helvetica, Arial, sans-serif !important;
+    height: auto !important;
+    line-height: normal !important;
+    margin: 2px !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    page-break-inside: avoid !important;
+    position: relative !important;
+    vertical-align: top !important;
+    width: 190px !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-mikhmon-table,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-mikhmon-table * {
+    visibility: visible !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-a4 .hotspot-voucher-mikhmon-table .hotspot-voucher-qr {
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-sizing: content-box !important;
+    display: block !important;
+    height: 60px !important;
+    margin: 0 0 0 auto !important;
+    padding: 0 !important;
+    width: 60px !important;
+  }
+}
+
+.hotspot-voucher-qr {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58,
+.hotspot-voucher-print-stack.print-mode-thermal-80 {
+  align-items: start;
+  background: #ffffff;
+  gap: 0;
+  grid-template-columns: 1fr;
+  justify-content: center;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-print-page,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-print-page {
+  background: #ffffff;
+  border: 1px dashed #d1d5db;
+  box-sizing: border-box;
+  display: grid;
+  gap: 2mm;
+  grid-template-columns: 1fr;
+  padding: 0;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-print-page {
+  width: 58mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-print-page {
+  width: 80mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-ticket,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-ticket {
+  border-color: #111111;
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  page-break-inside: avoid;
+  width: 100%;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal {
+  gap: 1mm;
+  min-height: 58mm;
+  padding: 2mm 1.5mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal {
+  gap: .8mm;
+  min-height: 58mm;
+  padding: 1.6mm 1.2mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-head,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-head {
+  border: 0;
+  border-radius: 0;
+  gap: .7mm;
+  padding: 0;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-brand,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-brand {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-brand img {
+  border: 0;
+  border-radius: 0;
+  height: 8mm;
+  max-width: 48mm;
+  padding: 0;
+  width: 48mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-brand img {
+  border: 0;
+  border-radius: 0;
+  height: 7mm;
+  max-width: 38mm;
+  padding: 0;
+  width: 38mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-price,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-price {
+  justify-content: center;
+  text-align: center;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-price span {
+  font-size: 8pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-price strong {
+  font-size: 17pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-price span {
+  font-size: 6.5pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-price strong {
+  font-size: 14pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-body,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-body {
+  gap: 1mm;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  min-height: 0;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-main,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-main,
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-side,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-side {
+  gap: .8mm;
+  justify-items: center;
+  text-align: center;
+  width: 100%;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-code-box,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-code-box {
+  border-bottom: .25mm solid var(--voucher-accent, #0277bd);
+  width: 100%;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-code-box span {
+  font-size: 7pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-code-box strong {
+  font-size: 17pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-code-box span {
+  font-size: 6pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-code-box strong {
+  font-size: 14pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-activation,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-activation {
+  display: block;
+  font-weight: 900;
+  max-height: none;
+  overflow: hidden;
+  text-align: center;
+  white-space: normal;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-activation {
+  font-size: 5.8pt;
+  line-height: 1.12;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-activation {
+  font-size: 5.1pt;
+  line-height: 1.1;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-validity,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-validity {
+  gap: .2mm;
+  justify-items: center;
+  text-align: center;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-validity span,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-validity strong {
+  font-size: 6pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-validity span,
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-validity strong {
+  font-size: 5.2pt;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-qr {
+  background: #ffffff;
+  border: 0;
+  border-radius: 0;
+  height: 28mm;
+  padding: 0;
+  width: 28mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-qr {
+  background: #ffffff;
+  border: 0;
+  border-radius: 0;
+  height: 24mm;
+  padding: 0;
+  width: 24mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-footer,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-footer {
+  border-radius: 0;
+  color: #ff9100;
+  font-weight: 900;
+  line-height: 1;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-footer {
+  font-size: 5.7pt;
+  padding: .7mm 1mm;
+}
+
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-footer {
+  font-size: 5pt;
+  padding: .55mm .8mm;
+}
+
+@media print {
+  html:has(body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58),
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 {
+    min-height: auto !important;
+    width: 58mm !important;
+  }
+
+  html:has(body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80),
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 {
+    min-height: auto !important;
+    width: 80mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 dialog,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .modal-frame,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 #modalBody,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-preview,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-print-stack,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-print-page {
+    max-width: 58mm !important;
+    min-width: 0 !important;
+    width: 58mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 dialog,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .modal-frame,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 #modalBody,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-preview,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-print-stack,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-print-page {
+    max-width: 80mm !important;
+    min-width: 0 !important;
+    width: 80mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-print-stack,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-print-stack,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-print-page,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-print-page {
+    background: #ffffff !important;
+    border: 0 !important;
+    display: grid !important;
+    gap: 0 !important;
+    grid-template-columns: 1fr !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-ticket,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-ticket {
+    border-color: #111111 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    box-sizing: border-box !important;
+    margin: 0 0 2mm !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+    page-break-inside: avoid !important;
+    width: 100% !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal {
+    gap: 1mm !important;
+    min-height: 58mm !important;
+    padding: 2mm 1.5mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal {
+    gap: .8mm !important;
+    min-height: 58mm !important;
+    padding: 1.6mm 1.2mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-head,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-head {
+    border: 0 !important;
+    border-radius: 0 !important;
+    gap: .7mm !important;
+    padding: 0 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-brand,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-brand {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    justify-items: center !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-brand img {
+    border: 0 !important;
+    border-radius: 0 !important;
+    height: 8mm !important;
+    max-width: 48mm !important;
+    padding: 0 !important;
+    width: 48mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-brand img {
+    border: 0 !important;
+    border-radius: 0 !important;
+    height: 7mm !important;
+    max-width: 38mm !important;
+    padding: 0 !important;
+    width: 38mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-price,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-price {
+    justify-content: center !important;
+    text-align: center !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-price span {
+    font-size: 8pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-price strong {
+    font-size: 17pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-price span {
+    font-size: 6.5pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-price strong {
+    font-size: 14pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-body,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-body {
+    gap: 1mm !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    justify-items: center !important;
+    min-height: 0 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-main,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-main,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-side,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-side {
+    gap: .8mm !important;
+    justify-items: center !important;
+    text-align: center !important;
+    width: 100% !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-code-box,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-code-box {
+    border-bottom: .25mm solid var(--voucher-accent, #0277bd) !important;
+    width: 100% !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-code-box span {
+    font-size: 7pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-code-box strong {
+    font-size: 17pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-code-box span {
+    font-size: 6pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-code-box strong {
+    font-size: 14pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-activation,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-activation {
+    display: block !important;
+    font-weight: 900 !important;
+    max-height: none !important;
+    overflow: hidden !important;
+    text-align: center !important;
+    white-space: normal !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-activation {
+    font-size: 5.8pt !important;
+    line-height: 1.12 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-activation {
+    font-size: 5.1pt !important;
+    line-height: 1.1 !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-validity,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-validity {
+    gap: .2mm !important;
+    justify-items: center !important;
+    text-align: center !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-validity span,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-validity strong {
+    font-size: 6pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-validity span,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-validity strong {
+    font-size: 5.2pt !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-qr {
+    background: #ffffff !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    height: 28mm !important;
+    padding: 0 !important;
+    width: 28mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-qr {
+    background: #ffffff !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    height: 24mm !important;
+    padding: 0 !important;
+    width: 24mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-footer,
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-footer {
+    border-radius: 0 !important;
+    color: #f8fafc !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+    overflow: hidden !important;
+    text-align: center !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-footer {
+    font-size: 5.7pt !important;
+    padding: .7mm 1mm !important;
+  }
+
+  body.printing-hotspot-vouchers.hotspot-voucher-print-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-footer {
+    font-size: 5pt !important;
+    padding: .55mm .8mm !important;
+  }
+}
+
+.hotspot-voucher-activation,
+.hotspot-voucher-mikhmon .hotspot-voucher-activation,
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-activation,
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-activation,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-activation {
+  color: #374151 !important;
+  text-shadow: 0 0 2px #ffffff !important;
+}
+
+.hotspot-voucher-mikhmon .hotspot-voucher-footer,
+.hotspot-voucher-template-thermal .hotspot-voucher-footer,
+.hotspot-voucher-print-stack.print-mode-a4 .hotspot-voucher-mikhmon .hotspot-voucher-footer,
+.hotspot-voucher-print-stack.print-mode-thermal-58 .hotspot-voucher-template-thermal .hotspot-voucher-footer,
+.hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-footer {
+  color: #f8fafc !important;
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.35) !important;
 }

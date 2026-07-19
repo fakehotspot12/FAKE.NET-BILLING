@@ -69,6 +69,7 @@ const BILLING_SOURCE = String(process.env.BILLING_SOURCE || (APP_MODE === 'stand
 const MIGRATION_MODE = ['1', 'true', 'yes', 'on'].includes(String(process.env.MIGRATION_MODE || '').toLowerCase());
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
+const UPLOAD_ROOT = path.join(APP_ROOT, 'data', 'uploads');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
 const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-19');
@@ -82,6 +83,8 @@ const RADBOOX_DASHBOARD_MEMBER_MAX_PAGES = 1;
 const BODY_LIMIT_BYTES = 3 * 1024 * 1024;
 const BACKUP_RESTORE_LIMIT_BYTES = 25 * 1024 * 1024;
 const LOGO_DATA_URL_LIMIT_BYTES = 2 * 1024 * 1024;
+const IMAGE_UPLOAD_LIMIT_BYTES = 3 * 1024 * 1024;
+const IMAGE_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
 const XENDIT_WITHDRAW_TTL_MS = 10 * 60 * 1000;
 const WA_GATEWAY_SEND_INTERVAL_MS = Math.max(15_000, Number(process.env.WA_GATEWAY_SEND_INTERVAL_MS || 30_000) || 30_000);
 const WA_GATEWAY_HTTP_TIMEOUT_MS = Math.max(5_000, Number(process.env.WA_GATEWAY_HTTP_TIMEOUT_MS || 15_000) || 15_000);
@@ -124,6 +127,9 @@ const MIME_TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon'
 };
 
@@ -804,6 +810,181 @@ function sanitizePublicUrl(value = '') {
     return '';
   }
   return '';
+}
+
+function sanitizeStoredImageUrl(value = '', folder = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const prefix = folder ? `/uploads/${folder}/` : '/uploads/';
+  if (raw.startsWith(prefix) && !raw.includes('..')) return raw.slice(0, 240);
+  if (/^data:image\//i.test(raw)) {
+    throw new Error('Gambar harus diupload sebagai file, bukan disimpan langsung di data');
+  }
+  throw new Error('Gambar harus diupload dari aplikasi');
+}
+
+function uploadPurposeDirectory(value = '') {
+  const purpose = String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  const map = {
+    profile: 'profile',
+    'member-house': 'member-house',
+    house: 'member-house',
+    customer: 'member-house'
+  };
+  const directory = map[purpose] || '';
+  if (!directory) {
+    throw new Error('Tujuan upload tidak valid');
+  }
+  return directory;
+}
+
+function parseImageDataUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    throw new Error('File gambar tidak tersedia');
+  }
+  const match = raw.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) {
+    throw new Error('Format gambar harus PNG, JPG, atau WEBP');
+  }
+  const mime = match[1].toLowerCase() === 'jpg' ? 'jpeg' : match[1].toLowerCase();
+  const base64 = match[2].replace(/\s+/g, '');
+  const buffer = Buffer.from(base64, 'base64');
+  if (!buffer.length || buffer.length > IMAGE_UPLOAD_MAX_BYTES) {
+    throw new Error('Ukuran gambar maksimal 2 MB');
+  }
+  const signatures = {
+    png: (bytes) => bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47,
+    jpeg: (bytes) => bytes.length > 4 && bytes[0] === 0xff && bytes[1] === 0xd8,
+    webp: (bytes) => bytes.length > 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP'
+  };
+  if (!signatures[mime]?.(buffer)) {
+    throw new Error('Isi file gambar tidak sesuai format');
+  }
+  return {
+    buffer,
+    extension: mime === 'jpeg' ? '.jpg' : `.${mime}`
+  };
+}
+
+async function saveUploadedImage(payload = {}) {
+  const directory = uploadPurposeDirectory(payload.purpose || payload.folder);
+  const { buffer, extension } = parseImageDataUrl(payload.image || payload.dataUrl || payload.file);
+  const targetDir = path.join(UPLOAD_ROOT, directory);
+  await fs.mkdir(targetDir, { recursive: true });
+  const filename = `${Date.now().toString(36)}-${crypto.randomBytes(8).toString('hex')}${extension}`;
+  const targetPath = path.join(targetDir, filename);
+  await fs.writeFile(targetPath, buffer, { flag: 'wx' });
+  return {
+    url: `/uploads/${directory}/${filename}`,
+    size: buffer.length
+  };
+}
+
+function isInlineImageDataUrl(value = '') {
+  return /^data:image\/(png|jpe?g|webp);base64,/i.test(String(value || '').trim());
+}
+
+function migrationFilePrefix(value = '') {
+  return String(value || 'image')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'image';
+}
+
+async function writeMigratedInlineImage(dataUrl = '', folder = '', prefix = 'image', options = {}) {
+  const directory = uploadPurposeDirectory(folder);
+  const { buffer, extension } = parseImageDataUrl(dataUrl);
+  const uploadRoot = options.uploadRoot || UPLOAD_ROOT;
+  const targetDir = path.join(uploadRoot, directory);
+  await fs.mkdir(targetDir, { recursive: true });
+  const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 18);
+  const filename = `migrated-${migrationFilePrefix(prefix)}-${hash}${extension}`;
+  const targetPath = path.join(targetDir, filename);
+  try {
+    await fs.writeFile(targetPath, buffer, { flag: 'wx' });
+  } catch (error) {
+    if (error.code !== 'EEXIST') {
+      throw error;
+    }
+  }
+  return `/uploads/${directory}/${filename}`;
+}
+
+async function migrateInlineImageField(record = {}, field = '', folder = '', prefix = '', stats = {}, options = {}) {
+  if (!record || typeof record !== 'object' || !field) return '';
+  const current = record[field];
+  if (!isInlineImageDataUrl(current)) return '';
+  try {
+    const url = await writeMigratedInlineImage(current, folder, prefix || field, options);
+    record[field] = url;
+    stats.migrated += 1;
+    return url;
+  } catch (error) {
+    stats.skipped += 1;
+    if (stats.errors.length < 10) {
+      stats.errors.push(`${prefix || field}: ${error.message || error}`);
+    }
+    return '';
+  }
+}
+
+async function migrateLegacyInlineImages(data = {}, options = {}) {
+  const stats = {
+    migrated: 0,
+    skipped: 0,
+    errors: []
+  };
+
+  for (const user of data.users || []) {
+    const prefix = `user-${user.id || user.username || 'profile'}`;
+    const photoUrl = await migrateInlineImageField(user, 'photoUrl', 'profile', `${prefix}-photo`, stats, options);
+    const avatarUrl = await migrateInlineImageField(user, 'avatarUrl', 'profile', `${prefix}-avatar`, stats, options);
+    if (!user.photoUrl && avatarUrl) {
+      user.photoUrl = avatarUrl;
+    }
+    if (isInlineImageDataUrl(user.avatarUrl) || (avatarUrl && user.photoUrl === avatarUrl)) {
+      delete user.avatarUrl;
+    }
+  }
+
+  for (const customer of data.customers || []) {
+    const prefix = `customer-${customer.id || customer.username || 'house'}`;
+    const housePhotoUrl = await migrateInlineImageField(customer, 'housePhotoUrl', 'member-house', `${prefix}-house`, stats, options);
+    const memberHousePhotoUrl = await migrateInlineImageField(customer, 'memberHousePhotoUrl', 'member-house', `${prefix}-member-house`, stats, options);
+    const photoUrl = await migrateInlineImageField(customer, 'photoUrl', 'member-house', `${prefix}-photo`, stats, options);
+    if (!customer.housePhotoUrl) {
+      customer.housePhotoUrl = housePhotoUrl || memberHousePhotoUrl || photoUrl || customer.housePhotoUrl || '';
+    }
+    if (memberHousePhotoUrl && customer.housePhotoUrl === memberHousePhotoUrl) {
+      delete customer.memberHousePhotoUrl;
+    }
+    if (photoUrl && customer.housePhotoUrl === photoUrl) {
+      delete customer.photoUrl;
+    }
+  }
+
+  return stats;
+}
+
+function hasLegacyInlineImages(data = {}) {
+  const userPhotoFields = ['photoUrl', 'avatarUrl'];
+  for (const user of data.users || []) {
+    if (userPhotoFields.some((field) => isInlineImageDataUrl(user?.[field]))) {
+      return true;
+    }
+  }
+
+  const customerPhotoFields = ['housePhotoUrl', 'memberHousePhotoUrl', 'photoUrl'];
+  for (const customer of data.customers || []) {
+    if (customerPhotoFields.some((field) => isInlineImageDataUrl(customer?.[field]))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function sanitizePublicInfoSettings(payload = {}, current = {}) {
@@ -1859,64 +2040,184 @@ function radiusProfileRowsLocal(data = {}, serviceType = 'pppoe') {
     }));
 }
 
-function defaultHotspotVoucherTemplate() {
-  const now = new Date().toISOString();
-  return {
+const HOTSPOT_VOUCHER_TEMPLATE_PRESETS = Object.freeze([
+  {
     id: 'default',
-    name: 'Voucher Standar',
-    title: 'Hotspot Voucher',
-    subtitle: '',
-    footer: 'Simpan voucher sampai masa aktif habis.',
+    name: 'Mikhmon Compact',
+    title: 'Voucher Compact',
+    layout: 'mikhmon-compact',
+    active: true
+  },
+  {
+    id: 'thermal',
+    name: 'Thermal',
+    title: 'Thermal Voucher',
+    layout: 'thermal',
+    active: false
+  },
+  {
+    id: 'small',
+    name: 'Small',
+    title: 'Small Voucher',
+    layout: 'small',
+    active: false
+  }
+]);
+
+const HOTSPOT_VOUCHER_TEMPLATE_LAYOUTS = new Set(['mikhmon-compact', 'thermal', 'small', 'custom']);
+const HOTSPOT_VOUCHER_BUILTIN_TEMPLATE_IDS = new Set(HOTSPOT_VOUCHER_TEMPLATE_PRESETS.map((template) => template.id));
+const LEGACY_HOTSPOT_VOUCHER_INSTRUCTION = 'cara aktivasi kode voucher buka chrome ketik : {{login_host}} lalu enter';
+const LEGACY_SHORT_HOTSPOT_VOUCHER_INSTRUCTION = 'Login: {{login_host}}';
+const DEFAULT_HOTSPOT_VOUCHER_INSTRUCTION = 'cara aktivasi kode\nvoucer buka chrome ketik : {{login_host}} lalu enter';
+
+function hotspotVoucherTemplatePreset(preset = {}, now = new Date().toISOString()) {
+  return {
+    id: preset.id || 'default',
+    name: preset.name || 'Mikhmon Compact',
+    title: preset.title || 'Voucher Compact',
+    subtitle: DEFAULT_HOTSPOT_VOUCHER_INSTRUCTION,
+    footer: '',
     loginLabel: 'Link login',
+    layout: preset.layout || 'mikhmon-compact',
+    accentColor: '#0277BD',
+    instruction: DEFAULT_HOTSPOT_VOUCHER_INSTRUCTION,
+    supportText: '',
+    codeLabel: 'VOUCHER',
+    validityLabel: 'MASA AKTIF',
+    customHtml: '',
+    customCss: '',
     showPrice: true,
     showQr: true,
-    active: true,
+    active: preset.active === true,
     editable: true,
+    builtin: true,
     createdAt: now,
     updatedAt: now
   };
 }
 
+function defaultHotspotVoucherTemplate() {
+  return hotspotVoucherTemplatePreset(HOTSPOT_VOUCHER_TEMPLATE_PRESETS[0]);
+}
+
+function hotspotVoucherTemplateDefaults(now = new Date().toISOString()) {
+  return HOTSPOT_VOUCHER_TEMPLATE_PRESETS.map((preset) => hotspotVoucherTemplatePreset(preset, now));
+}
+
+function normalizeHotspotVoucherTemplate(template = {}, fallback = {}) {
+  const layout = HOTSPOT_VOUCHER_TEMPLATE_LAYOUTS.has(String(template.layout || fallback.layout || '').trim())
+    ? String(template.layout || fallback.layout || '').trim()
+    : 'mikhmon-compact';
+  const instruction = String(template.instruction || fallback.instruction || '').trim();
+  const normalizedInstruction = [LEGACY_HOTSPOT_VOUCHER_INSTRUCTION, LEGACY_SHORT_HOTSPOT_VOUCHER_INSTRUCTION].includes(instruction)
+    ? DEFAULT_HOTSPOT_VOUCHER_INSTRUCTION
+    : instruction;
+  return {
+    ...fallback,
+    ...template,
+    id: String(template.id || fallback.id || createId('hvt')).trim(),
+    name: String(template.name || fallback.name || 'Mikhmon Compact').trim(),
+    title: String(template.title || fallback.title || 'Voucher Compact').trim(),
+    subtitle: [LEGACY_HOTSPOT_VOUCHER_INSTRUCTION, LEGACY_SHORT_HOTSPOT_VOUCHER_INSTRUCTION].includes(String(template.subtitle || fallback.subtitle || '').trim())
+      ? DEFAULT_HOTSPOT_VOUCHER_INSTRUCTION
+      : String(template.subtitle || fallback.subtitle || '').trim(),
+    footer: String(template.footer ?? fallback.footer ?? '').trim(),
+    loginLabel: String(template.loginLabel || fallback.loginLabel || 'Link login').trim(),
+    layout,
+    accentColor: /^#[0-9a-f]{6}$/i.test(String(template.accentColor || fallback.accentColor || '').trim())
+      ? String(template.accentColor || fallback.accentColor).trim()
+      : '#0277BD',
+    instruction: normalizedInstruction,
+    supportText: String(template.supportText ?? fallback.supportText ?? '').trim(),
+    codeLabel: String(template.codeLabel || fallback.codeLabel || 'VOUCHER').trim(),
+    validityLabel: String(template.validityLabel || fallback.validityLabel || 'MASA AKTIF').trim(),
+    customHtml: String(template.customHtml ?? fallback.customHtml ?? ''),
+    customCss: String(template.customCss ?? fallback.customCss ?? ''),
+    showPrice: template.showPrice !== false,
+    showQr: template.showQr !== false,
+    active: template.active !== undefined ? template.active !== false : fallback.active === true,
+    editable: template.editable !== false,
+    builtin: fallback.builtin === true || HOTSPOT_VOUCHER_BUILTIN_TEMPLATE_IDS.has(String(template.id || fallback.id || '')),
+    createdAt: template.createdAt || fallback.createdAt || new Date().toISOString(),
+    updatedAt: template.updatedAt || fallback.updatedAt || template.createdAt || fallback.createdAt || ''
+  };
+}
+
 function hotspotVoucherTemplates(data = {}) {
   const rows = Array.isArray(data.radiusHotspotTemplates) ? data.radiusHotspotTemplates : [];
-  return rows.length ? rows : [defaultHotspotVoucherTemplate()];
+  const defaults = hotspotVoucherTemplateDefaults();
+  const byId = new Map(rows.map((template) => [String(template.id || ''), template]));
+  const merged = defaults.map((preset) => normalizeHotspotVoucherTemplate(byId.get(preset.id) || {}, preset));
+  for (const template of rows) {
+    const id = String(template.id || '');
+    if (!HOTSPOT_VOUCHER_BUILTIN_TEMPLATE_IDS.has(id)) {
+      merged.push(normalizeHotspotVoucherTemplate(template, {}));
+    }
+  }
+  return merged;
 }
 
 function radiusTemplateRowsLocal(data = {}) {
   return hotspotVoucherTemplates(data).map((template) => ({
     id: template.id || 'default',
-    name: template.name || 'Voucher Standar',
-    title: template.title || 'Hotspot Voucher',
+    name: template.name || 'Mikhmon Compact',
+    title: template.title || 'Voucher Compact',
     subtitle: template.subtitle || '',
     footer: template.footer || '',
     loginLabel: template.loginLabel || 'Link login',
+    layout: template.layout || 'mikhmon-compact',
+    accentColor: template.accentColor || '#0277BD',
+    instruction: template.instruction || template.subtitle || '',
+    supportText: template.supportText || '',
+    codeLabel: template.codeLabel || 'VOUCHER',
+    validityLabel: template.validityLabel || 'MASA AKTIF',
+    customHtml: template.customHtml || '',
+    customCss: template.customCss || '',
     showPrice: template.showPrice !== false,
     showQr: template.showQr !== false,
     active: template.active !== false,
     editable: template.editable !== false,
+    builtin: template.builtin === true || HOTSPOT_VOUCHER_BUILTIN_TEMPLATE_IDS.has(String(template.id || '')),
     status: template.active === false ? 'disabled' : 'active',
     updatedAt: template.updatedAt || template.createdAt || ''
   }));
 }
 
 function hotspotVoucherTemplatePayload(payload = {}, current = {}) {
+  const has = (key) => Object.prototype.hasOwnProperty.call(payload, key);
+  const stringValue = (key, fallback = '', limit = 220, trim = true) => {
+    const source = has(key) ? payload[key] : (current[key] ?? fallback);
+    const text = String(source ?? fallback ?? '');
+    const next = trim ? text.trim() : text;
+    return next.slice(0, limit);
+  };
+  const layout = HOTSPOT_VOUCHER_TEMPLATE_LAYOUTS.has(String(payload.layout || current.layout || '').trim())
+    ? String(payload.layout || current.layout || '').trim()
+    : 'mikhmon-compact';
+  const accentColor = String(payload.accentColor || current.accentColor || '#0277BD').trim();
   return {
-    name: String(payload.name || current.name || 'Voucher Standar').trim().slice(0, 80) || 'Voucher Standar',
-    title: String(payload.title || current.title || 'Hotspot Voucher').trim().slice(0, 80) || 'Hotspot Voucher',
-    subtitle: String(payload.subtitle || current.subtitle || '').trim().slice(0, 80),
-    footer: String(payload.footer || current.footer || '').trim().slice(0, 180),
-    loginLabel: String(payload.loginLabel || current.loginLabel || 'Link login').trim().slice(0, 40) || 'Link login',
-    showPrice: payload.showPrice !== false,
-    showQr: payload.showQr !== false,
-    active: payload.active !== false,
+    name: stringValue('name', 'Mikhmon Compact', 80) || 'Mikhmon Compact',
+    title: stringValue('title', 'Voucher Compact', 80) || 'Voucher Compact',
+    subtitle: stringValue('subtitle', '', 220),
+    footer: stringValue('footer', '', 220),
+    loginLabel: stringValue('loginLabel', 'Link login', 40) || 'Link login',
+    layout,
+    accentColor: /^#[0-9a-f]{6}$/i.test(accentColor) ? accentColor : '#0277BD',
+    instruction: stringValue('instruction', '', 220),
+    supportText: stringValue('supportText', '', 160),
+    codeLabel: stringValue('codeLabel', 'VOUCHER', 28) || 'VOUCHER',
+    validityLabel: stringValue('validityLabel', 'MASA AKTIF', 28) || 'MASA AKTIF',
+    customHtml: stringValue('customHtml', '', 12000, false),
+    customCss: stringValue('customCss', '', 8000, false),
+    showPrice: has('showPrice') ? payload.showPrice !== false : current.showPrice !== false,
+    showQr: has('showQr') ? payload.showQr !== false : current.showQr !== false,
+    active: has('active') ? payload.active !== false : current.active !== false,
     editable: true
   };
 }
 
 function ensureHotspotVoucherTemplateStore(data = {}) {
-  if (!Array.isArray(data.radiusHotspotTemplates) || !data.radiusHotspotTemplates.length) {
-    data.radiusHotspotTemplates = [defaultHotspotVoucherTemplate()];
-  }
+  data.radiusHotspotTemplates = hotspotVoucherTemplates(data);
   return data.radiusHotspotTemplates;
 }
 
@@ -1930,9 +2231,15 @@ function upsertHotspotVoucherTemplate(data = {}, id = '', payload = {}, actor = 
       ...templates[index],
       ...hotspotVoucherTemplatePayload(payload, templates[index]),
       id: templates[index].id,
+      builtin: templates[index].builtin === true || HOTSPOT_VOUCHER_BUILTIN_TEMPLATE_IDS.has(String(templates[index].id || '')),
       updatedAt: now,
       updatedBy: actor?.name || actor?.username || 'Sistem'
     };
+    if (templates[index].active !== false) {
+      templates.forEach((template, templateIndex) => {
+        if (templateIndex !== index) template.active = false;
+      });
+    }
     return templates[index];
   }
   const item = {
@@ -1942,6 +2249,11 @@ function upsertHotspotVoucherTemplate(data = {}, id = '', payload = {}, actor = 
     updatedAt: now,
     updatedBy: actor?.name || actor?.username || 'Sistem'
   };
+  if (item.active !== false) {
+    templates.forEach((template) => {
+      template.active = false;
+    });
+  }
   templates.push(item);
   return item;
 }
@@ -1950,7 +2262,7 @@ function deleteHotspotVoucherTemplate(data = {}, id = '') {
   const templates = ensureHotspotVoucherTemplateStore(data);
   const index = templates.findIndex((template) => String(template.id) === String(id || ''));
   if (index === -1) throw new Error('Template voucher tidak ditemukan');
-  if (templates[index].id === 'default' || templates.length <= 1) {
+  if (HOTSPOT_VOUCHER_BUILTIN_TEMPLATE_IDS.has(String(templates[index].id || '')) || templates.length <= 1) {
     templates[index].active = false;
     templates[index].updatedAt = new Date().toISOString();
     return templates[index];
@@ -1992,6 +2304,11 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         owner: customer.name || '',
         profile: profile.name || '',
         profileId: profile.id || user.profileId || '',
+        validity: profile.validity || '',
+        validitySeconds: profile.validitySeconds || 0,
+        quota: profile.quota || '',
+        quotaBytes: profile.quotaBytes || 0,
+        sharedUsers: profile.sharedUsers || 1,
         nas: nas.name || '',
         nasId: nas.id || user.nasId || '',
         hotspotLoginUrl: serviceType === 'hotspot' ? hotspotLoginUrlForNas(data, nas.id || user.nasId || nas.name) : '',
@@ -3289,7 +3606,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     countsAsPsb: payload.memberCountsAsPsb === undefined ? true : payloadEnabled(payload.memberCountsAsPsb),
     recordOrigin: String(payload.memberRecordOrigin || payload.recordOrigin || 'wizard').trim(),
     importedAt: String(payload.memberImportedAt || payload.importedAt || '').trim(),
-    housePhotoUrl: String(payload.memberHousePhotoUrl || payload.housePhotoUrl || '').trim(),
+    housePhotoUrl: sanitizeStoredImageUrl(payload.memberHousePhotoUrl || payload.housePhotoUrl || '', 'member-house'),
     createdByName: customer.createdByName || actor.name || actor.username || 'Sistem',
     createdByUsername: customer.createdByUsername || actor.username || '',
     createdByRole: customer.createdByRole || actor.role || '',
@@ -3775,10 +4092,21 @@ function collectorUsers(data = {}) {
 
 function normalizedTimestampIso(value) {
   if (value === null || value === undefined || value === '') return '';
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+  }
   const numeric = Number(value);
-  const timestamp = Number.isFinite(numeric) && numeric > 0
-    ? (numeric > 1_000_000_000_000 ? numeric : numeric * 1000)
-    : Date.parse(String(value));
+  const raw = String(value).trim();
+  const numericText = /^[+-]?\d+(?:\.\d+)?$/.test(raw);
+  let timestamp = NaN;
+  if (Number.isFinite(numeric) && numeric > 0 && (typeof value === 'number' || numericText)) {
+    if (numeric >= 1_000_000_000_000) timestamp = numeric;
+    else if (numeric >= 1_000_000_000) timestamp = numeric * 1000;
+    else return '';
+  } else {
+    timestamp = Date.parse(raw);
+  }
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
 }
 
@@ -3787,6 +4115,14 @@ function timestampLocalDateKey(value) {
   if (!timestamp) return '';
   const parts = localDateParts(new Date(timestamp));
   return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function reportTimestampValue(...values) {
+  for (const value of values) {
+    const timestamp = normalizedTimestampIso(value);
+    if (timestamp) return timestamp;
+  }
+  return '';
 }
 
 function paymentReportTimestamp(payment = {}, invoice = {}) {
@@ -3909,15 +4245,36 @@ function voucherReportCommissionPercent(settings = {}) {
   return Math.max(0, Math.min(100, Number(settings.voucherRevenueSharePercent || 0) || 0));
 }
 
+function voucherUsernamesForReport(order = {}) {
+  const seen = new Set();
+  const rows = [];
+  const add = (value = '') => {
+    const text = String(value || '').trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) return;
+    seen.add(key);
+    rows.push(text);
+  };
+  (Array.isArray(order.vouchers) ? order.vouchers : []).forEach((voucher) => add(voucher.username || voucher.user || voucher.code));
+  add(order.username);
+  add(order.voucherUsername);
+  add(order.voucherUser);
+  add(order.code);
+  if (!rows.length && String(order.source || '') === 'manual') add(order.reference);
+  return rows.join(', ');
+}
+
 function enrichVoucherOrderForReport(data = {}, order = {}) {
   const reseller = voucherResellerForOrder(data, order);
   const amount = Math.max(0, Math.round(Number(order.amount || 0) || 0));
   const commissionPercent = reseller ? voucherReportCommissionPercent(data.settings || {}) : 0;
   const commissionAmount = Math.round((amount * commissionPercent) / 100);
   const methodGroup = paymentCategoryForRecord(order, order.paymentMethod || order.method || '');
+  const voucherUsernames = voucherUsernamesForReport(order);
   return {
     ...order,
     amount,
+    voucherUsernames,
     resellerId: reseller?.id || '',
     resellerUsername: reseller?.username || '',
     resellerName: reseller?.name || '',
@@ -6609,26 +6966,63 @@ async function generatedVoucherFirstOnlineMap(data = {}) {
 }
 
 function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUsername = new Map()) {
+  const reportUsers = hotspotVoucherReportUsers(data);
+  const voucherUsersForOrder = (order = {}) => {
+    const seen = new Set();
+    const rows = [];
+    const add = (voucher = {}) => {
+      const key = String(voucher.id || voucher.username || '').trim().toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      rows.push({
+        id: voucher.id || '',
+        username: voucher.username || '',
+        password: voucher.password || '',
+        profileName: voucher.profileName || order.profileName || '',
+        nasName: voucher.nasName || order.nasName || ''
+      });
+    };
+    (Array.isArray(order.vouchers) ? order.vouchers : []).forEach(add);
+    const ids = new Set((Array.isArray(order.voucherUserIds) ? order.voucherUserIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean));
+    reportUsers
+      .filter((user) => ids.has(String(user.id || ''))
+        || (order.id && user.onlineOrderId === order.id)
+        || (order.reference && user.onlineOrderReference === order.reference))
+      .forEach(add);
+    return rows;
+  };
   const onlineOrders = [
     ...(data.hotspotVoucherOrders || []),
     ...(data.hotspotVoucherSalesHistory || [])
   ]
     .filter((order) => !['free', 'unpaid'].includes(String(order.paymentStatus || order.payment_status || '').toLowerCase()))
     .filter((order) => String(order.status || '').toLowerCase() === 'paid')
-    .filter((order) => timestampLocalDateKey(order.paidAt || order.updatedAt || order.createdAt).slice(0, 7) === period)
-    .map((order) => ({
-      ...order,
-      date: timestampLocalDateKey(order.paidAt || order.updatedAt || order.createdAt),
-      amount: Number(order.amount || 0),
-      paymentMethod: order.paymentMethod || 'QRIS',
-      createdByName: order.createdByName || order.paidByName || '',
-      createdByUsername: order.createdByUsername || order.paidByUsername || '',
-      updatedByName: order.updatedByName || order.paidByName || '',
-      updatedByUsername: order.updatedByUsername || order.paidByUsername || ''
-    }));
+    .map((order) => {
+      const paidAt = reportTimestampValue(order.paidAt);
+      const updatedAt = reportTimestampValue(order.updatedAt);
+      const createdAt = reportTimestampValue(order.createdAt);
+      const reportAt = paidAt || updatedAt || createdAt;
+      return {
+        ...order,
+        date: timestampLocalDateKey(reportAt),
+        amount: Number(order.amount || 0),
+        paymentMethod: order.paymentMethod || 'QRIS',
+        paidAt,
+        createdAt,
+        updatedAt,
+        vouchers: voucherUsersForOrder(order),
+        createdByName: order.createdByName || order.paidByName || '',
+        createdByUsername: order.createdByUsername || order.paidByUsername || '',
+        updatedByName: order.updatedByName || order.paidByName || '',
+        updatedByUsername: order.updatedByUsername || order.paidByUsername || ''
+      };
+    })
+    .filter((order) => order.date.slice(0, 7) === period);
   const profileById = new Map((data.radiusProfiles || []).map((profile) => [profile.id, profile]));
   const nasById = new Map(radiusNasRowsLocal(data).map((nas) => [nas.id, nas]));
-  const manualOrders = hotspotVoucherReportUsers(data)
+  const manualOrders = reportUsers
     .filter((user) => user.serviceType === 'hotspot')
     .filter((user) => !user.customerId)
     .filter((user) => !user.onlineOrderId && !user.onlineOrderReference)
@@ -6642,8 +7036,8 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
       const nas = nasById.get(user.nasId) || {};
       const generated = Boolean(user.voucherBatchId);
       const paidAt = generated
-        ? firstOnlineByUsername.get(radiusSessionUsername(user.username))
-        : (user.paidAt || user.createdAt || user.updatedAt || '');
+        ? reportTimestampValue(firstOnlineByUsername.get(radiusSessionUsername(user.username)))
+        : reportTimestampValue(user.paidAt, user.createdAt, user.updatedAt);
       const amount = Number(user.amount || profile.price || 0);
       return {
         id: `manual-${user.id}`,
@@ -6678,8 +7072,8 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
         }],
         date: timestampLocalDateKey(paidAt),
         paidAt,
-        createdAt: user.createdAt || '',
-        updatedAt: user.updatedAt || ''
+        createdAt: reportTimestampValue(user.createdAt),
+        updatedAt: reportTimestampValue(user.updatedAt)
       };
     })
     .filter((order) => order.date.slice(0, 7) === period);
@@ -9078,6 +9472,17 @@ async function ensureStartupData() {
   if (result && result.created && result.created.length) {
     console.log(`Master inventaris dibuat: ${result.created.length} barang`);
   }
+  const currentData = peekStore() || await loadStore();
+  if (!hasLegacyInlineImages(currentData)) {
+    return;
+  }
+  const migration = await mutate((data) => migrateLegacyInlineImages(data));
+  if (migration.result?.migrated) {
+    console.log(`Migrasi foto base64 selesai: ${migration.result.migrated} gambar dipindah ke data/uploads`);
+  }
+  if (migration.result?.skipped) {
+    console.warn(`Migrasi foto base64 melewati ${migration.result.skipped} gambar: ${migration.result.errors.join(' | ')}`);
+  }
 }
 
 async function requirePermission(req, res, permission) {
@@ -10654,28 +11059,34 @@ async function handleApi(req, res, url) {
       ...(data.settings?.waGateway || {}),
       provider: 'waha'
     };
+    const configuredPhone = normalizeLocalPhone(data.settings?.publicInfo?.contactPhone || '');
     try {
       const status = await wahaSessionStatusWithProfile(settings, { timeoutMs: 3500 });
       const waPhone = wahaLinkedPhoneFromStatus(status);
+      const phone = normalizeLocalPhone(waPhone) || configuredPhone;
+      const linkPhone = normalizeWaPhone(waPhone || configuredPhone);
       sendJson(res, 200, {
         ok: true,
-        available: Boolean(waPhone),
+        available: Boolean(phone),
         online: wahaIsConnected(status),
         name: wahaLinkedNameFromStatus(status) || data.settings?.businessName || 'Admin',
-        phone: normalizeLocalPhone(waPhone),
-        waPhone,
-        link: waPhone ? `https://wa.me/${waPhone}` : '',
+        phone,
+        waPhone: linkPhone,
+        link: linkPhone ? `https://wa.me/${linkPhone}` : '',
+        source: waPhone ? 'linked' : (configuredPhone ? 'settings' : ''),
         status: wahaStatusText(status)
       });
     } catch (error) {
+      const linkPhone = normalizeWaPhone(configuredPhone);
       sendJson(res, 200, {
         ok: true,
-        available: false,
+        available: Boolean(configuredPhone),
         online: false,
         name: data.settings?.businessName || 'Admin',
-        phone: '',
-        waPhone: '',
-        link: '',
+        phone: configuredPhone,
+        waPhone: linkPhone,
+        link: linkPhone ? `https://wa.me/${linkPhone}` : '',
+        source: configuredPhone ? 'settings' : '',
         status: 'Offline',
         error: error.message || 'Nomor WAHA belum terbaca'
       });
@@ -11000,26 +11411,70 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if ((method === 'PUT' || method === 'PATCH') && pathname === '/api/auth/profile') {
+    const data = await requestStore(req);
+    const user = auth.requestUser(req, data);
+    if (!user) {
+      unauthorized(res);
+      return;
+    }
+    const payload = await readBody(req);
+    try {
+      const { result } = await mutate((store) => auth.updateOwnProfile(store, user.id, payload));
+      if (!result) {
+        unauthorized(res);
+        return;
+      }
+      sendJson(res, 200, { user: result });
+    } catch (error) {
+      badRequest(res, error.message || 'Profil user tidak bisa diperbarui');
+    }
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/uploads/image') {
+    const data = await requestStore(req);
+    const user = auth.requestUser(req, data);
+    if (!user) {
+      unauthorized(res);
+      return;
+    }
+    try {
+      const payload = await readBody(req, IMAGE_UPLOAD_LIMIT_BYTES);
+      const purpose = uploadPurposeDirectory(payload.purpose || payload.folder);
+      if (purpose === 'member-house'
+        && !auth.hasPermission(user, 'customers:manage')
+        && !auth.hasPermission(user, 'members:contact:write')) {
+        forbidden(res);
+        return;
+      }
+      const upload = await saveUploadedImage(payload);
+      sendJson(res, 200, { ok: true, ...upload });
+    } catch (error) {
+      badRequest(res, error.message || 'Gambar tidak bisa diupload');
+    }
+    return;
+  }
+
   if (method === 'GET' && pathname === '/api/tools/qr') {
-    const authContext = await requirePermission(req, res, 'radius:read');
-    if (!authContext) return;
     const text = qrTextParam(url.searchParams.get('text') || '');
     if (!text) {
       badRequest(res, 'Data QR kosong');
       return;
     }
-    const width = Math.min(384, Math.max(96, Number.parseInt(url.searchParams.get('size') || '160', 10) || 160));
+    const width = Math.min(1024, Math.max(96, Number.parseInt(url.searchParams.get('size') || '160', 10) || 160));
     const svg = await QRCode.toString(text, {
       type: 'svg',
       errorCorrectionLevel: 'M',
       margin: 1,
       width,
       color: {
-        dark: '#07111f',
+        dark: '#000000',
         light: '#ffffff'
       }
     });
-    sendBinary(res, 200, svg, 'image/svg+xml; charset=utf-8');
+    const crispSvg = svg.replace('<svg ', '<svg shape-rendering="crispEdges" text-rendering="geometricPrecision" ');
+    sendBinary(res, 200, crispSvg, 'image/svg+xml; charset=utf-8');
     return;
   }
 
@@ -11365,7 +11820,7 @@ async function handleApi(req, res, url) {
     const baseOrders = voucherOrdersVisibleForUser(data, await paidVoucherOrdersForReport(data, date.slice(0, 7)), authContext.user);
     let orders = filterVoucherReportOrders(data, baseOrders, filters, authContext.user)
       .filter((order) => order.date === date);
-    orders = filterSearch(orders, search, ['reference', 'paymentReference', 'buyerName', 'whatsapp', 'profileName', 'packageLabel', 'nasName', 'paymentMethod', 'source', 'sourceLabel', 'resellerName', 'resellerUsername', 'createdByName', 'createdByUsername']);
+    orders = filterSearch(orders, search, ['reference', 'paymentReference', 'voucherUsernames', 'buyerName', 'whatsapp', 'profileName', 'packageLabel', 'nasName', 'paymentMethod', 'source', 'sourceLabel', 'resellerName', 'resellerUsername', 'createdByName', 'createdByUsername']);
     orders.sort((a, b) => String(b.paidAt || b.updatedAt || '').localeCompare(String(a.paidAt || a.updatedAt || '')));
     const summary = voucherReportSummary(orders);
     const pagination = paginationPayload(page, limit, orders.length);
@@ -13840,7 +14295,7 @@ async function handleApi(req, res, url) {
           customer.locationAccuracy = String(payload.locationAccuracy || payload.memberLocationAccuracy || '').trim();
           customer.locationUrl = customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : '';
           if (typeof payload.housePhotoUrl === 'string' || typeof payload.memberHousePhotoUrl === 'string') {
-            customer.housePhotoUrl = String(payload.housePhotoUrl || payload.memberHousePhotoUrl || '').trim();
+            customer.housePhotoUrl = sanitizeStoredImageUrl(payload.housePhotoUrl || payload.memberHousePhotoUrl || '', 'member-house');
           }
           customer.updatedAt = new Date().toISOString();
           customer.updatedBy = authContext.user.name || authContext.user.username;
@@ -15031,6 +15486,51 @@ async function serveStatic(req, res, url) {
   if (pathname === '/') {
     pathname = '/index.html';
   }
+  if (pathname.startsWith('/uploads/')) {
+    const uploadRelative = pathname.slice('/uploads/'.length);
+    if (!uploadRelative || uploadRelative.includes('\0') || uploadRelative.split('/').some((part) => part === '..')) {
+      notFound(res);
+      return;
+    }
+    const uploadPath = path.normalize(path.join(UPLOAD_ROOT, uploadRelative));
+    if (!uploadPath.startsWith(UPLOAD_ROOT)) {
+      notFound(res);
+      return;
+    }
+    try {
+      const stat = await fs.stat(uploadPath);
+      if (!stat.isFile()) {
+        notFound(res);
+        return;
+      }
+      const ext = path.extname(uploadPath).toLowerCase();
+      if (!['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) {
+        notFound(res);
+        return;
+      }
+      const etag = staticEtag(stat);
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, {
+          ETag: etag,
+          'Cache-Control': 'public, max-age=86400'
+        });
+        res.end();
+        return;
+      }
+      const body = await fs.readFile(uploadPath);
+      res.writeHead(200, {
+        'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+        'Content-Length': body.length,
+        'Cache-Control': 'public, max-age=86400',
+        ETag: etag,
+        'Last-Modified': stat.mtime.toUTCString()
+      });
+      res.end(body);
+    } catch {
+      notFound(res);
+    }
+    return;
+  }
   try {
     const data = peekStore();
     const voucherPath = data?.settings?.hotspotVoucherOnline?.publicPath || '/voucher';
@@ -15205,6 +15705,7 @@ module.exports = {
     hotspotLoginUrlForNas,
     hotspotVoucherPublicStatusUrl,
     hotspotFreeUserWritable,
+    hasLegacyInlineImages,
     customerInvoiceGenerationDue,
     invoiceGenerationDue,
     importPppUsers,
@@ -15217,6 +15718,7 @@ module.exports = {
     localManualInvoicePreview,
     monthlyBillingDailyRows,
     monthlyVoucherDailyRows,
+    migrateLegacyInlineImages,
     paymentCategoryForRecord,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,

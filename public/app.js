@@ -23,7 +23,14 @@ const modal = document.getElementById('modal');
 const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const logoutButton = document.getElementById('logoutButton');
+const accountMenu = document.getElementById('accountMenu');
+const accountPanel = document.getElementById('accountPanel');
+const accountGreeting = document.getElementById('accountGreeting');
+const accountProfileMenu = document.getElementById('accountProfileMenu');
+const accountLogoutMenu = document.getElementById('accountLogoutMenu');
+const profileButton = document.getElementById('profileButton');
 const currentUserName = document.getElementById('currentUserName');
+const currentUserAvatar = document.getElementById('currentUserAvatar');
 const menuToggleButton = document.getElementById('menuToggleButton');
 const menuBackdrop = document.getElementById('menuBackdrop');
 const sidebarLogo = document.getElementById('sidebarLogo');
@@ -37,11 +44,13 @@ const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100, 'all'];
 const APP_TIME_ZONE = 'Asia/Makassar';
 const DEFAULT_LOGO_URL = '/fakenet-logo.png';
+const DEFAULT_PROFILE_PHOTO_URL = '/default-user-avatar.svg';
 const LEGACY_SOURCE_OFFSET_MINUTES = 7 * 60;
 const XENDIT_WITHDRAW_RESERVE_AMOUNT = 10000;
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 const MONTH_FULL_LABELS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 const MAX_LOGO_UPLOAD_BYTES = 1024 * 1024;
+const MAX_IMAGE_UPLOAD_BYTES = 2 * 1024 * 1024;
 const LAST_VIEW_STORAGE_KEY = 'fakenetBillingLastView';
 const LEGACY_LAST_VIEW_STORAGE_KEY = 'fakenetOpsLastView';
 const LOGIN_RETURN_VIEW_STORAGE_KEY = 'fakenetBillingReturnView';
@@ -484,6 +493,47 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function profileInitials(user = {}) {
+  const source = String(user.name || user.username || 'U').trim();
+  const words = source.split(/\s+/).filter(Boolean);
+  const initials = words.length > 1
+    ? `${words[0][0] || ''}${words[1][0] || ''}`
+    : source.slice(0, 2);
+  return initials.toUpperCase() || 'U';
+}
+
+function safeProfilePhotoUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('/uploads/profile/')) return raw;
+  try {
+    const parsed = new URL(raw);
+    if (['http:', 'https:'].includes(parsed.protocol)) return parsed.toString();
+  } catch {
+    // Invalid external URLs are ignored for profile previews.
+  }
+  return '';
+}
+
+function profilePhotoDisplayUrl(user = {}) {
+  const photoUrl = safeProfilePhotoUrl(user.photoUrl || user.avatarUrl);
+  if (!photoUrl) return DEFAULT_PROFILE_PHOTO_URL;
+  const version = String(user.updatedAt || '').trim();
+  if (!version) return photoUrl;
+  return `${photoUrl}${photoUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`;
+}
+
+function avatarImageMarkup(src, alt = 'Foto user') {
+  const source = src || DEFAULT_PROFILE_PHOTO_URL;
+  return `<img src="${escapeHtml(source)}" alt="${escapeHtml(alt)}" onerror="this.onerror=null;this.src='${escapeHtml(DEFAULT_PROFILE_PHOTO_URL)}'">`;
+}
+
+function userAvatarMarkup(user = {}, className = 'user-avatar') {
+  const photoUrl = safeProfilePhotoUrl(user.photoUrl || user.avatarUrl);
+  const classes = [className, photoUrl ? 'has-photo' : 'is-default'].filter(Boolean).join(' ');
+  return `<span class="${classes}">${avatarImageMarkup(profilePhotoDisplayUrl(user), `Foto ${user.name || user.username || 'default user'}`)}</span>`;
+}
+
 function dateText(value) {
   if (!value) return '-';
   const text = String(value).trim();
@@ -492,10 +542,32 @@ function dateText(value) {
   return readable || readablePeriodText(text);
 }
 
+function dateTimeValueDate(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && /^[+-]?\d+(?:\.\d+)?$/.test(raw)) {
+    if (numeric >= 1_000_000_000_000) {
+      const date = new Date(numeric);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    if (numeric >= 1_000_000_000) {
+      const date = new Date(numeric * 1000);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+    return null;
+  }
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function dateTimeText(value) {
   if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return dateText(value);
+  const date = dateTimeValueDate(value);
+  if (!date) return dateText(value);
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: APP_TIME_ZONE,
     year: 'numeric',
@@ -1365,6 +1437,18 @@ function setPeriodPickerOpen(open) {
   periodPicker?.classList.toggle('is-open', open);
 }
 
+function setAccountMenuOpen(open) {
+  if (!accountPanel || !profileButton || !accountMenu) return;
+  const visible = Boolean(open && state.auth);
+  accountPanel.hidden = !visible;
+  accountMenu.classList.toggle('is-open', visible);
+  profileButton.setAttribute('aria-expanded', visible ? 'true' : 'false');
+}
+
+function toggleAccountMenu() {
+  setAccountMenuOpen(accountPanel?.hidden !== false);
+}
+
 function updatePeriodPicker() {
   if (periodPickerLabel) {
     periodPickerLabel.textContent = periodLabel(state.period);
@@ -1406,6 +1490,7 @@ function configureShell() {
   applyBranding();
   if (!loggedIn) {
     setMenuOpen(false);
+    setAccountMenuOpen(false);
     window.clearInterval(notificationsTimer);
     hideNotifications();
     hideTopWaStatus();
@@ -1414,6 +1499,26 @@ function configureShell() {
 
   if (currentUserName) {
     currentUserName.textContent = loggedIn ? (state.auth.name || state.auth.username) : '';
+  }
+  if (accountGreeting) {
+    accountGreeting.textContent = loggedIn ? `Hi, ${state.auth.name || state.auth.username}` : 'Hi, -';
+  }
+  if (profileButton) {
+    profileButton.hidden = !loggedIn;
+    profileButton.title = loggedIn ? 'Akun Saya' : '';
+  }
+  if (accountMenu) {
+    accountMenu.hidden = !loggedIn;
+  }
+  if (currentUserAvatar) {
+    const photoUrl = loggedIn ? safeProfilePhotoUrl(state.auth.photoUrl || state.auth.avatarUrl) : '';
+    const avatarUrl = loggedIn ? profilePhotoDisplayUrl(state.auth) : '';
+    currentUserAvatar.innerHTML = avatarUrl
+      ? avatarImageMarkup(avatarUrl, `Foto ${state.auth.name || state.auth.username || 'user'}`)
+      : '-';
+    currentUserAvatar.classList.toggle('has-photo', Boolean(photoUrl));
+    currentUserAvatar.classList.toggle('is-default', loggedIn && !photoUrl);
+    currentUserAvatar.style.backgroundImage = '';
   }
   if (loggedIn) {
     startTopWaStatusTimer();
@@ -2350,6 +2455,35 @@ function readLogoFile(file) {
     reader.onerror = () => reject(new Error('Logo tidak bisa dibaca'));
     reader.readAsDataURL(file);
   });
+}
+
+function readImageFile(file, options = {}) {
+  if (!file) return Promise.resolve(null);
+  const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+  const label = options.label || 'Gambar';
+  const maxBytes = Number(options.maxBytes || MAX_IMAGE_UPLOAD_BYTES);
+  if (!allowedTypes.includes(file.type)) {
+    return Promise.reject(new Error(`Format ${label.toLowerCase()} harus PNG, JPG, atau WEBP`));
+  }
+  if (file.size > maxBytes) {
+    return Promise.reject(new Error(`Ukuran ${label.toLowerCase()} maksimal ${Math.round(maxBytes / 1024 / 1024)} MB`));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`${label} tidak bisa dibaca`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadImageFile(file, purpose, options = {}) {
+  const image = await readImageFile(file, options);
+  if (!image) return '';
+  const result = await api('/api/uploads/image', {
+    method: 'POST',
+    body: JSON.stringify({ purpose, image })
+  });
+  return result.url || '';
 }
 
 function updateBranding(payload = {}) {
@@ -3643,6 +3777,43 @@ function voucherMethodOptionTags(selected = 'all') {
   return options.map(([value, label]) => `<option value="${value}" ${String(selected || 'all') === value ? 'selected' : ''}>${label}</option>`).join('');
 }
 
+function voucherReportOrderUsers(order = {}) {
+  const users = [];
+  const seen = new Set();
+  const add = (value = '') => {
+    const text = String(value || '').trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) return;
+    seen.add(key);
+    users.push(text);
+  };
+  String(order.voucherUsernames || '').split(',').forEach(add);
+  (Array.isArray(order.vouchers) ? order.vouchers : []).forEach((voucher) => add(voucher.username || voucher.user || voucher.code));
+  add(order.username);
+  add(order.voucherUsername);
+  add(order.voucherUser);
+  add(order.code);
+  if (!users.length && String(order.source || '') === 'manual') add(order.reference);
+  return users;
+}
+
+function voucherReportOrderUsersText(order = {}) {
+  const users = voucherReportOrderUsers(order);
+  if (!users.length) return '-';
+  if (users.length <= 3) return users.join(', ');
+  return `${users.slice(0, 3).join(', ')} +${users.length - 3}`;
+}
+
+function voucherReportPurchaseAt(order = {}) {
+  return order.paidAt || order.paymentAt || order.updatedAt || order.createdAt || '';
+}
+
+function voucherReportBuyerText(order = {}) {
+  const buyer = String(order.buyerName || '').trim();
+  if (buyer && !buyer.includes('@')) return buyer;
+  return String(order.whatsapp || '').trim() || '-';
+}
+
 function voucherReportFilterMarkup(filterOptions = {}, monthly = false) {
   const scoped = filterOptions.scoped === true;
   return `
@@ -3769,7 +3940,7 @@ async function renderReportsVoucherDaily(options = {}) {
         <div class="filters">
           ${datePickerControl({ id: 'voucherDailyDate', value: state.reportVoucherDailyDate || todayInput(), className: 'control' })}
           ${voucherReportFilterMarkup(filterOptions)}
-          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari reference, pembeli, paket, NAS, reseller" autocomplete="off">
+          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari reference, user voucher, paket, NAS, reseller" autocomplete="off">
         </div>
       </div>
 
@@ -3782,39 +3953,57 @@ async function renderReportsVoucherDaily(options = {}) {
           <table>
             <thead>
               <tr>
+                <th>Waktu Beli</th>
+                <th>Voucher/User</th>
                 <th>Reference</th>
-                <th>Pembeli</th>
-                <th>Paket</th>
-                <th>NAS</th>
+                <th>Pembeli/WA</th>
+                <th>Paket & NAS</th>
                 ${scoped ? '' : '<th>Reseller</th>'}
-                <th>Qty</th>
                 <th>Metode</th>
+                <th>Qty</th>
                 <th class="amount">Omzet</th>
                 <th class="amount">Komisi</th>
                 <th class="amount">Net</th>
               </tr>
             </thead>
             <tbody>
-              ${orders.length ? orders.map((order) => `
-                <tr>
-                  <td>
-                    <strong class="cell-title">${escapeHtml(order.reference || '-')}</strong>
-                    <div class="muted">${escapeHtml(dateTimeText(order.paidAt || order.updatedAt || order.createdAt))}</div>
-                  </td>
-                  <td>
-                    <strong>${escapeHtml(order.buyerName || '-')}</strong>
-                    <div class="muted">${escapeHtml(order.whatsapp || '')}</div>
-                  </td>
-                  <td>${escapeHtml(order.packageLabel || order.profileName || '-')}</td>
-                  <td>${nasActiveBadge(order.nasName || '-')}</td>
-                  ${scoped ? '' : `<td>${escapeHtml(order.resellerName || order.resellerUsername || '-')}</td>`}
-                  <td>${displayNumber(order.quantity || order.vouchers?.length || 0)}</td>
-                  <td><span class="badge active">${escapeHtml(order.paymentMethod || 'QRIS')}</span></td>
-                  <td class="amount positive">${rupiah(order.amount || 0)}</td>
-                  <td class="amount warning">${rupiah(order.commissionAmount || 0)}</td>
-                  <td class="amount positive">${rupiah(order.netAmount || 0)}</td>
-                </tr>
-              `).join('') : `<tr><td colspan="${scoped ? 9 : 10}">Belum ada voucher paid pada tanggal ini.</td></tr>`}
+              ${orders.length ? orders.map((order) => {
+                const purchaseAt = voucherReportPurchaseAt(order);
+                const voucherUsers = voucherReportOrderUsers(order);
+                const voucherUsersText = voucherReportOrderUsersText(order);
+                const quantity = Number(order.quantity || voucherUsers.length || order.vouchers?.length || 0) || 0;
+                const seller = order.resellerName || order.resellerUsername || order.createdByName || order.createdByUsername || order.paidByName || order.sourceLabel || '-';
+                return `
+                  <tr>
+                    <td class="nowrap">
+                      <strong>${escapeHtml(dateTimeText(purchaseAt))}</strong>
+                      <div class="muted">${escapeHtml(dateText(order.date || purchaseAt))}</div>
+                    </td>
+                    <td>
+                      <strong class="cell-title" title="${escapeHtml(voucherUsers.join(', '))}">${escapeHtml(voucherUsersText)}</strong>
+                      <div class="muted">${displayNumber(quantity)} voucher</div>
+                    </td>
+                    <td>
+                      <strong class="cell-title">${escapeHtml(order.reference || '-')}</strong>
+                      <div class="muted">${escapeHtml(order.sourceLabel || order.source || '')}</div>
+                    </td>
+                    <td>
+                      <strong>${escapeHtml(voucherReportBuyerText(order))}</strong>
+                      <div class="muted">${escapeHtml(order.whatsapp && voucherReportBuyerText(order) !== order.whatsapp ? order.whatsapp : '')}</div>
+                    </td>
+                    <td>
+                      <strong>${escapeHtml(order.packageLabel || order.profileName || '-')}</strong>
+                      <div class="muted">${nasActiveBadge(order.nasName || '-')}</div>
+                    </td>
+                    ${scoped ? '' : `<td>${escapeHtml(seller)}</td>`}
+                    <td><span class="badge active">${escapeHtml(order.paymentMethod || 'QRIS')}</span></td>
+                    <td>${displayNumber(quantity)}</td>
+                    <td class="amount positive">${rupiah(order.amount || 0)}</td>
+                    <td class="amount warning">${rupiah(order.commissionAmount || 0)}</td>
+                    <td class="amount positive">${rupiah(order.netAmount || 0)}</td>
+                  </tr>
+                `;
+              }).join('') : `<tr><td colspan="${scoped ? 10 : 11}">Belum ada voucher paid pada tanggal ini.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -6517,7 +6706,8 @@ function hotspotVoucherDirectLoginUrl(row = {}) {
     const url = new URL(baseUrl);
     if (!url.pathname || url.pathname === '/') url.pathname = '/login';
     url.search = '';
-    url.hash = new URLSearchParams({ fnb_autologin: '1', username, password }).toString();
+    url.search = new URLSearchParams({ username, password }).toString();
+    url.hash = '';
     return url.toString();
   } catch {
     return '';
@@ -6546,17 +6736,419 @@ async function ensureHotspotVoucherAdminPhone() {
   return hotspotVoucherAdminPhone();
 }
 
+const HOTSPOT_VOUCHER_DEFAULT_INSTRUCTION = 'cara aktivasi kode\nvoucer buka chrome ketik : {{login_host}} lalu enter';
+
 function hotspotVoucherTemplateFallback() {
   return {
-    name: 'Voucher Standar',
-    title: 'Hotspot Voucher',
-    subtitle: '',
+    name: 'Mikhmon Compact',
+    title: 'Voucher Compact',
+    subtitle: HOTSPOT_VOUCHER_DEFAULT_INSTRUCTION,
     footer: '',
     loginLabel: 'Link login',
+    layout: 'mikhmon-compact',
+    accentColor: '#0277BD',
+    instruction: HOTSPOT_VOUCHER_DEFAULT_INSTRUCTION,
+    supportText: '',
+    codeLabel: 'VOUCHER',
+    validityLabel: 'MASA AKTIF',
+    customHtml: '',
+    customCss: '',
     showPrice: true,
     showQr: true,
     active: true
   };
+}
+
+const HOTSPOT_VOUCHER_CUSTOM_HTML_DEFAULT = `<div class="mikhmon-card">
+  <div class="mikhmon-head">
+    <div class="mikhmon-logo">{{logo_img}}</div>
+    <div class="mikhmon-price"><span>Rp</span><strong>{{price}}</strong></div>
+  </div>
+  <div class="mikhmon-body">
+    <div class="mikhmon-main">
+      <div class="mikhmon-label">VOUCHER</div>
+      <div class="mikhmon-code">{{code}}</div>
+      <div class="mikhmon-instruction">{{instruction}}</div>
+    </div>
+    <div class="mikhmon-side">
+      <div class="mikhmon-validity"><span>MASA AKTIF :</span> <strong>{{validity}}</strong></div>
+      {{qr}}
+    </div>
+  </div>
+  <div class="mikhmon-footer">{{support}}</div>
+</div>`;
+
+const HOTSPOT_VOUCHER_CUSTOM_CSS_DEFAULT = `.mikhmon-card {
+  border: 1px solid #111;
+  box-sizing: border-box;
+  color: #111;
+  display: grid;
+  font-family: Helvetica, Arial, sans-serif;
+  gap: 0;
+  grid-template-rows: 28px 66px 14px;
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+}
+.mikhmon-card::before {
+  border-left: 13.2mm solid transparent;
+  border-right: 36.6mm solid #b0bec5;
+  border-top: 60.8mm solid transparent;
+  content: "";
+  opacity: 0.42;
+  position: absolute;
+  left: 0;
+  top: -26.5mm;
+}
+.mikhmon-card > * {
+  position: relative;
+  z-index: 1;
+}
+.mikhmon-head {
+  align-items: start;
+  display: grid;
+  grid-template-columns: 19.8mm minmax(0, 1fr);
+  min-height: 7.2mm;
+}
+.mikhmon-logo img {
+  display: block;
+  height: 5.25mm;
+  margin: 1.3mm 0 0 1.3mm;
+  max-width: 22.5mm;
+  object-fit: contain;
+  width: 22.5mm;
+}
+.mikhmon-price {
+  color: var(--voucher-accent, #0277bd);
+  display: block;
+  font-family: Tahoma, Arial, sans-serif;
+  font-weight: 900;
+  line-height: 1;
+  margin-top: -1.6mm;
+  padding-left: 4.5mm;
+  text-align: right;
+}
+.mikhmon-price span {
+  font-size: 7.4pt;
+  margin-left: -4.5mm;
+  position: absolute;
+}
+.mikhmon-price strong {
+  font-size: 14.8pt;
+}
+.mikhmon-body {
+  display: grid;
+  gap: 0;
+  grid-template-columns: 95px minmax(0, 1fr);
+  min-height: 66px;
+}
+.mikhmon-main,
+.mikhmon-side {
+  align-content: start;
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+.mikhmon-label {
+  border-bottom: 0.2mm solid var(--voucher-accent, #0277bd);
+  color: var(--voucher-accent, #0277bd);
+  font-size: 7.4pt;
+  font-weight: 900;
+  line-height: 1.1;
+  margin-top: 0.55mm;
+  text-align: center;
+}
+.mikhmon-code {
+  border-bottom: 0.2mm solid var(--voucher-accent, #0277bd);
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.08;
+  overflow: hidden;
+  text-align: center;
+  white-space: nowrap;
+}
+.mikhmon-instruction {
+  color: #374151;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1.1;
+  max-height: 34px;
+  overflow: hidden;
+  padding: 2.5px;
+  text-align: center;
+  text-shadow: 0 0 2px #fff;
+  white-space: pre-line;
+}
+.mikhmon-validity {
+  color: #ff9100;
+  display: block;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1;
+  min-height: 8px;
+  overflow: hidden;
+  padding: 0 2.5px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mikhmon-validity span,
+.mikhmon-validity strong {
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+.mikhmon-side .hotspot-voucher-qr {
+  height: 58px;
+  justify-self: end;
+  margin: 0 5px 0 0;
+  width: 58px;
+}
+.mikhmon-footer {
+  background: var(--voucher-accent, #0277bd);
+  color: #f8fafc;
+  font-size: 6.2pt;
+  font-weight: 900;
+  line-height: 1;
+  overflow: hidden;
+  padding: 0.55mm 0.65mm;
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.35);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}`;
+
+const HOTSPOT_VOUCHER_THERMAL_HTML_DEFAULT = `<div class="thermal-card">
+  <div class="thermal-logo">{{logo_img}}</div>
+  <div class="thermal-title">VOUCHER</div>
+  <div class="thermal-code">{{code}}</div>
+  <div class="thermal-meta">
+    <span>Rp {{price}}</span>
+    <span>{{validity}}</span>
+  </div>
+  {{qr}}
+  <div class="thermal-instruction">{{instruction}}</div>
+  <div class="thermal-footer">{{support}}</div>
+</div>`;
+
+const HOTSPOT_VOUCHER_THERMAL_CSS_DEFAULT = `.thermal-card {
+  align-content: start;
+  border: 1px solid #111;
+  border-radius: 0;
+  box-sizing: border-box;
+  color: #111;
+  display: grid;
+  gap: 1mm;
+  justify-items: center;
+  min-height: 58mm;
+  overflow: hidden;
+  padding: 2mm 1.5mm;
+  text-align: center;
+  width: 100%;
+}
+.thermal-logo img {
+  display: block;
+  height: 8mm;
+  max-width: 48mm;
+  object-fit: contain;
+}
+.thermal-title {
+  border-bottom: 0.3mm solid var(--voucher-accent, #0277bd);
+  color: var(--voucher-accent, #0277bd);
+  font-size: 7pt;
+  font-weight: 900;
+  line-height: 1;
+  width: 100%;
+}
+.thermal-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 16pt;
+  font-weight: 900;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+.thermal-meta {
+  color: #ff9100;
+  display: flex;
+  font-size: 6.2pt;
+  font-weight: 900;
+  gap: 2mm;
+  justify-content: center;
+  line-height: 1;
+}
+.thermal-card .hotspot-voucher-qr {
+  border: 0;
+  border-radius: 0;
+  height: 28mm;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  padding: 0;
+  width: 28mm;
+}
+.thermal-instruction,
+.thermal-footer {
+  font-size: 5.7pt;
+  font-weight: 800;
+  line-height: 1.12;
+}
+.thermal-instruction {
+  max-height: 5.2em;
+  overflow: hidden;
+  white-space: pre-line;
+}
+.thermal-footer {
+  background: var(--voucher-accent, #0277bd);
+  color: #f8fafc;
+  padding: 0.6mm 1mm;
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.35);
+  width: 100%;
+}`;
+
+const HOTSPOT_VOUCHER_SMALL_HTML_DEFAULT = `<div class="small-card">
+  <div class="small-head">
+    <div class="small-logo">{{logo_img}}</div>
+    <div class="small-price">Rp {{price}}</div>
+  </div>
+  <div class="small-body">
+    <div class="small-main">
+      <div class="small-label">VOUCHER</div>
+      <div class="small-code">{{code}}</div>
+      <div class="small-validity">MASA AKTIF : {{validity}}</div>
+      <div class="small-instruction">{{instruction}}</div>
+    </div>
+    {{qr}}
+  </div>
+  <div class="small-footer">{{support}}</div>
+</div>`;
+
+const HOTSPOT_VOUCHER_SMALL_CSS_DEFAULT = `.small-card {
+  border: 1px solid #111;
+  box-sizing: border-box;
+  color: #111;
+  display: grid;
+  gap: 0.35mm;
+  height: 100%;
+  overflow: hidden;
+  padding: 0.45mm;
+}
+.small-head {
+  align-items: center;
+  border-bottom: 0.2mm solid #111;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  min-height: 4.4mm;
+}
+.small-logo img {
+  display: block;
+  height: 4.4mm;
+  max-width: 21mm;
+  object-fit: contain;
+}
+.small-price {
+  color: var(--voucher-accent, #0277bd);
+  font-size: 6pt;
+  font-weight: 900;
+  line-height: 1;
+}
+.small-body {
+  display: grid;
+  gap: 0.5mm;
+  grid-template-columns: minmax(0, 1fr) 14mm;
+}
+.small-main {
+  align-content: start;
+  display: grid;
+  gap: 0.25mm;
+  min-width: 0;
+}
+.small-label {
+  border-bottom: 0.2mm solid var(--voucher-accent, #0277bd);
+  color: var(--voucher-accent, #0277bd);
+  font-size: 3.3pt;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
+}
+.small-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 7pt;
+  font-weight: 900;
+  line-height: 1;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.small-validity,
+.small-instruction,
+.small-footer {
+  color: #ff9100;
+  font-size: 3.5pt;
+  font-weight: 900;
+  line-height: 1.05;
+  overflow: hidden;
+  text-align: center;
+}
+.small-instruction {
+  max-height: 4.2em;
+  white-space: pre-line;
+}
+.small-card .hotspot-voucher-qr {
+  height: 14mm;
+  width: 14mm;
+}
+.small-footer {
+  background: var(--voucher-accent, #0277bd);
+  padding: 0.25mm 0.45mm;
+  color: #f8fafc;
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.35);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}`;
+
+const HOTSPOT_VOUCHER_TEMPLATE_LAYOUTS = [
+  { value: 'mikhmon-compact', label: 'Mikhmon Compact' },
+  { value: 'thermal', label: 'Thermal' },
+  { value: 'small', label: 'Small' },
+  { value: 'custom', label: 'Custom HTML' }
+];
+
+const HOTSPOT_VOUCHER_TEMPLATE_VARIABLES = [
+  '{{logo_img}}', '{{business_name}}', '{{price}}', '{{code}}', '{{username}}', '{{password}}',
+  '{{validity}}', '{{profile}}', '{{quota}}', '{{login_host}}', '{{login_url}}', '{{qr}}',
+  '{{instruction}}', '{{support}}', '{{footer}}', '{{num}}'
+].join('\n');
+
+const HOTSPOT_VOUCHER_HTML_PRESETS = {
+  'mikhmon-compact': {
+    html: HOTSPOT_VOUCHER_CUSTOM_HTML_DEFAULT,
+    css: HOTSPOT_VOUCHER_CUSTOM_CSS_DEFAULT
+  },
+  thermal: {
+    html: HOTSPOT_VOUCHER_THERMAL_HTML_DEFAULT,
+    css: HOTSPOT_VOUCHER_THERMAL_CSS_DEFAULT
+  },
+  small: {
+    html: HOTSPOT_VOUCHER_SMALL_HTML_DEFAULT,
+    css: HOTSPOT_VOUCHER_SMALL_CSS_DEFAULT
+  },
+  custom: {
+    html: HOTSPOT_VOUCHER_CUSTOM_HTML_DEFAULT,
+    css: HOTSPOT_VOUCHER_CUSTOM_CSS_DEFAULT
+  }
+};
+
+function hotspotVoucherLayoutValue(template = {}) {
+  const layout = String(template.layout || 'mikhmon-compact').trim();
+  return HOTSPOT_VOUCHER_TEMPLATE_LAYOUTS.some((item) => item.value === layout) ? layout : 'mikhmon-compact';
+}
+
+function hotspotVoucherLayoutLabel(value = '') {
+  return HOTSPOT_VOUCHER_TEMPLATE_LAYOUTS.find((item) => item.value === value)?.label || 'Mikhmon Compact';
+}
+
+function hotspotVoucherTemplateHtmlPreset(template = {}) {
+  return HOTSPOT_VOUCHER_HTML_PRESETS[hotspotVoucherLayoutValue(template)] || HOTSPOT_VOUCHER_HTML_PRESETS['mikhmon-compact'];
 }
 
 function hotspotVoucherPrintTemplate() {
@@ -6581,6 +7173,417 @@ function hotspotVoucherPriceText(value) {
   return amount.toLocaleString('id-ID', { maximumFractionDigits: 0 });
 }
 
+function hotspotVoucherValidityText(row = {}) {
+  const raw = String(row.validity || '').trim();
+  if (raw) {
+    const match = raw.match(/^(\d+(?:[.,]\d+)?)\s*([smhdw])$/i);
+    if (match) {
+      const units = {
+        s: 'Detik',
+        m: 'Menit',
+        h: 'Jam',
+        d: 'Hari',
+        w: 'Minggu'
+      };
+      return `${match[1].replace('.', ',')}${units[match[2].toLowerCase()] || match[2]}`;
+    }
+    return raw;
+  }
+  const seconds = Math.max(0, Math.trunc(Number(row.validitySeconds || 0)) || 0);
+  if (seconds) {
+    if (seconds % 604800 === 0) return `${displayNumber(seconds / 604800)}Minggu`;
+    if (seconds % 86400 === 0) return `${displayNumber(seconds / 86400)}Hari`;
+    if (seconds % 3600 === 0) return `${displayNumber(seconds / 3600)}Jam`;
+    if (seconds % 60 === 0) return `${displayNumber(seconds / 60)}Menit`;
+    return `${displayNumber(seconds)}Detik`;
+  }
+  return row.profile || '-';
+}
+
+function hotspotVoucherLoginHost(row = {}) {
+  const url = hotspotVoucherLoginUrl(row);
+  if (!url) return '';
+  try {
+    return new URL(url).host;
+  } catch {
+    return String(url).replace(/^https?:\/\//i, '').split('/')[0];
+  }
+}
+
+function hotspotVoucherActivationText(row = {}) {
+  const host = hotspotVoucherLoginHost(row);
+  return host ? `Login: ${host}` : 'Login di portal Hotspot';
+}
+
+function hotspotVoucherAccentColor(template = {}) {
+  const color = String(template.accentColor || '#0277BD').trim();
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#0277BD';
+}
+
+function hotspotVoucherTemplateValues(row = {}, index = 0, template = {}) {
+  const username = String(row.username || row.password || '-').trim() || '-';
+  const password = String(row.password || row.voucherPassword || row.username || '').trim() || username;
+  const loginHost = hotspotVoucherLoginHost(row);
+  const callCenter = hotspotVoucherAdminPhone();
+  const support = callCenter ? `CS: ${callCenter}` : String(template.supportText || '').trim();
+  const validity = hotspotVoucherValidityText(row);
+  const price = hotspotVoucherPriceText(row.price);
+  return {
+    business_name: hotspotVoucherBusinessName(),
+    code: username,
+    comment: row.note || '',
+    dnsname: loginHost,
+    footer: String(template.footer || '').trim(),
+    hotspotname: hotspotVoucherBusinessName(),
+    instruction: String(template.instruction || template.subtitle || '').trim() || hotspotVoucherActivationText(row),
+    login_host: loginHost,
+    login_url: hotspotVoucherLoginUrl(row),
+    logo: hotspotVoucherLogoUrl(),
+    num: String(index + 1),
+    password,
+    price,
+    profile: row.profile || '-',
+    qrcode_url: hotspotVoucherQrSrc(row, 1024),
+    quota: row.quota || '',
+    shared_users: row.sharedUsers || '',
+    support,
+    timelimit: '',
+    username,
+    validity
+  };
+}
+
+function hotspotVoucherAbsoluteUrl(value = '') {
+  try {
+    return new URL(String(value || ''), window.location.origin).toString();
+  } catch {
+    return String(value || '');
+  }
+}
+
+function renderHotspotVoucherTemplateText(text = '', values = {}) {
+  return String(text || '').replace(/\{\{\s*([a-z0-9_]+)\s*\}\}|\[([a-z0-9_]+)\]/gi, (match, curlyKey, bracketKey) => {
+    const key = String(curlyKey || bracketKey || '').toLowerCase();
+    return values[key] === undefined ? match : String(values[key]);
+  });
+}
+
+function hotspotVoucherInstructionHtml(text = '') {
+  const source = String(text || '').replace(/\r\n?/g, '\n').trim();
+  const normalized = source.includes('\n')
+    ? source
+    : source.replace(
+      /\bcara aktivasi kode\s+(?:voucher|voucer)\s+buka chrome\s+ketik\s*:\s*(.+?)\s+lalu enter\b/i,
+      'cara aktivasi kode\nvoucer buka chrome\nketik : $1\nlalu enter'
+    );
+  return escapeHtml(normalized).replace(/\n/g, '<br>');
+}
+
+function sanitizeHotspotVoucherCustomHtml(html = '') {
+  const template = document.createElement('template');
+  template.innerHTML = String(html || '');
+  template.content.querySelectorAll('script, iframe, object, embed, link, meta, style').forEach((node) => node.remove());
+  template.content.querySelectorAll('*').forEach((node) => {
+    [...node.attributes].forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = String(attribute.value || '').trim().toLowerCase();
+      if (name.startsWith('on') || value.startsWith('javascript:')) node.removeAttribute(attribute.name);
+    });
+  });
+  return template.innerHTML;
+}
+
+function sanitizeHotspotVoucherCustomCss(css = '') {
+  return String(css || '')
+    .replace(/<\/style/gi, '<\\/style')
+    .replace(/@import\b/gi, '');
+}
+
+function hotspotVoucherCustomHtml(row = {}, index = 0, template = {}) {
+  const values = hotspotVoucherTemplateValues(row, index, template);
+  const rawHtml = renderHotspotVoucherTemplateText(template.customHtml || '', {
+    ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, escapeHtml(value)])),
+    logo_img: `<img class="hotspot-voucher-logo" src="${escapeHtml(values.logo)}" alt="Logo">`,
+    qr: template.showQr === false ? '' : `<img class="hotspot-voucher-qr" src="${escapeHtml(values.qrcode_url)}" alt="QR voucher ${escapeHtml(values.username)}" loading="eager" decoding="sync">`
+  });
+  const css = sanitizeHotspotVoucherCustomCss(template.customCss).trim();
+  return `
+    <article class="hotspot-voucher-ticket hotspot-voucher-custom" style="--voucher-accent:${escapeHtml(hotspotVoucherAccentColor(template))}">
+      ${css ? `<style>${css}</style>` : ''}
+      ${sanitizeHotspotVoucherCustomHtml(rawHtml)}
+    </article>
+  `;
+}
+
+function hotspotVoucherMikhmonCompactTable(row = {}, index = 0, template = {}) {
+  const values = hotspotVoucherTemplateValues(row, index, template);
+  const accentColor = hotspotVoucherAccentColor(template);
+  const logoUrl = hotspotVoucherAbsoluteUrl(hotspotVoucherLogoUrl());
+  const businessName = hotspotVoucherBusinessName();
+  const voucherCode = String(row.username || row.password || '-');
+  const price = hotspotVoucherPriceText(row.price);
+  const validity = hotspotVoucherValidityText(row);
+  const activationText = renderHotspotVoucherTemplateText(
+    String(template.instruction || template.subtitle || '').trim() || HOTSPOT_VOUCHER_DEFAULT_INSTRUCTION,
+    values
+  );
+  const activationHtml = escapeHtml(String(activationText || '').replace(/\s+/g, ' ').trim());
+  const footerText = renderHotspotVoucherTemplateText(values.support, values);
+  const validityLabel = String(template.validityLabel || 'MASA AKTIF').replace(/\s*:?\s*$/, '');
+  const qrSource = Array.isArray(template.qrSources) && template.qrSources[index]
+    ? template.qrSources[index]
+    : hotspotVoucherAbsoluteUrl(hotspotVoucherQrSrc(row, 1024));
+  const qrSvg = Array.isArray(template.qrSvgs) && template.qrSvgs[index] ? template.qrSvgs[index] : '';
+  return `
+    <table class="hotspot-voucher-ticket hotspot-voucher-mikhmon-table hotspot-voucher-template-mikhmon-compact" style="display:inline-block;border-collapse:collapse;border:1px solid #000000;margin:2px;width:190px;overflow:hidden;position:relative;padding:0px;height:auto;min-height:0;vertical-align:top;background:#FFFFFF linear-gradient(105deg, transparent 0 45%, #B0BEC5 45% 100%);">
+      <tbody>
+        <tr>
+          <td style="color:#666;" valign="top">
+            <table style="width:100%;">
+              <tbody>
+                <tr>
+                  <td style="width:75px">
+                    <img style="display:block;margin:5px 0 0 5px;object-fit:contain;" width="85" height="20" src="${escapeHtml(logoUrl)}" alt="Logo ${escapeHtml(businessName)}">
+                  </td>
+                  <td style="width:115px">
+                    <div style="float:right;margin-top:-6px;margin-right:0px;width:5%;text-align:right;font-size:7px;"></div>
+                    ${template.showPrice === false ? '' : `
+                      <div style="text-align:right;font-weight:bold;font-family:Tahoma,Arial,sans-serif;font-size:20px;padding-left:17px;color:${escapeHtml(accentColor)}">
+                        <small style="font-size:10px;margin-left:-17px;position:absolute;">Rp</small>${escapeHtml(price)}
+                      </div>
+                    `}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="color:#666;border-collapse:collapse;" valign="top">
+            <table style="width:100%;border-collapse:collapse;">
+              <tbody>
+                <tr>
+                  <td style="width:95px" valign="top">
+                    <div style="clear:both;color:#555;margin-top:2px;margin-bottom:2.5px;">
+                      <div style="padding:0px;border-bottom:1px solid ${escapeHtml(accentColor)};text-align:center;font-weight:bold;font-size:10px;color:#0277BD;">${escapeHtml(template.codeLabel || 'VOUCHER')}</div>
+                      <div style="padding:0px;border-bottom:1px solid ${escapeHtml(accentColor)};text-align:center;font-weight:bold;font-size:14px;color:#000000;">${escapeHtml(voucherCode)}</div>
+                    </div>
+                    <div style="text-align:center;color:#374151;font-size:7px;font-weight:bold;line-height:1.1;margin:0px;padding:2.5px;text-shadow:0 0 2px #FFFFFF;">${activationHtml}</div>
+                  </td>
+                  <td style="width:100px;text-align:right;">
+                      <div style="clear:both;padding:0 2.5px;font-size:7px;font-weight:bold;color:#111827;text-shadow:0 0 2px #FFFFFF;">
+                      ${escapeHtml(validityLabel)} : ${escapeHtml(validity)}<br> <br>
+                    </div>
+                    ${template.showQr === false ? '' : `
+                      <div style="float:right;padding:1px;text-align:right;width:72%;margin:0 5px -20px 0;">
+                        ${qrSvg
+                          ? `<span class="hotspot-voucher-qr hotspot-voucher-qr-inline" style="height:64px;width:64px;display:block;border:0;border-radius:0;margin-left:auto;padding:0;line-height:0;">${qrSvg}</span>`
+                          : `<img class="hotspot-voucher-qr" style="height:64px;width:64px;display:block;border:0;border-radius:0;margin-left:auto;padding:0;image-rendering:pixelated;image-rendering:crisp-edges;" src="${escapeHtml(qrSource)}" alt="QR voucher ${escapeHtml(row.username || '')}" loading="eager" decoding="sync">`}
+                      </div>
+                    `}
+                  </td>
+                </tr>
+                ${footerText ? `
+                  <tr>
+                    <td style="background:${escapeHtml(accentColor)};color:#666;padding:0px;" valign="top" colspan="2">
+                      <div style="text-align:left;color:#F8FAFC;font-size:9px;font-weight:bold;margin:0px;padding:2.5px;text-shadow:0 0 1px rgba(0,0,0,0.35);"><b>${escapeHtml(footerText)}</b></div>
+                    </td>
+                  </tr>
+                ` : ''}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+function hotspotVoucherMikhmonPrintDocument(rows = [], template = {}) {
+  const cards = rows.map((row, index) => hotspotVoucherMikhmonCompactTable(row, index, template)).join('');
+  const baseUrl = `${window.location.origin}/`;
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="${escapeHtml(baseUrl)}">
+  <style>
+    body {
+      color: #000000;
+      background-color: #FFFFFF;
+      font-size: 14px;
+      font-family: Helvetica, Arial, sans-serif;
+      margin: 0px;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    table.voucher {
+      display: inline-block;
+      border: 2px solid black;
+      margin: 2px;
+    }
+    @page {
+      size: auto;
+      margin-left: 7mm;
+      margin-right: 3mm;
+      margin-top: 9mm;
+      margin-bottom: 3mm;
+    }
+    @media print {
+      table { page-break-after: auto; }
+      tr { page-break-inside: avoid; page-break-after: auto; }
+      td { page-break-inside: avoid; page-break-after: auto; }
+      thead { display: table-header-group; }
+      tfoot { display: table-footer-group; }
+    }
+    .qrcode,
+    .hotspot-voucher-qr {
+      height: 64px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      width: 64px;
+    }
+    .hotspot-voucher-qr-inline,
+    .hotspot-voucher-qr-inline svg,
+    .hotspot-voucher-qr-svg {
+      display: block;
+      height: 64px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      shape-rendering: crispEdges;
+      width: 64px;
+    }
+  </style>
+</head>
+<body>${cards}</body>
+</html>`;
+}
+
+function hotspotVoucherThermalTicket(row = {}, index = 0, template = {}, mode = 'thermal-80') {
+  return hotspotVoucherMikhmonCompactTable(row, index, {
+    ...template,
+    showQr: true
+  });
+}
+
+function hotspotVoucherThermalPrintDocument(rows = [], template = {}, mode = 'thermal-80') {
+  const paper58 = mode === 'thermal-58';
+  const paperHeight = paper58 ? '58mm' : '55mm';
+  const paperWidth = paper58 ? '86mm' : '80mm';
+  const pagePadding = paper58 ? '2mm 1.5mm' : '2mm';
+  const thermalScale = paper58 ? '1.62' : '1.48';
+  const cards = rows.map((row, index) => `
+    <section class="hotspot-voucher-thermal-page">
+      <div class="hotspot-voucher-thermal-scale">
+        ${hotspotVoucherThermalTicket(row, index, template, mode)}
+      </div>
+    </section>
+  `).join('');
+  const baseUrl = `${window.location.origin}/`;
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="${escapeHtml(baseUrl)}">
+  <style>
+    @page {
+      size: ${paperWidth} ${paperHeight};
+      margin: 0;
+    }
+    html,
+    body {
+      background: #ffffff;
+      color: #000000;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      margin: 0;
+      min-height: ${paperHeight};
+      padding: 0;
+      width: ${paperWidth};
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    body {
+      text-align: left;
+    }
+    .hotspot-voucher-thermal-page {
+      align-items: center;
+      background: #ffffff;
+      box-sizing: border-box;
+      break-after: page;
+      display: flex;
+      height: ${paperHeight};
+      justify-content: center;
+      overflow: hidden;
+      padding: ${pagePadding};
+      page-break-after: always;
+      width: ${paperWidth};
+    }
+    .hotspot-voucher-thermal-page:last-child {
+      break-after: auto;
+      page-break-after: auto;
+    }
+    .hotspot-voucher-thermal-scale {
+      align-items: center;
+      display: flex;
+      flex: 0 0 auto;
+      justify-content: center;
+      transform: scale(${thermalScale});
+      transform-origin: center center;
+      width: 190px;
+    }
+    .hotspot-voucher-mikhmon-table {
+      flex: 0 0 auto;
+      page-break-inside: avoid;
+    }
+    .hotspot-voucher-mikhmon-table img:not(.hotspot-voucher-qr) {
+      object-fit: contain;
+    }
+    .qrcode,
+    .hotspot-voucher-qr {
+      height: 64px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      width: 64px;
+    }
+    .hotspot-voucher-qr-inline,
+    .hotspot-voucher-qr-inline svg,
+    .hotspot-voucher-qr-svg {
+      display: block;
+      height: 64px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      shape-rendering: crispEdges;
+      width: 64px;
+    }
+    @media print {
+      html,
+      body {
+        width: ${paperWidth};
+        min-height: ${paperHeight};
+      }
+      table {
+        page-break-after: auto;
+      }
+      tr,
+      td {
+        page-break-inside: avoid;
+        page-break-after: auto;
+      }
+      .hotspot-voucher-mikhmon-table {
+        display: inline-block;
+        margin: 0;
+        page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>${cards}</body>
+</html>`;
+}
+
 function hotspotVoucherInternetLabel(row = {}) {
   return row.sessionOnline === true || String(row.internetStatus || '').toLowerCase() === 'online' ? 'Online' : 'Offline';
 }
@@ -6603,6 +7606,63 @@ function hotspotVoucherQrSrc(row = {}, size = 160) {
   return `/api/tools/qr?size=${Number(size) || 160}&text=${encodeURIComponent(hotspotVoucherQrText(row))}`;
 }
 
+function sanitizeHotspotVoucherQrSvg(svg = '') {
+  let text = String(svg || '').trim()
+    .replace(/^<\?xml[\s\S]*?\?>/i, '')
+    .replace(/^<!doctype[\s\S]*?>/i, '')
+    .trim();
+  if (!/^<svg[\s>]/i.test(text)) return '';
+  text = text
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/\son\w+=(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s(?:href|xlink:href)=["']\s*javascript:[^"']*["']/gi, '');
+  return text.replace(/<svg\b/i, '<svg class="hotspot-voucher-qr-svg" aria-hidden="true" focusable="false"');
+}
+
+async function hotspotVoucherQrAssets(rows = [], size = 1024) {
+  const result = {
+    sources: new Array(rows.length).fill(''),
+    svgs: new Array(rows.length).fill('')
+  };
+  const cache = new Map();
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < rows.length) {
+      const index = cursor;
+      cursor += 1;
+      const source = hotspotVoucherAbsoluteUrl(hotspotVoucherQrSrc(rows[index], size));
+      if (cache.has(source)) {
+        const asset = cache.get(source);
+        result.sources[index] = asset.source;
+        result.svgs[index] = asset.svg;
+        continue;
+      }
+      try {
+        const response = await fetch(source, {
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        if (!response.ok) throw new Error(`QR ${response.status}`);
+        const svg = await response.text();
+        const safeSvg = sanitizeHotspotVoucherQrSvg(svg);
+        if (!safeSvg) throw new Error('QR SVG kosong');
+        const asset = {
+          source: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(safeSvg)}`,
+          svg: safeSvg
+        };
+        cache.set(source, asset);
+        result.sources[index] = asset.source;
+        result.svgs[index] = asset.svg;
+      } catch {
+        result.sources[index] = source;
+        result.svgs[index] = '';
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, Math.max(1, rows.length)) }, () => worker()));
+  return result;
+}
+
 function hotspotVoucherQrButton(row = {}, index = 0) {
   return `
     <button class="voucher-qr-button" type="button" data-radius-hotspot-qr="${index}" title="Preview/print QR voucher ${escapeHtml(row.username || '')}" aria-label="Preview/print QR voucher ${escapeHtml(row.username || '')}">
@@ -6612,55 +7672,59 @@ function hotspotVoucherQrButton(row = {}, index = 0) {
 }
 
 function hotspotVoucherTicket(row = {}, index = 0) {
-  const dateSource = hotspotVoucherDateSource(row);
   const voucherCode = row.username || row.password || '-';
   const template = hotspotVoucherPrintTemplate();
-  const lines = [
-    { label: 'Kode Voucher', value: voucherCode, className: 'voucher-code-line' },
-    { label: 'Paket', value: row.profile || '-' },
-    ...(template.showPrice === false ? [] : [{ label: 'Harga', value: hotspotVoucherPriceText(row.price) }])
-  ];
-  const loginLine = hotspotVoucherLoginUrl(row)
-    ? `${template.loginLabel || 'Login'} : ${hotspotVoucherLoginUrl(row)}`
-    : 'Login melalui portal Hotspot site';
-  const callCenter = hotspotVoucherAdminPhone();
-  const footerText = [loginLine, callCenter ? `Call Center : ${callCenter}` : ''].filter(Boolean).join(' · ');
-  const dateTimeMarkup = `
-    <div class="hotspot-voucher-qr-meta">
-      <span>${escapeHtml(hotspotVoucherDateText(dateSource))}</span>
-      <strong>${escapeHtml(timeText(dateSource))}</strong>
-    </div>
-  `;
+  if (String(template.customHtml || '').trim()) {
+    return hotspotVoucherCustomHtml(row, index, template);
+  }
+  const values = hotspotVoucherTemplateValues(row, index, template);
+  const accentColor = hotspotVoucherAccentColor(template);
+  const layout = hotspotVoucherLayoutValue(template);
+  if (layout === 'mikhmon-compact') {
+    return hotspotVoucherMikhmonCompactTable(row, index, template);
+  }
+  const compactLayout = layout === 'mikhmon-compact';
+  const validityText = hotspotVoucherValidityText(row);
+  const logoUrl = hotspotVoucherLogoUrl();
+  const businessName = hotspotVoucherBusinessName();
+  const activationText = renderHotspotVoucherTemplateText(
+    String(template.instruction || template.subtitle || '').trim() || hotspotVoucherActivationText(row),
+    values
+  );
+  const activationHtml = hotspotVoucherInstructionHtml(activationText);
+  const footerText = renderHotspotVoucherTemplateText(values.support, values);
   return `
-    <article class="hotspot-voucher-ticket">
+    <article class="hotspot-voucher-ticket hotspot-voucher-mikhmon hotspot-voucher-template-${escapeHtml(layout)}" style="--voucher-accent:${escapeHtml(accentColor)}">
       <div class="hotspot-voucher-head">
         <div class="hotspot-voucher-brand">
-          <img src="${escapeHtml(hotspotVoucherLogoUrl())}" alt="Logo ${escapeHtml(hotspotVoucherBusinessName())}">
-          <div>
-            <strong>${escapeHtml(hotspotVoucherBusinessName())}</strong>
-            <span>${escapeHtml(brandingPrintLabel('', {
-              appSubtitle: hotspotVoucherAppSubtitle()
-            }))}</span>
-          </div>
+          <img src="${escapeHtml(logoUrl)}" alt="Logo ${escapeHtml(businessName)}">
         </div>
-      </div>
-      <div class="hotspot-voucher-body ${template.showQr === false ? 'no-qr' : ''}">
-        <div class="hotspot-voucher-lines">
-          ${lines.map((line) => `
-            <div class="${escapeHtml(line.className || '')}">
-              <span>${escapeHtml(line.label)}</span>
-              <strong>${escapeHtml(line.value)}</strong>
-            </div>
-          `).join('')}
-        </div>
-        ${template.showQr === false ? dateTimeMarkup : `
-          <div class="hotspot-voucher-qr-block">
-            <img class="hotspot-voucher-qr" src="${escapeHtml(hotspotVoucherQrSrc(row, 176))}" alt="QR voucher ${escapeHtml(row.username || '')}">
-            ${dateTimeMarkup}
+        ${template.showPrice === false ? '' : `
+          <div class="hotspot-voucher-price">
+            <span>Rp</span>
+            <strong>${escapeHtml(hotspotVoucherPriceText(row.price))}</strong>
           </div>
         `}
       </div>
-      <div class="hotspot-voucher-footer">${escapeHtml(footerText)}</div>
+      <div class="hotspot-voucher-body ${template.showQr === false ? 'no-qr' : ''}">
+        <div class="hotspot-voucher-main">
+          <div class="hotspot-voucher-code-box">
+            <span>${escapeHtml(template.codeLabel || 'VOUCHER')}</span>
+            <strong>${escapeHtml(voucherCode)}</strong>
+          </div>
+          <div class="hotspot-voucher-activation">${activationHtml}</div>
+        </div>
+        <div class="hotspot-voucher-side">
+          <div class="hotspot-voucher-validity">
+            <span>${escapeHtml(template.validityLabel || 'MASA AKTIF')}${compactLayout ? ' :' : ''}</span>
+            <strong>${escapeHtml(validityText)}</strong>
+          </div>
+          ${template.showQr === false ? '' : `
+            <img class="hotspot-voucher-qr" src="${escapeHtml(hotspotVoucherQrSrc(row, 1024))}" alt="QR voucher ${escapeHtml(row.username || '')}" loading="eager" decoding="sync">
+          `}
+        </div>
+      </div>
+      ${footerText ? `<div class="hotspot-voucher-footer">${escapeHtml(footerText)}</div>` : ''}
     </article>
   `;
 }
@@ -6668,21 +7732,28 @@ function hotspotVoucherTicket(row = {}, index = 0) {
 function hotspotVoucherPrintModeLabel(mode = 'a4') {
   if (mode === 'thermal-58') return 'Thermal 58mm';
   if (mode === 'thermal-80') return 'Thermal 80mm';
-  return 'A4 - 50 Voucher';
+  return 'A4 Portrait - Mikhmon';
 }
 
 function hotspotVoucherPrintPageSize(mode = 'a4') {
-  if (mode === 'thermal-58') return '58mm auto';
-  if (mode === 'thermal-80') return '80mm auto';
-  return 'A4 landscape';
+  if (mode === 'thermal-58') return '86mm 58mm';
+  if (mode === 'thermal-80') return '80mm 55mm';
+  return 'A4 portrait';
 }
 
 function setHotspotVoucherPrintMode(mode = 'a4') {
   const safeMode = ['a4', 'thermal-58', 'thermal-80'].includes(mode) ? mode : 'a4';
   const stack = document.querySelector('.hotspot-voucher-print-stack');
+  const isolated = document.querySelector('[data-hotspot-voucher-isolated]');
+  const isolatedModes = String(isolated?.dataset.isolatedModes || '').split(/\s+/).filter(Boolean);
+  const useIsolatedMode = isolatedModes.includes(safeMode);
   if (stack) {
     stack.classList.remove('print-mode-a4', 'print-mode-thermal-58', 'print-mode-thermal-80');
     stack.classList.add(`print-mode-${safeMode}`);
+    if (isolated) stack.hidden = useIsolatedMode;
+  }
+  if (isolated) {
+    isolated.hidden = !useIsolatedMode;
   }
   const label = document.getElementById('hotspotVoucherPrintModeLabel');
   if (label) label.textContent = hotspotVoucherPrintModeLabel(safeMode);
@@ -6719,6 +7790,16 @@ function waitForImages(root, timeoutMs = 2500) {
   ]);
 }
 
+function waitForFrameReady(frame, timeoutMs = 3000) {
+  if (!frame) return Promise.resolve();
+  const doc = frame.contentDocument;
+  if (doc?.readyState === 'complete') return Promise.resolve();
+  return Promise.race([
+    new Promise((resolve) => frame.addEventListener('load', resolve, { once: true })),
+    new Promise((resolve) => window.setTimeout(resolve, timeoutMs))
+  ]);
+}
+
 async function openHotspotVoucherPrintModal(vouchers = []) {
   const rows = vouchers.filter(Boolean);
   if (!rows.length) {
@@ -6729,6 +7810,25 @@ async function openHotspotVoucherPrintModal(vouchers = []) {
     ensureHotspotVoucherTemplates(),
     ensureHotspotVoucherAdminPhone()
   ]);
+  const activeTemplate = hotspotVoucherPrintTemplate();
+  const qrAssets = await hotspotVoucherQrAssets(rows, 1024);
+  const printTemplate = {
+    ...activeTemplate,
+    qrSources: qrAssets.sources,
+    qrSvgs: qrAssets.svgs
+  };
+  const useIsolatedMikhmonA4 = !String(activeTemplate.customHtml || '').trim()
+    && hotspotVoucherLayoutValue(activeTemplate) === 'mikhmon-compact';
+  const defaultPrintMode = hotspotVoucherLayoutValue(activeTemplate) === 'thermal' ? 'thermal-80' : 'a4';
+  const isolatedDocuments = {
+    a4: useIsolatedMikhmonA4 ? hotspotVoucherMikhmonPrintDocument(rows, printTemplate) : '',
+    'thermal-80': hotspotVoucherThermalPrintDocument(rows, printTemplate, 'thermal-80'),
+    'thermal-58': hotspotVoucherThermalPrintDocument(rows, printTemplate, 'thermal-58')
+  };
+  const isolatedModes = Object.entries(isolatedDocuments)
+    .filter(([, documentText]) => String(documentText || '').trim())
+    .map(([mode]) => mode)
+    .join(' ');
   openModal('Print Voucher Hotspot', `
     <div class="hotspot-voucher-preview">
       <div class="hotspot-voucher-preview-head">
@@ -6736,40 +7836,80 @@ async function openHotspotVoucherPrintModal(vouchers = []) {
         <label class="field inline-field hotspot-voucher-print-mode">
           <span>Ukuran</span>
           <select id="hotspotVoucherPrintMode">
-            <option value="a4" selected>A4 - 50 Voucher</option>
-            <option value="thermal-80">Thermal 80mm</option>
-            <option value="thermal-58">Thermal 58mm</option>
+            <option value="a4" ${defaultPrintMode === 'a4' ? 'selected' : ''}>A4 Portrait - Mikhmon</option>
+            <option value="thermal-80" ${defaultPrintMode === 'thermal-80' ? 'selected' : ''}>Thermal 80mm</option>
+            <option value="thermal-58" ${defaultPrintMode === 'thermal-58' ? 'selected' : ''}>Thermal 58mm</option>
           </select>
         </label>
-        <span class="muted" id="hotspotVoucherPrintModeLabel">A4 - 50 Voucher</span>
+        <span class="muted" id="hotspotVoucherPrintModeLabel">${escapeHtml(hotspotVoucherPrintModeLabel(defaultPrintMode))}</span>
         <div class="row-actions hotspot-voucher-print-actions">
           <button class="ghost-button compact" data-close-modal type="button">Tutup</button>
           <button class="button compact" id="printHotspotVouchers" type="button">Print Browser</button>
         </div>
       </div>
-      <div class="hotspot-voucher-print-stack print-mode-a4">
-        ${chunkItems(rows, 50).map((pageRows, pageIndex) => `
+      ${isolatedModes ? `
+        <div class="hotspot-voucher-print-isolated" data-hotspot-voucher-isolated data-isolated-modes="${escapeHtml(isolatedModes)}">
+          <iframe id="hotspotVoucherPrintFrame" title="Preview voucher Mikhmon"></iframe>
+        </div>
+      ` : ''}
+      <div class="hotspot-voucher-print-stack print-mode-${escapeHtml(defaultPrintMode)}">
+        ${chunkItems(rows, rows.length).map((pageRows, pageIndex) => `
           <div class="hotspot-voucher-print-page">
-            ${pageRows.map((row, rowIndex) => hotspotVoucherTicket(row, (pageIndex * 50) + rowIndex)).join('')}
+            ${pageRows.map((row, rowIndex) => hotspotVoucherTicket(row, rowIndex)).join('')}
           </div>
         `).join('')}
       </div>
     </div>
   `, async () => {});
+  const printFrame = document.getElementById('hotspotVoucherPrintFrame');
+  const setPrintFrameDocument = (mode = 'a4') => {
+    const documentText = isolatedDocuments[mode] || '';
+    if (!printFrame || !documentText) return false;
+    if (printFrame.dataset.printMode !== mode) {
+      printFrame.srcdoc = documentText;
+      printFrame.dataset.printMode = mode;
+    }
+    return true;
+  };
   const modeInput = document.getElementById('hotspotVoucherPrintMode');
-  modeInput?.addEventListener('change', () => setHotspotVoucherPrintMode(modeInput.value));
-  setHotspotVoucherPrintMode(modeInput?.value || 'a4');
+  modeInput?.addEventListener('change', () => {
+    const mode = setHotspotVoucherPrintMode(modeInput.value);
+    setPrintFrameDocument(mode);
+  });
+  setPrintFrameDocument(defaultPrintMode);
+  setHotspotVoucherPrintMode(modeInput?.value || defaultPrintMode);
   document.getElementById('printHotspotVouchers')?.addEventListener('click', async () => {
-    await waitForImages(document.querySelector('.hotspot-voucher-print-stack'));
     const mode = setHotspotVoucherPrintMode(modeInput?.value || 'a4');
+    if (setPrintFrameDocument(mode) && printFrame && !printFrame.closest('[data-hotspot-voucher-isolated]')?.hidden) {
+      await waitForFrameReady(printFrame);
+      await waitForImages(printFrame.contentDocument, 5000);
+      printFrame.contentWindow?.focus();
+      printFrame.contentWindow?.print();
+      return;
+    }
+    await waitForImages(document.querySelector('.hotspot-voucher-print-stack'));
     applyHotspotVoucherPrintPageStyle(mode);
     document.body.classList.add('printing-hotspot-vouchers');
     document.body.classList.add(`hotspot-voucher-print-${mode}`);
-    window.print();
-    window.setTimeout(() => {
+    let fallbackTimer = null;
+    let printMedia = null;
+    const cleanupPrintMode = () => {
       document.body.classList.remove('printing-hotspot-vouchers', 'hotspot-voucher-print-a4', 'hotspot-voucher-print-thermal-58', 'hotspot-voucher-print-thermal-80');
       clearHotspotVoucherPrintPageStyle();
-    }, 500);
+      window.removeEventListener('afterprint', cleanupPrintMode);
+      if (printMedia?.removeEventListener) printMedia.removeEventListener('change', handlePrintMediaChange);
+      if (fallbackTimer) window.clearTimeout(fallbackTimer);
+    };
+    const handlePrintMediaChange = (event) => {
+      if (!event.matches) cleanupPrintMode();
+    };
+    window.addEventListener('afterprint', cleanupPrintMode, { once: true });
+    if (window.matchMedia) {
+      printMedia = window.matchMedia('print');
+      printMedia.addEventListener?.('change', handlePrintMediaChange);
+    }
+    fallbackTimer = window.setTimeout(cleanupPrintMode, 120000);
+    window.print();
   });
 }
 
@@ -6891,27 +8031,32 @@ function radiusProfileRows(rows = [], type = 'ppp', writeAllowed = false) {
 }
 
 function radiusTemplateRows(rows = [], writeAllowed = false) {
-  return rows.map((row) => `
-    <tr>
-      <td>
-        <strong>${escapeHtml(row.name || '-')}</strong>
-        <div class="muted">${escapeHtml(row.title || row.id || '-')}</div>
-      </td>
-      <td>
-        <span>${escapeHtml(row.subtitle || '-')}</span>
-        <div class="muted">${escapeHtml(row.footer || '-')}</div>
-      </td>
-      <td><span class="badge ${row.active === false ? 'inactive' : 'active'}">${row.active === false ? 'Nonaktif' : 'Aktif'}</span></td>
-      ${writeAllowed ? `
+  return rows.map((row) => {
+    const layout = hotspotVoucherLayoutValue(row);
+    const custom = String(row.customHtml || '').trim();
+    return `
+      <tr>
         <td>
-          <div class="row-actions">
-            <button class="ghost-button compact" type="button" data-edit-radius-hotspot-template="${escapeHtml(row.id)}">Edit</button>
-            <button class="danger-button compact" type="button" data-delete-radius-hotspot-template="${escapeHtml(row.id)}" data-radius-template-name="${escapeHtml(row.name || '')}">Hapus</button>
-          </div>
+          <strong>${escapeHtml(row.name || '-')}</strong>
+          <div class="muted">${escapeHtml(row.title || row.id || '-')} · ${escapeHtml(hotspotVoucherLayoutLabel(layout))}${custom ? ' · HTML custom' : ''}</div>
         </td>
-      ` : ''}
-    </tr>
-  `).join('');
+        <td>
+          <span>${escapeHtml(row.instruction || row.subtitle || '-')}</span>
+          <div class="muted">CS otomatis dari WA tertaut/Public Info</div>
+        </td>
+        <td><span class="badge ${row.active === false ? 'inactive' : 'active'}">${row.active === false ? 'Nonaktif' : 'Aktif'}</span></td>
+        ${writeAllowed ? `
+          <td>
+            <div class="row-actions">
+              <button class="ghost-button compact" type="button" data-edit-radius-hotspot-template="${escapeHtml(row.id)}">Edit</button>
+              ${row.builtin === true ? '' : `<button class="danger-button compact" type="button" data-delete-radius-hotspot-template="${escapeHtml(row.id)}" data-radius-template-name="${escapeHtml(row.name || '')}">Hapus</button>`}
+              <button class="ghost-button compact" type="button" data-edit-radius-hotspot-template-html="${escapeHtml(row.id)}">Edit HTML</button>
+            </div>
+          </td>
+        ` : ''}
+      </tr>
+    `;
+  }).join('');
 }
 
 function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
@@ -7628,7 +8773,7 @@ async function openRadiusPppUserModal(user = null) {
     }
     const housePhotoFile = form.querySelector('input[name="memberHousePhoto"]')?.files?.[0];
     if (housePhotoFile) {
-      payload.memberHousePhotoUrl = await readLogoFile(housePhotoFile);
+      payload.memberHousePhotoUrl = await uploadImageFile(housePhotoFile, 'member-house', { label: 'Foto rumah' });
     }
     delete payload.memberHousePhoto;
     const result = await api(user ? `/api/radius/ppp-dhcp/users/${encodeURIComponent(user.id)}` : '/api/radius/ppp-dhcp/users', {
@@ -8046,7 +9191,7 @@ function bindRadiusMemberFields(options = {}) {
   });
   housePhotoInput?.addEventListener('change', async () => {
     try {
-      const uploaded = await readLogoFile(housePhotoInput.files?.[0]);
+      const uploaded = await readImageFile(housePhotoInput.files?.[0], { label: 'Foto rumah' });
       if (!uploaded || !housePhotoPreview) return;
       housePhotoPreview.src = uploaded;
       housePhotoPreview.hidden = false;
@@ -8225,23 +9370,40 @@ function radiusHotspotTemplateFormBody(template = {}) {
   const active = template.active !== false;
   const showPrice = template.showPrice !== false;
   const showQr = template.showQr !== false;
+  const layout = hotspotVoucherLayoutValue(template);
   return `
     <div class="form-grid">
       <label class="field">
         <span>Nama Template</span>
-        <input name="name" value="${escapeHtml(template.name || 'Voucher Standar')}" required maxlength="80">
+        <input name="name" value="${escapeHtml(template.name || 'Mikhmon Compact')}" required maxlength="80">
       </label>
       <label class="field">
         <span>Judul Voucher</span>
-        <input name="title" value="${escapeHtml(template.title || 'Hotspot Voucher')}" required maxlength="80">
+        <input name="title" value="${escapeHtml(template.title || 'Voucher Compact')}" required maxlength="80">
       </label>
       <label class="field">
-        <span>Subjudul</span>
-        <input name="subtitle" value="${escapeHtml(template.subtitle || '')}" maxlength="80">
+        <span>Layout</span>
+        <select name="layout" id="hotspotTemplateLayout">
+          ${HOTSPOT_VOUCHER_TEMPLATE_LAYOUTS.map((item) => `
+            <option value="${escapeHtml(item.value)}" ${layout === item.value ? 'selected' : ''}>${escapeHtml(item.label)}</option>
+          `).join('')}
+        </select>
       </label>
       <label class="field">
-        <span>Label Login</span>
-        <input name="loginLabel" value="${escapeHtml(template.loginLabel || 'Link login')}" maxlength="40">
+        <span>Warna</span>
+        <input name="accentColor" type="color" value="${escapeHtml(template.accentColor || '#0277BD')}">
+      </label>
+      <label class="field">
+        <span>Label Kode</span>
+        <input name="codeLabel" value="${escapeHtml(template.codeLabel || 'VOUCHER')}" maxlength="28">
+      </label>
+      <label class="field">
+        <span>Label Masa Aktif</span>
+        <input name="validityLabel" value="${escapeHtml(template.validityLabel || 'MASA AKTIF')}" maxlength="28">
+      </label>
+      <label class="field full">
+        <span>Instruksi</span>
+        <textarea name="instruction" rows="4" maxlength="220">${escapeHtml(template.instruction || template.subtitle || HOTSPOT_VOUCHER_DEFAULT_INSTRUCTION)}</textarea>
       </label>
       <label class="field checkbox-field">
         <input name="showPrice" type="checkbox" value="true" ${showPrice ? 'checked' : ''}>
@@ -8254,10 +9416,6 @@ function radiusHotspotTemplateFormBody(template = {}) {
       <label class="field checkbox-field">
         <input name="active" type="checkbox" value="true" ${active ? 'checked' : ''}>
         <span>Aktif</span>
-      </label>
-      <label class="field full">
-        <span>Footer</span>
-        <textarea name="footer" rows="3" maxlength="180">${escapeHtml(template.footer || '')}</textarea>
       </label>
     </div>
     <div class="modal-actions">
@@ -8273,6 +9431,7 @@ function openRadiusHotspotTemplateModal(template = null) {
       method: template ? 'PUT' : 'POST',
       body: JSON.stringify({
         ...payload,
+        subtitle: payload.instruction || '',
         showPrice: payload.showPrice === true,
         showQr: payload.showQr === true,
         active: payload.active === true
@@ -8281,6 +9440,99 @@ function openRadiusHotspotTemplateModal(template = null) {
     setToast(template ? 'Template voucher diperbarui' : 'Template voucher ditambahkan');
     renderRadiusHotspot({ refresh: true });
   });
+  bindRadiusHotspotTemplateFields();
+}
+
+function radiusHotspotTemplateHtmlFormBody(template = {}) {
+  const preset = hotspotVoucherTemplateHtmlPreset(template);
+  const html = String(template.customHtml || '').trim() ? template.customHtml : preset.html;
+  const css = String(template.customCss || '').trim() ? template.customCss : preset.css;
+  return `
+    <div class="form-grid">
+      <label class="field">
+        <span>Nama Template</span>
+        <input value="${escapeHtml(template.name || '-')}" readonly>
+      </label>
+      <label class="field">
+        <span>Layout</span>
+        <input value="${escapeHtml(hotspotVoucherLayoutLabel(hotspotVoucherLayoutValue(template)))}" readonly>
+      </label>
+      <label class="field full">
+        <span>HTML</span>
+        <textarea name="customHtml" rows="14" maxlength="12000" spellcheck="false" data-template-custom-html>${escapeHtml(html)}</textarea>
+      </label>
+      <label class="field full">
+        <span>CSS</span>
+        <textarea name="customCss" rows="10" maxlength="8000" spellcheck="false" data-template-custom-css>${escapeHtml(css)}</textarea>
+      </label>
+      <label class="field full">
+        <span>Placeholder</span>
+        <textarea rows="6" readonly>${escapeHtml(HOTSPOT_VOUCHER_TEMPLATE_VARIABLES)}</textarea>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost-button" value="cancel" type="submit">Batal</button>
+      <button class="ghost-button" id="fillHotspotHtmlPreset" type="button">Pakai Contoh Layout</button>
+      <button class="ghost-button" id="clearHotspotHtmlCustom" type="button">Kosongkan Custom</button>
+      <button class="button" type="submit">Simpan HTML</button>
+    </div>
+  `;
+}
+
+function openRadiusHotspotTemplateHtmlModal(template = {}) {
+  const preset = hotspotVoucherTemplateHtmlPreset(template);
+  openModal(`Edit HTML - ${template.name || 'Template Voucher'}`, radiusHotspotTemplateHtmlFormBody(template), async (payload) => {
+    await api(`/api/radius/hotspot/templates/${encodeURIComponent(template.id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        ...template,
+        customHtml: payload.customHtml || '',
+        customCss: payload.customCss || ''
+      })
+    });
+    setToast('HTML template voucher diperbarui');
+    renderRadiusHotspot({ refresh: true });
+  });
+  const htmlInput = modalBody.querySelector('[data-template-custom-html]');
+  const cssInput = modalBody.querySelector('[data-template-custom-css]');
+  modalBody.querySelector('#fillHotspotHtmlPreset')?.addEventListener('click', () => {
+    if (htmlInput) htmlInput.value = preset.html;
+    if (cssInput) cssInput.value = preset.css;
+  });
+  modalBody.querySelector('#clearHotspotHtmlCustom')?.addEventListener('click', () => {
+    if (htmlInput) htmlInput.value = '';
+    if (cssInput) cssInput.value = '';
+  });
+}
+
+function bindRadiusHotspotTemplateFields() {
+  const layoutInput = modalBody.querySelector('#hotspotTemplateLayout');
+  const customFields = [...modalBody.querySelectorAll('[data-template-custom-field]')];
+  const htmlInput = modalBody.querySelector('[data-template-custom-html]');
+  const cssInput = modalBody.querySelector('[data-template-custom-css]');
+  const fillButton = modalBody.querySelector('#fillHotspotMikhmonTemplate');
+  const sync = () => {
+    const custom = layoutInput?.value === 'custom';
+    if (custom) {
+      if (htmlInput && !htmlInput.value.trim()) htmlInput.value = HOTSPOT_VOUCHER_CUSTOM_HTML_DEFAULT;
+      if (cssInput && !cssInput.value.trim()) cssInput.value = HOTSPOT_VOUCHER_CUSTOM_CSS_DEFAULT;
+    }
+    customFields.forEach((field) => {
+      field.hidden = !custom;
+      field.querySelectorAll('textarea,input,select').forEach((input) => {
+        if (input.readOnly) return;
+        input.disabled = !custom;
+      });
+    });
+  };
+  layoutInput?.addEventListener('change', sync);
+  fillButton?.addEventListener('click', () => {
+    if (layoutInput) layoutInput.value = 'custom';
+    if (htmlInput) htmlInput.value = HOTSPOT_VOUCHER_CUSTOM_HTML_DEFAULT;
+    if (cssInput) cssInput.value = HOTSPOT_VOUCHER_CUSTOM_CSS_DEFAULT;
+    sync();
+  });
+  sync();
 }
 
 function radiusHotspotBatchToolbar(writeAllowed = false) {
@@ -9012,6 +10264,12 @@ async function renderRadiusHotspot(options = {}) {
       button.addEventListener('click', () => {
         const template = rows.find((entry) => String(entry.id) === String(button.dataset.editRadiusHotspotTemplate));
         if (template) openRadiusHotspotTemplateModal(template);
+      });
+    });
+    app.querySelectorAll('[data-edit-radius-hotspot-template-html]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const template = rows.find((entry) => String(entry.id) === String(button.dataset.editRadiusHotspotTemplateHtml));
+        if (template) openRadiusHotspotTemplateHtmlModal(template);
       });
     });
     app.querySelectorAll('[data-delete-radius-hotspot-template]').forEach((button) => {
@@ -11578,7 +12836,7 @@ async function openMemberContactModal(member = {}) {
     try {
       const housePhotoFile = form.querySelector('#memberHousePhotoUpload')?.files?.[0];
       if (housePhotoFile) {
-        formPayload.housePhotoUrl = await readLogoFile(housePhotoFile);
+        formPayload.housePhotoUrl = await uploadImageFile(housePhotoFile, 'member-house', { label: 'Foto rumah' });
       }
       delete formPayload.housePhotoUpload;
       const result = await api('/api/monitoring/member-contact', {
@@ -11620,7 +12878,7 @@ function bindMemberDetailModal(detail = {}) {
     try {
       const preview = modalBody.querySelector('#memberHousePhotoPreview');
       const empty = modalBody.querySelector('#memberHousePhotoEmpty');
-      const uploaded = await readLogoFile(upload.files?.[0]);
+      const uploaded = await readImageFile(upload.files?.[0], { label: 'Foto rumah' });
       if (!uploaded || !preview) return;
       preview.src = uploaded;
       preview.hidden = false;
@@ -12911,6 +14169,188 @@ function bindUserRoleNasLock() {
   };
   roleSelect?.addEventListener('change', sync);
   sync();
+}
+
+function accountSettingsFormBody(user = {}) {
+  const roleText = user.roleLabel || roleLabel(user.role);
+  const photoUrl = safeProfilePhotoUrl(user.photoUrl || user.avatarUrl);
+  const previewUrl = profilePhotoDisplayUrl(user);
+  return `
+    <div class="account-settings-modal">
+      <section class="account-profile-head">
+        <div class="account-photo-preview" id="accountPhotoPreview">
+          ${avatarImageMarkup(previewUrl, `Foto ${user.name || user.username || 'default user'}`)}
+        </div>
+        <div class="account-profile-title">
+          <strong>${escapeHtml(user.name || user.username || '-')}</strong>
+          <span>${escapeHtml(roleText)} · ${escapeHtml(user.username || '-')}</span>
+        </div>
+        <div class="account-photo-actions">
+          <label class="ghost-button compact account-photo-upload">
+            <span>Upload Foto</span>
+            <input id="accountPhotoInput" name="photoUpload" type="file" accept="image/png,image/jpeg,image/webp">
+          </label>
+          <button class="ghost-button compact" id="accountPhotoClear" type="button">Hapus</button>
+        </div>
+      </section>
+      <input name="photoUrl" type="hidden" value="${escapeHtml(photoUrl)}">
+      <div class="form-grid">
+        <label class="field">
+          <span>Nama Lengkap</span>
+          <input name="name" value="${escapeHtml(user.name || '')}" autocomplete="name" required>
+        </label>
+        <label class="field">
+          <span>ID Karyawan (NIK)</span>
+          <input name="employeeId" value="${escapeHtml(user.employeeId || user.nik || '')}" inputmode="numeric" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>Jabatan</span>
+          <input name="position" value="${escapeHtml(user.position || '')}" autocomplete="organization-title">
+        </label>
+        <label class="field">
+          <span>Unit/Divisi</span>
+          <input value="${escapeHtml(roleText || '-')}" autocomplete="organization" readonly disabled>
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input name="email" type="email" value="${escapeHtml(user.email || '')}" autocomplete="email">
+        </label>
+        <label class="field">
+          <span>No. HP/Whatsapp</span>
+          <input name="phone" value="${escapeHtml(user.phone || '')}" inputmode="tel" autocomplete="tel">
+        </label>
+        <label class="field full">
+          <span>Alamat</span>
+          <textarea name="address" autocomplete="street-address">${escapeHtml(user.address || '')}</textarea>
+        </label>
+        <div class="field full account-readonly-grid">
+          <div>
+            <span>Username Login</span>
+            <strong>${escapeHtml(user.username || '-')}</strong>
+          </div>
+          <div>
+            <span>Role</span>
+            <strong>${escapeHtml(roleText || '-')}</strong>
+          </div>
+        </div>
+        <div class="field full form-subhead">
+          <strong>Ganti Password</strong>
+          <span>Isi bagian ini hanya jika password ingin diganti.</span>
+        </div>
+        <label class="field">
+          <span>Password Lama</span>
+          <input name="currentPassword" type="password" autocomplete="current-password">
+        </label>
+        <label class="field">
+          <span>Password Baru</span>
+          <input name="newPassword" type="password" autocomplete="new-password">
+        </label>
+        <label class="field full">
+          <span>Ulangi Password Baru</span>
+          <input name="confirmPassword" type="password" autocomplete="new-password">
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" value="cancel" type="submit">Batal</button>
+        <button class="button" type="submit">Simpan Akun</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindAccountSettingsPhotoInput(user = {}) {
+  const input = modalBody.querySelector('#accountPhotoInput');
+  const hidden = modalBody.querySelector('input[name="photoUrl"]');
+  const preview = modalBody.querySelector('#accountPhotoPreview');
+  const clearButton = modalBody.querySelector('#accountPhotoClear');
+  const resetPreview = () => {
+    if (preview) {
+      preview.innerHTML = `<img src="${escapeHtml(DEFAULT_PROFILE_PHOTO_URL)}" alt="Foto default user">`;
+    }
+  };
+  input?.addEventListener('change', async () => {
+    try {
+      const file = input.files?.[0];
+      if (!file) return;
+      const dataUrl = await readImageFile(file, { label: 'Foto profil' });
+      if (preview) {
+        preview.innerHTML = `<img src="${escapeHtml(dataUrl)}" alt="Preview foto ${escapeHtml(user.name || user.username || 'user')}">`;
+      }
+    } catch (error) {
+      input.value = '';
+      setToast(error.message);
+    }
+  });
+  clearButton?.addEventListener('click', () => {
+    if (input) input.value = '';
+    if (hidden) hidden.value = '';
+    resetPreview();
+  });
+}
+
+function openAccountSettingsModal() {
+  if (!state.auth) return;
+  openModal('Akun Saya', accountSettingsFormBody(state.auth), async (payload, form) => {
+    const photoFile = form.querySelector('#accountPhotoInput')?.files?.[0];
+    const body = {
+      name: payload.name,
+      employeeId: payload.employeeId,
+      nik: payload.employeeId,
+      position: payload.position,
+      email: payload.email,
+      phone: payload.phone,
+      address: payload.address,
+      photoUrl: payload.photoUrl,
+      currentPassword: payload.currentPassword,
+      newPassword: payload.newPassword
+    };
+    if (photoFile) {
+      body.photoUrl = await uploadImageFile(photoFile, 'profile', { label: 'Foto profil' });
+    }
+    if (body.newPassword || payload.confirmPassword || body.currentPassword) {
+      if (!body.newPassword) {
+        throw new Error('Password baru wajib diisi');
+      }
+      if (!body.currentPassword) {
+        throw new Error('Password lama wajib diisi');
+      }
+      if (body.newPassword !== payload.confirmPassword) {
+        throw new Error('Konfirmasi password baru tidak sama');
+      }
+    } else {
+      delete body.currentPassword;
+      delete body.newPassword;
+    }
+    const result = await api('/api/auth/profile', {
+      method: 'PUT',
+      body: JSON.stringify(body)
+    });
+    state.auth = result.user || state.auth;
+    configureShell();
+    setToast('Akun diperbarui');
+  });
+  bindAccountSettingsPhotoInput(state.auth);
+}
+
+async function logoutCurrentUser() {
+  rememberLoginReturnView();
+  await api('/api/auth/logout', {
+    method: 'POST',
+    skipAuthRedirect: true
+  }).catch(() => ({}));
+  setMenuOpen(false);
+  setAccountMenuOpen(false);
+  state.auth = null;
+  abortPageRequests();
+  clearRealtimeTimers();
+  window.clearInterval(notificationsTimer);
+  hideNotifications();
+  hideTopWaStatus();
+  closeDatePickers();
+  setPeriodPickerOpen(false);
+  if (modal?.open) modal.close();
+  setToast('Logout berhasil');
+  renderLogin();
 }
 
 async function openUserModal(user = null) {
@@ -14896,6 +16336,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     closeDatePickers();
     setPeriodPickerOpen(false);
+    setAccountMenuOpen(false);
   }
 });
 
@@ -14910,25 +16351,21 @@ notificationPanel?.addEventListener('click', (event) => {
   event.stopPropagation();
 });
 
-logoutButton.addEventListener('click', async () => {
-  rememberLoginReturnView();
-  await api('/api/auth/logout', {
-    method: 'POST',
-    skipAuthRedirect: true
-  }).catch(() => ({}));
-  setMenuOpen(false);
-  state.auth = null;
-  abortPageRequests();
-  clearRealtimeTimers();
-  window.clearInterval(notificationsTimer);
-  hideNotifications();
-  hideTopWaStatus();
-  closeDatePickers();
-  setPeriodPickerOpen(false);
-  if (modal?.open) modal.close();
-  setToast('Logout berhasil');
-  renderLogin();
+profileButton?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  toggleAccountMenu();
 });
+
+accountPanel?.addEventListener('click', (event) => event.stopPropagation());
+
+accountProfileMenu?.addEventListener('click', () => {
+  setAccountMenuOpen(false);
+  openAccountSettingsModal();
+});
+
+accountLogoutMenu?.addEventListener('click', logoutCurrentUser);
+
+logoutButton?.addEventListener('click', logoutCurrentUser);
 
 menuToggleButton?.addEventListener('click', toggleMenu);
 
@@ -14953,6 +16390,13 @@ document.addEventListener('click', (event) => {
   if (!notificationMenu || notificationMenu.hidden) return;
   if (!notificationMenu.contains(event.target)) {
     closeNotificationPanel();
+  }
+});
+
+document.addEventListener('click', (event) => {
+  if (!accountMenu || accountMenu.hidden) return;
+  if (!accountMenu.contains(event.target)) {
+    setAccountMenuOpen(false);
   }
 });
 
