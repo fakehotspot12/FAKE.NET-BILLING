@@ -6911,57 +6911,73 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
     const online = profile.online || {};
     const profileId = String(profile.id || '');
     return `
-      <tr>
-        <td>
-          <label class="inline-check">
+      <article class="voucher-online-package">
+        <div class="voucher-online-package-summary">
+          <label class="inline-check voucher-online-package-toggle">
             <input type="checkbox" name="pkgEnabled_${escapeHtml(profileId)}" ${online.enabled ? 'checked' : ''} ${writeAllowed ? '' : 'disabled'}>
-            <span>Jual</span>
+            <span>Jual Online</span>
           </label>
-        </td>
-        <td>
           <strong>${escapeHtml(profile.name || '-')}</strong>
-          <div class="muted">${profile.price ? rupiah(profile.price) : '-'}${profile.validity ? ` · ${escapeHtml(profile.validity)}` : ''}${profile.quota ? ` · ${escapeHtml(profile.quota)}` : ''}</div>
-        </td>
-        <td>
+          <span>${profile.price ? rupiah(profile.price) : '-'}${profile.validity ? ` · ${escapeHtml(profile.validity)}` : ''}${profile.quota ? ` · ${escapeHtml(profile.quota)}` : ''}</span>
+        </div>
+        <label class="voucher-online-package-field package-label-field">
+          <span>Nama Paket</span>
           <input class="control compact-input" name="pkgLabel_${escapeHtml(profileId)}" value="${escapeHtml(online.label || profile.name || '')}" ${writeAllowed ? '' : 'disabled'}>
-        </td>
-        <td>
+        </label>
+        <label class="voucher-online-package-field package-nas-field">
+          <span>NAS Penjualan</span>
           <select class="control compact-input" name="pkgNas_${escapeHtml(profileId)}" ${writeAllowed ? '' : 'disabled'}>
             ${radiusOptionTags(nasOptions, online.nasId || '', 'Semua NAS')}
           </select>
-        </td>
-        <td>
+        </label>
+        <label class="voucher-online-package-field package-number-field">
+          <span>Maks/Order</span>
           <input class="control compact-input" name="pkgMax_${escapeHtml(profileId)}" type="number" min="1" max="50" value="${escapeHtml(online.maxPerOrder || 1)}" ${writeAllowed ? '' : 'disabled'}>
-        </td>
-        <td>
+        </label>
+        <label class="voucher-online-package-field package-number-field">
+          <span>Urutan</span>
           <input class="control compact-input" name="pkgSort_${escapeHtml(profileId)}" type="number" min="0" max="999" value="${escapeHtml(online.sort || 0)}" ${writeAllowed ? '' : 'disabled'}>
-        </td>
-        <td class="nowrap">${displayNumber(online.activeVouchers || 0)}</td>
-      </tr>
+        </label>
+        <div class="voucher-online-package-stock">
+          <span>Stok Aktif</span>
+          <strong>${displayNumber(online.activeVouchers || 0)}</strong>
+        </div>
+      </article>
     `;
   }).join('');
   return `
-    <div class="stack compact-stack">
-      <section class="metrics">
-        ${metric('Channel', settings.enabled ? 'Aktif' : 'Off', settings.publicPath || '/voucher', settings.enabled ? 'positive' : '')}
-        ${metric('Paket Jual', displayNumber(payload.summary?.enabledPackageCount || 0), `${displayNumber(payload.summary?.profileCount || 0)} profile Hotspot`)}
-        ${metric('Payment QRIS', integrations.paymentGatewayEnabled ? 'Aktif' : 'Off', integrations.paymentGatewayProvider || '-', integrations.paymentGatewayEnabled ? 'positive' : 'warning-card')}
-        ${metric('Generate', 'Username=Password', `Panjang ${displayNumber(settings.codeLength || 6)}${settings.codePrefix ? ` · ${settings.codePrefix}` : ''}`)}
-      </section>
-      <form id="hotspotVoucherOnlineForm" class="form-panel">
-        <div class="section-head">
-          <h2>Voucher Online</h2>
-          ${writeAllowed ? '<button class="button" type="submit">Simpan</button>' : ''}
+    <div class="stack compact-stack voucher-online-panel">
+      <section class="voucher-online-summary">
+        <div class="voucher-online-summary-item ${settings.enabled ? 'is-positive' : ''}">
+          <span>Channel</span>
+          <strong>${settings.enabled ? 'Aktif' : 'Off'}</strong>
+          <small>${escapeHtml(settings.publicPath || '/voucher')}</small>
         </div>
-        <section class="notice">
-          <strong>Alur QRIS voucher</strong>
-          <span>Pembeli memilih paket dari login page, bayar via QRIS, lalu voucher Hotspot baru dibuat otomatis dengan username sama dengan password.</span>
-        </section>
-        <div class="form-grid">
-          <label class="field checkbox-field">
-            <input name="enabled" type="checkbox" value="true" ${settings.enabled ? 'checked' : ''} ${writeAllowed ? '' : 'disabled'}>
-            <span>Aktifkan channel</span>
-          </label>
+        <div class="voucher-online-summary-item">
+          <span>Paket Jual</span>
+          <strong>${displayNumber(payload.summary?.enabledPackageCount || 0)}</strong>
+          <small>${displayNumber(payload.summary?.profileCount || 0)} profile Hotspot</small>
+        </div>
+        <div class="voucher-online-summary-item ${integrations.paymentGatewayEnabled ? 'is-positive' : 'is-warning'}">
+          <span>Payment</span>
+          <strong>${integrations.paymentGatewayEnabled ? 'QRIS Aktif' : 'Off'}</strong>
+          <small>${escapeHtml(integrations.paymentGatewayProvider || '-')}</small>
+        </div>
+        <div class="voucher-online-summary-item">
+          <span>Format Voucher</span>
+          <strong>Username = Password</strong>
+          <small>${displayNumber(settings.codeLength || 6)} karakter${settings.codePrefix ? ` · ${escapeHtml(settings.codePrefix)}` : ''}</small>
+        </div>
+      </section>
+      <form id="hotspotVoucherOnlineForm" class="form-panel voucher-online-form">
+        <div class="section-head">
+          <div>
+            <h2>Pengaturan Voucher Online</h2>
+            <span class="muted">Channel penjualan dan format voucher</span>
+          </div>
+          ${writeAllowed ? '<button class="button compact voucher-online-save" type="submit">Simpan</button>' : ''}
+        </div>
+        <div class="voucher-online-settings-grid">
           <label class="field">
             <span>Judul Halaman</span>
             <input name="title" value="${escapeHtml(settings.title || 'Beli Voucher Hotspot')}" ${writeAllowed ? '' : 'disabled'}>
@@ -6999,6 +7015,12 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
               ], settings.codeCharacter || 'mixed')}
             </select>
           </label>
+        </div>
+        <div class="voucher-online-toggle-grid">
+          <label class="field checkbox-field">
+            <input name="enabled" type="checkbox" value="true" ${settings.enabled ? 'checked' : ''} ${writeAllowed ? '' : 'disabled'}>
+            <span>Aktifkan channel</span>
+          </label>
           <label class="field checkbox-field">
             <input name="autoGenerateOnPaid" type="checkbox" value="true" ${settings.autoGenerateOnPaid !== false ? 'checked' : ''} ${writeAllowed ? '' : 'disabled'}>
             <span>Generate setelah paid</span>
@@ -7015,6 +7037,8 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
             <input name="showPrice" type="checkbox" value="true" ${settings.showPrice !== false ? 'checked' : ''} ${writeAllowed ? '' : 'disabled'}>
             <span>Tampilkan harga</span>
           </label>
+        </div>
+        <div class="voucher-online-message-grid">
           <label class="field full">
             <span>Pesan Sukses</span>
             <textarea name="successMessage" rows="3" ${writeAllowed ? '' : 'disabled'}>${escapeHtml(settings.successMessage || '')}</textarea>
@@ -7024,22 +7048,18 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
             <textarea name="terms" rows="4" ${writeAllowed ? '' : 'disabled'}>${escapeHtml(settings.terms || '')}</textarea>
           </label>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Profile</th>
-                <th>Nama Paket</th>
-                <th>NAS Penjualan</th>
-                <th>Maks/Order</th>
-                <th>Urutan</th>
-                <th>Stok Aktif</th>
-              </tr>
-            </thead>
-            <tbody>${profileRows || '<tr><td colspan="7">Belum ada profile Hotspot.</td></tr>'}</tbody>
-          </table>
-        </div>
+        <section class="voucher-online-packages">
+          <div class="voucher-online-packages-head">
+            <div>
+              <h3>Paket Dijual</h3>
+              <span class="muted">Pilih paket dan NAS yang tersedia pada portal voucher.</span>
+            </div>
+            <span class="badge active">${displayNumber(payload.summary?.enabledPackageCount || 0)} aktif</span>
+          </div>
+          <div class="voucher-online-package-list">
+            ${profileRows || '<div class="empty">Belum ada profile Hotspot.</div>'}
+          </div>
+        </section>
       </form>
     </div>
   `;

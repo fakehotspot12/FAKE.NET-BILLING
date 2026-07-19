@@ -60,7 +60,7 @@ const genieAcs = require('./genieacs');
 const license = require('./license');
 const secureSecrets = require('./secure-secrets');
 const { WhatsAppQueue } = require('./whatsapp-queue');
-const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, publicSettings, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
+const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
 
 const PORT = Number(process.env.PORT || 8891);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -128,10 +128,13 @@ const MIME_TYPES = {
 };
 
 function staticCacheControl(ext) {
-  if (['.html', '.js', '.css'].includes(ext)) {
-    return 'no-store';
-  }
+  if (ext === '.html') return 'no-store';
+  if (['.js', '.css'].includes(ext)) return 'public, max-age=0, must-revalidate';
   return 'public, max-age=86400';
+}
+
+function staticEtag(stat) {
+  return `W/"${Number(stat.size).toString(16)}-${Math.floor(Number(stat.mtimeMs)).toString(16)}"`;
 }
 
 let writeQueue = Promise.resolve();
@@ -8026,7 +8029,7 @@ async function processWaGatewayQueueJob(job) {
       current.queueJobId = '';
       current.scheduledAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       current.updatedAt = new Date().toISOString();
-    });
+    }, { collections: ['waMessages'], includeCore: false });
     return {
       skipped: true,
       reason: !settings.enabled ? 'gateway-disabled' : provider !== 'waha' ? 'provider-disabled' : 'outside-send-window'
@@ -8053,7 +8056,7 @@ async function processWaGatewayQueueJob(job) {
         messageId: current.id,
         queueJobId: job.id
       });
-    });
+    }, { collections: ['waMessages', 'activity'], includeCore: false });
     return {
       sent: true,
       providerMessageId: delivery.providerMessageId || ''
@@ -8072,7 +8075,7 @@ async function processWaGatewayQueueJob(job) {
       current.scheduledAt = new Date(Date.now() + retryDelaySeconds * 1000).toISOString();
       current.lastError = error.message || 'Whatsapp Gateway gagal mengirim';
       current.updatedAt = new Date().toISOString();
-    });
+    }, { collections: ['waMessages'], includeCore: false });
     throw error;
   }
 }
@@ -8177,7 +8180,10 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
       return waGatewayDraftIsRecoverable(data, message, data.waMessages || []);
     });
     if (hasRecoverableDraft) {
-      const recovered = await mutate((store) => recoverRelevantWaGatewayDrafts(store));
+      const recovered = await mutate(
+        (store) => recoverRelevantWaGatewayDrafts(store),
+        { collections: ['waMessages'], includeCore: false }
+      );
       if (recovered.result.length) {
         data = recovered.data;
         settings = data.settings?.waGateway || {};
@@ -8221,7 +8227,7 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
         message.provider = provider;
         message.updatedAt = new Date().toISOString();
       }
-    });
+    }, { collections: ['waMessages'], includeCore: false });
     return {
       queued: results.length,
       backend: 'bullmq',
@@ -8401,11 +8407,20 @@ function persistRadbooxCredentials(radbooxSettings, payload = {}, data = null) {
   }
 }
 
-async function mutate(mutator) {
+async function mutate(mutator, saveOptions = {}) {
   const run = async () => {
-    const data = await loadStore();
+    const current = await loadStore();
+    const targetedCollections = Array.isArray(saveOptions.collections) && saveOptions.includeCore === false
+      ? saveOptions.collections
+      : [];
+    const data = targetedCollections.length
+      ? targetedCollections.reduce((copy, collection) => {
+        copy[collection] = structuredClone(current[collection] || []);
+        return copy;
+      }, { ...current })
+      : structuredClone(current);
     const result = await mutator(data);
-    const saved = await saveStore(data);
+    const saved = await saveStore(data, saveOptions);
     return { data: saved, result };
   };
 
@@ -8881,7 +8896,7 @@ async function ensureStartupData() {
 }
 
 async function requirePermission(req, res, permission) {
-  const data = await loadStore();
+  const data = await requestStore(req);
   const user = auth.requestUser(req, data);
   if (!user) {
     unauthorized(res);
@@ -8895,7 +8910,7 @@ async function requirePermission(req, res, permission) {
 }
 
 async function requireAnyPermission(req, res, permissions = []) {
-  const data = await loadStore();
+  const data = await requestStore(req);
   const user = auth.requestUser(req, data);
   if (!user) {
     unauthorized(res);
@@ -8906,6 +8921,12 @@ async function requireAnyPermission(req, res, permissions = []) {
     return null;
   }
   return { data, user };
+}
+
+async function requestStore(req) {
+  if (req.appStore) return req.appStore;
+  req.appStore = await loadStore();
+  return req.appStore;
 }
 
 function paymentGatewayCallbackPayload(payload = {}) {
@@ -9765,7 +9786,10 @@ async function handleWahaWebhook(req, res) {
   try {
     const { payload, raw } = await readBodyWithRaw(req);
     verifyWahaWebhookSignature(req.headers || {}, raw);
-    const { result } = await mutate((store) => applyWahaAckEvent(store, payload));
+    const { result } = await mutate(
+      (store) => applyWahaAckEvent(store, payload),
+      { collections: ['waMessages'], includeCore: false }
+    );
     sendJson(res, 200, { ok: true, ...result });
   } catch (error) {
     const unauthorizedWebhook = /HMAC|Signature/i.test(String(error.message || ''));
@@ -9858,7 +9882,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/license/status') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     sendJson(res, 200, {
       ok: true,
       license: licenseStatusForStore(data),
@@ -9898,7 +9922,7 @@ async function handleApi(req, res, url) {
   }
 
   if (!['/api/branding', '/api/license/status', '/api/license/activate'].includes(pathname)) {
-    const data = await loadStore();
+    const data = await requestStore(req);
     if (licenseBlocksAccess(data)) {
       sendJson(res, 423, {
         ok: false,
@@ -9915,7 +9939,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/public/hotspot-voucher-online') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     sendJson(res, 200, publicHotspotVoucherStorefrontPayload(data, {
       nas: String(url.searchParams.get('nas') || '').trim()
     }));
@@ -9983,7 +10007,7 @@ async function handleApi(req, res, url) {
 
   const publicVoucherOrderMatch = pathname.match(/^\/api\/public\/hotspot-voucher-orders\/([^/]+)$/);
   if (method === 'GET' && publicVoucherOrderMatch) {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const order = findHotspotVoucherOrder(data, decodeURIComponent(publicVoucherOrderMatch[1]));
     if (!order) {
       sendJson(res, 404, { ok: false, error: 'Order voucher tidak ditemukan' });
@@ -10020,7 +10044,7 @@ async function handleApi(req, res, url) {
 
   const publicVoucherCheckoutMatch = pathname.match(/^\/api\/public\/hotspot-voucher-orders\/([^/]+)\/checkout$/);
   if (method === 'POST' && publicVoucherCheckoutMatch) {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const order = findHotspotVoucherOrder(data, decodeURIComponent(publicVoucherCheckoutMatch[1]));
     if (!order) {
       sendJson(res, 404, { ok: false, error: 'Order voucher tidak ditemukan' });
@@ -10062,7 +10086,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/public/payment-gateway/channels') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const amount = decimalNumber(url.searchParams.get('amount') || 0);
     const kind = String(url.searchParams.get('kind') || 'monthly-package').trim();
     const channelOptions = { amount, kind };
@@ -10087,7 +10111,7 @@ async function handleApi(req, res, url) {
 
   const publicGatewayInvoiceMatch = pathname.match(/^\/api\/public\/payment-gateway\/invoices\/([^/]+)$/);
   if (method === 'GET' && publicGatewayInvoiceMatch) {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const invoice = findBillingInvoiceByReference(data, decodeURIComponent(publicGatewayInvoiceMatch[1]));
     if (!invoice) {
       sendJson(res, 404, { ok: false, error: 'Invoice tidak ditemukan' });
@@ -10106,7 +10130,7 @@ async function handleApi(req, res, url) {
 
   const publicGatewayInvoiceCheckoutMatch = pathname.match(/^\/api\/public\/payment-gateway\/invoices\/([^/]+)\/checkout$/);
   if (method === 'POST' && publicGatewayInvoiceCheckoutMatch) {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const invoice = findBillingInvoiceByReference(data, decodeURIComponent(publicGatewayInvoiceCheckoutMatch[1]));
     if (!invoice) {
       sendJson(res, 404, { ok: false, error: 'Invoice tidak ditemukan' });
@@ -10156,7 +10180,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/public/wifiku/settings') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const settings = wifiKuSettings(data);
     sendJson(res, 200, {
       ok: true,
@@ -10173,7 +10197,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/public/wa-admin-contact') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const settings = {
       ...(data.settings?.waGateway || {}),
       provider: 'waha'
@@ -10209,7 +10233,7 @@ async function handleApi(req, res, url) {
 
   if (method === 'POST' && pathname === '/api/public/wifiku/request-otp') {
     const payload = await readBody(req);
-    const data = await loadStore();
+    const data = await requestStore(req);
     const settings = wifiKuSettings(data);
     if (!settings.enabled) {
       forbidden(res);
@@ -10246,7 +10270,7 @@ async function handleApi(req, res, url) {
       attempts: 0,
       expiresAt: Date.now() + settings.otpTtlMinutes * 60 * 1000
     });
-    queueWaGatewayMessage(data, {
+    await mutate((store) => queueWaGatewayMessage(store, {
       phone,
       recipientName: customer.name || customer.username || 'Pelanggan',
       subject: 'WifiKu OTP',
@@ -10254,8 +10278,7 @@ async function handleApi(req, res, url) {
       status: 'queued',
       type: 'wifiku-otp',
       actorName: 'WifiKu'
-    });
-    await saveStore(data);
+    }), { collections: ['waMessages'], includeCore: false });
     sendJson(res, 200, {
       ok: true,
       requireOtp: true,
@@ -10267,7 +10290,7 @@ async function handleApi(req, res, url) {
 
   if (method === 'POST' && pathname === '/api/public/wifiku/login') {
     const payload = await readBody(req);
-    const data = await loadStore();
+    const data = await requestStore(req);
     const settings = wifiKuSettings(data);
     if (!settings.enabled) {
       forbidden(res);
@@ -10445,7 +10468,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/branding') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     sendJson(res, 200, {
       branding: publicBranding(data.settings),
       publicInfo: sanitizePublicInfoSettings(data.settings?.publicInfo || {})
@@ -10454,7 +10477,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/auth/verification-code') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     if (!loginVerificationEnabled(data.settings || {})) {
       sendJson(res, 200, {
         ok: true,
@@ -10473,7 +10496,7 @@ async function handleApi(req, res, url) {
 
   if (method === 'POST' && pathname === '/api/auth/login') {
     const payload = await readBody(req);
-    const settingsData = await loadStore();
+    const settingsData = await requestStore(req);
     if (loginVerificationEnabled(settingsData.settings || {})) {
       const verification = verifyLoginVerificationChallenge(payload.verificationId, payload.verificationCode);
       if (!verification.ok) {
@@ -10510,7 +10533,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/auth/me') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const user = auth.requestUser(req, data);
     if (!user) {
       unauthorized(res);
@@ -10557,7 +10580,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/notifications') {
-    const data = await loadStore();
+    const data = await requestStore(req);
     const user = auth.requestUser(req, data);
     if (!user) {
       unauthorized(res);
@@ -14510,9 +14533,9 @@ async function serveStatic(req, res, url) {
     pathname = '/index.html';
   }
   try {
-    const data = await loadStore();
-    const voucherPath = data.settings?.hotspotVoucherOnline?.publicPath || '/voucher';
-    const wifiKuPath = data.settings?.wifiKu?.publicPath || '/wifiku';
+    const data = peekStore();
+    const voucherPath = data?.settings?.hotspotVoucherOnline?.publicPath || '/voucher';
+    const wifiKuPath = data?.settings?.wifiKu?.publicPath || '/wifiku';
     if (pathname === voucherPath || pathname === `${voucherPath}/`) {
       pathname = '/order-voucher.html';
     } else if (pathname === wifiKuPath || pathname === `${wifiKuPath}/`) {
@@ -14565,11 +14588,22 @@ async function serveStatic(req, res, url) {
       return;
     }
     const ext = path.extname(filePath);
+    const etag = staticEtag(stat);
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, {
+        ETag: etag,
+        'Cache-Control': staticCacheControl(ext)
+      });
+      res.end();
+      return;
+    }
     const body = await fs.readFile(filePath);
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': body.length,
-      'Cache-Control': staticCacheControl(ext)
+      'Cache-Control': staticCacheControl(ext),
+      ETag: etag,
+      'Last-Modified': stat.mtime.toUTCString()
     });
     res.end(body);
   } catch (error) {
@@ -14614,14 +14648,19 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  server.listen(PORT, HOST, () => {
-    console.log(`FAKE.NET Billing berjalan di http://${HOST}:${PORT}`);
-    ensureStartupData().catch((error) => {
-      console.error(`Inisialisasi data awal gagal: ${error.message || error}`);
+  const startMainServer = async () => {
+    await loadStore();
+    await ensureStartupData();
+    server.listen(PORT, HOST, () => {
+      console.log(`FAKE.NET Billing berjalan di http://${HOST}:${PORT}`);
+      startStandaloneBillingAutomation();
+      startWaGatewaySender();
+      startPaymentGatewayHistorySync();
     });
-    startStandaloneBillingAutomation();
-    startWaGatewaySender();
-    startPaymentGatewayHistorySync();
+  };
+  startMainServer().catch((error) => {
+    console.error(`FAKE.NET Billing gagal dimulai: ${error.message || error}`);
+    process.exitCode = 1;
   });
 
   let shuttingDown = false;

@@ -12,12 +12,27 @@ const STORE_PATH = path.join(DATA_DIR, 'store.json');
 const execFileAsync = promisify(execFile);
 const STORAGE_MODE = String(process.env.STORAGE || (process.env.DATABASE_URL ? 'postgres' : 'json')).toLowerCase();
 const POSTGRES_STORE_TABLE = process.env.POSTGRES_STORE_TABLE || 'app_store';
-const CACHE_MODE = redisCache.enabled() ? 'redis' : 'none';
+const CACHE_MODE = ['postgres', 'postgresql'].includes(STORAGE_MODE)
+  ? 'memory'
+  : redisCache.enabled() ? 'memory+redis' : 'memory';
 const APP_MODE = String(process.env.APP_MODE || 'standalone').toLowerCase();
 const BILLING_SOURCE = String(process.env.BILLING_SOURCE || 'local').toLowerCase();
 const STORE_CACHE_KEY = process.env.REDIS_STORE_KEY || `fakenet-billing:${process.env.NODE_ENV || 'dev'}:${STORAGE_MODE}:store:main`;
 const PSQL_MAX_BUFFER_BYTES = Math.min(256, Math.max(16, Number(process.env.STORE_PSQL_MAX_BUFFER_MB || 64) || 64)) * 1024 * 1024;
+const STORE_SCHEMA_VERSION = 2;
+const NORMALIZED_COLLECTIONS = Object.freeze({
+  customers: 'app_customers',
+  invoices: 'app_invoices',
+  payments: 'app_payments',
+  waMessages: 'app_wa_messages',
+  activity: 'app_activity'
+});
 let postgresReady = false;
+let memoryStore = null;
+let memoryLoadPromise = null;
+let storeWriteQueue = Promise.resolve();
+let persistedCoreFingerprint = '';
+let persistedCollectionFingerprints = new Map();
 
 const DEFAULT_PACKAGE_PRICES = {
   'PAKET 5 Mb': 75000,
@@ -707,56 +722,73 @@ async function runPsqlSql(sql) {
 async function ensurePostgresStore() {
   if (postgresReady) return;
   const table = postgresTableName();
-  await runPsql([
-    '-v',
-    'ON_ERROR_STOP=1',
-    '-c',
-    `
+  const normalizedTablesSql = Object.values(NORMALIZED_COLLECTIONS).map((name) => `
+      create table if not exists ${name} (
+        id text primary key,
+        position bigint not null default 0,
+        data jsonb not null,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      );
+      create index if not exists ${name}_position_idx on ${name} (position);
+  `).join('\n');
+  await runPsqlSql(`
+      begin;
       create table if not exists ${table} (
         id text primary key,
         data jsonb not null,
         created_at timestamptz not null default now(),
         updated_at timestamptz not null default now()
       );
-    `
-  ]);
+      ${normalizedTablesSql}
+      commit;
+  `);
   postgresReady = true;
 }
 
 async function loadStore() {
-  const cached = await loadCachedStore();
-  if (cached) {
-    return cached;
-  }
+  if (memoryStore) return memoryStore;
+  if (memoryLoadPromise) return memoryLoadPromise;
 
-  if (postgresEnabled()) {
-    const data = await loadPostgresStore();
-    await cacheStore(data);
-    return data;
-  }
-
-  await fs.mkdir(DATA_DIR, { recursive: true });
-
-  try {
-    const raw = await fs.readFile(STORE_PATH, 'utf8');
-    const data = ensureShape(JSON.parse(raw));
-    await cacheStore(data);
-    return data;
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      throw error;
+  memoryLoadPromise = (async () => {
+    if (!postgresEnabled()) {
+      const cached = await loadCachedStore();
+      if (cached) {
+        memoryStore = cached;
+        return memoryStore;
+      }
     }
 
-    const data = createDefaultStore();
-    await saveStore(data);
-    return data;
+    if (postgresEnabled()) {
+      memoryStore = await loadPostgresStore();
+      return memoryStore;
+    }
+
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    try {
+      const raw = await fs.readFile(STORE_PATH, 'utf8');
+      memoryStore = ensureShape(JSON.parse(raw));
+      await cacheStore(memoryStore);
+      return memoryStore;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      memoryStore = createDefaultStore();
+      await saveStore(memoryStore);
+      return memoryStore;
+    }
+  })();
+
+  try {
+    return await memoryLoadPromise;
+  } finally {
+    memoryLoadPromise = null;
   }
 }
 
-async function saveStore(data) {
+async function persistStore(data, options = {}) {
   if (postgresEnabled()) {
-    const saved = await savePostgresStore(data);
-    await cacheStore(saved);
+    const saved = await savePostgresStore(data, options);
+    memoryStore = saved;
     return saved;
   }
 
@@ -766,8 +798,15 @@ async function saveStore(data) {
   const tempPath = `${STORE_PATH}.tmp`;
   await fs.writeFile(tempPath, `${JSON.stringify(next, null, 2)}\n`);
   await fs.rename(tempPath, STORE_PATH);
+  memoryStore = next;
   await cacheStore(next);
   return next;
+}
+
+async function saveStore(data, options = {}) {
+  const run = () => persistStore(data, options);
+  storeWriteQueue = storeWriteQueue.then(run, run);
+  return storeWriteQueue;
 }
 
 async function loadCachedStore() {
@@ -786,7 +825,7 @@ async function loadCachedStore() {
 }
 
 async function cacheStore(data) {
-  if (!redisCache.enabled()) {
+  if (postgresEnabled() || !redisCache.enabled()) {
     return;
   }
   try {
@@ -794,6 +833,127 @@ async function cacheStore(data) {
   } catch {
     // Redis is a speed-up layer only; persistent storage remains authoritative.
   }
+}
+
+function sqlText(value = '') {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function jsonHex(value) {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('hex');
+}
+
+function normalizedRowId(collection, row) {
+  const id = String(row && row.id || '').trim();
+  if (!id) throw new Error(`Data ${collection} tidak memiliki id`);
+  return id;
+}
+
+function storeCore(data = {}) {
+  const core = { ...data, storageSchemaVersion: STORE_SCHEMA_VERSION };
+  for (const collection of Object.keys(NORMALIZED_COLLECTIONS)) {
+    delete core[collection];
+  }
+  return core;
+}
+
+function coreFingerprint(data = {}) {
+  const comparable = { ...storeCore(data) };
+  delete comparable.updatedAt;
+  return crypto.createHash('sha256').update(JSON.stringify(comparable)).digest('hex');
+}
+
+function collectionSnapshot(collection, rows = []) {
+  const snapshot = new Map();
+  rows.forEach((row, position) => {
+    const id = normalizedRowId(collection, row);
+    if (snapshot.has(id)) throw new Error(`ID duplikat ${id} pada ${collection}`);
+    const json = JSON.stringify(row);
+    snapshot.set(id, {
+      id,
+      position,
+      json,
+      fingerprint: crypto.createHash('sha256').update(`${position}:${json}`).digest('hex')
+    });
+  });
+  return snapshot;
+}
+
+function normalizedSnapshots(data = {}, collections = Object.keys(NORMALIZED_COLLECTIONS)) {
+  return new Map(collections.map((collection) => [
+    collection,
+    collectionSnapshot(collection, Array.isArray(data[collection]) ? data[collection] : [])
+  ]));
+}
+
+function rememberPersistedState(data = {}) {
+  persistedCoreFingerprint = coreFingerprint(data);
+  persistedCollectionFingerprints = new Map();
+  for (const [collection, snapshot] of normalizedSnapshots(data)) {
+    persistedCollectionFingerprints.set(collection, new Map(
+      [...snapshot].map(([id, row]) => [id, row.fingerprint])
+    ));
+  }
+}
+
+function collectionUpsertSql(table, rows = []) {
+  if (!rows.length) return '';
+  const values = rows.map((row) => `(
+    ${sqlText(row.id)},
+    ${Number(row.position) || 0},
+    convert_from(decode('${Buffer.from(row.json, 'utf8').toString('hex')}', 'hex'), 'UTF8')::jsonb
+  )`).join(',\n');
+  return `
+    insert into ${table} (id, position, data)
+    values ${values}
+    on conflict (id) do update
+      set position = excluded.position,
+          data = excluded.data,
+          updated_at = now();
+  `;
+}
+
+function collectionDeleteSql(table, ids = []) {
+  if (!ids.length) return '';
+  return `delete from ${table} where id in (${ids.map(sqlText).join(', ')});`;
+}
+
+function coreUpsertSql(data = {}) {
+  const table = postgresTableName();
+  return `
+    insert into ${table} (id, data, updated_at)
+    values ('main', convert_from(decode('${jsonHex(storeCore(data))}', 'hex'), 'UTF8')::jsonb, now())
+    on conflict (id) do update
+      set data = excluded.data,
+          updated_at = now();
+  `;
+}
+
+async function migrateLegacyPostgresStore(data = {}) {
+  const statements = ['begin;'];
+  for (const [collection, table] of Object.entries(NORMALIZED_COLLECTIONS)) {
+    const snapshot = collectionSnapshot(collection, data[collection] || []);
+    statements.push(`delete from ${table};`);
+    statements.push(collectionUpsertSql(table, [...snapshot.values()]));
+  }
+  statements.push(coreUpsertSql(data));
+  statements.push('commit;');
+  await runPsqlSql(statements.join('\n'));
+}
+
+async function loadNormalizedCollections() {
+  const pairs = Object.entries(NORMALIZED_COLLECTIONS).map(([collection, table]) => `
+    ${sqlText(collection)}, coalesce((select jsonb_agg(data order by position) from ${table}), '[]'::jsonb)
+  `);
+  const raw = (await runPsql([
+    '-v',
+    'ON_ERROR_STOP=1',
+    '-t',
+    '-A',
+    '-c',
+    `select jsonb_build_object(${pairs.join(',')})::text;`
+  ])).trim();
+  return raw ? JSON.parse(raw) : {};
 }
 
 async function loadPostgresStore() {
@@ -809,30 +969,72 @@ async function loadPostgresStore() {
   ])).trim();
 
   if (!raw) {
-    const data = createDefaultStore();
+    const data = ensureShape(createDefaultStore());
     await savePostgresStore(data);
     return data;
   }
 
-  return ensureShape(JSON.parse(raw));
+  const parsed = JSON.parse(raw);
+  if (Number(parsed.storageSchemaVersion || 0) < STORE_SCHEMA_VERSION) {
+    const legacy = ensureShape(parsed);
+    await migrateLegacyPostgresStore(legacy);
+    rememberPersistedState(legacy);
+    return legacy;
+  }
+
+  const collections = await loadNormalizedCollections();
+  const data = ensureShape({ ...parsed, ...collections });
+  rememberPersistedState(data);
+  return data;
 }
 
-async function savePostgresStore(data) {
-  const next = ensureShape(data);
-  next.updatedAt = new Date().toISOString();
+async function savePostgresStore(data, options = {}) {
+  const next = data && typeof data === 'object' ? data : ensureShape(data);
   await ensurePostgresStore();
-  const table = postgresTableName();
-  const payloadHex = Buffer.from(JSON.stringify(next), 'utf8').toString('hex');
+  const requestedCollections = Array.isArray(options.collections)
+    ? [...new Set(options.collections.filter((collection) => NORMALIZED_COLLECTIONS[collection]))]
+    : Object.keys(NORMALIZED_COLLECTIONS);
+  const includeCore = options.includeCore !== false;
+  const nextCoreFingerprint = includeCore ? coreFingerprint(next) : persistedCoreFingerprint;
+  const coreChanged = includeCore && nextCoreFingerprint !== persistedCoreFingerprint;
+  const snapshots = normalizedSnapshots(next, requestedCollections);
+  const statements = ['begin;'];
+  let normalizedChanged = false;
 
-  await runPsqlSql(`
-      insert into ${table} (id, data, updated_at)
-      values ('main', convert_from(decode('${payloadHex}', 'hex'), 'UTF8')::jsonb, now())
-      on conflict (id) do update
-        set data = excluded.data,
-            updated_at = now();
-  `);
+  for (const collection of requestedCollections) {
+    const table = NORMALIZED_COLLECTIONS[collection];
+    const previous = persistedCollectionFingerprints.get(collection) || new Map();
+    const current = snapshots.get(collection) || new Map();
+    const changedRows = [...current.values()].filter((row) => previous.get(row.id) !== row.fingerprint);
+    const deletedIds = [...previous.keys()].filter((id) => !current.has(id));
+    if (changedRows.length || deletedIds.length) normalizedChanged = true;
+    statements.push(collectionUpsertSql(table, changedRows));
+    statements.push(collectionDeleteSql(table, deletedIds));
+  }
+
+  if (!coreChanged && !normalizedChanged) {
+    memoryStore = next;
+    return next;
+  }
+  if (coreChanged) {
+    next.updatedAt = new Date().toISOString();
+    statements.push(coreUpsertSql(next));
+  }
+  statements.push('commit;');
+  await runPsqlSql(statements.filter(Boolean).join('\n'));
+  if (coreChanged) persistedCoreFingerprint = coreFingerprint(next);
+  for (const [collection, snapshot] of snapshots) {
+    persistedCollectionFingerprints.set(collection, new Map(
+      [...snapshot].map(([id, row]) => [id, row.fingerprint])
+    ));
+  }
+  memoryStore = next;
 
   return next;
+}
+
+function peekStore() {
+  return memoryStore;
 }
 
 function createId(prefix) {
@@ -974,10 +1176,17 @@ module.exports = {
   createId,
   ensureShape,
   loadStore,
+  peekStore,
   publicSettings,
   redisStatus: () => ({
     ...redisCache.safeStatus(),
-    key: STORE_CACHE_KEY
+    key: postgresEnabled() ? '' : STORE_CACHE_KEY,
+    storeLayer: 'memory'
   }),
-  saveStore
+  saveStore,
+  __test: {
+    collectionSnapshot,
+    coreFingerprint,
+    storeCore
+  }
 };

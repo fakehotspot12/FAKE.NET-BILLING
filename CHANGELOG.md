@@ -7,6 +7,22 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.0] - 2026-07-19
+
+### Changed
+
+- Penyimpanan pelanggan, invoice, pembayaran, pesan Whatsapp, dan aktivitas dipisahkan ke tabel PostgreSQL terstruktur melalui migrasi otomatis yang idempoten.
+- Store aktif disimpan di cache memori proses sehingga request tidak lagi memindahkan dan mem-parsing seluruh data aplikasi dari Redis berulang kali.
+- Pemeriksaan lisensi dan autentikasi memakai snapshot store yang sama dalam satu request.
+- Aset statis dilayani tanpa membaca database serta mendukung validasi ETag agar refresh browser tidak mengunduh ulang file yang belum berubah.
+- Pengaturan Voucher Online memakai layout paket responsif yang lebih ringkas dan presisi pada desktop, laptop, ponsel, serta tema gelap.
+
+### Performance
+
+- Perubahan status ACK Whatsapp hanya memperbarui row pesan terkait dan tidak lagi menulis ulang seluruh data aplikasi.
+- Automation tidak melakukan write PostgreSQL ketika hasil mutasi tidak mengubah data.
+- Startup memigrasikan format lama dalam satu transaksi; histori lama tetap dipertahankan dan backup aplikasi tetap memuat seluruh data.
+
 ## [1.4.6] - 2026-07-19
 
 ### Fixed
