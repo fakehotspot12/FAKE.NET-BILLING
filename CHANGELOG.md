@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.6] - 2026-07-19
+
+### Fixed
+
+- Profil manual Hotspot dan PPP-DHCP mengirim `Mikrotik-Rate-Limit` sederhana tanpa susunan burst `0s` yang ditolak RouterOS.
+- Konfigurasi burst tetap mendukung Rate Limit, Burst Limit, Burst Threshold, Burst Time, Priority, dan Min Rate dengan susunan atribut RouterOS yang lengkap.
+- Nilai bandwidth dan burst divalidasi saat profil disimpan agar kesalahan format tidak baru muncul ketika pelanggan login.
+
 ## [1.5.5] - 2026-07-19
 
 ### Fixed

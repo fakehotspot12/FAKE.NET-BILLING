@@ -151,8 +151,59 @@ test('linked Hotspot profile inherits RouterOS profile while manual Hotspot keep
   assert.ok(rows.some((row) => (
     row.groupname === manualGroup
       && row.attribute === 'Mikrotik-Rate-Limit'
-      && row.value.startsWith('10M/10M')
+      && row.value === '10M/10M'
   )));
+});
+
+test('manual Hotspot and PPP profiles emit valid RouterOS rate limits', () => {
+  const data = createDefaultStore();
+  const hotspot = freeradius.addProfile(data, {
+    name: 'Hotspot Manual',
+    serviceType: 'hotspot',
+    rateLimit: '10m / 10m'
+  });
+  const ppp = freeradius.addProfile(data, {
+    name: 'PPP Manual Burst',
+    serviceType: 'pppoe',
+    rateLimit: '10M/20M',
+    burstLimit: '20M/40M',
+    burstThreshold: '8M/16M',
+    burstTime: '16s/16s',
+    minRate: '2M/4M',
+    priority: 5
+  });
+
+  assert.equal(freeradius.mikrotikRateLimit(hotspot), '10M/10M');
+  assert.equal(
+    freeradius.mikrotikRateLimit(ppp),
+    '10M/20M 20M/40M 8M/16M 16s/16s 5 2M/4M'
+  );
+});
+
+test('manual profile fills a valid burst time and rejects malformed limits', () => {
+  const data = createDefaultStore();
+  const customPriority = freeradius.addProfile(data, {
+    name: 'PPP Priority',
+    serviceType: 'pppoe',
+    rateLimit: '10M/10M',
+    priority: 4
+  });
+  assert.equal(
+    freeradius.mikrotikRateLimit(customPriority),
+    '10M/10M 10M/10M 10M/10M 1s 4'
+  );
+
+  assert.throws(() => freeradius.addProfile(data, {
+    name: 'Hotspot Invalid',
+    serviceType: 'hotspot',
+    rateLimit: '10 Mbps'
+  }), /Rate Limit tidak valid/);
+  assert.throws(() => freeradius.addProfile(data, {
+    name: 'PPP Invalid Burst',
+    serviceType: 'pppoe',
+    rateLimit: '10M/10M',
+    burstTime: 'secepatnya'
+  }), /Burst Time tidak valid/);
 });
 
 test('stale session cleanup only closes an older duplicate with a fresh replacement', () => {

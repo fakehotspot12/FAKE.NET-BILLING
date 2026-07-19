@@ -116,29 +116,84 @@ function clampPriority(value) {
   return Math.max(1, Math.min(8, number || 8));
 }
 
+function normalizeMikrotikRatePair(value, label = 'Rate Limit') {
+  const raw = text(value);
+  if (!raw) return '';
+  const normalized = raw.replace(/\s*\/\s*/g, '/');
+  const parts = normalized.split('/');
+  const valid = parts.length <= 2 && parts.every((part) => /^(?:0|\d+(?:\.\d+)?[kKmMgG]?)$/.test(part));
+  if (!valid) {
+    throw new Error(`${label} tidak valid. Gunakan format RouterOS seperti 10M/10M atau 512k/2M.`);
+  }
+  return parts.map((part) => {
+    const match = part.match(/^(.*?)([kKmMgG])?$/);
+    if (!match?.[2]) return part;
+    const suffix = match[2].toLowerCase() === 'k' ? 'k' : match[2].toUpperCase();
+    return `${match[1]}${suffix}`;
+  }).join('/');
+}
+
+function normalizeMikrotikTimePair(value, label = 'Burst Time') {
+  const raw = text(value);
+  if (!raw) return '';
+  const normalized = raw.replace(/\s*\/\s*/g, '/').toLowerCase();
+  const parts = normalized.split('/');
+  const valid = parts.length <= 2 && parts.every((part) => /^\d+(?:\.\d+)?(?:ms|s|m|h|d|w)?$/.test(part));
+  if (!valid) {
+    throw new Error(`${label} tidak valid. Gunakan format RouterOS seperti 16s/16s.`);
+  }
+  return normalized;
+}
+
+function normalizeProfileBandwidth(input = {}, useMikrotikProfile = false) {
+  if (useMikrotikProfile) {
+    return {
+      rateLimit: '',
+      burstLimit: '',
+      burstThreshold: '',
+      burstTime: '',
+      minRate: '',
+      priority: clampPriority(input.priority)
+    };
+  }
+  const bandwidth = {
+    rateLimit: normalizeMikrotikRatePair(input.rateLimit, 'Rate Limit'),
+    burstLimit: normalizeMikrotikRatePair(input.burstLimit, 'Burst Limit'),
+    burstThreshold: normalizeMikrotikRatePair(input.burstThreshold, 'Burst Threshold'),
+    burstTime: normalizeMikrotikTimePair(input.burstTime, 'Burst Time'),
+    minRate: normalizeMikrotikRatePair(input.minRate, 'Min Rate'),
+    priority: clampPriority(input.priority)
+  };
+  const hasDependentLimit = Boolean(
+    bandwidth.burstLimit
+    || bandwidth.burstThreshold
+    || bandwidth.burstTime
+    || bandwidth.minRate
+  );
+  if (!bandwidth.rateLimit && hasDependentLimit) {
+    throw new Error('Rate Limit wajib diisi ketika Burst atau Min Rate digunakan.');
+  }
+  return bandwidth;
+}
+
 function mikrotikRateLimit(profile = {}) {
   // RouterOS must inherit rate-limit from Mikrotik-Group when the profile is linked.
   if (profile.useMikrotikProfile === true) return '';
-  const rateLimit = text(profile.rateLimit);
+  const bandwidth = normalizeProfileBandwidth(profile, false);
+  const rateLimit = bandwidth.rateLimit;
   if (!rateLimit) return '';
-  const burstLimit = text(profile.burstLimit);
-  const burstThreshold = text(profile.burstThreshold);
-  const burstTime = text(profile.burstTime);
-  const priority = profile.priority ? String(clampPriority(profile.priority)) : '';
-  const minRate = text(profile.minRate);
+  const burstLimit = bandwidth.burstLimit;
+  const burstThreshold = bandwidth.burstThreshold;
+  const burstTime = bandwidth.burstTime;
+  const priority = String(bandwidth.priority);
+  const minRate = bandwidth.minRate;
+  const hasExtendedLimit = Boolean(burstLimit || burstThreshold || burstTime || minRate || bandwidth.priority !== 8);
+  if (!hasExtendedLimit) return rateLimit;
   const tokens = [rateLimit];
-  if (burstLimit || burstThreshold || burstTime || priority || minRate) {
-    tokens.push(burstLimit || rateLimit);
-  }
-  if (burstThreshold || burstTime || priority || minRate) {
-    tokens.push(burstThreshold || burstLimit || rateLimit);
-  }
-  if (burstTime || priority || minRate) {
-    tokens.push(burstTime || '0s');
-  }
-  if (priority || minRate) {
-    tokens.push(priority || '8');
-  }
+  tokens.push(burstLimit || rateLimit);
+  tokens.push(burstThreshold || burstLimit || rateLimit);
+  tokens.push(burstTime || '1s');
+  tokens.push(priority);
   if (minRate) {
     tokens.push(minRate);
   }
@@ -299,6 +354,7 @@ function addProfile(data, input, actor) {
   if (!name) throw new Error('Nama profile wajib diisi');
   const now = new Date().toISOString();
   const useMikrotikProfile = input.useMikrotikProfile === true;
+  const bandwidth = normalizeProfileBandwidth(input, useMikrotikProfile);
   const item = {
     id: createId('rpf'),
     name,
@@ -306,12 +362,7 @@ function addProfile(data, input, actor) {
     useMikrotikProfile,
     mikrotikGroup: text(input.mikrotikGroup || input.routerProfile),
     serviceType: normalizeServiceType(input.serviceType),
-    rateLimit: useMikrotikProfile ? '' : text(input.rateLimit),
-    burstLimit: useMikrotikProfile ? '' : text(input.burstLimit),
-    burstThreshold: useMikrotikProfile ? '' : text(input.burstThreshold),
-    burstTime: useMikrotikProfile ? '' : text(input.burstTime),
-    minRate: useMikrotikProfile ? '' : text(input.minRate),
-    priority: clampPriority(input.priority),
+    ...bandwidth,
     validity: text(input.validity),
     validitySeconds: parseDurationSeconds(input.validitySeconds || input.validity),
     quota: text(input.quota),
@@ -334,17 +385,14 @@ function updateProfile(data, id, input, actor) {
   ensureArrays(data);
   const item = data.radiusProfiles.find((profile) => profile.id === id);
   if (!item) throw new Error('Profile tidak ditemukan');
+  const useMikrotikProfile = input.useMikrotikProfile === true;
+  const bandwidth = normalizeProfileBandwidth(input, useMikrotikProfile);
   item.name = text(input.name) || item.name;
   item.groupName = text(input.groupName || input.group) || item.groupName || item.name;
-  item.useMikrotikProfile = input.useMikrotikProfile === true;
+  item.useMikrotikProfile = useMikrotikProfile;
   item.mikrotikGroup = text(input.mikrotikGroup || input.routerProfile);
   item.serviceType = normalizeServiceType(input.serviceType || item.serviceType);
-  item.rateLimit = item.useMikrotikProfile ? '' : text(input.rateLimit);
-  item.burstLimit = item.useMikrotikProfile ? '' : text(input.burstLimit);
-  item.burstThreshold = item.useMikrotikProfile ? '' : text(input.burstThreshold);
-  item.burstTime = item.useMikrotikProfile ? '' : text(input.burstTime);
-  item.minRate = item.useMikrotikProfile ? '' : text(input.minRate);
-  item.priority = clampPriority(input.priority);
+  Object.assign(item, bandwidth);
   item.validity = text(input.validity);
   item.validitySeconds = parseDurationSeconds(input.validitySeconds || input.validity);
   item.quota = text(input.quota);
