@@ -181,6 +181,8 @@ function createDefaultStore() {
         voucherAdminFee: 750,
         voucherAdminFeePercent: 0.70,
         checkoutTtlMinutes: 60,
+        checkoutVaTtlMinutes: 1440,
+        checkoutRetailTtlMinutes: 1440,
         settlementReserveAmount: 10000,
         tripay: { merchantCode: '', apiKey: '', privateKey: '' },
         midtrans: { merchantId: '', serverKey: '', clientKey: '' },

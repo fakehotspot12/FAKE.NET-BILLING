@@ -5239,6 +5239,59 @@ test('Tripay voucher checkout resolves QRIS before creating the transaction', as
   }
 });
 
+test('Tripay checkout expiry follows the selected channel limits', () => {
+  const settings = {
+    checkoutTtlMinutes: 60,
+    checkoutVaTtlMinutes: 1440,
+    checkoutRetailTtlMinutes: 1440
+  };
+
+  assert.equal(serverInternals.tripayCheckoutTtlMinutes(settings, 'QRIS'), 60);
+  assert.equal(serverInternals.tripayCheckoutTtlMinutes(settings, 'PERMATAVA'), 1440);
+  assert.equal(serverInternals.tripayCheckoutTtlMinutes(settings, 'MUAMALATVA'), 180);
+  assert.equal(serverInternals.tripayCheckoutTtlMinutes(settings, 'INDOMARET'), 1440);
+});
+
+test('active payment checkout is reusable only for the same amount and method', () => {
+  const invoice = {};
+  serverInternals.storePaymentCheckout(invoice, {
+    provider: 'tripay',
+    method: 'BRIVA',
+    externalReference: 'TRIPAY-ACTIVE-001',
+    amount: 155000,
+    checkoutUrl: 'https://example.test/checkout',
+    expiredAt: Math.floor(Date.now() / 1000) + 3600,
+    ttlMinutes: 60
+  }, {
+    provider: 'tripay',
+    kind: 'monthly-package',
+    method: 'BRIVA',
+    reference: '009999',
+    amount: 155000
+  });
+
+  const active = serverInternals.reusablePaymentCheckout(invoice, {
+    provider: 'tripay',
+    kind: 'monthly-package',
+    method: 'BRIVA',
+    amount: 155000
+  });
+  assert.equal(active.reused, true);
+  assert.equal(active.externalReference, 'TRIPAY-ACTIVE-001');
+  assert.equal(serverInternals.reusablePaymentCheckout(invoice, {
+    provider: 'tripay',
+    kind: 'monthly-package',
+    method: 'PERMATAVA',
+    amount: 155000
+  }), null);
+  assert.equal(serverInternals.reusablePaymentCheckout(invoice, {
+    provider: 'tripay',
+    kind: 'monthly-package',
+    method: 'BRIVA',
+    amount: 160000
+  }), null);
+});
+
 test('tripay webhook path and callback signature are accepted', () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.provider = 'tripay';

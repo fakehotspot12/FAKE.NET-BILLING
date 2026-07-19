@@ -13753,8 +13753,16 @@ function paymentGatewayAdvancedModalBody(settings = {}) {
         <input name="voucherAdminFeePercent" inputmode="decimal" value="${escapeHtml(settings.voucherAdminFeePercent ?? 0.70)}">
       </label>
       <label class="field">
-        <span>Masa aktif checkout</span>
+        <span>Masa aktif QRIS/e-wallet (menit)</span>
         <input name="checkoutTtlMinutes" inputmode="numeric" value="${escapeHtml(settings.checkoutTtlMinutes || 60)}">
+      </label>
+      <label class="field">
+        <span>Masa aktif virtual account (menit)</span>
+        <input name="checkoutVaTtlMinutes" inputmode="numeric" value="${escapeHtml(settings.checkoutVaTtlMinutes || 1440)}">
+      </label>
+      <label class="field">
+        <span>Masa aktif gerai (menit)</span>
+        <input name="checkoutRetailTtlMinutes" inputmode="numeric" value="${escapeHtml(settings.checkoutRetailTtlMinutes || 1440)}">
       </label>
       <label class="field">
         <span>Mulai riwayat provider</span>
@@ -13784,6 +13792,8 @@ function openPaymentGatewaySettingsModal(settings = {}) {
         voucherAdminFee: payload.voucherAdminFee || 750,
         voucherAdminFeePercent: payload.voucherAdminFeePercent || 0.70,
         checkoutTtlMinutes: payload.checkoutTtlMinutes || 60,
+        checkoutVaTtlMinutes: payload.checkoutVaTtlMinutes || 1440,
+        checkoutRetailTtlMinutes: payload.checkoutRetailTtlMinutes || 1440,
         historyStartDate: payload.historyStartDate || ''
       })
     });

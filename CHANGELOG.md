@@ -7,6 +7,19 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.1] - 2026-07-19
+
+### Fixed
+
+- Checkout aktif untuk invoice dan voucher dipakai ulang agar klik ulang tidak membuat transaksi Tripay duplikat yang kemudian berstatus kedaluwarsa.
+- Request checkout bersamaan untuk referensi, kanal, dan nominal yang sama dikunci menjadi satu transaksi provider.
+- Masa aktif Tripay disesuaikan per kanal: QRIS/e-wallet mengikuti batas kanal, sedangkan virtual account dan gerai dapat aktif hingga 24 jam.
+- Sinkron riwayat Tripay dijeda selama enam jam ketika IP keluar CGNAT ditolak; callback melalui Cloudflare Tunnel tetap memproses pembayaran secara realtime.
+
+### Changed
+
+- Pengaturan Payment Gateway menyediakan masa aktif terpisah untuk QRIS/e-wallet, virtual account, dan gerai.
+
 ## [1.5.0] - 2026-07-19
 
 ### Changed

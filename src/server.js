@@ -5701,6 +5701,8 @@ function sanitizePaymentGatewaySettings(payload = {}, current = {}) {
     voucherAdminFee: Math.max(0, Math.round(decimalNumber(payload.voucherAdminFee ?? current.voucherAdminFee ?? 750))),
     voucherAdminFeePercent: Math.max(0, decimalNumber(payload.voucherAdminFeePercent ?? current.voucherAdminFeePercent ?? 0.70)),
     checkoutTtlMinutes: Math.max(5, Math.min(1440, Math.round(decimalNumber(payload.checkoutTtlMinutes ?? current.checkoutTtlMinutes ?? 60) || 60))),
+    checkoutVaTtlMinutes: Math.max(15, Math.min(4320, Math.round(decimalNumber(payload.checkoutVaTtlMinutes ?? current.checkoutVaTtlMinutes ?? 1440) || 1440))),
+    checkoutRetailTtlMinutes: Math.max(60, Math.min(4320, Math.round(decimalNumber(payload.checkoutRetailTtlMinutes ?? current.checkoutRetailTtlMinutes ?? 1440) || 1440))),
     historyStartDate: /^\d{4}-\d{2}-\d{2}$/.test(historyStartDateRaw) ? historyStartDateRaw : '',
     settlementReserveAmount: Math.max(0, Math.round(Number(payload.settlementReserveAmount ?? current.settlementReserveAmount ?? 10000) || 0)),
     tripay: sanitizeProviderSecrets(payload.tripay, current.tripay || {}),
@@ -9191,6 +9193,7 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
   };
   const voucherOrder = findHotspotVoucherOrder(data, merchantReference);
   if (voucherOrder) {
+    updatePaymentCheckoutStatus(voucherOrder, payment, status);
     const expectedAmount = Number(voucherOrder.gatewayAmount || voucherOrder.totalAmount || voucherOrder.amount || 0);
     if (payment.amount > 0 && payment.amount < expectedAmount) {
       throw new Error('Nominal pembayaran lebih kecil dari order');
@@ -9209,6 +9212,7 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
       reused: fulfilled.reused
     };
   }
+  updatePaymentCheckoutStatus(findBillingInvoiceByReference(data, merchantReference), payment, status);
   const billing = fulfillBillingInvoicePaymentGateway(data, merchantReference, payment, actor);
   return {
     type: 'monthly-package',
@@ -9601,9 +9605,17 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
 
 let paymentGatewayHistorySyncRunning = false;
 let paymentGatewayHistorySyncTimer = null;
+let paymentGatewayHistorySyncPausedUntil = 0;
+
+function isTripayUnauthorizedIpError(error = null) {
+  return /unauthorized\s+ip/i.test(String(error?.message || error || ''));
+}
 
 async function runPaymentGatewayHistorySync(reason = 'interval') {
   if (MIGRATION_MODE || paymentGatewayHistorySyncRunning) return null;
+  if (Date.now() < paymentGatewayHistorySyncPausedUntil) {
+    return { skipped: true, reason: 'unauthorized-ip-backoff' };
+  }
   paymentGatewayHistorySyncRunning = true;
   try {
     const data = await loadStore();
@@ -9639,6 +9651,11 @@ function startPaymentGatewayHistorySync() {
   }
   const run = (reason) => {
     runPaymentGatewayHistorySync(reason).catch((error) => {
+      if (isTripayUnauthorizedIpError(error)) {
+        paymentGatewayHistorySyncPausedUntil = Date.now() + (6 * 60 * 60 * 1000);
+        console.error('Tripay auto-sync riwayat dijeda 6 jam karena IP keluar tidak terdaftar; callback pembayaran tetap aktif');
+        return;
+      }
       console.error(`Tripay auto-sync gagal: ${error.message || error}`);
     });
   };
@@ -9663,6 +9680,120 @@ async function paymentGatewayChannels(data = {}, options = {}) {
     return channels;
   }
   return [];
+}
+
+const TRIPAY_CHANNEL_EXPIRY_LIMITS = Object.freeze({
+  PERMATAVA: [60, 4320],
+  BNIVA: [15, 1440],
+  BRIVA: [60, 4320],
+  MANDIRIVA: [60, 4320],
+  BCAVA: [15, 4320],
+  MUAMALATVA: [60, 180],
+  CIMBVA: [15, 4320],
+  BSIVA: [60, 180],
+  OCBCVA: [15, 4320],
+  DANAMONVA: [15, 4320],
+  OTHERBANKVA: [15, 1440],
+  ALFAMART: [60, 1440],
+  ALFAMIDI: [60, 1440],
+  INDOMARET: [15, 4320],
+  OVO: [15, 4320],
+  DANA: [15, 60],
+  SHOPEEPAY: [15, 60],
+  QRIS: [10, 60],
+  QRISC: [10, 1440],
+  QRIS2: [10, 1440],
+  QRIS_SHOPEEPAY: [10, 60]
+});
+
+function tripayCheckoutTtlMinutes(settings = {}, method = '') {
+  const code = String(method || '').trim().toUpperCase();
+  const configured = isTripayRetailChannel(code)
+    ? Number(settings.checkoutRetailTtlMinutes || 1440)
+    : code.includes('VA')
+      ? Number(settings.checkoutVaTtlMinutes || 1440)
+      : Number(settings.checkoutTtlMinutes || 60);
+  const [minimum, maximum] = TRIPAY_CHANNEL_EXPIRY_LIMITS[code] || [5, 1440];
+  return Math.max(minimum, Math.min(maximum, Math.round(configured || 60)));
+}
+
+function paymentCheckoutExpiryIso(value = '', fallbackMinutes = 60) {
+  const numeric = Number(value || 0);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const timestamp = numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+    const parsed = new Date(timestamp);
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
+  }
+  const parsed = Date.parse(String(value || ''));
+  if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  return new Date(Date.now() + (Math.max(5, Number(fallbackMinutes || 60)) * 60_000)).toISOString();
+}
+
+function paymentCheckoutMethodMatches(storedMethod = '', requestedMethod = '', kind = '') {
+  const stored = String(storedMethod || '').trim().toUpperCase();
+  const requested = String(requestedMethod || '').trim().toUpperCase();
+  if (String(kind || '').toLowerCase().includes('voucher')) {
+    return stored.includes('QRIS') && (!requested || requested.includes('QRIS'));
+  }
+  return Boolean(stored && requested && stored === requested);
+}
+
+function reusablePaymentCheckout(target = {}, params = {}) {
+  const checkout = target?.paymentCheckout;
+  if (!checkout || typeof checkout !== 'object') return null;
+  const status = String(checkout.status || 'pending').trim().toLowerCase();
+  const expiresAt = Date.parse(checkout.expiresAt || '');
+  const requestedAmount = Math.max(0, Math.round(Number(params.amount || 0) || 0));
+  if (status !== 'pending'
+    || !Number.isFinite(expiresAt)
+    || expiresAt <= Date.now() + 90_000
+    || Number(checkout.requestedAmount ?? checkout.amount ?? 0) !== requestedAmount
+    || String(checkout.provider || '').toLowerCase() !== String(params.provider || 'tripay').toLowerCase()
+    || !paymentCheckoutMethodMatches(checkout.method, params.method, params.kind)
+    || !(checkout.checkoutUrl || checkout.paymentUrl || checkout.qrUrl || checkout.qrString)) {
+    return null;
+  }
+  return { ok: true, ...checkout, reused: true };
+}
+
+function paymentCheckoutTarget(data = {}, params = {}) {
+  const reference = String(params.reference || '').trim();
+  if (String(params.kind || '').toLowerCase().includes('voucher')) {
+    return findHotspotVoucherOrder(data, reference);
+  }
+  return findBillingInvoiceByReference(data, reference);
+}
+
+function storePaymentCheckout(target = {}, checkout = {}, params = {}) {
+  const ttlMinutes = Math.max(5, Number(checkout.ttlMinutes || params.ttlMinutes || 60) || 60);
+  target.paymentCheckout = {
+    provider: String(checkout.provider || params.provider || 'tripay').trim().toLowerCase(),
+    method: String(checkout.method || params.method || '').trim().toUpperCase(),
+    reference: String(params.reference || checkout.reference || '').trim(),
+    externalReference: String(checkout.externalReference || '').trim(),
+    amount: Math.max(0, Math.round(Number(checkout.amount || params.amount || 0) || 0)),
+    requestedAmount: Math.max(0, Math.round(Number(params.amount || checkout.amount || 0) || 0)),
+    checkoutUrl: String(checkout.checkoutUrl || '').trim(),
+    paymentUrl: String(checkout.paymentUrl || '').trim(),
+    qrUrl: String(checkout.qrUrl || '').trim(),
+    qrString: String(checkout.qrString || '').trim(),
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    expiresAt: paymentCheckoutExpiryIso(checkout.expiredAt, ttlMinutes)
+  };
+  target.updatedAt = new Date().toISOString();
+  return target.paymentCheckout;
+}
+
+function updatePaymentCheckoutStatus(target = {}, payment = {}, status = '') {
+  const checkout = target?.paymentCheckout;
+  if (!checkout || typeof checkout !== 'object') return;
+  const externalReference = String(payment.externalId || payment.externalReference || '').trim();
+  const storedReference = String(checkout.externalReference || '').trim();
+  const normalizedStatus = normalizePaymentStatus(status || payment.status || 'pending');
+  if (normalizedStatus !== 'paid' && externalReference && storedReference && externalReference !== storedReference) return;
+  checkout.status = normalizedStatus;
+  checkout.updatedAt = new Date().toISOString();
 }
 
 async function createTripayCheckout(data = {}, params = {}) {
@@ -9704,6 +9835,7 @@ async function createTripayCheckout(data = {}, params = {}) {
     amount: requestedAmount
   });
   const amount = amountBreakdown.gatewayAmount;
+  const ttlMinutes = tripayCheckoutTtlMinutes(settings, method);
   const signature = crypto.createHmac('sha256', privateKey)
     .update(`${merchantCode}${merchantRef}${amount}`)
     .digest('hex');
@@ -9720,7 +9852,7 @@ async function createTripayCheckout(data = {}, params = {}) {
       quantity: 1
     }],
     return_url: params.returnUrl || paymentGatewayReturnUrl(data, '/'),
-    expired_time: Math.floor(Date.now() / 1000) + (Math.max(5, Number(settings.checkoutTtlMinutes || 60) || 60) * 60),
+    expired_time: Math.floor(Date.now() / 1000) + (ttlMinutes * 60),
     signature
   };
   const callbackUrl = String(params.callbackUrl || settings.callbackUrl || '').trim();
@@ -9760,7 +9892,8 @@ async function createTripayCheckout(data = {}, params = {}) {
     paymentUrl: trx.checkout_url || trx.payment_url || trx.paymentUrl || '',
     qrUrl: trx.qr_url || trx.qrUrl || '',
     qrString: trx.qr_string || trx.qrString || '',
-    expiredAt: trx.expired_time || trx.expiredAt || ''
+    expiredAt: trx.expired_time || trx.expiredAt || payload.expired_time,
+    ttlMinutes
   };
 }
 
@@ -9772,6 +9905,47 @@ async function createPaymentGatewayCheckout(data = {}, params = {}) {
     return createTripayCheckout(data, params);
   }
   throw new Error(`Provider ${provider} belum mendukung checkout otomatis`);
+}
+
+const paymentGatewayCheckoutLocks = new Map();
+
+async function createOrReusePaymentGatewayCheckout(data = {}, params = {}) {
+  const provider = String(data.settings?.paymentGateway?.provider || 'tripay').trim().toLowerCase();
+  const normalized = {
+    ...params,
+    provider,
+    method: String(params.method || '').trim().toUpperCase()
+  };
+  const reusable = reusablePaymentCheckout(paymentCheckoutTarget(data, normalized), normalized);
+  if (reusable) return reusable;
+
+  const lockKey = [provider, normalized.kind, normalized.reference, normalized.method, normalized.amount]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .join(':');
+  if (paymentGatewayCheckoutLocks.has(lockKey)) return paymentGatewayCheckoutLocks.get(lockKey);
+
+  const pending = (async () => {
+    const fresh = await loadStore();
+    const latest = reusablePaymentCheckout(paymentCheckoutTarget(fresh, normalized), normalized);
+    if (latest) return latest;
+    const checkout = await createPaymentGatewayCheckout(fresh, normalized);
+    const collection = String(normalized.kind || '').toLowerCase().includes('voucher') ? 'hotspotVoucherOrders' : 'invoices';
+    const saved = await mutate((store) => {
+      const target = paymentCheckoutTarget(store, normalized);
+      if (!target) throw new Error(collection === 'invoices' ? 'Invoice tidak ditemukan' : 'Order voucher tidak ditemukan');
+      const active = reusablePaymentCheckout(target, normalized);
+      if (active) return active;
+      const paymentCheckout = storePaymentCheckout(target, checkout, normalized);
+      return { ok: true, ...paymentCheckout, reused: false };
+    }, { collections: [collection], includeCore: false });
+    return saved.result;
+  })();
+  paymentGatewayCheckoutLocks.set(lockKey, pending);
+  try {
+    return await pending;
+  } finally {
+    if (paymentGatewayCheckoutLocks.get(lockKey) === pending) paymentGatewayCheckoutLocks.delete(lockKey);
+  }
 }
 
 function isWahaWebhookPath(pathname = '') {
@@ -10055,7 +10229,7 @@ async function handleApi(req, res, url) {
       return;
     }
     try {
-      const checkout = await createPaymentGatewayCheckout(data, {
+      const checkout = await createOrReusePaymentGatewayCheckout(data, {
         kind: 'hotspot-voucher',
         reference: order.reference,
         method: 'QRIS',
@@ -10152,7 +10326,7 @@ async function handleApi(req, res, url) {
     try {
       const payload = await readBody(req);
       const customer = customerForInvoice(data, invoice);
-      const checkout = await createPaymentGatewayCheckout(data, {
+      const checkout = await createOrReusePaymentGatewayCheckout(data, {
         kind: 'monthly-package',
         reference: publicInvoice.reference,
         method: payload.method || payload.paymentMethod || '',
@@ -14217,6 +14391,7 @@ async function handleApi(req, res, url) {
     const lastSyncAt = Date.parse(currentSettings.lastHistorySyncAt || '');
     const syncDue = currentSettings.enabled === true
       && String(currentSettings.provider || '').toLowerCase() === 'tripay'
+      && Date.now() >= paymentGatewayHistorySyncPausedUntil
       && (!Number.isFinite(lastSyncAt) || Date.now() - lastSyncAt >= PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS);
     let historySync = {
       ok: true,
@@ -14229,6 +14404,9 @@ async function handleApi(req, res, url) {
         reportData = synced.data;
         historySync = { ok: true, ...synced.result };
       } catch (error) {
+        if (isTripayUnauthorizedIpError(error)) {
+          paymentGatewayHistorySyncPausedUntil = Date.now() + (6 * 60 * 60 * 1000);
+        }
         historySync = {
           ok: false,
           syncedAt: currentSettings.lastHistorySyncAt || '',
@@ -14745,6 +14923,9 @@ module.exports = {
     syncRadiusCustomerStatus,
     standaloneBillingAutomation,
     tripayCheckoutAmountBreakdown,
+    tripayCheckoutTtlMinutes,
+    reusablePaymentCheckout,
+    storePaymentCheckout,
     tripayHistoryStatus,
     tripayHistoryRowsFromDate,
     tripayTimestampIso,
