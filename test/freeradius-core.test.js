@@ -267,3 +267,21 @@ test('stale session cleanup only closes an older duplicate with a fresh replacem
   assert.match(query, /ranked\.updated_at </);
   assert.match(query, /Stale-Replaced/);
 });
+
+test('session NAS addresses are normalized before matching a configured NAS', () => {
+  const active = freeradiusSessions.__test.normalizeSession({
+    username: 'hotspot-test',
+    nasipaddress: '172.16.125.254/32',
+    framedipaddress: '10.10.10.20/32'
+  });
+  const history = freeradiusSessions.__test.normalizeUsageHistory({
+    username: 'hotspot-test',
+    nasipaddress: '2001:db8::1/128',
+    framedipaddress: '2001:db8::10/128'
+  });
+
+  assert.equal(active.nasIpAddress, '172.16.125.254');
+  assert.equal(active.framedIpAddress, '10.10.10.20');
+  assert.equal(history.nasIpAddress, '2001:db8::1');
+  assert.equal(history.framedIpAddress, '2001:db8::10');
+});

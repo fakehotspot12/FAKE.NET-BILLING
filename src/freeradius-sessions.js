@@ -388,7 +388,7 @@ function normalizeSession(row = {}) {
     username: cleanText(row.username),
     sessionId: cleanText(row.acctsessionid),
     uniqueId: cleanText(row.acctuniqueid),
-    nasIpAddress: cleanText(row.nasipaddress),
+    nasIpAddress: cleanInet(row.nasipaddress),
     nasPortId: cleanText(row.nasportid),
     nasPortType: cleanText(row.nasporttype),
     startedAt: cleanText(row.started_at),
@@ -431,7 +431,7 @@ function normalizeUsageHistory(row = {}) {
     username: cleanText(row.username),
     sessionId: cleanText(row.acctsessionid),
     uniqueId: cleanText(row.acctuniqueid),
-    nasIpAddress: cleanText(row.nasipaddress),
+    nasIpAddress: cleanInet(row.nasipaddress),
     framedIpAddress: cleanInet(row.framedipaddress),
     callingStationId: cleanText(row.callingstationid),
     calledStationId: cleanText(row.calledstationid),
@@ -700,6 +700,8 @@ module.exports = {
   monthlyUsageByUsernames,
   usageHistoryByUsername,
   __test: {
-    closeSupersededSessionsQuery
+    closeSupersededSessionsQuery,
+    normalizeSession,
+    normalizeUsageHistory
   }
 };

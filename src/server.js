@@ -1744,8 +1744,12 @@ function radiusNasDirectory(data = {}) {
   return new Map(freeradius.radiusNasEntries(data, { includeUnconfigured: true }).map((nas) => [nas.id, nas]));
 }
 
+function radiusNasAddressKey(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/\/(?:32|128)$/, '');
+}
+
 function radiusNasByAddress(data = {}) {
-  return new Map(freeradius.radiusNasEntries(data, { includeUnconfigured: true }).map((nas) => [String(nas.address || '').toLowerCase(), nas]));
+  return new Map(freeradius.radiusNasEntries(data, { includeUnconfigured: true }).map((nas) => [radiusNasAddressKey(nas.address), nas]));
 }
 
 function radiusCustomerDirectory(data = {}) {
@@ -1798,9 +1802,11 @@ function radiusFindProfile(data = {}, value = '', serviceType = '') {
 
 function radiusFindNas(data = {}, value = '') {
   const needle = String(value || '').trim().toLowerCase();
+  const addressNeedle = radiusNasAddressKey(value);
   if (!needle) return null;
   return freeradius.radiusNasEntries(data, { includeUnconfigured: true }).find((nas) => {
-    return [nas.id, nas.name, nas.address].some((item) => String(item || '').toLowerCase() === needle);
+    return [nas.id, nas.name].some((item) => String(item || '').toLowerCase() === needle)
+      || radiusNasAddressKey(nas.address) === addressNeedle;
   }) || null;
 }
 
@@ -2044,7 +2050,7 @@ function radiusSessionRowsLocal(data = {}, serviceType = 'pppoe', sessions = [])
       const resolvedServiceType = radiusSessionServiceType(data, session, user);
       if (resolvedServiceType !== serviceType) return null;
       const profile = user ? (profiles.get(user.profileId) || {}) : {};
-      const nas = (user && nasMap.get(user.nasId)) || nasAddressMap.get(String(session.nasIpAddress || '').toLowerCase()) || {};
+      const nas = (user && nasMap.get(user.nasId)) || nasAddressMap.get(radiusNasAddressKey(session.nasIpAddress)) || {};
       const customer = user ? (customers.get(user.customerId) || {}) : {};
       const suppressedDuplicateCount = Number(session.suppressedDuplicateCount || 0);
       const duplicateNote = suppressedDuplicateCount > 0 ? `${suppressedDuplicateCount} duplicate session disembunyikan` : '';
@@ -4134,7 +4140,7 @@ function monitoringRadiusSessionRows(data = {}, sessions = []) {
       const type = radiusSessionServiceType(data, session, user);
       if (!['pppoe', 'hotspot'].includes(type)) return null;
       const profile = user ? (profiles.get(user.profileId) || {}) : {};
-      const nas = (user && nasMap.get(user.nasId)) || nasAddressMap.get(String(session.nasIpAddress || '').toLowerCase()) || {};
+      const nas = (user && nasMap.get(user.nasId)) || nasAddressMap.get(radiusNasAddressKey(session.nasIpAddress)) || {};
       const customer = user ? (customers.get(user.customerId) || {}) : {};
       const username = session.username || user?.username || '';
       const clientIp = session.framedIpAddress || user?.staticIp || '';
@@ -15174,6 +15180,7 @@ module.exports = {
     publicPaymentGatewayInvoicePayload,
     publicMonitoringTarget,
     radiusProfileRowsLocal,
+    radiusNasAddressKey,
     reportStatisticsPayload,
     radiusMemberFromPayload,
     readWorkbookRowsFromBase64,

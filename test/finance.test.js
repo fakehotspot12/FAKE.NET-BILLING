@@ -69,6 +69,11 @@ const {
   verifyXenditWithdraw
 } = require('../src/radboox');
 const { __test: serverInternals } = require('../src/server');
+
+test('NAS address matching ignores PostgreSQL inet host masks', () => {
+  assert.equal(serverInternals.radiusNasAddressKey('172.16.125.254/32'), '172.16.125.254');
+  assert.equal(serverInternals.radiusNasAddressKey('2001:DB8::1/128'), '2001:db8::1');
+});
 const {
   createUser,
   deleteUser,

@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.9] - 2026-07-19
+
+### Fixed
+
+- Alamat NAS dari kolom PostgreSQL `inet` dinormalisasi tanpa suffix `/32` atau `/128` sebelum dicocokkan dengan Site.
+- Session Hotspot dan PPP-DHCP menampilkan nama NAS yang dikonfigurasi, bukan alamat NAS mentah, ketika alamatnya cocok.
+
 ## [1.5.8] - 2026-07-19
 
 ### Fixed
