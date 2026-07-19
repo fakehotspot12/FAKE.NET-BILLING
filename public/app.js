@@ -254,6 +254,8 @@ let monitoringCustomersTimer = null;
 let monitoringServicesTimer = null;
 let monitoringBillingTimer = null;
 let monitoringBillingRevision = '';
+let voucherDataTimer = null;
+let voucherDataRevision = '';
 let dashboardRouterNasTimer = null;
 let dashboardRouterNasLoading = false;
 let dashboardRouterNasPayload = null;
@@ -1304,6 +1306,10 @@ function clearRealtimeTimers() {
   if (monitoringBillingTimer) {
     window.clearTimeout(monitoringBillingTimer);
     monitoringBillingTimer = null;
+  }
+  if (voucherDataTimer) {
+    window.clearTimeout(voucherDataTimer);
+    voucherDataTimer = null;
   }
   if (dashboardRouterNasTimer) {
     window.clearTimeout(dashboardRouterNasTimer);
@@ -3727,8 +3733,9 @@ function voucherMonthlyRowsTable(rows = []) {
   `;
 }
 
-async function renderReportsVoucherDaily() {
-  app.innerHTML = '<div class="empty">Memuat voucher harian...</div>';
+async function renderReportsVoucherDaily(options = {}) {
+  clearRealtimeTimers();
+  if (!options.silent) app.innerHTML = '<div class="empty">Memuat voucher harian...</div>';
   const params = queryString({
     date: state.reportVoucherDailyDate || todayInput(),
     search: state.search,
@@ -3740,6 +3747,7 @@ async function renderReportsVoucherDaily() {
     limit: state.reportVoucherDailyLimit
   });
   const payload = await api(`/api/reports/voucher-daily?${params}`);
+  voucherDataRevision = String(payload.revision || voucherDataRevision || '');
   const orders = Array.isArray(payload.orders) ? payload.orders : [];
   const summary = payload.summary || {};
   const filterOptions = payload.filterOptions || {};
@@ -3837,10 +3845,12 @@ async function renderReportsVoucherDaily() {
   }, (page) => {
     state.reportVoucherDailyPage = page;
   }, renderReportsVoucherDaily, 10);
+  scheduleVoucherDataRefresh(renderReportsVoucherDaily);
 }
 
-async function renderReportsVoucherMonthly() {
-  app.innerHTML = '<div class="empty">Memuat voucher bulanan...</div>';
+async function renderReportsVoucherMonthly(options = {}) {
+  clearRealtimeTimers();
+  if (!options.silent) app.innerHTML = '<div class="empty">Memuat voucher bulanan...</div>';
   const period = state.reportVoucherMonthlyPeriod || state.period || todayInput().slice(0, 7);
   const payload = await api(`/api/reports/voucher-monthly?${queryString({
     period,
@@ -3849,6 +3859,7 @@ async function renderReportsVoucherMonthly() {
     profile: state.reportVoucherProfile || 'all',
     method: state.reportVoucherMethod || 'all'
   })}`);
+  voucherDataRevision = String(payload.revision || voucherDataRevision || '');
   const summary = payload.summary || {};
   const filterOptions = payload.filterOptions || {};
   const scoped = filterOptions.scoped === true;
@@ -3881,6 +3892,7 @@ async function renderReportsVoucherMonthly() {
     </div>
   `;
   bindVoucherReportFilters(renderReportsVoucherMonthly);
+  scheduleVoucherDataRefresh(renderReportsVoucherMonthly);
 }
 
 function legacySourceDateTimeText(value) {
@@ -8751,7 +8763,8 @@ async function renderRadiusPppDhcp(options = {}) {
 }
 
 async function renderRadiusHotspot(options = {}) {
-  app.innerHTML = '<div class="empty">Memuat Radius Hotspot...</div>';
+  clearRealtimeTimers();
+  if (!options.silent) app.innerHTML = '<div class="empty">Memuat Radius Hotspot...</div>';
   const resellerVoucherRole = state.auth?.role === 'reseller_voucher';
   if (resellerVoucherRole && state.radiusHotspotTab === 'voucher-online') {
     state.radiusHotspotTab = 'users';
@@ -8771,6 +8784,7 @@ async function renderRadiusHotspot(options = {}) {
   const payload = voucherOnlineTab
     ? await api('/api/radius/hotspot/voucher-online')
     : await api(`/api/radius/hotspot?${params}`);
+  voucherDataRevision = String(payload.revision || voucherDataRevision || '');
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
   if (!voucherOnlineTab && state.radiusHotspotTab === 'templates') {
     state.hotspotVoucherTemplates = rows.length ? rows : [hotspotVoucherTemplateFallback()];
@@ -9005,6 +9019,7 @@ async function renderRadiusHotspot(options = {}) {
       state.radiusHotspotLimit = limit;
     });
   }
+  scheduleVoucherDataRefresh(renderRadiusHotspot);
 }
 
 function defaultIsolirPublicUrl() {
@@ -12306,6 +12321,35 @@ function scheduleMonitoringBillingRefresh() {
       if (error.name === 'AbortError') return;
     }
     scheduleMonitoringBillingRefresh();
+  }, 10000);
+}
+
+function scheduleVoucherDataRefresh(renderFn) {
+  if (voucherDataTimer) window.clearTimeout(voucherDataTimer);
+  const expectedView = state.view;
+  if (!['radiusHotspot', 'reportsVoucherDaily', 'reportsVoucherMonthly'].includes(expectedView) || !state.auth) return;
+  voucherDataTimer = window.setTimeout(async () => {
+    voucherDataTimer = null;
+    if (state.view !== expectedView || !state.auth) return;
+    const activeElement = document.activeElement;
+    const editingFilter = app.contains(activeElement) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activeElement?.tagName || '');
+    if (document.hidden || modal?.open || editingFilter) {
+      scheduleVoucherDataRefresh(renderFn);
+      return;
+    }
+    try {
+      const payload = await api('/api/radius/hotspot/voucher-revision');
+      const revision = String(payload.revision || '');
+      if (revision && voucherDataRevision && revision !== voucherDataRevision) {
+        voucherDataRevision = revision;
+        await renderFn({ silent: true });
+        return;
+      }
+      if (revision) voucherDataRevision = revision;
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+    }
+    scheduleVoucherDataRefresh(renderFn);
   }, 10000);
 }
 

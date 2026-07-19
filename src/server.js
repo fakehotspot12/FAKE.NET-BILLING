@@ -1692,6 +1692,33 @@ function localBillingRevision(data = {}, period = currentPeriod()) {
     .slice(0, 24);
 }
 
+function hotspotVoucherRevision(data = {}, user = {}) {
+  const orders = voucherOrdersVisibleForUser(data, data.hotspotVoucherOrders || [], user);
+  const orderIds = new Set(orders.map((order) => order.id).filter(Boolean));
+  const orderReferences = new Set(orders.map((order) => order.reference).filter(Boolean));
+  const resellerScoped = String(user.role || '').toLowerCase() === 'reseller_voucher';
+  const users = (data.radiusUsers || [])
+    .filter((row) => String(row.serviceType || row.type || '').trim().toLowerCase() === 'hotspot')
+    .filter((row) => !resellerScoped || resellerHotspotVoucherRowVisible(row, user));
+  const transactions = (data.paymentGatewayTransactions || []).filter((row) => {
+    if (paymentGatewayTransactionKind(row) !== 'hotspot-voucher') return false;
+    if (!resellerScoped) return true;
+    return orderIds.has(row.voucherOrderId) || orderReferences.has(row.reference);
+  });
+  const salesHistory = (data.hotspotVoucherSalesHistory || []).filter((row) => (
+    !resellerScoped || resellerHotspotVoucherRowVisible(row, user)
+  ));
+  const compact = (rows, fields) => rows.map((row) => fields.map((field) => row[field] ?? '')).sort((left, right) => (
+    JSON.stringify(left).localeCompare(JSON.stringify(right))
+  ));
+  return crypto.createHash('sha256').update(JSON.stringify({
+    orders: compact(orders, ['id', 'reference', 'status', 'paidAt', 'updatedAt', 'voucherBatchId', 'voucherUserIds']),
+    users: compact(users, ['id', 'username', 'status', 'paymentStatus', 'firstOnlineAt', 'updatedAt', 'onlineOrderId']),
+    transactions: compact(transactions, ['id', 'reference', 'status', 'paidAt', 'updatedAt', 'voucherOrderId']),
+    salesHistory: compact(salesHistory, ['id', 'reference', 'status', 'paidAt', 'updatedAt', 'username'])
+  })).digest('hex').slice(0, 24);
+}
+
 function radiusPagination(rows = [], page = 1, limit = 10) {
   const pagination = paginationPayload(page, limit, rows.length);
   const offset = (pagination.page - 1) * limit;
@@ -6213,7 +6240,11 @@ function fulfillHotspotVoucherOrder(data = {}, value = '', payment = {}, actor =
   const order = findHotspotVoucherOrder(data, value);
   if (!order) throw new Error('Order voucher tidak ditemukan');
   if (order.status === 'paid' && order.vouchers?.length) {
-    upsertPaidHotspotVoucherPaymentGatewayTransaction(data, order);
+    const transactionExists = (data.paymentGatewayTransactions || []).some((row) => (
+      (row.voucherOrderId === order.id || row.reference === order.reference)
+      && ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase())
+    ));
+    if (!transactionExists) upsertPaidHotspotVoucherPaymentGatewayTransaction(data, order);
     return { order, vouchers: order.vouchers, reused: true };
   }
   const status = normalizePaymentStatus(payment.status || 'paid');
@@ -11138,6 +11169,7 @@ async function handleApi(req, res, url) {
     const offset = (pagination.page - 1) * limit;
     sendJson(res, 200, {
       ok: true,
+      revision: hotspotVoucherRevision(data, authContext.user),
       date,
       search,
       filters,
@@ -11167,6 +11199,7 @@ async function handleApi(req, res, url) {
     const summary = voucherReportSummary(orders);
     sendJson(res, 200, {
       ok: true,
+      revision: hotspotVoucherRevision(data, authContext.user),
       period,
       filters,
       filterOptions: voucherReportFilterOptions(data, filterVoucherReportOrders(data, baseOrders, {}, authContext.user), authContext.user),
@@ -12621,7 +12654,10 @@ async function handleApi(req, res, url) {
         forbidden(res);
         return;
       }
-      sendJson(res, 200, publicHotspotVoucherOnlinePayload(authContext.data));
+      sendJson(res, 200, {
+        ...publicHotspotVoucherOnlinePayload(authContext.data),
+        revision: hotspotVoucherRevision(authContext.data, authContext.user)
+      });
       return;
     }
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
@@ -12637,7 +12673,10 @@ async function handleApi(req, res, url) {
       internet: String(url.searchParams.get('internet') || '').trim(),
       viewer: authContext.user
     });
-    sendJson(res, 200, result);
+    sendJson(res, 200, {
+      ...result,
+      revision: hotspotVoucherRevision(authContext.data, authContext.user)
+    });
     return;
   }
 
@@ -12648,7 +12687,10 @@ async function handleApi(req, res, url) {
       forbidden(res);
       return;
     }
-    sendJson(res, 200, publicHotspotVoucherOnlinePayload(authContext.data));
+    sendJson(res, 200, {
+      ...publicHotspotVoucherOnlinePayload(authContext.data),
+      revision: hotspotVoucherRevision(authContext.data, authContext.user)
+    });
     return;
   }
 
@@ -12984,6 +13026,16 @@ async function handleApi(req, res, url) {
       source: standaloneMode(authContext.data) ? 'local' : 'remote',
       period: normalizePeriod(period),
       revision: localBillingRevision(authContext.data, period)
+    });
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/radius/hotspot/voucher-revision') {
+    const authContext = await requireAnyPermission(req, res, ['radius:read', 'reports:voucher:read']);
+    if (!authContext) return;
+    sendJson(res, 200, {
+      ok: true,
+      revision: hotspotVoucherRevision(authContext.data, authContext.user)
     });
     return;
   }
@@ -14944,6 +14996,7 @@ module.exports = {
     deleteOrphanRadiusMembers,
     fulfillHotspotVoucherOrder,
     fulfillPaymentGatewayCallback,
+    hotspotVoucherRevision,
     hotspotVoucherDirectLoginUrl,
     hotspotFreeUserWritable,
     customerInvoiceGenerationDue,

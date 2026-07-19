@@ -5224,6 +5224,7 @@ test('online voucher order only creates payment gateway transaction after paid',
   assert.equal(data.hotspotVoucherOrders.length, 1);
   assert.equal(data.paymentGatewayTransactions.length, 0);
   assert.equal(serverInternals.paymentGatewayReportPayload(data, {}).transactions.length, 0);
+  const pendingRevision = serverInternals.hotspotVoucherRevision(data, { role: 'finance' });
 
   const fulfilled = serverInternals.fulfillHotspotVoucherOrder(data, order.id, {
     status: 'paid',
@@ -5240,6 +5241,22 @@ test('online voucher order only creates payment gateway transaction after paid',
   assert.equal(data.paymentGatewayTransactions[0].reference, order.reference);
   assert.equal(data.paymentGatewayTransactions[0].amount, 10820);
   assert.equal(data.paymentGatewayTransactions[0].fee, 820);
+  const paidRevision = serverInternals.hotspotVoucherRevision(data, { role: 'finance' });
+  assert.notEqual(paidRevision, pendingRevision);
+
+  const reused = serverInternals.fulfillHotspotVoucherOrder(data, order.reference, {
+    status: 'paid',
+    paidAt: '2026-07-12T10:01:00.000Z',
+    externalId: 'trx-paid-duplicate-callback'
+  }, {
+    username: 'payment-gateway',
+    name: 'Payment Gateway'
+  });
+  assert.equal(reused.reused, true);
+  assert.equal(reused.vouchers.length, 2);
+  assert.equal(data.radiusUsers.filter((user) => user.onlineOrderId === order.id).length, 2);
+  assert.equal(data.paymentGatewayTransactions.filter((row) => row.voucherOrderId === order.id).length, 1);
+  assert.equal(serverInternals.hotspotVoucherRevision(data, { role: 'finance' }), paidRevision);
 });
 
 test('Tripay voucher checkout resolves QRIS before creating the transaction', async () => {

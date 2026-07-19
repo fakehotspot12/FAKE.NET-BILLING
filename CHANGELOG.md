@@ -7,6 +7,15 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.3] - 2026-07-19
+
+### Fixed
+
+- Status pembayaran voucher dan user Hotspot yang dihasilkan otomatis terdeteksi lintas akun maksimal sekitar 10 detik.
+- Radius Hotspot serta Laporan Voucher Harian/Bulanan memperbarui tampilan hanya ketika revisi data voucher berubah.
+- Callback paid voucher dibuat sepenuhnya idempoten agar callback ulang tidak menggandakan user, transaksi gateway, atau pesan Whatsapp.
+- Pembatasan reseller tetap berlaku sehingga reseller hanya melihat voucher yang dibuatnya sendiri.
+
 ## [1.5.2] - 2026-07-19
 
 ### Fixed
