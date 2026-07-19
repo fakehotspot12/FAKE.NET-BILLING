@@ -252,6 +252,8 @@ const state = {
 
 let monitoringCustomersTimer = null;
 let monitoringServicesTimer = null;
+let monitoringBillingTimer = null;
+let monitoringBillingRevision = '';
 let dashboardRouterNasTimer = null;
 let dashboardRouterNasLoading = false;
 let dashboardRouterNasPayload = null;
@@ -699,6 +701,7 @@ async function api(path, options = {}) {
   try {
     const response = await fetch(path, {
       ...fetchOptions,
+      cache: fetchOptions.cache || 'no-store',
       signal: signal || pageSignal || controller?.signal,
       headers: {
         'Content-Type': 'application/json',
@@ -1297,6 +1300,10 @@ function clearRealtimeTimers() {
   if (monitoringServicesTimer) {
     window.clearTimeout(monitoringServicesTimer);
     monitoringServicesTimer = null;
+  }
+  if (monitoringBillingTimer) {
+    window.clearTimeout(monitoringBillingTimer);
+    monitoringBillingTimer = null;
   }
   if (dashboardRouterNasTimer) {
     window.clearTimeout(dashboardRouterNasTimer);
@@ -11914,7 +11921,9 @@ function billingPaidMetric(summary = {}) {
 
 async function renderMonitoringBilling(options = {}) {
   clearRealtimeTimers();
-  app.innerHTML = '<div class="empty">Memuat tagihan pelanggan...</div>';
+  if (!options.silent) {
+    app.innerHTML = '<div class="empty">Memuat tagihan pelanggan...</div>';
+  }
   const billingPeriod = normalizedPeriod(state.monitoringBillingPeriod || state.period || todayInput().slice(0, 7));
   state.monitoringBillingPeriod = billingPeriod;
   saveMonitoringBillingPeriod(billingPeriod);
@@ -11929,6 +11938,7 @@ async function renderMonitoringBilling(options = {}) {
     refresh: options.refresh ? 1 : 0
   });
   const payload = await api(`/api/monitoring/billing-unpaid?${params}`);
+  monitoringBillingRevision = String(payload.revision || monitoringBillingRevision || '');
   const summary = payload.summary || {};
   const invoices = Array.isArray(payload.invoices) ? payload.invoices : [];
   const sites = Array.isArray(payload.sites) ? payload.sites : [];
@@ -12269,6 +12279,34 @@ async function renderMonitoringBilling(options = {}) {
     });
   });
   updateBillingBatchButtons();
+  scheduleMonitoringBillingRefresh();
+}
+
+function scheduleMonitoringBillingRefresh() {
+  if (monitoringBillingTimer) window.clearTimeout(monitoringBillingTimer);
+  if (state.view !== 'monitoringBilling' || !state.auth) return;
+  monitoringBillingTimer = window.setTimeout(async () => {
+    monitoringBillingTimer = null;
+    if (state.view !== 'monitoringBilling' || !state.auth) return;
+    if (document.hidden || modal?.open) {
+      scheduleMonitoringBillingRefresh();
+      return;
+    }
+    try {
+      const period = normalizedPeriod(state.monitoringBillingPeriod || state.period || todayInput().slice(0, 7));
+      const payload = await api(`/api/monitoring/billing-revision?${queryString({ period })}`);
+      const revision = String(payload.revision || '');
+      if (revision && monitoringBillingRevision && revision !== monitoringBillingRevision) {
+        monitoringBillingRevision = revision;
+        await renderMonitoringBilling({ silent: true });
+        return;
+      }
+      if (revision) monitoringBillingRevision = revision;
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+    }
+    scheduleMonitoringBillingRefresh();
+  }, 10000);
 }
 
 function scheduleMonitoringServicesRefresh() {

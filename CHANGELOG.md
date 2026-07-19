@@ -7,6 +7,15 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.2] - 2026-07-19
+
+### Fixed
+
+- Status pembayaran manual tersimpan global dan halaman Tagihan Pelanggan akun lain mendeteksi perubahan otomatis maksimal sekitar 10 detik.
+- Aksi bayar dibuat idempoten agar klik bersamaan atau klik ulang tidak menggandakan pembayaran maupun notifikasi Whatsapp.
+- Request API browser tidak memakai cache sehingga status invoice selalu bersumber dari data aplikasi terbaru.
+- Audit pembayaran mencatat invoice, pelanggan, metode, nominal, nama, username, dan role akun yang menjalankan aksi.
+
 ## [1.5.1] - 2026-07-19
 
 ### Fixed

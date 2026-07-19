@@ -4533,6 +4533,66 @@ test('rollback payment removes collector dashboard earnings', () => {
   assert.equal(legacyRollbackScope.transactionCount, 0);
 });
 
+test('paying the same invoice twice stays idempotent and preserves the first actor', () => {
+  const data = createDefaultStore();
+  data.invoices.push({
+    id: 'inv-idempotent-pay',
+    customerId: 'cus-idempotent-pay',
+    customerName: 'Pelanggan Idempoten',
+    period: '2026-07',
+    amount: 150000,
+    status: 'pending',
+    dueDate: '2026-07-20'
+  });
+
+  markInvoicePaid(data, 'inv-idempotent-pay', {
+    paidAt: '2026-07-19T10:00:00+08:00',
+    paymentMethod: 'Tunai',
+    actorName: 'Wahyudi',
+    actorUsername: 'yudi31385',
+    actorRole: 'collector'
+  });
+  markInvoicePaid(data, 'inv-idempotent-pay', {
+    paidAt: '2026-07-19T10:05:00+08:00',
+    paymentMethod: 'Transfer',
+    actorName: 'Admin',
+    actorUsername: 'admin',
+    actorRole: 'admin'
+  });
+
+  const payments = data.payments.filter((payment) => payment.invoiceId === 'inv-idempotent-pay' && paymentIsActive(payment));
+  assert.equal(payments.length, 1);
+  assert.equal(payments[0].createdByUsername, 'yudi31385');
+  assert.equal(data.invoices[0].paymentMethod, 'Tunai');
+  assert.equal(data.activity.filter((item) => item.meta?.action === 'invoice-paid').length, 1);
+});
+
+test('billing revision changes when another account pays an invoice', () => {
+  const data = createDefaultStore();
+  data.customers.push({ id: 'cus-shared-payment', name: 'Herdin', status: 'active' });
+  data.invoices.push({
+    id: 'inv-shared-payment',
+    customerId: 'cus-shared-payment',
+    customerName: 'Herdin',
+    period: '2026-07',
+    amount: 150000,
+    status: 'pending',
+    dueDate: '2026-07-20'
+  });
+
+  const before = serverInternals.localBillingRevision(data, '2026-07');
+  markInvoicePaid(data, 'inv-shared-payment', {
+    paidAt: '2026-07-19T10:00:00+08:00',
+    paymentMethod: 'Tunai',
+    actorName: 'Wahyudi',
+    actorUsername: 'yudi31385',
+    actorRole: 'collector'
+  });
+  const after = serverInternals.localBillingRevision(data, '2026-07');
+
+  assert.notEqual(after, before);
+});
+
 test('collector reports are scoped to own collected payments', () => {
   const data = createDefaultStore();
   const collector = {

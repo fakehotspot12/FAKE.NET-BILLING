@@ -1014,6 +1014,12 @@ function markInvoicePaid(data, invoiceId, payload = {}) {
   if (invoiceRuntimeStatus(invoice) === 'cancelled') {
     throw new Error('Invoice yang sudah dibatalkan tidak bisa dibayar');
   }
+  const existingPayment = (data.payments || []).find((payment) => (
+    payment.invoiceId === invoice.id && paymentIsActive(payment)
+  ));
+  if (invoiceRuntimeStatus(invoice) === 'paid' && existingPayment) {
+    return invoice;
+  }
 
   invoice.status = 'paid';
   invoice.paidAt = payload.paidAt || todayIso();
@@ -1023,31 +1029,44 @@ function markInvoicePaid(data, invoiceId, payload = {}) {
   invoice.paidByUsername = cleanText(payload.createdByUsername || payload.actorUsername);
   invoice.updatedAt = new Date().toISOString();
 
-  data.payments.push({
-    id: createId('pay'),
-    invoiceId: invoice.id,
-    customerId: invoice.customerId,
-    amount: toNumber(payload.amount || invoice.amount),
-    baseAmount: toNumber(payload.baseAmount || invoice.amount),
-    fee: toNumber(payload.fee || payload.adminFee),
-    adminFee: toNumber(payload.adminFee || payload.fee),
-    gatewayAmount: toNumber(payload.gatewayAmount || payload.amount || invoice.amount),
-    providerFee: toNumber(payload.providerFee),
-    cashierFee: toNumber(payload.cashierFee),
-    provider: cleanText(payload.provider),
-    paidAt: invoice.paidAt,
-    method: invoice.paymentMethod,
-    paymentCategory: cleanText(payload.paymentCategory),
-    status: 'paid',
-    notes: cleanText(payload.notes),
-    createdByName: cleanText(payload.createdByName || payload.actorName || payload.admin),
-    createdByUsername: cleanText(payload.createdByUsername || payload.actorUsername),
-    createdByRole: cleanText(payload.createdByRole || payload.actorRole),
-    createdAt: new Date().toISOString()
-  });
+  if (!existingPayment) {
+    data.payments.push({
+      id: createId('pay'),
+      invoiceId: invoice.id,
+      customerId: invoice.customerId,
+      amount: toNumber(payload.amount || invoice.amount),
+      baseAmount: toNumber(payload.baseAmount || invoice.amount),
+      fee: toNumber(payload.fee || payload.adminFee),
+      adminFee: toNumber(payload.adminFee || payload.fee),
+      gatewayAmount: toNumber(payload.gatewayAmount || payload.amount || invoice.amount),
+      providerFee: toNumber(payload.providerFee),
+      cashierFee: toNumber(payload.cashierFee),
+      provider: cleanText(payload.provider),
+      paidAt: invoice.paidAt,
+      method: invoice.paymentMethod,
+      paymentCategory: cleanText(payload.paymentCategory),
+      status: 'paid',
+      notes: cleanText(payload.notes),
+      createdByName: cleanText(payload.createdByName || payload.actorName || payload.admin),
+      createdByUsername: cleanText(payload.createdByUsername || payload.actorUsername),
+      createdByRole: cleanText(payload.createdByRole || payload.actorRole),
+      createdAt: new Date().toISOString()
+    });
+  }
 
-  addActivity(data, 'payment', `Pembayaran ${invoice.customerName || invoice.username} tercatat`, {
-    invoiceId: invoice.id
+  const actorName = cleanText(payload.createdByName || payload.actorName || payload.admin);
+  const invoiceNo = cleanText(invoice.invoiceNo || invoice.externalId || invoice.id);
+  addActivity(data, 'payment', `Pembayaran ${invoice.customerName || invoice.username} dicatat${actorName ? ` oleh ${actorName}` : ''}`, {
+    action: 'invoice-paid',
+    invoiceId: invoice.id,
+    invoiceNo,
+    customerId: invoice.customerId || '',
+    customerName: invoice.customerName || invoice.username || '',
+    paymentMethod: invoice.paymentMethod,
+    amount: toNumber(payload.amount || invoice.amount),
+    actorName,
+    actorUsername: cleanText(payload.createdByUsername || payload.actorUsername),
+    actorRole: cleanText(payload.createdByRole || payload.actorRole)
   });
 
   return invoice;

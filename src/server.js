@@ -1648,6 +1648,50 @@ function localBillingMonitorPayload(data = {}, query = {}) {
   };
 }
 
+function localBillingRevision(data = {}, period = currentPeriod()) {
+  const selectedPeriod = normalizePeriod(period || currentPeriod());
+  const invoices = (data.invoices || [])
+    .filter((invoice) => normalizePeriod(invoice.period || selectedPeriod) === selectedPeriod)
+    .map((invoice) => ({
+      id: invoice.id || '',
+      status: invoice.status || '',
+      amount: Number(invoice.amount || 0),
+      paidAt: invoice.paidAt || '',
+      paymentMethod: invoice.paymentMethod || '',
+      updatedAt: invoice.updatedAt || ''
+    }))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  const invoiceIds = new Set(invoices.map((invoice) => invoice.id).filter(Boolean));
+  const customerIds = new Set((data.invoices || [])
+    .filter((invoice) => invoiceIds.has(invoice.id))
+    .map((invoice) => invoice.customerId)
+    .filter(Boolean));
+  const customers = (data.customers || [])
+    .filter((customer) => customerIds.has(customer.id))
+    .map((customer) => ({
+      id: customer.id || '',
+      status: customer.status || '',
+      updatedAt: customer.updatedAt || ''
+    }))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  const payments = (data.payments || [])
+    .filter((payment) => invoiceIds.has(payment.invoiceId))
+    .map((payment) => ({
+      id: payment.id || '',
+      invoiceId: payment.invoiceId || '',
+      status: payment.status || '',
+      amount: Number(payment.amount || 0),
+      paidAt: payment.paidAt || '',
+      method: payment.method || '',
+      updatedAt: payment.updatedAt || payment.createdAt || ''
+    }))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  return crypto.createHash('sha256')
+    .update(JSON.stringify({ selectedPeriod, invoices, customers, payments }))
+    .digest('hex')
+    .slice(0, 24);
+}
+
 function radiusPagination(rows = [], page = 1, limit = 10) {
   const pagination = paginationPayload(page, limit, rows.length);
   const offset = (pagination.page - 1) * limit;
@@ -11480,12 +11524,14 @@ async function handleApi(req, res, url) {
     const payload = await readBody(req);
     const invoiceId = decodeURIComponent(payMatch[1]);
     const { result } = await mutate(async (data) => {
+      const currentInvoice = (data.invoices || []).find((invoice) => invoice.id === invoiceId);
+      const wasPaid = currentInvoice && invoiceRuntimeStatus(currentInvoice) === 'paid';
       const invoice = markInvoicePaid(data, invoiceId, {
         ...payload,
         paymentCategory: paymentCategoryForRecord(payload, payload.paymentMethod || payload.method || 'Tunai'),
         ...actorPayload(authContext.user)
       });
-      if (invoice) {
+      if (invoice && !wasPaid) {
         queueInvoiceWaMessage(data, invoice, 'paymentPaid', authContext.user);
         const activation = reactivateCustomerAfterPaidInvoice(data, invoice, authContext.user);
         if (activation.activatedUser) {
@@ -11500,13 +11546,17 @@ async function handleApi(req, res, url) {
           });
         }
       }
-      return invoice;
+      return { invoice, changed: Boolean(invoice && !wasPaid) };
     });
-    if (!result) {
+    if (!result.invoice) {
       notFound(res);
       return;
     }
-    sendJson(res, 200, { invoice: result });
+    sendJson(res, 200, {
+      invoice: result.invoice,
+      changed: result.changed,
+      message: result.changed ? 'Invoice ditandai lunas' : 'Invoice sudah lunas'
+    });
     return;
   }
 
@@ -12925,6 +12975,19 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/monitoring/billing-revision') {
+    const authContext = await requirePermission(req, res, 'billing-monitor:read');
+    if (!authContext) return;
+    const period = url.searchParams.get('period') || currentPeriod();
+    sendJson(res, 200, {
+      ok: true,
+      source: standaloneMode(authContext.data) ? 'local' : 'remote',
+      period: normalizePeriod(period),
+      revision: localBillingRevision(authContext.data, period)
+    });
+    return;
+  }
+
   if (method === 'GET' && pathname === '/api/monitoring/billing-unpaid') {
     const authContext = await requirePermission(req, res, 'billing-monitor:read');
     if (!authContext) return;
@@ -12954,6 +13017,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, {
         ok: true,
         source: 'local',
+        revision: localBillingRevision(authContext.data, period),
         sites: local.sites.length ? local.sites : billingSites,
         summary: local.summary,
         invoices: local.rows.slice(offset, offset + limit),
@@ -13119,6 +13183,7 @@ async function handleApi(req, res, url) {
           throw new Error('Invoice tidak ditemukan');
         }
         if (action === 'pay') {
+          const wasPaid = invoiceRuntimeStatus(invoice) === 'paid';
           const paymentMethod = payload.paymentMethod || payload.method || 'Tunai';
           const paid = markInvoicePaid(data, invoice.id, {
             paymentMethod,
@@ -13127,7 +13192,7 @@ async function handleApi(req, res, url) {
             notes: payload.notes || `Dibayar oleh ${authContext.user.name || authContext.user.username}`,
             ...actorPayload(authContext.user)
           });
-          if (paid) {
+          if (paid && !wasPaid) {
             queueInvoiceWaMessage(data, paid, 'paymentPaid', authContext.user, { bulk: payload.bulk === true });
             const activation = reactivateCustomerAfterPaidInvoice(data, paid, authContext.user);
             if (activation.activatedUser) {
@@ -13142,7 +13207,7 @@ async function handleApi(req, res, url) {
               });
             }
           }
-          return paid;
+          return { invoice: paid, changed: Boolean(paid && !wasPaid) };
         }
         if (action === 'cancel') {
           return cancelInvoice(data, invoice.id, {
@@ -13158,13 +13223,17 @@ async function handleApi(req, res, url) {
         return;
       }
 
+      const actionResult = result.result;
+      const invoiceResult = action === 'pay' ? actionResult?.invoice : actionResult;
+      const changed = action === 'pay' ? actionResult?.changed !== false : true;
       sendJson(res, 200, {
         ok: true,
         source: 'standalone',
-        invoice: result.result,
+        invoice: invoiceResult,
+        changed,
         invoiceNo,
         message: action === 'pay'
-          ? 'Invoice ditandai lunas'
+          ? (changed ? 'Invoice ditandai lunas' : 'Invoice sudah lunas')
           : (action === 'cancel' ? 'Invoice dibatalkan' : 'Invoice dikembalikan ke belum bayar')
       });
       return;
@@ -14884,6 +14953,7 @@ module.exports = {
     invoiceWaTemplateValues,
     paymentMethodDisplayLabel,
     localDailyReport,
+    localBillingRevision,
     localBillingSite,
     localManualInvoicePreview,
     monthlyBillingDailyRows,
