@@ -5185,10 +5185,50 @@ test('online hotspot storefront filters packages by their assigned NAS', () => {
 
   const fake = serverInternals.publicHotspotVoucherStorefrontPayload(data, { nas: 'FAKE.NET' });
   const kampung = serverInternals.publicHotspotVoucherStorefrontPayload(data, { nas: 'KAMPUNG.NET' });
+  const withoutSite = serverInternals.publicHotspotVoucherStorefrontPayload(data);
   assert.deepEqual(fake.packages.map((row) => row.id), ['profile-fake']);
   assert.deepEqual(kampung.packages.map((row) => row.id), ['profile-kampung']);
   assert.equal(fake.packages[0].nasId, 'site-fake');
   assert.equal(fake.loginUrl, 'http://login.example.net/login');
+  assert.equal(withoutSite.nasRequired, true);
+  assert.equal(withoutSite.packages.length, 0);
+  assert.deepEqual(withoutSite.sites.map((row) => row.name), ['FAKE.NET', 'KAMPUNG.NET']);
+});
+
+test('online hotspot order rejects missing or cross-site NAS context', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.hotspotVoucherOnline.enabled = true;
+  data.settings.hotspotVoucherOnline.requireWhatsapp = false;
+  data.monitoringTargets.push(
+    { id: 'site-fake', name: 'FAKE.NET', host: '10.0.0.1', radius: { enabled: true, name: 'FAKE.NET', address: '10.0.0.1' } },
+    { id: 'site-kampung', name: 'KAMPUNG.NET', host: '10.0.0.2', radius: { enabled: true, name: 'KAMPUNG.NET', address: '10.0.0.2' } }
+  );
+  data.radiusProfiles.push({
+    id: 'profile-fake',
+    name: 'V-1Hari',
+    serviceType: 'hotspot',
+    price: 5000,
+    active: true
+  });
+  data.settings.hotspotVoucherOnline.packages = {
+    'profile-fake': { enabled: true, label: 'V-1Hari', nasId: 'site-fake', maxPerOrder: 1 }
+  };
+
+  assert.throws(() => serverInternals.createHotspotVoucherOrder(data, {
+    profileId: 'profile-fake',
+    nasId: 'site-kampung'
+  }), /tidak tersedia pada site/);
+  assert.throws(() => serverInternals.createHotspotVoucherOrder(data, {
+    profileId: 'profile-fake'
+  }), /Pilih site hotspot/);
+
+  const order = serverInternals.createHotspotVoucherOrder(data, {
+    profileId: 'profile-fake',
+    nasId: 'site-fake'
+  });
+  assert.equal(order.nasId, 'site-fake');
+  assert.equal(order.nasName, 'FAKE.NET');
 });
 
 test('online voucher order only creates payment gateway transaction after paid', () => {
@@ -5197,6 +5237,12 @@ test('online voucher order only creates payment gateway transaction after paid',
   data.settings.paymentGateway.provider = 'tripay';
   data.settings.hotspotVoucherOnline.enabled = true;
   data.settings.hotspotVoucherOnline.requireWhatsapp = false;
+  data.monitoringTargets.push({
+    id: 'site-voucher-online',
+    name: 'SITE VOUCHER',
+    host: '10.0.0.10',
+    radius: { enabled: true, name: 'SITE VOUCHER', address: '10.0.0.10' }
+  });
   data.radiusProfiles.push({
     id: 'profile-voucher-online',
     serviceType: 'hotspot',
@@ -5208,12 +5254,14 @@ test('online voucher order only creates payment gateway transaction after paid',
     'profile-voucher-online': {
       enabled: true,
       label: 'Voucher Online',
+      nasId: 'site-voucher-online',
       maxPerOrder: 5
     }
   };
 
   const order = serverInternals.createHotspotVoucherOrder(data, {
     profileId: 'profile-voucher-online',
+    nasId: 'site-voucher-online',
     quantity: 2,
     buyerName: 'Pembeli Test'
   });

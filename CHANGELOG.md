@@ -7,6 +7,16 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.4] - 2026-07-19
+
+### Fixed
+
+- Portal voucher online hanya menampilkan paket milik NAS/site yang dibawa oleh tautan captive portal.
+- Akses portal tanpa identitas NAS tidak lagi menggabungkan paket seluruh site dan menyediakan pemilihan site sebagai fallback.
+- Pembuatan order memvalidasi kecocokan paket dengan NAS sehingga request lintas site ditolak.
+- Konfigurasi paket jual online kini mewajibkan NAS penjualan pada instalasi multi-site.
+- Halaman status order menyiapkan dan menampilkan barcode QRIS secara otomatis tanpa klik checkout tambahan.
+
 ## [1.5.3] - 2026-07-19
 
 ### Fixed

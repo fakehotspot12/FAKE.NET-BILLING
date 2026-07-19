@@ -6,6 +6,14 @@ const STATUS_PAGE = 'status-order.html';
 
 let storefront = null;
 let pollTimer = null;
+const voucherCheckoutCache = new Map();
+const voucherCheckoutRequests = new Map();
+const voucherCheckoutFailures = new Map();
+
+function currentNasValue() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('nas') || params.get('nasId') || params.get('site') || params.get('siteId') || params.get('router') || '';
+}
 
 function byId(id) {
   return document.getElementById(id);
@@ -28,7 +36,7 @@ function pageUrl(file, params = {}) {
   const url = new URL(file, window.location.href);
   const current = new URLSearchParams(window.location.search);
   const context = {
-    nas: current.get('nas') || '',
+    nas: currentNasValue(),
     return: current.get('return') || current.get('returnUrl') || ''
   };
   Object.entries({ ...context, ...params }).forEach(([key, value]) => {
@@ -49,7 +57,7 @@ function safeHttpUrl(value = '') {
 }
 
 function voucherReturnStorageKey() {
-  const nas = new URLSearchParams(window.location.search).get('nas') || 'default';
+  const nas = currentNasValue() || 'default';
   return `fakenet-voucher-return:${nas}`;
 }
 
@@ -126,9 +134,46 @@ function show(id, visible) {
 
 async function loadStorefront() {
   if (storefront) return storefront;
-  const nas = new URLSearchParams(window.location.search).get('nas') || '';
+  const nas = currentNasValue();
   storefront = await api(`/api/public/hotspot-voucher-online${nas ? `?nas=${encodeURIComponent(nas)}` : ''}`);
   return storefront;
+}
+
+function renderStorefrontSiteContext() {
+  const list = byId('list_paket');
+  if (!list) return;
+  let panel = byId('voucher_site_context');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'voucher_site_context';
+    list.before(panel);
+  }
+  const context = storefront?.nasContext;
+  const sites = Array.isArray(storefront?.sites) ? storefront.sites : [];
+  if (context) {
+    panel.className = 'voucher-site-context is-selected';
+    panel.innerHTML = `<span>Site Hotspot</span><strong>${escapeHtml(context.name || context.id || '-')}</strong>`;
+    panel.hidden = false;
+    return;
+  }
+  if (!sites.length) {
+    panel.hidden = true;
+    panel.innerHTML = '';
+    return;
+  }
+  panel.className = 'voucher-site-context';
+  panel.innerHTML = `
+    <label for="voucher_site_select">Pilih site hotspot</label>
+    <select id="voucher_site_select" class="form-control">
+      <option value="">Pilih site</option>
+      ${sites.map((site) => `<option value="${escapeHtml(site.id || '')}">${escapeHtml(site.name || site.id || '-')}</option>`).join('')}
+    </select>
+  `;
+  panel.hidden = false;
+  byId('voucher_site_select')?.addEventListener('change', (event) => {
+    const nas = event.target.value || '';
+    if (nas) window.location.href = pageUrl(ORDER_PAGE, { nas });
+  });
 }
 
 function packageInfo(item = {}) {
@@ -144,9 +189,20 @@ function renderOrderPackages() {
   const list = byId('list_paket');
   if (!list) return;
   const packages = storefront?.packages || [];
+  renderStorefrontSiteContext();
   if (!storefront?.enabled) {
     list.innerHTML = '';
     setResponse('Channel voucher online belum aktif.', 'warning');
+    return;
+  }
+  if (storefront?.nasRequired) {
+    list.innerHTML = '';
+    setResponse(
+      storefront.invalidNas
+        ? 'Site hotspot pada tautan tidak dikenali. Pilih site yang tersedia.'
+        : 'Pilih site hotspot untuk melihat paket voucher yang tersedia.',
+      'warning'
+    );
     return;
   }
   if (!packages.length) {
@@ -267,67 +323,119 @@ function setField(id, value = '') {
   if (el) el.textContent = value || '-';
 }
 
-function renderPaymentInfo(order = {}) {
-  show('info_pembayaran', order.status !== 'paid');
-  setField('os_metode_pembayaran', order.paymentMethod || 'QRIS');
+function voucherOrderIsPayable(order = {}) {
+  return String(order.status || '').toLowerCase() === 'pending';
+}
+
+function renderVoucherCheckout(order = {}, checkout = {}) {
+  const qrBox = byId('os_qris_img');
+  const instruction = byId('os_instruksi_pembayaran');
+  const qrUrl = safeHttpUrl(checkout.qrUrl || '');
+  const checkoutUrl = safeHttpUrl(checkout.checkoutUrl || checkout.paymentUrl || '');
   const baseText = order.amountText || rupiah(order.amount);
   const feeText = order.adminFeeText || rupiah(order.adminFee || 0);
+  const totalText = order.gatewayAmountText || rupiah(order.gatewayAmount || order.totalAmount || order.amount);
+  if (qrBox) {
+    qrBox.innerHTML = qrUrl
+      ? `<div class="qris-box voucher-qris-box">
+          <img class="voucher-qris-code" src="${escapeHtml(qrUrl)}" alt="QRIS ${escapeHtml(order.reference || order.id || '')}">
+          <strong>${escapeHtml(totalText)}</strong>
+          <small>No. Order ${escapeHtml(order.reference || order.id || '-')}</small>
+        </div>`
+      : `<div class="qris-box voucher-qris-box is-fallback">
+          <strong>QRIS</strong>
+          <span>${escapeHtml(totalText)}</span>
+          <small>Buka halaman pembayaran untuk menampilkan QRIS.</small>
+        </div>`;
+  }
+  if (instruction) {
+    instruction.innerHTML = `
+      Biaya: <b>${escapeHtml(baseText)}</b><br>
+      Fee: <b>${escapeHtml(feeText)}</b><br>
+      Total bayar: <b>${escapeHtml(totalText)}</b><br>
+      Scan QRIS di atas. Voucher dibuat otomatis setelah pembayaran berhasil.
+      ${checkoutUrl ? `<br><br><a class="w-12 btn-md bg-success" href="${escapeHtml(checkoutUrl)}">Buka Pembayaran</a>` : ''}
+    `;
+  }
+}
+
+function renderVoucherCheckoutError(order = {}, message = '') {
+  const qrBox = byId('os_qris_img');
+  const instruction = byId('os_instruksi_pembayaran');
+  if (qrBox) {
+    qrBox.innerHTML = `<div class="qris-box voucher-qris-box is-error"><strong>QRIS belum tersedia</strong><small>${escapeHtml(message || 'Checkout gagal disiapkan')}</small></div>`;
+  }
+  if (instruction) {
+    instruction.innerHTML = '<button class="w-12 btn-md bg-success" type="button" id="os_retry_checkout">Coba Lagi</button>';
+    byId('os_retry_checkout')?.addEventListener('click', () => ensureVoucherCheckout(order, true));
+  }
+}
+
+async function voucherCheckout(order = {}, force = false) {
+  const reference = order.reference || order.id || '';
+  if (!reference) throw new Error('Nomor order tidak tersedia');
+  if (force) {
+    voucherCheckoutCache.delete(reference);
+    voucherCheckoutRequests.delete(reference);
+    voucherCheckoutFailures.delete(reference);
+  }
+  if (voucherCheckoutCache.has(reference)) return voucherCheckoutCache.get(reference);
+  if (voucherCheckoutRequests.has(reference)) return voucherCheckoutRequests.get(reference);
+  const request = api(`/api/public/hotspot-voucher-orders/${encodeURIComponent(reference)}/checkout`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  }).then((payload) => {
+    if (payload.paid) return { paid: true };
+    const checkout = payload.checkout || {};
+    if (!(checkout.qrUrl || checkout.qrString || checkout.checkoutUrl || checkout.paymentUrl)) {
+      throw new Error('Payment Gateway belum mengembalikan QRIS');
+    }
+    voucherCheckoutCache.set(reference, checkout);
+    voucherCheckoutFailures.delete(reference);
+    return checkout;
+  }).finally(() => voucherCheckoutRequests.delete(reference));
+  voucherCheckoutRequests.set(reference, request);
+  return request;
+}
+
+async function ensureVoucherCheckout(order = {}, force = false) {
+  if (!voucherOrderIsPayable(order)) return;
+  try {
+    const checkout = await voucherCheckout(order, force);
+    if (checkout.paid) {
+      await loadOrderStatus(order.reference || order.id || '', true);
+      return;
+    }
+    renderVoucherCheckout(order, checkout);
+  } catch (error) {
+    voucherCheckoutFailures.set(order.reference || order.id || '', error.message || 'Checkout QRIS gagal disiapkan');
+    renderVoucherCheckoutError(order, error.message);
+  }
+}
+
+function renderPaymentInfo(order = {}) {
+  const payable = voucherOrderIsPayable(order);
+  show('info_pembayaran', payable);
+  if (!payable) return;
+  setField('os_metode_pembayaran', order.paymentMethod || 'QRIS');
   const totalText = order.gatewayAmountText || rupiah(order.gatewayAmount || order.totalAmount || order.amount);
   const qrBox = byId('os_qris_img');
   if (qrBox) {
     qrBox.innerHTML = `
-      <div class="qris-box">
-        <strong>QRIS</strong>
+      <div class="qris-box voucher-qris-box is-loading">
+        <strong>Menyiapkan QRIS</strong>
         <span>${escapeHtml(totalText)}</span>
         <small>No. Order ${escapeHtml(order.reference || order.id || '-')}</small>
       </div>
     `;
   }
   const instruction = byId('os_instruksi_pembayaran');
-  if (instruction) {
-    instruction.innerHTML = `
-      Biaya: <b>${escapeHtml(baseText)}</b><br>
-      Adm. Fee: <b>${escapeHtml(feeText)}</b><br>
-      Total bayar: <b>${escapeHtml(totalText)}</b><br>
-      Gunakan No. Order <b>${escapeHtml(order.reference || order.id || '-')}</b> sebagai acuan pembayaran.
-      Voucher akan tampil otomatis setelah status pembayaran berhasil.
-      <br><br>
-      <button class="w-12 btn-md bg-success" type="button" id="os_pay_gateway">Bayar via Payment Gateway</button>
-    `;
-    byId('os_pay_gateway')?.addEventListener('click', () => checkoutVoucher(order));
-  }
-}
-
-async function checkoutVoucher(order = {}) {
-  const reference = order.reference || order.id || '';
-  if (!reference) return;
-  const button = byId('os_pay_gateway');
-  try {
-    if (button) {
-      button.disabled = true;
-      button.textContent = 'Memuat gateway...';
-    }
-    const payload = await api(`/api/public/hotspot-voucher-orders/${encodeURIComponent(reference)}/checkout`, {
-      method: 'POST',
-      body: JSON.stringify({})
-    });
-    if (payload.paid) {
-      setResponse('Voucher sudah paid.');
-      await loadOrderStatus(reference, true);
-      return;
-    }
-    const checkout = payload.checkout || {};
-    const url = checkout.checkoutUrl || checkout.paymentUrl || '';
-    if (!url) throw new Error('Payment Gateway belum mengembalikan checkout URL');
-    window.location.href = url;
-  } catch (error) {
-    setResponse(error.message, 'error');
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = 'Bayar via Payment Gateway';
-    }
-  }
+  if (instruction) instruction.textContent = 'QRIS sedang disiapkan...';
+  const cached = voucherCheckoutCache.get(order.reference || order.id || '');
+  const failure = voucherCheckoutFailures.get(order.reference || order.id || '');
+  if (cached) renderVoucherCheckout(order, cached);
+  else if (failure) renderVoucherCheckoutError(order, failure);
+  else ensureVoucherCheckout(order);
 }
 
 function renderVoucherInfo(order = {}) {
@@ -381,7 +489,7 @@ async function loadOrderStatus(orderNo, silent = false) {
     const result = await api(`/api/public/hotspot-voucher-orders/${encodeURIComponent(orderNo)}`);
     setResponse('');
     renderOrderStatus(result.order);
-    if (String(result.order?.status || '').toLowerCase() !== 'paid') {
+    if (voucherOrderIsPayable(result.order)) {
       pollTimer = window.setTimeout(() => loadOrderStatus(orderNo, true), 5000);
     }
   } catch (error) {

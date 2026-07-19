@@ -232,6 +232,15 @@ Alur voucher online:
 6. Voucher dapat dikirim melalui Whatsapp Gateway jika notifikasi voucher diaktifkan.
 7. Transaksi voucher paid masuk ke laporan voucher harian/bulanan dan pendapatan reseller sesuai role pembuat voucher.
 
+Pada instalasi multi-site, tautan beli voucher di setiap captive portal wajib membawa NAS tujuan agar paket dan voucher tidak bercampur antar-site. Nilainya dapat memakai ID, nama, atau alamat NAS yang terdaftar, misalnya:
+
+```text
+http://IP-SERVER:8893/voucher?nas=FAKE.NET
+http://IP-SERVER:8893/voucher?nas=KAMPUNG.NET
+```
+
+Portal mengunci paket dan order ke NAS tersebut. Jika parameter `nas` tidak ada, portal tidak menampilkan paket global dan meminta pelanggan memilih site sebagai fallback.
+
 Voucher batch untuk operasional loket/reseller dapat dicetak langsung dari aplikasi. Format print dibuat ringkas agar satu kertas A4 dapat memuat banyak voucher, lengkap dengan nama usaha, paket, harga, tanggal, jam, QR code, dan link login Hotspot.
 
 Untuk role reseller voucher, data dibuat terpisah berdasarkan pembuat voucher dan NAS yang dikunci pada user tersebut. Reseller hanya melihat, mencetak, dan mengelola voucher yang dibuat olehnya sendiri, sehingga stok voucher, transaksi, dan pendapatan reseller tidak tercampur dengan reseller lain. Admin dan role yang diberi kewenangan lebih tinggi tetap dapat melakukan audit sesuai kebutuhan operasional.

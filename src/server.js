@@ -5827,7 +5827,15 @@ function sanitizeHotspotVoucherOnlineSettings(payload = {}, current = {}, data =
     const incoming = incomingPackages[profileId] && typeof incomingPackages[profileId] === 'object' ? incomingPackages[profileId] : null;
     const previous = currentPackages[profileId] && typeof currentPackages[profileId] === 'object' ? currentPackages[profileId] : {};
     const source = incoming || previous;
-    const packageNas = radiusFindNas(data, source.nasId || previous.nasId || '');
+    let packageNas = radiusFindNas(data, source.nasId || previous.nasId || '');
+    if (source.enabled === true && !packageNas) {
+      const activeNas = radiusNasRowsLocal(data).filter((nas) => nas.status === 'active');
+      if (activeNas.length === 1) {
+        packageNas = radiusFindNas(data, activeNas[0].id);
+      } else {
+        throw new Error(`Pilih NAS penjualan untuk paket ${profile.name || profileId}`);
+      }
+    }
     next.packages[profileId] = {
       enabled: incoming ? source.enabled === true : previous.enabled === true,
       label: String(source.label || profile.name || '').trim().slice(0, 80),
@@ -5938,13 +5946,40 @@ function enabledHotspotVoucherPackages(data = {}) {
     .sort((a, b) => Number(a.online.sort || 0) - Number(b.online.sort || 0) || String(a.name || '').localeCompare(String(b.name || '')));
 }
 
+function hotspotVoucherSalesSites(data = {}, profiles = enabledHotspotVoucherPackages(data)) {
+  const packageCountByNas = new Map();
+  for (const profile of profiles) {
+    const nas = radiusFindNas(data, profile.online?.nasId || '');
+    if (!nas || nas.active === false) continue;
+    packageCountByNas.set(nas.id, (packageCountByNas.get(nas.id) || 0) + 1);
+  }
+  return radiusNasRowsLocal(data)
+    .filter((nas) => nas.status === 'active' && packageCountByNas.has(nas.id))
+    .map((nas) => ({
+      id: nas.id,
+      name: nas.name || nas.id,
+      packageCount: packageCountByNas.get(nas.id) || 0
+    }))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+
 function publicHotspotVoucherStorefrontPayload(data = {}, options = {}) {
   const settings = data.settings?.hotspotVoucherOnline || {};
   const paymentSettings = data.settings?.paymentGateway || {};
   const waSettings = data.settings?.waGateway || {};
-  const requestedNas = radiusFindNas(data, options.nas || options.nasId || '');
-  const packages = enabledHotspotVoucherPackages(data)
-    .filter((profile) => !requestedNas || !profile.online.nasId || profile.online.nasId === requestedNas.id)
+  const enabledPackages = enabledHotspotVoucherPackages(data);
+  const sites = hotspotVoucherSalesSites(data, enabledPackages);
+  const activeNas = radiusNasRowsLocal(data).filter((nas) => nas.status === 'active');
+  const requestedNasValue = String(options.nas || options.nasId || '').trim();
+  const requestedNasCandidate = radiusFindNas(data, requestedNasValue);
+  const requestedNas = requestedNasCandidate?.active === false ? null : requestedNasCandidate;
+  const selectedNas = requestedNas || (
+    !requestedNasValue && activeNas.length === 1 && sites.length === 1
+      ? radiusFindNas(data, sites[0].id)
+      : null
+  );
+  const packages = enabledPackages
+    .filter((profile) => selectedNas && profile.online.nasId === selectedNas.id)
     .map((profile) => ({
     id: profile.id,
     name: profile.name,
@@ -5966,7 +6001,10 @@ function publicHotspotVoucherStorefrontPayload(data = {}, options = {}) {
     logoUrl: data.settings?.logoUrl || '/fakenet-logo.png',
     title: settings.title || 'Beli Voucher Hotspot',
     loginUrl: sanitizePublicUrl(data.settings?.voucherLoginUrl || settings.loginUrl || ''),
-    nasContext: requestedNas ? { id: requestedNas.id, name: requestedNas.name || requestedNas.id } : null,
+    nasContext: selectedNas ? { id: selectedNas.id, name: selectedNas.name || selectedNas.id } : null,
+    nasRequired: !selectedNas,
+    invalidNas: Boolean(requestedNasValue && !requestedNas),
+    sites,
     publicPath: settings.publicPath || '/voucher',
     paymentMethod: 'QRIS',
     paymentMethods: [{ id: 'qris', label: 'QRIS' }],
@@ -6109,7 +6147,20 @@ function createHotspotVoucherOrder(data = {}, payload = {}) {
   if (price <= 0) throw new Error('Harga profile Hotspot belum diisi');
   const baseAmount = price * quantity;
   const gatewayBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, baseAmount, 'voucher');
-  const nas = radiusFindNas(data, online.nasId || payload.nasId || settings.defaultNas || '');
+  const activeNas = radiusNasRowsLocal(data).filter((nas) => nas.status === 'active');
+  const requestedNasValue = String(payload.nasId || payload.nas || '').trim();
+  const requestedNasCandidate = radiusFindNas(data, requestedNasValue);
+  const requestedNas = requestedNasCandidate?.active === false ? null : requestedNasCandidate;
+  const packageNas = radiusFindNas(data, online.nasId || '');
+  if (requestedNasValue && !requestedNas) throw new Error('Site/NAS voucher tidak valid');
+  if (!packageNas || packageNas.active === false) throw new Error('Paket voucher belum ditautkan ke NAS penjualan aktif');
+  if (requestedNas && requestedNas.id !== packageNas.id) {
+    throw new Error('Paket voucher tidak tersedia pada site yang dipilih');
+  }
+  if (!requestedNas && activeNas.length > 1) {
+    throw new Error('Pilih site hotspot sebelum membuat order voucher');
+  }
+  const nas = requestedNas || packageNas;
   const now = new Date().toISOString();
   const reference = nextHotspotVoucherOrderReference(data);
   const paymentSettings = data.settings?.paymentGateway || {};
@@ -10190,7 +10241,14 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/public/hotspot-voucher-online') {
     const data = await requestStore(req);
     sendJson(res, 200, publicHotspotVoucherStorefrontPayload(data, {
-      nas: String(url.searchParams.get('nas') || '').trim()
+      nas: String(
+        url.searchParams.get('nas')
+          || url.searchParams.get('nasId')
+          || url.searchParams.get('site')
+          || url.searchParams.get('siteId')
+          || url.searchParams.get('router')
+          || ''
+      ).trim()
     }));
     return;
   }
@@ -10272,6 +10330,8 @@ async function handleApi(req, res, url) {
         whatsapp: order.whatsapp,
         packageLabel: order.packageLabel,
         profileName: order.profileName,
+        nasId: order.nasId || '',
+        nasName: order.nasName || '',
         quantity: order.quantity,
         unitPrice: order.unitPrice,
         amount: order.amount,
@@ -10303,6 +10363,10 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, { ok: true, paid: true, order });
       return;
     }
+    if (String(order.status || '').toLowerCase() !== 'pending') {
+      sendJson(res, 400, { ok: false, error: 'Order voucher sudah tidak dapat dibayar' });
+      return;
+    }
     try {
       const checkout = await createOrReusePaymentGatewayCheckout(data, {
         kind: 'hotspot-voucher',
@@ -10312,7 +10376,10 @@ async function handleApi(req, res, url) {
         customerName: order.buyerName || 'Pembeli Voucher',
         customerPhone: order.whatsapp || '',
         itemName: `Voucher Hotspot ${order.packageLabel || order.profileName || ''}`.trim(),
-        returnUrl: paymentGatewayReturnUrl(data, `/status-order.html?id=${encodeURIComponent(order.reference || order.id || '')}`)
+        returnUrl: paymentGatewayReturnUrl(
+          data,
+          `/status-order.html?id=${encodeURIComponent(order.reference || order.id || '')}&nas=${encodeURIComponent(order.nasId || '')}`
+        )
       });
       sendJson(res, 200, {
         ok: true,

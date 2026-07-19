@@ -211,6 +211,36 @@ button.btn {
   color: var(--warning);
 }
 
+.voucher-site-context {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f5f9fd;
+  padding: 10px;
+}
+
+.voucher-site-context label,
+.voucher-site-context span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.voucher-site-context.is-selected {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.voucher-site-context.is-selected strong {
+  border-radius: 999px;
+  background: #dff4ff;
+  color: var(--blue-dark);
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
 .voucher-product-card {
   display: grid;
   gap: 6px;
@@ -304,6 +334,38 @@ hr {
 
 .qris-box small {
   color: var(--muted);
+}
+
+.voucher-qris-code {
+  display: block;
+  width: min(240px, 100%);
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.voucher-qris-box > strong:not(:first-child) {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.voucher-qris-box.is-loading,
+.voucher-qris-box.is-error {
+  min-height: 132px;
+}
+
+.voucher-qris-box.is-loading strong,
+.voucher-qris-box.is-error strong {
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+.voucher-qris-box.is-error {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
 }
 
 .voucher-line {

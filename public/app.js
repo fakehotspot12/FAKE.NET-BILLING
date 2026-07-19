@@ -6946,7 +6946,7 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
         <label class="voucher-online-package-field package-nas-field">
           <span>NAS Penjualan</span>
           <select class="control compact-input" name="pkgNas_${escapeHtml(profileId)}" ${writeAllowed ? '' : 'disabled'}>
-            ${radiusOptionTags(nasOptions, online.nasId || '', 'Semua NAS')}
+            ${radiusOptionTags(nasOptions, online.nasId || '', 'Pilih NAS')}
           </select>
         </label>
         <label class="voucher-online-package-field package-number-field">
