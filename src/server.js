@@ -1810,6 +1810,17 @@ function radiusFindNas(data = {}, value = '') {
   }) || null;
 }
 
+function radiusUserNas(data = {}, user = {}, profile = {}, session = null) {
+  const packages = data.settings?.hotspotVoucherOnline?.packages;
+  const onlinePackage = packages && typeof packages === 'object' && profile.id
+    ? packages[profile.id]
+    : null;
+  return radiusFindNas(data, user.nasId || '')
+    || radiusFindNas(data, onlinePackage?.nasId || '')
+    || radiusFindNas(data, session?.nasIpAddress || '')
+    || null;
+}
+
 function radiusProfileRowsLocal(data = {}, serviceType = 'pppoe') {
   return (data.radiusProfiles || [])
     .filter((profile) => profile.serviceType === serviceType)
@@ -1965,15 +1976,14 @@ function radiusNasRowsLocal(data = {}) {
 
 function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsername = new Map()) {
   const profiles = radiusProfileDirectory(data);
-  const nasMap = radiusNasDirectory(data);
   const customers = radiusCustomerDirectory(data);
   return (data.radiusUsers || [])
     .filter((user) => user.serviceType === serviceType)
     .map((user) => {
       const profile = profiles.get(user.profileId) || {};
-      const nas = nasMap.get(user.nasId) || {};
-      const customer = customers.get(user.customerId) || {};
       const session = sessionsByUsername.get(radiusSessionUsername(user.username)) || null;
+      const nas = radiusUserNas(data, user, profile, session) || {};
+      const customer = customers.get(user.customerId) || {};
       return {
         id: user.id,
         username: user.username,
@@ -15221,6 +15231,7 @@ module.exports = {
     publicPaymentGatewayInvoicePayload,
     publicMonitoringTarget,
     radiusProfileRowsLocal,
+    radiusUserRowsLocal,
     radiusNasAddressKey,
     reportStatisticsPayload,
     radiusMemberFromPayload,

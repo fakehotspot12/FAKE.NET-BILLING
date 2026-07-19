@@ -74,6 +74,33 @@ test('NAS address matching ignores PostgreSQL inet host masks', () => {
   assert.equal(serverInternals.radiusNasAddressKey('172.16.125.254/32'), '172.16.125.254');
   assert.equal(serverInternals.radiusNasAddressKey('2001:DB8::1/128'), '2001:db8::1');
 });
+
+test('Hotspot user NAS falls back to package assignment and active session address', () => {
+  const data = createDefaultStore();
+  data.monitoringTargets.push(
+    { id: 'site-a', name: 'SITE-A', host: '10.0.0.1', radius: { enabled: true, name: 'SITE-A', address: '10.0.0.1' } },
+    { id: 'site-b', name: 'SITE-B', host: '10.0.0.2', radius: { enabled: true, name: 'SITE-B', address: '10.0.0.2' } }
+  );
+  data.radiusProfiles.push(
+    { id: 'profile-a', name: 'Voucher A', serviceType: 'hotspot' },
+    { id: 'profile-b', name: 'Voucher B', serviceType: 'hotspot' }
+  );
+  data.settings.hotspotVoucherOnline.packages = {
+    'profile-a': { enabled: true, nasId: 'site-a' }
+  };
+  data.radiusUsers.push(
+    { id: 'user-a', username: 'voucher-a', password: 'voucher-a', serviceType: 'hotspot', profileId: 'profile-a', nasId: '' },
+    { id: 'user-b', username: 'voucher-b', password: 'voucher-b', serviceType: 'hotspot', profileId: 'profile-b', nasId: '' }
+  );
+  const sessions = new Map([
+    ['voucher-b', { username: 'voucher-b', nasIpAddress: '10.0.0.2/32', framedIpAddress: '192.0.2.2' }]
+  ]);
+
+  const rows = serverInternals.radiusUserRowsLocal(data, 'hotspot', sessions);
+  assert.equal(rows.find((row) => row.id === 'user-a').nas, 'SITE-A');
+  assert.equal(rows.find((row) => row.id === 'user-b').nas, 'SITE-B');
+  assert.equal(rows.find((row) => row.id === 'user-b').nasId, 'site-b');
+});
 const {
   createUser,
   deleteUser,

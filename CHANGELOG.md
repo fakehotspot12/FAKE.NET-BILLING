@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.6.2] - 2026-07-19
+
+### Fixed
+
+- Kolom NAS pada Radius > Hotspot User memakai fallback penugasan NAS paket voucher dan NAS-IP-Address session aktif ketika data user lama belum memiliki `nasId`.
+- Nama NAS pada tab User dan Session kembali konsisten tanpa mengubah data voucher atau session FreeRADIUS.
+
 ## [1.6.1] - 2026-07-19
 
 ### Added
