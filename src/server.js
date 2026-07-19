@@ -9448,30 +9448,89 @@ function firstTripayQrisChannel(channels = []) {
   return (Array.isArray(channels) ? channels : []).find(isTripayQrisChannel) || null;
 }
 
+const TRIPAY_CHANNEL_CACHE_TTL_MS = 120_000;
+const TRIPAY_CHANNEL_STALE_TTL_MS = 3_600_000;
+let tripayChannelCache = {
+  key: '',
+  rows: [],
+  fetchedAt: 0,
+  promise: null
+};
+
+async function tripayPaymentChannelRows(settings = {}, apiKey = '') {
+  const key = crypto.createHash('sha256')
+    .update(`${tripayApiBase(settings)}|${apiKey}`)
+    .digest('hex');
+  const now = Date.now();
+  if (tripayChannelCache.key === key
+    && tripayChannelCache.rows.length
+    && now - tripayChannelCache.fetchedAt < TRIPAY_CHANNEL_CACHE_TTL_MS) {
+    return tripayChannelCache.rows;
+  }
+  if (tripayChannelCache.key === key && tripayChannelCache.promise) {
+    return tripayChannelCache.promise;
+  }
+
+  const request = (async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(`${tripayApiBase(settings)}/merchant/payment-channel`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/json'
+        },
+        signal: controller.signal
+      });
+      const bodyText = await response.text();
+      let body = {};
+      try {
+        body = bodyText ? JSON.parse(bodyText) : {};
+      } catch {
+        body = { message: bodyText };
+      }
+      if (!response.ok || body.success === false) {
+        throw new Error(body.message || body.error || `Tripay channel HTTP ${response.status}`);
+      }
+      const rows = Array.isArray(body.data) ? body.data : [];
+      tripayChannelCache = { key, rows, fetchedAt: Date.now(), promise: null };
+      return rows;
+    } catch (error) {
+      if (tripayChannelCache.key === key
+        && tripayChannelCache.rows.length
+        && now - tripayChannelCache.fetchedAt < TRIPAY_CHANNEL_STALE_TTL_MS) {
+        return tripayChannelCache.rows;
+      }
+      if (error.name === 'AbortError') throw new Error('Tripay channel timeout');
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  })();
+  const sameKey = tripayChannelCache.key === key;
+  tripayChannelCache = {
+    key,
+    rows: sameKey ? tripayChannelCache.rows : [],
+    fetchedAt: sameKey ? tripayChannelCache.fetchedAt : 0,
+    promise: request
+  };
+  try {
+    return await request;
+  } finally {
+    if (tripayChannelCache.key === key && tripayChannelCache.promise === request) {
+      tripayChannelCache.promise = null;
+    }
+  }
+}
+
 async function tripayPaymentChannels(data = {}, options = {}) {
   const settings = data.settings?.paymentGateway || {};
   const tripay = settings.tripay || {};
   const apiKey = String(tripay.apiKey || '').trim();
   if (!apiKey) throw new Error('API Key Tripay belum lengkap');
   const amount = Math.max(0, Math.round(Number(options.amount || 0) || 0));
-  const response = await fetch(`${tripayApiBase(settings)}/merchant/payment-channel`, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'application/json'
-    }
-  });
-  const bodyText = await response.text();
-  let body = {};
-  try {
-    body = bodyText ? JSON.parse(bodyText) : {};
-  } catch {
-    body = { message: bodyText };
-  }
-  if (!response.ok || body.success === false) {
-    throw new Error(body.message || body.error || `Tripay channel HTTP ${response.status}`);
-  }
-  const rows = Array.isArray(body.data) ? body.data : [];
+  const rows = await tripayPaymentChannelRows(settings, apiKey);
   return rows
     .map((channel) => tripayChannelPayload(channel, amount, options))
     .filter((channel) => channel.code && channel.active && channel.available);
@@ -10433,13 +10492,32 @@ async function handleApi(req, res, url) {
       sendJson(res, 404, { ok: false, error: 'Invoice tidak ditemukan' });
       return;
     }
+    const publicInvoice = publicPaymentGatewayInvoicePayload(data, invoice);
+    let channels = [];
+    let channelError = '';
+    if (data.settings?.paymentGateway?.enabled === true
+      && publicInvoice.canPay !== false
+      && ['pending', 'overdue', 'unpaid'].includes(publicInvoice.status)) {
+      try {
+        channels = await paymentGatewayChannels(data, {
+          kind: 'monthly-package',
+          amount: publicInvoice.gatewayAmount,
+          baseAmount: publicInvoice.amount,
+          adminFee: publicInvoice.adminFee
+        });
+      } catch (error) {
+        channelError = error.message || 'Channel payment gateway gagal dibaca';
+      }
+    }
     sendJson(res, 200, {
       ok: true,
       businessName: data.settings?.businessName || data.settings?.receiptBusinessCode || 'ISP Billing',
       appSubtitle: data.settings?.appSubtitle || 'ISP Billing',
       logoUrl: data.settings?.logoUrl || '/fakenet-logo.png',
       paymentGatewayEnabled: data.settings?.paymentGateway?.enabled === true,
-      invoice: publicPaymentGatewayInvoicePayload(data, invoice)
+      invoice: publicInvoice,
+      channels,
+      channelError
     });
     return;
   }

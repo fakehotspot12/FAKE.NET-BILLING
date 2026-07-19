@@ -112,16 +112,36 @@
     updateMethodHelp(message);
   }
 
-  async function api(path, options) {
-    const response = await fetch(path, {
-      headers: { 'Content-Type': 'application/json' },
-      ...options
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload.ok === false) {
-      throw new Error(payload.error || `HTTP ${response.status}`);
+  async function api(path, options = {}) {
+    const { retries = String(options.method || 'GET').toUpperCase() === 'GET' ? 2 : 0, timeoutMs = 15000, ...fetchOptions } = options;
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(path, {
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          ...fetchOptions,
+          signal: controller.signal
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          const error = new Error(payload.error || `HTTP ${response.status}`);
+          error.status = response.status;
+          throw error;
+        }
+        return payload;
+      } catch (error) {
+        lastError = error.name === 'AbortError' ? new Error('Koneksi pembayaran timeout') : error;
+        const retryable = !error.status || error.status >= 500;
+        if (!retryable || attempt >= retries) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+      } finally {
+        window.clearTimeout(timer);
+      }
     }
-    return payload;
+    throw lastError || new Error('Request pembayaran gagal');
   }
 
   function render(payload) {
@@ -148,7 +168,12 @@
       button.disabled = paid || payload.paymentGatewayEnabled === false;
       button.textContent = paid ? 'Invoice Sudah Dibayar' : 'Bayar Sekarang';
     }
-    renderChannels([], paid ? '' : 'Memuat channel pembayaran...');
+    if (paid) renderChannels([]);
+    else if (Array.isArray(payload.channels) && payload.channels.length) {
+      renderChannels(payload.channels, payload.channelError || '');
+    } else {
+      renderChannels([], payload.channelError || 'Memuat channel pembayaran...');
+    }
     if (paid) notice('Pembayaran invoice ini sudah tercatat lunas.');
     else if (payload.paymentGatewayEnabled === false) notice('Payment Gateway belum aktif. Hubungi admin.', 'error');
     else notice('');
@@ -175,7 +200,9 @@
     }
     const payload = await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(invoiceRef)}`);
     render(payload);
-    await loadChannels();
+    if (!Array.isArray(payload.channels) || !payload.channels.length) {
+      await loadChannels();
+    }
   }
 
   async function checkout() {

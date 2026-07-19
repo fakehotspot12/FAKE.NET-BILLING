@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.5] - 2026-07-19
+
+### Fixed
+
+- Halaman pembayaran bulanan menerima detail invoice dan metode pembayaran dalam satu respons agar tetap tampil pada koneksi site berlatensi tinggi.
+- Request baca invoice dan channel memiliki timeout serta retry terukur tanpa mengulang request pembuatan checkout.
+- Daftar channel Tripay memakai cache server singkat dan fallback cache terakhir ketika koneksi provider mengalami gangguan sementara.
+
 ## [1.5.4] - 2026-07-19
 
 ### Fixed
