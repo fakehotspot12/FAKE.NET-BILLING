@@ -7001,10 +7001,6 @@ function radiusHotspotVoucherOnlinePanel(payload = {}, writeAllowed = false) {
             <input name="title" value="${escapeHtml(settings.title || 'Beli Voucher Hotspot')}" ${writeAllowed ? '' : 'disabled'}>
           </label>
           <label class="field">
-            <span>Link Publik</span>
-            <input name="publicPath" value="${escapeHtml(settings.publicPath || '/voucher')}" ${writeAllowed ? '' : 'disabled'}>
-          </label>
-          <label class="field">
             <span>NAS Default</span>
             <select name="defaultNas" ${writeAllowed ? '' : 'disabled'}>${radiusOptionTags(nasOptions, settings.defaultNas || '', 'Auto')}</select>
           </label>
@@ -8915,7 +8911,6 @@ async function renderRadiusHotspot(options = {}) {
       body: JSON.stringify({
         enabled: raw.enabled === true,
         title: raw.title || '',
-        publicPath: raw.publicPath || '',
         defaultNas: raw.defaultNas || '',
         autoGenerateOnPaid: raw.autoGenerateOnPaid === true,
         codeLength: raw.codeLength || 6,

@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.6.3] - 2026-07-19
+
+### Changed
+
+- Field global Link Publik di pengaturan Voucher Online dihapus agar tujuan login voucher hanya mengikuti URL Login Hotspot pada Site/NAS terkait.
+- Penyimpanan pengaturan Voucher Online tidak lagi mengirim nilai link global dari browser.
+
 ## [1.6.2] - 2026-07-19
 
 ### Fixed
