@@ -7,6 +7,21 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.6.1] - 2026-07-19
+
+### Added
+
+- Scanner kamera HTTPS tersedia langsung pada domain portal voucher dan tidak memakai pemilih file.
+- Scanner menampilkan petunjuk membuka Chrome/Safari ketika mini-browser captive portal Android/iPhone membatasi izin kamera.
+- Contoh login Hotspot netral, panduan izin kamera, dan script walled garden idempoten tersedia pada folder `deploy/hotspot-login`.
+
+### Fixed
+
+- Tombol Masuk dan ikon QR pada login Hotspot dibuat ringkas, sejajar, dan memakai satu ikon QR berukuran 16 piksel.
+- QR voucher baru, URL QR lama, pasangan username/password, dan kode voucher dengan username sama dengan password dapat dipindai.
+- QR yang tidak dikenali sekarang menampilkan keterangan, bukan berhenti tanpa respons.
+- Hasil scan dari browser utama kembali ke URL login Site dan menjalankan autentikasi Hotspot otomatis.
+
 ## [1.6.0] - 2026-07-19
 
 ### Added

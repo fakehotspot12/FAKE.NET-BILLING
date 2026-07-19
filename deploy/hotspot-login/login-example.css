@@ -1,0 +1,95 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, sans-serif;
+  background: #eef2f6;
+  color: #172033;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  padding: 20px;
+  display: grid;
+  place-items: center;
+}
+
+.login-card {
+  width: min(100%, 380px);
+  padding: 22px;
+  border: 1px solid #d8e0e9;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(23, 32, 51, .12);
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+p {
+  margin: 0 0 18px;
+  color: #5b677a;
+  font-size: 14px;
+}
+
+label {
+  display: block;
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+input[type='text'],
+input[type='password'] {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid #bdc8d5;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.login-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.login-submit,
+.qr-login-button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: #0081c2;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.qr-login-button {
+  width: 36px;
+  padding: 9px;
+  display: grid;
+  place-items: center;
+}
+
+.qr-login-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.login-error {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 13px;
+}

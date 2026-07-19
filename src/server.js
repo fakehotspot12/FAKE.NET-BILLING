@@ -15040,6 +15040,10 @@ async function serveStatic(req, res, url) {
           'hotspot-voucher.html',
           'hotspot-voucher.css',
           'hotspot-voucher.js',
+          'scan-voucher.html',
+          'scan-voucher.css',
+          'scan-voucher.js',
+          'jsQR.js',
           'fakenet-logo.png'
         ]);
         if (allowedVoucherFiles.has(nested)) {

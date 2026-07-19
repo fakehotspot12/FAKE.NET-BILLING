@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hotspot Login</title>
+  <link rel="stylesheet" href="login-example.css">
+</head>
+<body>
+  $(if chap-id)
+  <form name="sendin" action="$(link-login-only)" method="post" hidden>
+    <input type="hidden" name="username">
+    <input type="hidden" name="password">
+    <input type="hidden" name="dst" value="$(link-orig)">
+    <input type="hidden" name="popup" value="true">
+  </form>
+  <script src="/md5.js"></script>
+  <script>
+  function doLogin() {
+    document.sendin.username.value = document.login.username.value;
+    document.sendin.password.value = hexMD5('$(chap-id)' + document.login.password.value + '$(chap-challenge)');
+    document.sendin.submit();
+    return false;
+  }
+  </script>
+  $(endif)
+
+  <main class="login-card">
+    <h1>Hotspot Login</h1>
+    <p>Masukkan kode voucher atau pindai QR voucher.</p>
+    <form name="login" action="$(link-login-only)" method="post" $(if chap-id) onsubmit="return doLogin()" $(endif)>
+      <input type="hidden" name="dst" value="$(link-orig)">
+      <input type="hidden" name="popup" value="true">
+      <label for="username">Kode voucher</label>
+      <input id="username" name="username" type="text" value="$(username)" autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password">
+      <div class="login-actions">
+        <input class="login-submit" type="submit" value="MASUK">
+        <button class="qr-login-button" type="button" onclick="openVoucherScanner()" title="Scan QR voucher" aria-label="Scan QR voucher">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><rect width="5" height="5" x="7" y="7" rx="1"/><rect width="5" height="5" x="12" y="12" rx="1"/></svg>
+        </button>
+      </div>
+    </form>
+    $(if error)<div class="login-error">$(error)</div>$(endif)
+  </main>
+
+  <script>
+  function submitVoucher(username, password) {
+    var loginForm = document.forms.login;
+    if (!loginForm || !username) return;
+    loginForm.username.value = username;
+    loginForm.password.value = password || username;
+    if (typeof window.doLogin === 'function') window.doLogin();
+    else loginForm.submit();
+  }
+
+  function openVoucherScanner() {
+    var base = 'https://voucher.fakehotspot.net/scan-voucher.html';
+    var target = base + '?return_url=' + encodeURIComponent(window.location.href.split('#')[0]);
+    var popup = window.open(target, '_blank');
+    if (!popup) window.location.href = target;
+  }
+
+  (function voucherAutoLogin() {
+    if (!window.location.hash) return;
+    var params = new URLSearchParams(window.location.hash.slice(1));
+    if (params.get('fnb_autologin') !== '1') return;
+    var username = params.get('username') || '';
+    var password = params.get('password') || username;
+    try {
+      window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+    } catch (error) {}
+    window.setTimeout(function () { submitVoucher(username, password); }, 250);
+  }());
+
+  window.addEventListener('message', function (event) {
+    if (event.origin !== 'https://voucher.fakehotspot.net') return;
+    var data = event.data || {};
+    if (data.type !== 'fnb:voucher-login') return;
+    submitVoucher(data.username, data.password);
+  });
+  </script>
+</body>
+</html>

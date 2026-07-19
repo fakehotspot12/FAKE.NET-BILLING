@@ -85,6 +85,10 @@ const SUBWEB_CONFIG = {
       '/hotspot-voucher.html',
       '/hotspot-voucher.css',
       '/hotspot-voucher.js',
+      '/scan-voucher.html',
+      '/scan-voucher.css',
+      '/scan-voucher.js',
+      '/jsQR.js',
       ...COMMON_FILES
     ])
   },
@@ -129,6 +133,10 @@ const ALL_PUBLIC_FILES = new Set([
   '/hotspot-voucher.html',
   '/hotspot-voucher.css',
   '/hotspot-voucher.js',
+  '/scan-voucher.html',
+  '/scan-voucher.css',
+  '/scan-voucher.js',
+  '/jsQR.js',
   '/wifiku.html',
   '/wifiku.css',
   '/wifiku.js',

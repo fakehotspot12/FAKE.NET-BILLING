@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#081b36">
+    <title>Scan QR Voucher</title>
+    <link rel="icon" href="/fakenet-logo.png">
+    <link rel="stylesheet" href="/scan-voucher.css?v=20260719-2">
+  </head>
+  <body>
+    <main class="scanner-page">
+      <header class="scanner-header">
+        <img src="/fakenet-logo.png" alt="Logo">
+        <div>
+          <strong>Scan QR Voucher</strong>
+          <span>Arahkan kamera ke QR voucher</span>
+        </div>
+      </header>
+
+      <section class="camera-stage" aria-label="Kamera pemindai QR">
+        <video id="scannerVideo" muted playsinline></video>
+        <div class="scan-frame" aria-hidden="true"><i></i></div>
+        <div class="camera-shade" id="cameraShade">
+          <span id="scannerStatus">Membuka kamera...</span>
+        </div>
+      </section>
+
+      <section class="camera-help" id="cameraHelp" hidden>
+        <strong>Izin kamera belum tersedia</strong>
+        <p id="cameraHelpText">Buka pemindai di browser utama, lalu izinkan akses kamera saat diminta.</p>
+        <ol>
+          <li>Tekan <b>Buka di Browser</b>.</li>
+          <li>Pilih <b>Izinkan</b> ketika browser meminta akses kamera.</li>
+          <li>Jika pernah ditolak, buka pengaturan situs browser dan aktifkan izin Kamera.</li>
+        </ol>
+      </section>
+
+      <div class="scanner-actions">
+        <a id="openBrowser" class="scanner-button" href="/scan-voucher.html?external=1" target="_blank" rel="noopener" hidden>Buka di Browser</a>
+        <button id="retryScanner" type="button" hidden>Izinkan Kamera</button>
+        <button id="closeScanner" class="secondary" type="button">Kembali</button>
+      </div>
+      <canvas id="scannerCanvas" hidden></canvas>
+    </main>
+    <script src="/jsQR.js?v=1.4.0"></script>
+    <script src="/scan-voucher.js?v=20260719-2" defer></script>
+  </body>
+</html>
