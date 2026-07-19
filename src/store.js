@@ -62,7 +62,6 @@ function createDefaultStore() {
       appSubtitle: 'ISP Billing',
       logoUrl: '/fakenet-logo.png',
       receiptBusinessCode: 'FAKE.NET',
-      voucherLoginUrl: '',
       publicInfo: {
         heroTitle: 'Informasi Layanan & Pembelian',
         heroText: 'Halaman ini berisi ringkasan produk, alur transaksi, syarat ketentuan, dan kontak layanan pelanggan untuk kebutuhan review payment gateway.',

@@ -24,6 +24,20 @@ function cleanText(value) {
   return String(value || '').trim();
 }
 
+function cleanHttpUrl(value = '') {
+  const raw = cleanText(value);
+  if (!raw) return '';
+  try {
+    const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    parsed.username = '';
+    parsed.password = '';
+    return parsed.toString().slice(0, 300);
+  } catch {
+    return '';
+  }
+}
+
 function toNumber(value) {
   const parsed = Number(String(value || '').replace(/[^\d.-]/g, ''));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -372,6 +386,18 @@ function sanitizeSiteRadius(payload = {}, current = {}, target = {}) {
     next.address = next.address || cleanText(target.host || payload.host || payload.ipAddress);
   }
   return next;
+}
+
+function sanitizeSiteHotspot(payload = {}, current = {}) {
+  const source = payload.hotspot && typeof payload.hotspot === 'object' ? payload.hotspot : payload;
+  const hasLoginUrl = Object.prototype.hasOwnProperty.call(source, 'loginUrl')
+    || Object.prototype.hasOwnProperty.call(source, 'hotspotLoginUrl');
+  return {
+    ...current,
+    loginUrl: hasLoginUrl
+      ? cleanHttpUrl(source.hotspotLoginUrl ?? source.loginUrl)
+      : cleanHttpUrl(current.loginUrl || '')
+  };
 }
 
 function serviceSettingsOnly(config = {}) {
@@ -779,6 +805,7 @@ function addMonitoringTarget(data, payload = {}) {
     notes: cleanText(payload.notes),
     mediaServices: sanitizeSiteMediaServices(payload),
     radius: sanitizeSiteRadius(payload, {}, { name, host }),
+    hotspot: sanitizeSiteHotspot(payload),
     createdAt: now,
     updatedAt: now
   };
@@ -809,6 +836,7 @@ function updateMonitoringTarget(data, targetId, payload = {}) {
     notes: cleanText(payload.notes),
     mediaServices: sanitizeSiteMediaServices(payload, monitoringTargetMediaServices(data, target)),
     radius: sanitizeSiteRadius(payload, target.radius || {}, target),
+    hotspot: sanitizeSiteHotspot(payload, target.hotspot || {}),
     updatedAt: nowIso()
   });
   addActivity(data, 'monitoring', `Target monitoring ${target.name} diperbarui`, { targetId: target.id });

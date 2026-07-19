@@ -92,7 +92,8 @@ test('network assets and monitoring summaries are separated from finance data', 
     name: 'Router Core SNMP',
     host: '192.168.1.1',
     community: 'public',
-    location: asset.site
+    location: asset.site,
+    hotspotLoginUrl: 'login.site.test/login'
   });
 
   assert.equal(networkSummary(data.networkAssets).assetCount, 1);
@@ -110,6 +111,7 @@ test('network assets and monitoring summaries are separated from finance data', 
   assert.equal(target.oid, DEFAULT_SNMP_OID);
   assert.equal(target.status, 'unknown');
   assert.deepEqual(target.mediaServices, {});
+  assert.equal(target.hotspot.loginUrl, 'http://login.site.test/login');
 
   const serviceTarget = updateMonitoringTarget(data, target.id, {
     name: target.name,
@@ -119,11 +121,13 @@ test('network assets and monitoring summaries are separated from finance data', 
     tvheadendUsername: 'viewer',
     tvheadendPassword: 'secret',
     embyUrl: 'http://emby.local:8096',
-    embyApiKey: 'token'
+    embyApiKey: 'token',
+    hotspotLoginUrl: 'https://login-new.site.test/login'
   });
   assert.equal(serviceTarget.mediaServices.tvheadendUrl, 'http://tvheadend.local:9981');
   assert.equal(serviceTarget.mediaServices.tvheadendPassword, 'secret');
   assert.equal(serviceTarget.mediaServices.embyApiKey, 'token');
+  assert.equal(serviceTarget.hotspot.loginUrl, 'https://login-new.site.test/login');
 
   updateMonitoringTarget(data, target.id, {
     name: target.name,

@@ -5171,10 +5171,9 @@ test('migrated hotspot sales remain available in voucher reports without radius 
 
 test('online hotspot storefront filters packages by their assigned NAS', () => {
   const data = createDefaultStore();
-  data.settings.voucherLoginUrl = 'http://login.example.net/login';
   data.monitoringTargets.push(
-    { id: 'site-fake', name: 'FAKE.NET', host: '10.0.0.1', radius: { enabled: true, name: 'FAKE.NET', address: '10.0.0.1' } },
-    { id: 'site-kampung', name: 'KAMPUNG.NET', host: '10.0.0.2', radius: { enabled: true, name: 'KAMPUNG.NET', address: '10.0.0.2' } }
+    { id: 'site-fake', name: 'FAKE.NET', host: '10.0.0.1', hotspot: { loginUrl: 'http://login.fake.test/login' }, radius: { enabled: true, name: 'FAKE.NET', address: '10.0.0.1' } },
+    { id: 'site-kampung', name: 'KAMPUNG.NET', host: '10.0.0.2', hotspot: { loginUrl: 'http://login.kampung.test/login' }, radius: { enabled: true, name: 'KAMPUNG.NET', address: '10.0.0.2' } }
   );
   data.radiusProfiles.push(
     { id: 'profile-fake', name: 'V-1Hari', serviceType: 'hotspot', price: 5000, validity: '1d', active: true },
@@ -5194,7 +5193,8 @@ test('online hotspot storefront filters packages by their assigned NAS', () => {
   assert.deepEqual(fake.packages.map((row) => row.id), ['profile-fake']);
   assert.deepEqual(kampung.packages.map((row) => row.id), ['profile-kampung']);
   assert.equal(fake.packages[0].nasId, 'site-fake');
-  assert.equal(fake.loginUrl, 'http://login.example.net/login');
+  assert.equal(fake.loginUrl, 'http://login.fake.test/login');
+  assert.equal(kampung.loginUrl, 'http://login.kampung.test/login');
   assert.equal(withoutSite.nasRequired, true);
   assert.equal(withoutSite.packages.length, 0);
   assert.deepEqual(withoutSite.sites.map((row) => row.name), ['FAKE.NET', 'KAMPUNG.NET']);
@@ -5456,8 +5456,31 @@ test('voucher Whatsapp login URL opens the hotspot login endpoint with voucher c
   });
   const url = new URL(direct);
   assert.equal(url.pathname, '/login');
-  assert.equal(url.searchParams.get('username'), 'voucher-01');
-  assert.equal(url.searchParams.get('password'), 'Rahasia 01');
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  assert.equal(url.search, '');
+  assert.equal(fragment.get('fnb_autologin'), '1');
+  assert.equal(fragment.get('username'), 'voucher-01');
+  assert.equal(fragment.get('password'), 'Rahasia 01');
+});
+
+test('voucher status and direct login resolve from the order site', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.publicBaseUrl = 'https://billing.example.net';
+  data.monitoringTargets.push({
+    id: 'site-kampung',
+    name: 'KAMPUNG.NET',
+    host: '10.0.0.2',
+    hotspot: { loginUrl: 'http://login.kampung.test/login' },
+    radius: { enabled: true, name: 'KAMPUNG.NET', address: '10.0.0.2', secret: 'test-secret' }
+  });
+  const order = { id: 'order-1', reference: 'VO-20260719-001', nasId: 'site-kampung', nasName: 'KAMPUNG.NET' };
+
+  assert.equal(serverInternals.hotspotLoginUrlForNas(data, order.nasId), 'http://login.kampung.test/login');
+  const statusUrl = new URL(serverInternals.hotspotVoucherPublicStatusUrl(data, order));
+  assert.equal(statusUrl.origin, 'https://billing.example.net');
+  assert.equal(statusUrl.pathname, '/status-order.html');
+  assert.equal(statusUrl.searchParams.get('id'), order.reference);
+  assert.equal(statusUrl.searchParams.get('nas'), order.nasId);
 });
 
 test('Tripay history import is idempotent and preserves provider status and fee', () => {

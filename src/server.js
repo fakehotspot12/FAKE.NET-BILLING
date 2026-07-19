@@ -1984,6 +1984,7 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         profileId: profile.id || user.profileId || '',
         nas: nas.name || '',
         nasId: nas.id || user.nasId || '',
+        hotspotLoginUrl: serviceType === 'hotspot' ? hotspotLoginUrlForNas(data, nas.id || user.nasId || nas.name) : '',
         site: nas.site || customer.site || '',
         ipAddress: session?.framedIpAddress || user.staticIp || '',
         sessionIpAddress: session?.framedIpAddress || '',
@@ -5291,12 +5292,47 @@ function hotspotVoucherDirectLoginUrl(baseUrl = '', voucher = {}) {
   try {
     const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
     if (!url.pathname || url.pathname === '/') url.pathname = '/login';
-    url.searchParams.set('username', username);
-    url.searchParams.set('password', password);
+    url.search = '';
+    url.hash = new URLSearchParams({
+      fnb_autologin: '1',
+      username,
+      password
+    }).toString();
     return url.toString();
   } catch {
-    const separator = raw.includes('?') ? '&' : '?';
-    return `${raw}${separator}username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    return raw || '-';
+  }
+}
+
+function hotspotSiteForNas(data = {}, value = '') {
+  const nas = radiusFindNas(data, value) || {};
+  const keys = [value, nas.id, nas.name, nas.address]
+    .map((item) => String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+  return (data.monitoringTargets || []).find((target) => {
+    const radius = target.radius && typeof target.radius === 'object' ? target.radius : {};
+    return [target.id, target.name, target.host, radius.id, radius.name, radius.address]
+      .map((item) => String(item || '').trim().toLowerCase())
+      .some((item) => item && keys.includes(item));
+  }) || null;
+}
+
+function hotspotLoginUrlForNas(data = {}, value = '') {
+  const target = hotspotSiteForNas(data, value);
+  return sanitizePublicUrl(target?.hotspot?.loginUrl || target?.hotspotLoginUrl || '');
+}
+
+function hotspotVoucherPublicStatusUrl(data = {}, order = {}) {
+  const origin = paymentGatewayOrigin(data.settings || {});
+  const reference = String(order.reference || order.id || '').trim();
+  if (!origin || !reference) return '';
+  try {
+    const url = new URL('/status-order.html', origin);
+    url.searchParams.set('id', reference);
+    if (order.nasId || order.nasName) url.searchParams.set('nas', order.nasId || order.nasName);
+    return url.toString();
+  } catch {
+    return '';
   }
 }
 
@@ -5311,13 +5347,14 @@ function hotspotVoucherTemplateValues(data = {}, order = {}, vouchers = [], user
   const fullName = order.buyerName || customer.name || customer.username || first.voucherBuyerName || first.username || 'Pelanggan';
   const validity = profile.validity || (profile.validitySeconds ? `${Math.round(Number(profile.validitySeconds) / 3600)} jam` : '-');
   const validUntil = first.validUntil || user.validUntil || order.validUntil || '';
-  const baseLoginUrl = String(data.settings?.voucherLoginUrl || data.settings?.hotspotVoucherOnline?.loginUrl || '').trim();
+  const baseLoginUrl = hotspotLoginUrlForNas(data, first.nasId || user.nasId || order.nasId || order.nas);
+  const publicStatusUrl = hotspotVoucherPublicStatusUrl(data, order);
   const voucherList = rows.map((voucher, index) => {
     const password = voucher.password || voucher.voucherPassword || voucher.username || '';
     const directLoginUrl = hotspotVoucherDirectLoginUrl(baseLoginUrl, voucher);
     return `${index + 1}. ${voucher.username || ''}${password ? ` / ${password}` : ''}${directLoginUrl && directLoginUrl !== '-' ? `\n   ${directLoginUrl}` : ''}`;
   }).join('\n');
-  const loginUrl = hotspotVoucherDirectLoginUrl(baseLoginUrl, first);
+  const loginUrl = publicStatusUrl || hotspotVoucherDirectLoginUrl(baseLoginUrl, first);
   const amount = Number(order.amount || first.amount || user.amount || profile.price || 0);
   return {
     full_name: fullName,
@@ -6010,7 +6047,7 @@ function publicHotspotVoucherStorefrontPayload(data = {}, options = {}) {
     businessName: data.settings?.businessName || 'FAKE.NET',
     logoUrl: data.settings?.logoUrl || '/fakenet-logo.png',
     title: settings.title || 'Beli Voucher Hotspot',
-    loginUrl: sanitizePublicUrl(data.settings?.voucherLoginUrl || settings.loginUrl || ''),
+    loginUrl: selectedNas ? hotspotLoginUrlForNas(data, selectedNas.id || selectedNas.name) : '',
     nasContext: selectedNas ? { id: selectedNas.id, name: selectedNas.name || selectedNas.id } : null,
     nasRequired: !selectedNas,
     invalidNas: Boolean(requestedNasValue && !requestedNas),
@@ -10414,6 +10451,7 @@ async function handleApi(req, res, url) {
         paymentReference: order.paymentReference || order.reference,
         createdAt: order.createdAt,
         paidAt: order.paidAt || '',
+        hotspotLoginUrl: order.status === 'paid' ? hotspotLoginUrlForNas(data, order.nasId || order.nasName) : '',
         vouchers: order.status === 'paid' ? (order.vouchers || []) : []
       }
     });
@@ -14872,9 +14910,6 @@ async function handleApi(req, res, url) {
       if (typeof payload.receiptBusinessCode === 'string') {
         store.settings.receiptBusinessCode = sanitizeReceiptBusinessCode(payload.receiptBusinessCode, store.settings.receiptBusinessCode || store.settings.billing?.invoiceBusinessCode || 'FAKE.NET');
       }
-      if (typeof payload.voucherLoginUrl === 'string') {
-        store.settings.voucherLoginUrl = sanitizePublicUrl(payload.voucherLoginUrl);
-      }
       if (payload.publicInfo && typeof payload.publicInfo === 'object') {
         store.settings.publicInfo = sanitizePublicInfoSettings(payload.publicInfo, store.settings.publicInfo || {});
       }
@@ -15153,6 +15188,8 @@ module.exports = {
     fulfillPaymentGatewayCallback,
     hotspotVoucherRevision,
     hotspotVoucherDirectLoginUrl,
+    hotspotLoginUrlForNas,
+    hotspotVoucherPublicStatusUrl,
     hotspotFreeUserWritable,
     customerInvoiceGenerationDue,
     invoiceGenerationDue,

@@ -7,6 +7,20 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.6.0] - 2026-07-19
+
+### Added
+
+- Setiap Site memiliki URL login Hotspot sendiri sebagai tujuan login voucher dan QR cetak.
+- Order voucher menyimpan NAS asal dan melakukan auto-login satu kali setelah callback pembayaran berstatus paid.
+- QR voucher membuka login page Site, mengisi username/password otomatis, serta mendukung autentikasi CHAP maupun PAP melalui bridge template MikroTik.
+- Template login Hotspot menyediakan tombol kamera QR di sebelah tombol Masuk dengan fallback pemilihan foto pada perangkat mobile.
+
+### Changed
+
+- Link Whatsapp voucher tetap memakai halaman status publik billing, lalu tombol login diselesaikan ke Site yang benar berdasarkan NAS order.
+- Field Link login voucher di Pengaturan umum dihapus karena URL sekarang dikelola per Site.
+
 ## [1.5.9] - 2026-07-19
 
 ### Fixed

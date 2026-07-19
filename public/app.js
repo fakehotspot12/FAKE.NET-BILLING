@@ -221,7 +221,6 @@ const state = {
     businessName: 'FAKE.NET Billing',
     appSubtitle: 'ISP Billing',
     logoUrl: DEFAULT_LOGO_URL,
-    voucherLoginUrl: '',
     security: {
       loginVerificationEnabled: true
     },
@@ -6505,26 +6504,23 @@ function hotspotVoucherLogoUrl() {
   return safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl || DEFAULT_LOGO_URL);
 }
 
-function hotspotVoucherLoginUrl() {
-  const configured = safePublicUrl(state.settings.voucherLoginUrl || '');
-  if (configured) return configured;
-  return 'http://xxx';
+function hotspotVoucherLoginUrl(row = {}) {
+  return safePublicUrl(row.hotspotLoginUrl || '');
 }
 
 function hotspotVoucherDirectLoginUrl(row = {}) {
-  const baseUrl = hotspotVoucherLoginUrl();
+  const baseUrl = hotspotVoucherLoginUrl(row);
   const username = String(row.username || '').trim();
   const password = String(row.password || row.voucherPassword || username).trim();
-  if (!username || !baseUrl || baseUrl === 'http://xxx') return baseUrl;
+  if (!username || !baseUrl) return '';
   try {
     const url = new URL(baseUrl);
     if (!url.pathname || url.pathname === '/') url.pathname = '/login';
-    url.searchParams.set('username', username);
-    url.searchParams.set('password', password);
+    url.search = '';
+    url.hash = new URLSearchParams({ fnb_autologin: '1', username, password }).toString();
     return url.toString();
   } catch {
-    const separator = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${separator}username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    return '';
   }
 }
 
@@ -6600,7 +6596,7 @@ function hotspotVoucherDateText(value) {
 }
 
 function hotspotVoucherQrText(row = {}) {
-  return hotspotVoucherDirectLoginUrl(row);
+  return hotspotVoucherDirectLoginUrl(row) || `${row.username || ''}/${row.password || row.username || ''}`;
 }
 
 function hotspotVoucherQrSrc(row = {}, size = 160) {
@@ -6624,7 +6620,9 @@ function hotspotVoucherTicket(row = {}, index = 0) {
     { label: 'Paket', value: row.profile || '-' },
     ...(template.showPrice === false ? [] : [{ label: 'Harga', value: hotspotVoucherPriceText(row.price) }])
   ];
-  const loginLine = `${template.loginLabel || 'Login'} : ${hotspotVoucherLoginUrl()}`;
+  const loginLine = hotspotVoucherLoginUrl(row)
+    ? `${template.loginLabel || 'Login'} : ${hotspotVoucherLoginUrl(row)}`
+    : 'Login melalui portal Hotspot site';
   const callCenter = hotspotVoucherAdminPhone();
   const footerText = [loginLine, callCenter ? `Call Center : ${callCenter}` : ''].filter(Boolean).join(' · ');
   const dateTimeMarkup = `
@@ -9545,6 +9543,7 @@ function monitoringFormBody(target = {}) {
   const oid = target.oid || '1.3.6.1.2.1.1.3.0';
   const media = target.mediaServices || {};
   const radius = target.radius || {};
+  const hotspot = target.hotspot || {};
   return `
     <div class="form-grid">
       <label class="field">
@@ -9609,6 +9608,11 @@ function monitoringFormBody(target = {}) {
         <span>Secret Radius</span>
         <input name="radiusSecret" type="text" autocomplete="off" value="${escapeHtml(radius.secret || '')}" placeholder="Shared secret MikroTik">
         ${radius.credentialStored ? '<span class="muted">Secret ditampilkan agar dapat dicocokkan dengan konfigurasi MikroTik.</span>' : ''}
+      </label>
+      <label class="field full">
+        <span>URL Login Hotspot</span>
+        <input name="hotspotLoginUrl" type="url" value="${escapeHtml(hotspot.loginUrl || target.hotspotLoginUrl || '')}" placeholder="http://login.site.example/login">
+        <span class="muted">Dipakai untuk auto-login setelah voucher dibayar dan QR voucher pada Site ini.</span>
       </label>
       <div class="field full form-subhead">
         <strong>Layanan site</strong>
@@ -14458,10 +14462,6 @@ async function renderSettings(options = {}) {
             <span>Kode kuitansi pemasukan</span>
             <input name="receiptBusinessCode" value="${escapeHtml(settings.receiptBusinessCode || settings.billing?.invoiceBusinessCode || 'FAKE.NET')}" placeholder="FAKE.NET" maxlength="30">
           </label>
-          <label class="field">
-            <span>Link login voucher</span>
-            <input name="voucherLoginUrl" value="${escapeHtml(settings.voucherLoginUrl || '')}" placeholder="http://login.example.net" maxlength="200">
-          </label>
           <div class="field">
             <span>Halaman public-info</span>
             <button class="ghost-button" id="editPublicInfoButton" type="button">Edit Public Info</button>
@@ -14590,7 +14590,6 @@ async function renderSettings(options = {}) {
       businessName: form.businessName.value,
       appSubtitle: form.appSubtitle.value,
       receiptBusinessCode: form.receiptBusinessCode.value,
-      voucherLoginUrl: form.voucherLoginUrl.value,
       voucherRevenueSharePercent: form.voucherRevenueSharePercent.value,
       collectorDailyBonusEnabled: form.collectorDailyBonusEnabled.checked,
       security: {

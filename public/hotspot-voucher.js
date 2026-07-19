@@ -9,6 +9,7 @@ let pollTimer = null;
 const voucherCheckoutCache = new Map();
 const voucherCheckoutRequests = new Map();
 const voucherCheckoutFailures = new Map();
+let voucherAutoLoginTimer = null;
 
 function currentNasValue() {
   const params = new URLSearchParams(window.location.search);
@@ -59,6 +60,51 @@ function safeHttpUrl(value = '') {
 function voucherReturnStorageKey() {
   const nas = currentNasValue() || 'default';
   return `fakenet-voucher-return:${nas}`;
+}
+
+function voucherAutoLoginStorageKey(reference = '') {
+  return `fakenet-voucher-autologin:${String(reference || '').trim()}`;
+}
+
+function markVoucherAutoLogin(reference = '') {
+  if (!reference) return;
+  try {
+    window.sessionStorage?.setItem(voucherAutoLoginStorageKey(reference), 'pending');
+  } catch {
+    // Browser privacy mode can disable session storage; manual login remains available.
+  }
+}
+
+function voucherAutoLoginState(reference = '') {
+  try {
+    return window.sessionStorage?.getItem(voucherAutoLoginStorageKey(reference)) || '';
+  } catch {
+    return '';
+  }
+}
+
+function setVoucherAutoLoginState(reference = '', state = '') {
+  try {
+    window.sessionStorage?.setItem(voucherAutoLoginStorageKey(reference), state);
+  } catch {
+    // Manual login remains available.
+  }
+}
+
+function hotspotVoucherLoginUrl(baseUrl = '', voucher = {}) {
+  const username = String(voucher.username || '').trim();
+  const password = String(voucher.password || voucher.voucherPassword || username).trim();
+  const safeUrl = safeHttpUrl(baseUrl);
+  if (!safeUrl || !username) return '';
+  try {
+    const url = new URL(safeUrl);
+    if (!url.pathname || url.pathname === '/') url.pathname = '/login';
+    url.search = '';
+    url.hash = new URLSearchParams({ fnb_autologin: '1', username, password }).toString();
+    return url.toString();
+  } catch {
+    return '';
+  }
 }
 
 function hotspotLoginReturnUrl() {
@@ -298,6 +344,7 @@ async function initBuyPage() {
           })
         });
         const orderNo = result.order?.reference || result.order?.id || '';
+        markVoucherAutoLogin(orderNo);
         window.location.href = pageUrl(STATUS_PAGE, { id: orderNo });
       } catch (error) {
         setResponse(error.message, 'error');
@@ -438,6 +485,23 @@ function renderPaymentInfo(order = {}) {
   else ensureVoucherCheckout(order);
 }
 
+function voucherLoginDestination(order = {}) {
+  const voucher = Array.isArray(order.vouchers) ? order.vouchers[0] : null;
+  return voucher ? hotspotVoucherLoginUrl(order.hotspotLoginUrl, voucher) : '';
+}
+
+function tryVoucherAutoLogin(order = {}) {
+  const reference = order.reference || order.id || '';
+  const destination = voucherLoginDestination(order);
+  if (!reference || !destination || voucherAutoLoginState(reference) !== 'pending') return;
+  setVoucherAutoLoginState(reference, 'started');
+  window.clearTimeout(voucherAutoLoginTimer);
+  setResponse('Pembayaran berhasil. Voucher siap, menghubungkan ke Hotspot...', 'success');
+  voucherAutoLoginTimer = window.setTimeout(() => {
+    window.location.replace(destination);
+  }, 1200);
+}
+
 function renderVoucherInfo(order = {}) {
   const paid = String(order.status || '').toLowerCase() === 'paid';
   const vouchers = Array.isArray(order.vouchers) ? order.vouchers : [];
@@ -452,7 +516,13 @@ function renderVoucherInfo(order = {}) {
     password.innerHTML = vouchers.map((voucher) => `<div class="voucher-line"><b>${escapeHtml(voucher.password || '-')}</b></div>`).join('');
   }
   const login = byId('os_link_login');
-  if (login) configureVoucherNavigation();
+  if (login) {
+    const destination = voucherLoginDestination(order);
+    login.href = destination || '#';
+    login.hidden = !destination;
+    login.onclick = destination ? null : (event) => event.preventDefault();
+  }
+  tryVoucherAutoLogin(order);
 }
 
 function renderOrderStatus(order = {}) {
