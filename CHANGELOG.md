@@ -7,6 +7,18 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [1.5.7] - 2026-07-19
+
+### Added
+
+- Profil manual PPP-DHCP dan Hotspot menyediakan pilihan Queue Type yang disembunyikan saat profil ditautkan langsung ke profil MikroTik.
+- Queue Type manual memakai profil pembawa queue bersama sehingga satu profil bandwidth billing dapat digunakan lintas site.
+- Script Hubungkan RADIUS ikut membuat atau memperbarui profil pembawa queue pada setiap NAS dan memeriksa ketersediaan Queue Type terlebih dahulu.
+
+### Verified
+
+- Profil pembawa `cake-default` untuk PPP-DHCP dan Hotspot berhasil dibuat, dibaca, dan dibersihkan kembali pada RouterOS 7.18.2.
+
 ## [1.5.6] - 2026-07-19
 
 ### Fixed

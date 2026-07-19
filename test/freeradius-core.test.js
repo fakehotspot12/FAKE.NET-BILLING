@@ -206,6 +206,58 @@ test('manual profile fills a valid burst time and rejects malformed limits', () 
   }), /Burst Time tidak valid/);
 });
 
+test('manual profiles can select a shared RouterOS queue carrier', () => {
+  const data = createDefaultStore();
+  const hotspot = freeradius.addProfile(data, {
+    name: 'Hotspot CAKE',
+    serviceType: 'hotspot',
+    rateLimit: '10M/10M',
+    queueType: 'cake-default'
+  });
+  const ppp = freeradius.addProfile(data, {
+    name: 'PPP PCQ',
+    serviceType: 'pppoe',
+    rateLimit: '20M/20M',
+    queueType: 'pcq-default'
+  });
+  const rows = freeradius.freeradiusRows(data).radgroupreply;
+
+  assert.equal(freeradius.queueCarrierGroupName(hotspot), 'FBQ-HS-cake-default');
+  assert.equal(freeradius.queueTypeRouterValue(hotspot), 'cake-default');
+  assert.equal(freeradius.queueCarrierGroupName(ppp), 'FBQ-PPP-pcq-default');
+  assert.equal(freeradius.queueTypeRouterValue(ppp), 'pcq-upload-default/pcq-download-default');
+  assert.ok(rows.some((row) => (
+    row.groupname === freeradius.profileGroupName(hotspot)
+      && row.attribute === 'Mikrotik-Group'
+      && row.value === 'FBQ-HS-cake-default'
+  )));
+  assert.ok(rows.some((row) => (
+    row.groupname === freeradius.profileGroupName(ppp)
+      && row.attribute === 'Mikrotik-Group'
+      && row.value === 'FBQ-PPP-pcq-default'
+  )));
+});
+
+test('linked profiles ignore queue selection and unsupported service choices are rejected', () => {
+  const data = createDefaultStore();
+  const linked = freeradius.addProfile(data, {
+    name: 'Linked PPP',
+    serviceType: 'pppoe',
+    useMikrotikProfile: true,
+    mikrotikGroup: 'Paket RouterOS',
+    queueType: 'cake-default'
+  });
+  assert.equal(linked.queueType, '');
+  assert.equal(freeradius.queueCarrierGroupName(linked), '');
+
+  assert.throws(() => freeradius.addProfile(data, {
+    name: 'Hotspot PCQ Pair',
+    serviceType: 'hotspot',
+    rateLimit: '10M/10M',
+    queueType: 'pcq-default'
+  }), /Queue Type .* tidak didukung/);
+});
+
 test('stale session cleanup only closes an older duplicate with a fresh replacement', () => {
   const query = freeradiusSessions.__test.closeSupersededSessionsQuery();
 

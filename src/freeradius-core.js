@@ -176,6 +176,38 @@ function normalizeProfileBandwidth(input = {}, useMikrotikProfile = false) {
   return bandwidth;
 }
 
+function normalizeQueueType(value, serviceType = 'pppoe') {
+  const queueType = text(value).toLowerCase();
+  if (!queueType) return '';
+  const common = ['default', 'default-small', 'cake-default'];
+  const allowed = normalizeServiceType(serviceType) === 'hotspot'
+    ? [...common, 'hotspot-default']
+    : [...common, 'pcq-default'];
+  if (!allowed.includes(queueType)) {
+    throw new Error(`Queue Type ${queueType} tidak didukung untuk ${normalizeServiceType(serviceType) === 'hotspot' ? 'Hotspot' : 'PPP-DHCP'}.`);
+  }
+  return queueType;
+}
+
+function queueTypeRouterValue(profile = {}) {
+  const serviceType = normalizeServiceType(profile.serviceType);
+  const queueType = normalizeQueueType(profile.queueType, serviceType);
+  if (!queueType) return '';
+  if (serviceType === 'pppoe') {
+    if (queueType === 'pcq-default') return 'pcq-upload-default/pcq-download-default';
+    return `${queueType}/${queueType}`;
+  }
+  return queueType;
+}
+
+function queueCarrierGroupName(profile = {}) {
+  if (profile.useMikrotikProfile === true) return '';
+  const queueType = normalizeQueueType(profile.queueType, profile.serviceType);
+  if (!queueType) return '';
+  const service = normalizeServiceType(profile.serviceType) === 'hotspot' ? 'HS' : 'PPP';
+  return `FBQ-${service}-${queueType.replace(/[^a-z0-9]+/g, '-')}`;
+}
+
 function mikrotikRateLimit(profile = {}) {
   // RouterOS must inherit rate-limit from Mikrotik-Group when the profile is linked.
   if (profile.useMikrotikProfile === true) return '';
@@ -355,13 +387,15 @@ function addProfile(data, input, actor) {
   const now = new Date().toISOString();
   const useMikrotikProfile = input.useMikrotikProfile === true;
   const bandwidth = normalizeProfileBandwidth(input, useMikrotikProfile);
+  const serviceType = normalizeServiceType(input.serviceType);
   const item = {
     id: createId('rpf'),
     name,
     groupName: text(input.groupName || input.group) || name,
     useMikrotikProfile,
     mikrotikGroup: text(input.mikrotikGroup || input.routerProfile),
-    serviceType: normalizeServiceType(input.serviceType),
+    serviceType,
+    queueType: useMikrotikProfile ? '' : normalizeQueueType(input.queueType, serviceType),
     ...bandwidth,
     validity: text(input.validity),
     validitySeconds: parseDurationSeconds(input.validitySeconds || input.validity),
@@ -387,11 +421,13 @@ function updateProfile(data, id, input, actor) {
   if (!item) throw new Error('Profile tidak ditemukan');
   const useMikrotikProfile = input.useMikrotikProfile === true;
   const bandwidth = normalizeProfileBandwidth(input, useMikrotikProfile);
+  const serviceType = normalizeServiceType(input.serviceType || item.serviceType);
   item.name = text(input.name) || item.name;
   item.groupName = text(input.groupName || input.group) || item.groupName || item.name;
   item.useMikrotikProfile = useMikrotikProfile;
   item.mikrotikGroup = text(input.mikrotikGroup || input.routerProfile);
-  item.serviceType = normalizeServiceType(input.serviceType || item.serviceType);
+  item.serviceType = serviceType;
+  item.queueType = useMikrotikProfile ? '' : normalizeQueueType(input.queueType, serviceType);
   Object.assign(item, bandwidth);
   item.validity = text(input.validity);
   item.validitySeconds = parseDurationSeconds(input.validitySeconds || input.validity);
@@ -635,12 +671,15 @@ function freeradiusRows(data) {
         value: rateLimit
       });
     }
-    if (profile.mikrotikGroup) {
+    const mikrotikGroup = profile.useMikrotikProfile === true
+      ? text(profile.mikrotikGroup)
+      : queueCarrierGroupName(profile);
+    if (mikrotikGroup) {
       radgroupreply.push({
         groupname,
         attribute: 'Mikrotik-Group',
         op: ':=',
-        value: profile.mikrotikGroup
+        value: mikrotikGroup
       });
     }
     if (profile.serviceType === 'hotspot') {
@@ -779,9 +818,12 @@ module.exports = {
   deleteRadiusUser,
   freeradiusRows,
   mikrotikRateLimit,
+  normalizeQueueType,
   profileGroupName,
   publicNas,
   publicProfile,
+  queueCarrierGroupName,
+  queueTypeRouterValue,
   publicRadiusUser,
   radiusUserServiceType,
   radiusNasEntries,
