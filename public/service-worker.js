@@ -19,7 +19,6 @@ self.addEventListener('push', (event) => {
   }
   const id = String(payload.id || payload.reference || Date.now());
   const tag = `fakenet-payment-${id}`;
-  const ttlMs = Math.max(1000, Math.min(10000, Number(payload.ttlMs || 3000)));
   event.waitUntil((async () => {
     await self.registration.showNotification(payload.title || 'Pembayaran Online Masuk', {
       body: payload.body || 'Pembayaran online berhasil diterima.',
@@ -27,15 +26,12 @@ self.addEventListener('push', (event) => {
       badge: '/fakenet-logo.png',
       tag,
       renotify: true,
-      requireInteraction: false,
+      requireInteraction: true,
       data: {
         id,
         url: payload.url || PAYMENT_URL
       }
     });
-    await new Promise((resolve) => setTimeout(resolve, ttlMs));
-    const notifications = await self.registration.getNotifications({ tag });
-    notifications.forEach((notification) => notification.close());
   })());
 });
 

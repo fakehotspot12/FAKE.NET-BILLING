@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.3.10', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.4.0', {
       scope: '/'
     });
   }
@@ -1090,20 +1090,17 @@ async function showBrowserPaymentNotification(item = {}) {
         icon: '/fakenet-logo.png',
         badge: '/fakenet-logo.png',
         tag,
+        requireInteraction: true,
         data: { url: '/#paymentGateway' }
       });
-      window.setTimeout(async () => {
-        const notifications = await registration.getNotifications({ tag }).catch(() => []);
-        notifications.forEach((notification) => notification.close());
-      }, PAYMENT_NOTIFICATION_TTL_MS);
       return;
     }
     const browserNotification = new window.Notification(item.title || 'Pembayaran online masuk', {
       body: item.description || 'Pembayaran online berhasil.',
       icon: '/fakenet-logo.png',
-      tag
+      tag,
+      requireInteraction: true
     });
-    window.setTimeout(() => browserNotification.close(), PAYMENT_NOTIFICATION_TTL_MS);
   } catch {
     // Notifikasi lonceng tetap menjadi fallback bila browser menolak notifikasi sistem.
   }
@@ -2657,8 +2654,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.3.10',
-    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.3.10',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.4.0',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.4.0',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -4242,8 +4239,8 @@ function receiptPrintModeLabel(mode = 'a4') {
 }
 
 function receiptPrintPageSize(mode = 'a4') {
-  if (mode === 'thermal-58') return '58mm auto';
-  if (mode === 'thermal-80') return '80mm auto';
+  if (mode === 'thermal-58') return '86mm 58mm';
+  if (mode === 'thermal-80') return '80mm 55mm';
   return 'A4 portrait';
 }
 
@@ -4305,8 +4302,11 @@ async function printReceiptWithMode(printClass, mode = 'a4', rootSelector = '.re
 
 function dailyReceiptTransaction(item = {}, report = {}) {
   const rawPlan = item.packageName || item.profileName || item.profile || item.item || '';
-  const planText = String(rawPlan || '').trim();
-  const planAfterPrefix = planText.includes('|') ? planText.slice(planText.indexOf('|') + 1).trim() : planText;
+  const planText = String(rawPlan || '').trim().replace(/^internet\s*:\s*/i, '');
+  const planAfterPipe = planText.includes('|') ? planText.slice(planText.indexOf('|') + 1).trim() : planText;
+  const planAfterPrefix = planAfterPipe.includes(' - ')
+    ? planAfterPipe.slice(planAfterPipe.lastIndexOf(' - ') + 3).trim()
+    : planAfterPipe;
   return {
     ...item,
     admin: dailyAdminLabel(item, report),
@@ -4341,7 +4341,6 @@ function dailyBillingReceiptBody(transaction = {}) {
           </div>
         </div>
         <div class="daily-receipt-number">
-          <span>No Invoice</span>
           <strong>Payment Invoice #${escapeHtml(invoiceNo)}</strong>
         </div>
       </div>

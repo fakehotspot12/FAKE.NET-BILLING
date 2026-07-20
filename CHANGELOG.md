@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.4.0] - 2026-07-20
+
+### Changed
+
+- Notifikasi pembayaran online di Chrome/Web Push tetap tampil sampai pengguna mengklik atau menutupnya.
+- Timer penutupan otomatis notifikasi sistem dihapus; toast internal aplikasi tetap singkat.
+
 ## [2.3.10] - 2026-07-20
 
 ### Fixed
