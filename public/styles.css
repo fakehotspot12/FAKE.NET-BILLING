@@ -9526,11 +9526,17 @@ dialog::backdrop {
 
   body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-page,
   body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-page {
-    break-after: auto;
+    break-after: page;
     display: block;
     height: auto;
-    page-break-after: auto;
+    page-break-after: always;
     width: 100%;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-page:last-child,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
   }
 
   body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt,
