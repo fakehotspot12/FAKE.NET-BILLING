@@ -9524,6 +9524,18 @@ dialog::backdrop {
     padding: 0;
   }
 
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-stack,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-page,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt {
+    width: 58mm !important;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-stack,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-page,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt {
+    width: 80mm !important;
+  }
+
   body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-page,
   body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-page {
     break-after: page;
