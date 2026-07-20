@@ -437,6 +437,11 @@ function normalizeWaTemplatePlaceholders(template = '', key = '') {
   if (['invoiceIssued', 'paymentReminder'].includes(String(key || ''))) {
     next = next.replace(/\*\[suspend_grace\]\*/g, `*${graceVariableText}*`);
   }
+  if (['invoiceIssued', 'paymentReminder', 'invoiceOverdue', 'paymentPaid', 'accountSuspend', 'accountActive'].includes(String(key || ''))
+    && next.includes('Pelanggan [nama_usaha]')
+    && !next.includes('[alamat]')) {
+    next = next.replace('Pelanggan [nama_usaha]\n', 'Pelanggan [nama_usaha]\nAlamat: [alamat]\n');
+  }
   return next;
 }
 

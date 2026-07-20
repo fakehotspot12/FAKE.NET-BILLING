@@ -1083,6 +1083,7 @@ function markInvoicePaid(data, invoiceId, payload = {}) {
       invoiceId: invoice.id,
       customerId: invoice.customerId,
       amount: toNumber(payload.amount || invoice.amount),
+      customerAmount: toNumber(payload.customerAmount || payload.amount || invoice.amount),
       baseAmount: toNumber(payload.baseAmount || invoice.amount),
       fee: toNumber(payload.fee || payload.adminFee),
       adminFee: toNumber(payload.adminFee || payload.fee),

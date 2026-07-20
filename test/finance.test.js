@@ -6078,7 +6078,7 @@ test('Tripay monthly checkout keeps flat customer fee while retail cashier takes
   assert.equal(voucher.gatewayAmount, 10820);
 });
 
-test('Tripay retail callback accepts checkout amount and records full flat customer fee', () => {
+test('Tripay retail callback keeps cashier fee outside billing income', () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.enabled = true;
   data.settings.paymentGateway.provider = 'tripay';
@@ -6123,12 +6123,14 @@ test('Tripay retail callback accepts checkout amount and records full flat custo
   assert.equal(result.status, 'paid');
   assert.equal(data.invoices[0].status, 'paid');
   assert.equal(data.paymentGatewayTransactions.length, 1);
-  assert.equal(data.paymentGatewayTransactions[0].amount, 155000);
+  assert.equal(data.paymentGatewayTransactions[0].amount, 148500);
+  assert.equal(data.paymentGatewayTransactions[0].customerAmount, 152000);
   assert.equal(data.paymentGatewayTransactions[0].gatewayAmount, 152000);
   assert.equal(data.paymentGatewayTransactions[0].fee, 5000);
   assert.equal(data.paymentGatewayTransactions[0].providerFee, 3500);
   assert.equal(data.paymentGatewayTransactions[0].cashierFee, 3000);
-  assert.equal(data.payments[0].amount, 155000);
+  assert.equal(data.payments[0].amount, 148500);
+  assert.equal(data.payments[0].customerAmount, 152000);
   assert.equal(data.payments[0].baseAmount, 150000);
   assert.equal(data.payments[0].fee, 5000);
   assert.equal(data.payments[0].gatewayAmount, 152000);

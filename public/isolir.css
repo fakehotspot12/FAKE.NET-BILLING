@@ -175,8 +175,15 @@ p {
   width: auto;
 }
 
+.button[hidden] {
+  display: none !important;
+}
+
 .actions .button {
-  flex: 0 0 180px;
+  flex: 1 1 0;
+  max-width: 240px;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .button.primary {
@@ -192,7 +199,7 @@ p {
 }
 
 #payLink[hidden] + #adminLink {
-  flex: 0 0 220px;
+  flex: 0 1 240px;
   margin-left: 0;
   border-radius: 10px;
 }
@@ -227,15 +234,24 @@ footer {
   }
 
   .actions {
-    gap: 8px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .actions .button {
-    flex: 1 1 0;
+    display: inline-flex;
+    width: 100%;
     min-width: 0;
+    font-size: 13px;
+    min-height: 44px;
+    padding-left: 8px;
+    padding-right: 8px;
   }
 
   #payLink[hidden] + #adminLink {
-    flex: 1 1 100%;
+    grid-column: 1 / -1;
+    width: min(100%, 240px);
+    justify-self: center;
   }
 }

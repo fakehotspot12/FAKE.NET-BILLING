@@ -5497,6 +5497,11 @@ function normalizeWaTemplateVariableText(template = '', key = '') {
   if (['invoiceIssued', 'paymentReminder'].includes(String(key || ''))) {
     next = next.replace(/\*\[suspend_grace\]\*/g, `*${graceVariableText}*`);
   }
+  if (['invoiceIssued', 'paymentReminder', 'invoiceOverdue', 'paymentPaid', 'accountSuspend', 'accountActive'].includes(String(key || ''))
+    && next.includes('Pelanggan [nama_usaha]')
+    && !next.includes('[alamat]')) {
+    next = next.replace('Pelanggan [nama_usaha]\n', 'Pelanggan [nama_usaha]\nAlamat: [alamat]\n');
+  }
   return next;
 }
 
@@ -6763,7 +6768,7 @@ function upsertPaidHotspotVoucherPaymentGatewayTransaction(data = {}, order = {}
     description: `Voucher Hotspot ${order.packageLabel || order.profileName || '-'} x${order.quantity || 1}`,
     invoiceNo: order.reference || '',
     customerName: order.buyerName || '',
-    amount: Number(order.gatewayAmount || order.totalAmount || order.amount || 0),
+    amount: Number(order.netAmount || order.gatewayAmount || order.totalAmount || order.amount || 0),
     baseAmount: Number(order.baseAmount || order.amount || 0),
     fee: Number(order.adminFee ?? existing?.fee ?? 0),
     adminFee: Number(order.adminFee ?? existing?.adminFee ?? 0),
@@ -6875,6 +6880,8 @@ function fulfillHotspotVoucherOrder(data = {}, value = '', payment = {}, actor =
   order.paidAt = payment.paidAt || now;
   order.updatedAt = now;
   order.paymentExternalId = payment.externalId || payment.transactionId || order.paymentExternalId || '';
+  order.netAmount = Number(payment.settlementAmount || order.netAmount || order.gatewayAmount || order.totalAmount || order.amount || 0);
+  order.providerFee = Number(payment.providerFee || order.providerFee || 0);
   order.paidByName = actor.name || actor.username || order.paidByName || '';
   order.paidByUsername = actor.username || order.paidByUsername || '';
   order.paidByRole = actor.role || order.paidByRole || '';
@@ -7134,7 +7141,7 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
       return {
         ...order,
         date: timestampLocalDateKey(reportAt),
-        amount: Number(order.amount || 0),
+        amount: Number(order.netAmount ?? order.amount ?? 0),
         paymentMethod: order.paymentMethod || 'QRIS',
         paidAt,
         createdAt,
@@ -8143,6 +8150,8 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
     full_name: fullname,
     fullname,
     nama_usaha: businessName,
+    alamat: customer.address || invoice.address || '-',
+    address: customer.address || invoice.address || '-',
     uid,
     pppoe_user: radiusUser.username || invoice.username || customer.username || '',
     pppoe_pass: radiusUser.password || '',
@@ -9909,6 +9918,7 @@ function upsertPaidBillingPaymentGatewayTransaction(data = {}, invoice = {}, pay
     customerName: customer.name || invoice.customerName || invoice.username || '',
     username: customer.username || invoice.username || '',
     amount: Number(payment.amount || invoice.amount || 0),
+    customerAmount: Number(payment.customerAmount || payment.amount || invoice.amount || 0),
     gatewayAmount: Number(payment.gatewayAmount || payment.amount || invoice.amount || 0),
     baseAmount: Number(payment.baseAmount || invoice.amount || 0),
     fee: Number(payment.adminFee ?? payment.fee ?? existing?.fee ?? 0),
@@ -9961,6 +9971,9 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
       customerAmount: gatewayBreakdown.totalAmount,
       cashierFee: 0
     };
+  const billingPaymentAmount = provider === 'tripay'
+    ? Math.max(0, amount - Math.max(0, Number(payment.fee || 0)))
+    : checkoutBreakdown.customerAmount;
   if (amount > 0 && amount < checkoutBreakdown.gatewayAmount) {
     throw new Error('Nominal pembayaran lebih kecil dari invoice');
   }
@@ -9971,7 +9984,8 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
     : markInvoicePaid(data, invoice.id, {
       paymentMethod: payment.method || 'Payment Gateway',
       paymentCategory: 'online',
-      amount: checkoutBreakdown.customerAmount,
+      amount: billingPaymentAmount,
+      customerAmount: amount || checkoutBreakdown.customerAmount,
       baseAmount: gatewayBreakdown.baseAmount,
       fee: gatewayBreakdown.adminFee,
       adminFee: gatewayBreakdown.adminFee,
@@ -10002,7 +10016,8 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
   }
   const transaction = upsertPaidBillingPaymentGatewayTransaction(data, paid || invoice, {
     ...payment,
-    amount: checkoutBreakdown.customerAmount,
+    amount: billingPaymentAmount,
+    customerAmount: amount || checkoutBreakdown.customerAmount,
     gatewayAmount: amount || checkoutBreakdown.gatewayAmount,
     baseAmount: gatewayBreakdown.baseAmount,
     providerFee: payment.fee || 0,
@@ -10036,10 +10051,15 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
     if (payment.amount > 0 && payment.amount < expectedAmount) {
       throw new Error('Nominal pembayaran lebih kecil dari order');
     }
+    const settlementAmount = provider === 'tripay'
+      ? Math.max(0, payment.amount - Math.max(0, payment.fee || 0))
+      : payment.amount;
     const fulfilled = fulfillHotspotVoucherOrder(data, voucherOrder.id, {
       status,
       paidAt: payment.paidAt,
-      externalId: payment.externalId
+      externalId: payment.externalId,
+      settlementAmount,
+      providerFee: payment.fee
     }, actor);
     return {
       type: 'hotspot-voucher',
