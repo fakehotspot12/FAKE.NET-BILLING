@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.5.8] - 2026-07-21
+
+### Fixed
+
+- Subweb WifiKu kini dapat menyajikan foto rumah dari `data/uploads` secara aman.
+
 ## [2.5.7] - 2026-07-21
 
 ### Fixed

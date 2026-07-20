@@ -9,6 +9,7 @@ const SUBWEB_KIND = String(process.env.SUBWEB_KIND || 'all').trim().toLowerCase(
 const HOST = process.env.SUBWEB_HOST || process.env.HOST || '0.0.0.0';
 const BILLING_BASE_URL = process.env.BILLING_BASE_URL || `http://127.0.0.1:${Number(process.env.PORT || 8891)}`;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const UPLOAD_ROOT = path.join(__dirname, '..', 'data', 'uploads');
 const SUBWEB_PORTS = {
   isolir: Number(process.env.ISOLIR_PORT || 8892),
   voucher: Number(process.env.VOUCHER_PORT || 8893),
@@ -252,6 +253,40 @@ function redirectKnownSubweb(req, res, pathname = '') {
 }
 
 async function serveStatic(res, pathname = '') {
+  if (pathname.startsWith('/uploads/')) {
+    const relative = pathname.slice('/uploads/'.length);
+    if (!relative || relative.includes('\0') || relative.split('/').some((part) => part === '..')) {
+      notFound(res);
+      return;
+    }
+    const filePath = path.normalize(path.join(UPLOAD_ROOT, relative));
+    if (!filePath.startsWith(UPLOAD_ROOT)) {
+      notFound(res);
+      return;
+    }
+    try {
+      const stat = await fs.stat(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      if (!stat.isFile() || !['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) {
+        notFound(res);
+        return;
+      }
+      const body = await fs.readFile(filePath);
+      res.writeHead(200, {
+        'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+        'Content-Length': body.length,
+        'Cache-Control': 'public, max-age=86400'
+      });
+      res.end(body);
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        notFound(res);
+        return;
+      }
+      sendJson(res, 500, { ok: false, error: error.message || 'Subweb gagal membaca upload' });
+    }
+    return;
+  }
   const publicPath = mappedStaticPath(pathname);
   if (!publicPath) {
     notFound(res);
