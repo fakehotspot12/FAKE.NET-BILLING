@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.3.10] - 2026-07-20
+
+### Fixed
+
+- Preview Tagihan Harian merender ulang jumlah struk per halaman saat ukuran A4/thermal diganti.
+- Thermal selalu satu struk per kertas, sedangkan A4 tetap tiga struk per halaman.
+
 ## [2.3.9] - 2026-07-20
 
 ### Fixed
