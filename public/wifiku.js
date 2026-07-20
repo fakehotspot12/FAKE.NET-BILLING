@@ -364,8 +364,19 @@ byId('closeAccountDialog').addEventListener('click', () => byId('accountDialog')
 byId('accountForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  const payload = Object.fromEntries(new FormData(form).entries());
-  delete payload.phone;
+  const field = (name) => form.elements.namedItem(name);
+  const payload = {
+    name: String(field('name')?.value || '').trim(),
+    ktp: String(field('ktp')?.value || '').trim(),
+    email: String(field('email')?.value || '').trim(),
+    address: String(field('address')?.value || '').trim()
+  };
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (!payload.name) {
+    toast('Nama wajib diisi');
+    return;
+  }
+  if (submitButton) submitButton.disabled = true;
   try {
     await api('/api/public/wifiku/profile', { method: 'PATCH', body: JSON.stringify(payload) });
     byId('accountDialog').close();
@@ -373,6 +384,8 @@ byId('accountForm').addEventListener('submit', async (event) => {
     await loadMe();
   } catch (error) {
     toast(error.message);
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 });
 

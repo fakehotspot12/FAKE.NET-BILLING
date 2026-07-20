@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.5.9] - 2026-07-21
+
+### Fixed
+
+- Tombol Simpan pada Akun Saya WifiKu membaca field form secara eksplisit dan menampilkan status request dengan benar.
+
 ## [2.5.8] - 2026-07-21
 
 ### Fixed
