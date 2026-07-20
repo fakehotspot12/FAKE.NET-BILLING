@@ -215,6 +215,14 @@ small {
   color: var(--muted);
 }
 
+.account-admin-note {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .login-panel {
   width: min(440px, 100%);
   margin: 52px auto 0;
@@ -238,6 +246,39 @@ small {
 
 .panel.compact {
   margin-top: 14px;
+}
+
+.customer-location-panel {
+  grid-column: 1 / -1;
+}
+
+.customer-location-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, .75fr);
+  gap: 12px;
+}
+
+.customer-map-wrap,
+.customer-house-photo-wrap {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.customer-map-wrap iframe,
+.customer-house-photo-wrap img {
+  width: 100%;
+  height: 230px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #eef2f6;
+  object-fit: cover;
+}
+
+.customer-map-wrap a {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .portal-layout {
@@ -624,6 +665,10 @@ dialog::backdrop {
   }
 
   .member-info-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-location-content {
     grid-template-columns: 1fr;
   }
 

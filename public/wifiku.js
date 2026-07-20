@@ -185,6 +185,33 @@ function renderPortal(payload) {
   byId('memberName').textContent = memberName;
   byId('memberPackage').textContent = customer.packageName || '-';
   byId('accountMenuName').textContent = memberName;
+  const hasLocation = Boolean(customer.latitude && customer.longitude);
+  const hasHousePhoto = Boolean(customer.housePhotoUrl);
+  const locationNotice = byId('customerLocationNotice');
+  const locationContent = byId('customerLocationContent');
+  const locationMap = byId('customerLocationMap');
+  const locationLink = byId('customerLocationLink');
+  const housePhoto = byId('customerHousePhoto');
+  const missing = [];
+  if (!hasLocation) missing.push('lokasi peta');
+  if (!hasHousePhoto) missing.push('foto rumah');
+  locationNotice.hidden = missing.length === 0;
+  locationNotice.textContent = missing.length
+    ? `Data ${missing.join(' dan ')} belum tersedia atau belum akurat. Untuk pembaruan data rumah dan peta, mohon hubungi admin.`
+    : '';
+  locationContent.hidden = !hasLocation && !hasHousePhoto;
+  if (hasLocation) {
+    const query = `${customer.latitude},${customer.longitude}`;
+    locationMap.hidden = false;
+    locationMap.src = `https://www.google.com/maps?q=${encodeURIComponent(query)}&z=17&output=embed`;
+    locationLink.hidden = false;
+    locationLink.href = customer.locationUrl || `https://www.google.com/maps?q=${encodeURIComponent(query)}`;
+  } else {
+    locationMap.hidden = true;
+    locationLink.hidden = true;
+  }
+  housePhoto.hidden = !hasHousePhoto;
+  if (hasHousePhoto) housePhoto.src = customer.housePhotoUrl;
   byId('usageTotal').textContent = usage.totalUsageText || '0 B';
   byId('usageDetail').textContent = `U ${usage.upload || '0 B'} / D ${usage.download || '0 B'}`;
   byId('rxPower').textContent = device.rxPowerText || '-';
@@ -222,8 +249,6 @@ function openAccountDialog() {
   form.phone.value = customer.phone || '';
   form.email.value = customer.email || '';
   form.address.value = customer.address || '';
-  form.latitude.value = customer.latitude || '';
-  form.longitude.value = customer.longitude || '';
   dialog.showModal();
 }
 

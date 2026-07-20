@@ -1410,6 +1410,10 @@ function publicWifiKuCustomer(data = {}, customer = {}, radiusUser = {}) {
     address: customer.address || '',
     latitude: customer.latitude || '',
     longitude: customer.longitude || '',
+    locationUrl: customer.locationUrl || (customer.latitude && customer.longitude
+      ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}`
+      : ''),
+    housePhotoUrl: customer.housePhotoUrl || '',
     status: customer.status || radiusUser.status || '',
     packageName: wifiKuPackageName(data, customer, radiusUser),
     dueDate: customer.dueDate || customer.nextDue || ''
@@ -11524,11 +11528,6 @@ async function handleApi(req, res, url) {
         customer.ktp = clean(payload.ktp, 32);
         customer.email = clean(payload.email, 160);
         customer.address = clean(payload.address, 500);
-        customer.latitude = clean(payload.latitude, 40);
-        customer.longitude = clean(payload.longitude, 40);
-        customer.locationUrl = customer.latitude && customer.longitude
-          ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}`
-          : '';
         customer.updatedAt = new Date().toISOString();
         customer.updatedBy = 'WifiKu';
         addActivity(store, 'customer', `Data Akun Saya ${customer.name} diperbarui melalui WifiKu`, {
