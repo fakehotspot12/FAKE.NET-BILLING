@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.5.5] - 2026-07-21
+
+### Changed
+
+- Preview lokasi peta dan foto rumah WifiKu dipisah menjadi dua kotak vertikal di Akun Saya.
+
 ## [2.5.4] - 2026-07-21
 
 ### Fixed

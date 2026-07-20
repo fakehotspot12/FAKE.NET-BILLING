@@ -250,7 +250,7 @@ small {
 
 .customer-location-content {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(220px, .75fr);
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -264,6 +264,10 @@ small {
   display: grid;
   gap: 8px;
   min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
 }
 
 .customer-map-wrap iframe,
@@ -668,10 +672,6 @@ dialog::backdrop {
   }
 
   .member-info-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .customer-location-content {
     grid-template-columns: 1fr;
   }
 
