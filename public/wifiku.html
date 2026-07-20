@@ -70,25 +70,6 @@
           </div>
         </section>
 
-        <section class="panel compact customer-location-panel">
-          <div class="panel-title-row">
-            <div>
-              <span class="panel-kicker">Data Member</span>
-              <h2>Lokasi & Foto Rumah</h2>
-            </div>
-          </div>
-          <div id="customerLocationNotice" class="notice warning" hidden></div>
-          <div id="customerLocationContent" class="customer-location-content" hidden>
-            <div class="customer-map-wrap">
-              <iframe id="customerLocationMap" title="Lokasi pelanggan" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
-              <a id="customerLocationLink" target="_blank" rel="noopener">Buka lokasi di Google Maps</a>
-            </div>
-            <div class="customer-house-photo-wrap">
-              <img id="customerHousePhoto" alt="Foto rumah pelanggan">
-            </div>
-          </div>
-        </section>
-
         <section id="billingSummary" class="panel compact checkout-panel">
           <div class="checkout-status-row">
             <div>
@@ -188,6 +169,19 @@
           <label><span>Email</span><input name="email" type="email" maxlength="160"></label>
           <label class="full"><span>Alamat</span><textarea name="address" rows="3" maxlength="500"></textarea></label>
           <div class="field full account-admin-note">Pembaruan data rumah dan peta dilakukan oleh admin. Silakan hubungi admin jika ada perubahan.</div>
+          <div class="field full account-location-section">
+            <strong>Lokasi & Foto Rumah</strong>
+            <div id="customerLocationNotice" class="notice warning" hidden></div>
+            <div id="customerLocationContent" class="customer-location-content" hidden>
+              <div class="customer-map-wrap">
+                <iframe id="customerLocationMap" title="Lokasi pelanggan" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                <a id="customerLocationLink" target="_blank" rel="noopener">Buka lokasi di Google Maps</a>
+              </div>
+              <div class="customer-house-photo-wrap">
+                <img id="customerHousePhoto" alt="Foto rumah pelanggan">
+              </div>
+            </div>
+          </div>
         </div>
         <div class="dialog-actions">
           <button value="cancel" type="button" id="closeAccountDialog">Batal</button>

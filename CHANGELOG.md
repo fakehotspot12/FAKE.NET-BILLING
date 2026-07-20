@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.5.4] - 2026-07-21
+
+### Fixed
+
+- Panel lokasi dan foto rumah dipindahkan dari halaman utama WifiKu ke menu Akun Saya.
+
 ## [2.5.3] - 2026-07-21
 
 ### Fixed
