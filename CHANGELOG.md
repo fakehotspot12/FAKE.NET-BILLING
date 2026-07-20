@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.3.3] - 2026-07-20
+
+### Fixed
+
+- Print thermal Tagihan Harian 58/80 mm mencetak satu transaksi per kertas saat batch dipilih.
+- Layout A4 tetap memakai susunan batch yang sudah tersedia.
+
 ## [2.3.2] - 2026-07-20
 
 ### Fixed
