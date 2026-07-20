@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.5.6] - 2026-07-21
+
+### Fixed
+
+- Layout desktop WifiKu memaksa peta dan foto rumah tampil vertikal.
+- Foto rumah tidak lagi dipaksa melebar melebihi ukuran naturalnya sehingga tidak diperburuk oleh pembesaran CSS.
+
 ## [2.5.5] - 2026-07-21
 
 ### Changed

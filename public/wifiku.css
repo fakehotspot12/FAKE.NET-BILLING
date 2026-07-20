@@ -249,9 +249,10 @@ small {
 }
 
 .customer-location-content {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  width: 100%;
 }
 
 .account-location-section {
@@ -272,7 +273,8 @@ small {
 
 .customer-map-wrap iframe,
 .customer-house-photo-wrap img {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   height: auto;
   min-height: 180px;
   max-height: 420px;
@@ -280,6 +282,15 @@ small {
   border-radius: 8px;
   background: #eef2f6;
   object-fit: contain;
+  justify-self: start;
+}
+
+.customer-map-wrap iframe {
+  width: 100%;
+}
+
+.customer-house-photo-wrap img {
+  image-rendering: auto;
 }
 
 .customer-map-wrap a {
