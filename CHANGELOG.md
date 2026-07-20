@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.3.2] - 2026-07-20
+
+### Fixed
+
+- Generator redirect isolir HTTPS tidak lagi meng-intercept port 443 melalui Web Proxy.
+- Script HTTPS menambahkan whitelist domain isolir Cloudflare sebelum rule drop internet.
+- Script HTTP tetap mempertahankan redirect sesuai konfigurasi lokal.
+
 ## [2.3.1] - 2026-07-20
 
 ### Changed
