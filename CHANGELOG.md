@@ -7,6 +7,13 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.3.4] - 2026-07-20
+
+### Changed
+
+- Nota Tagihan Harian menampilkan label `Paket` dari profile plan pelanggan.
+- Total dibayar pada preview dan hasil print dibuat rata tengah untuk thermal 58/80 mm dan A4.
+
 ## [2.3.3] - 2026-07-20
 
 ### Fixed

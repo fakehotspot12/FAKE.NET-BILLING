@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.3.3', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.3.4', {
       scope: '/'
     });
   }
@@ -2657,8 +2657,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.3.3',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.3.3',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.3.4',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.3.4',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -4318,7 +4318,7 @@ function dailyBillingReceiptBody(transaction = {}) {
   const signer = transaction.admin || state.auth?.name || state.auth?.username || 'Admin';
   const invoiceNo = transaction.invoiceNo || transaction.externalId || transaction.id || '-';
   const customerName = transaction.customerName || transaction.description || transaction.info || '-';
-  const itemName = transaction.item || transaction.packageName || 'Tagihan internet';
+  const itemName = transaction.item || transaction.packageName || transaction.profileName || transaction.profile || 'Tagihan internet';
   const periodSource = transaction.coverageText
     || transaction.coveredPeriodText
     || transaction.period
@@ -4344,7 +4344,7 @@ function dailyBillingReceiptBody(transaction = {}) {
       <div class="daily-receipt-main">
         <div class="daily-receipt-lines">
           <div><span>Nama Pelanggan</span><strong>${escapeHtml(customerName)}</strong></div>
-          <div><span>Layanan</span><strong>${escapeHtml(itemName)}</strong></div>
+          <div><span>Paket</span><strong>${escapeHtml(itemName)}</strong></div>
           <div><span>Periode</span><strong>${escapeHtml(periodText)}</strong></div>
           <div><span>Metode</span><strong>${escapeHtml(transaction.method || '-')}</strong></div>
           <div><span>Tanggal bayar</span><strong>${escapeHtml(reportTransactionDateText(transaction))}</strong></div>
