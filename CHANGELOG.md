@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.4.1] - 2026-07-20
+
+### Fixed
+
+- CSS thermal Tagihan Harian disamakan dengan layout voucher, termasuk ukuran tetap, padding, dan penghapusan garis pemisah yang dapat membuat halaman tambahan.
+
 ## [2.4.0] - 2026-07-20
 
 ### Changed

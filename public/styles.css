@@ -11752,6 +11752,109 @@ dialog::backdrop {
   body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-page {
     display: block !important;
     grid-template-rows: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    min-height: 0 !important;
+    gap: .8mm !important;
+    padding: 1.2mm !important;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-brand,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-brand {
+    gap: 1mm;
+    grid-template-columns: 6mm minmax(0, 1fr);
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-brand img,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-brand img {
+    height: 6mm;
+    width: 6mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-brand strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-brand strong {
+    font-size: 7pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-brand span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-brand span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-number span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-number span {
+    font-size: 5pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-number strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-number strong {
+    font-size: 5.6pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-lines,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-lines {
+    gap: .5mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-lines div,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-lines div {
+    gap: .4mm;
+    grid-template-columns: 17mm minmax(0, 1fr);
+    padding-bottom: .35mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-lines span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-lines span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-lines strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-lines strong {
+    font-size: 5.2pt;
+    line-height: 1;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-amount,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-amount {
+    gap: 1mm;
+    min-height: 10mm;
+    padding: 1mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-amount span,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-amount span {
+    font-size: 5.2pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-amount strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-amount strong {
+    font-size: 10pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-signature,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-signature {
+    min-height: 8mm;
+    padding-top: 1mm;
+    width: 30mm;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-signature small,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-signature small,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-signature strong,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-signature strong {
+    font-size: 5.2pt;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-receipt-footer,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-receipt-footer {
+    display: none !important;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt {
+    border-bottom: 0 !important;
   }
 }
 
