@@ -712,12 +712,14 @@ function freeradiusRows(data) {
   }
 
   for (const user of data.radiusUsers) {
-    if (['disabled', 'terminated', 'pending'].includes(user.status)) continue;
     const profile = data.radiusProfiles.find((item) => item.id === user.profileId) || {};
     const serviceType = radiusUserServiceType(data, user, user);
+    const terminatedPortalAccess = user.status === 'terminated' && serviceType !== 'hotspot';
+    if (['disabled', 'pending'].includes(user.status) || (user.status === 'terminated' && !terminatedPortalAccess)) continue;
     const userReplyStart = radreply.length;
     const isolation = data.settings?.radius && typeof data.settings.radius === 'object' ? data.settings.radius : {};
-    const isolatedWithNetworkOverride = user.status === 'isolated'
+    const restrictedAccess = user.status === 'isolated' || terminatedPortalAccess;
+    const restrictedWithNetworkOverride = restrictedAccess
       && (text(isolation.isolationMikrotikGroup) || text(isolation.isolationPool));
     radcheck.push({
       username: user.username,
@@ -725,7 +727,7 @@ function freeradiusRows(data) {
       op: ':=',
       value: radiusUserPassword(user.username, user.password, serviceType)
     });
-    if (user.status === 'isolated') {
+    if (restrictedAccess) {
       const isolationRateLimit = text(isolation.isolationRateLimit) || '128k/128k';
       radreply.push({
         username: user.username,
@@ -749,7 +751,7 @@ function freeradiusRows(data) {
           value: text(isolation.isolationPool)
         });
       }
-      if (user.serviceType === 'pppoe') {
+      if (serviceType === 'pppoe') {
         radreply.push({
           username: user.username,
           attribute: 'Service-Type',
@@ -764,7 +766,7 @@ function freeradiusRows(data) {
         });
       }
     }
-    if (user.staticIp && !isolatedWithNetworkOverride) {
+    if (user.staticIp && !restrictedWithNetworkOverride) {
       radreply.push({
         username: user.username,
         attribute: 'Framed-IP-Address',
@@ -789,7 +791,7 @@ function freeradiusRows(data) {
       });
     }
     const groupname = profileGroupName(profile);
-    if (groupname && !isolatedWithNetworkOverride) {
+    if (groupname && !restrictedWithNetworkOverride) {
       if (radreply.length > userReplyStart) {
         radreply.push({
           username: user.username,

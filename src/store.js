@@ -137,6 +137,7 @@ function createDefaultStore() {
         postpaidDueDay: 10,
         fixedInvoiceAdvanceDays: 7,
         suspendGraceDays: 0,
+        autoTerminateAfterDays: 0,
         notificationBeforeDueDays: 0,
         autoSuspendTime: '00:00',
         invoiceNumberFormat: 'XXXXXX',
@@ -265,6 +266,7 @@ function createDefaultStore() {
     hotspotVoucherOrders: [],
     hotspotVoucherSalesHistory: [],
     paymentGatewayTransactions: [],
+    webPushSubscriptions: [],
     expenses: [],
     users: [],
     activity: []
@@ -679,6 +681,7 @@ function ensureShape(data) {
     hotspotVoucherOrders: Array.isArray(safe.hotspotVoucherOrders) ? safe.hotspotVoucherOrders : [],
     hotspotVoucherSalesHistory: Array.isArray(safe.hotspotVoucherSalesHistory) ? safe.hotspotVoucherSalesHistory : [],
     paymentGatewayTransactions: Array.isArray(safe.paymentGatewayTransactions) ? safe.paymentGatewayTransactions : [],
+    webPushSubscriptions: Array.isArray(safe.webPushSubscriptions) ? safe.webPushSubscriptions : [],
     expenses: Array.isArray(safe.expenses) ? safe.expenses : [],
     users: Array.isArray(safe.users) ? safe.users : [],
     activity: Array.isArray(safe.activity) ? safe.activity : []

@@ -101,6 +101,10 @@ function billingMode(customer = {}) {
 
 function billingDueDayForCustomer(settings = {}, customer = {}) {
   const mode = billingMode(customer);
+  const manualDueDay = Number(customer.billingDueDayOverride || 0);
+  if (mode.billingPeriod === 'fixed' && Number.isFinite(manualDueDay) && manualDueDay >= 1 && manualDueDay <= 31) {
+    return clampDay(manualDueDay);
+  }
   if (mode.paymentType === 'postpaid' && mode.billingPeriod === 'cycle') {
     return billingDueDay(settings);
   }
@@ -831,7 +835,8 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       continue;
     }
 
-    const dueDate = dueDateForPeriod(selectedPeriod, billingDueDayForCustomer(data.settings, customer));
+    const dueDay = billingDueDayForCustomer(data.settings, customer);
+    const dueDate = dueDateForPeriod(selectedPeriod, dueDay);
     if (shouldGenerateCustomerInvoice && !shouldGenerateCustomerInvoice(customer, { period: selectedPeriod, dueDate })) {
       continue;
     }
@@ -880,6 +885,13 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
     data.invoices.push(invoice);
     created.push(invoice);
     existingKeys.add(key);
+
+    // Next Invoice is forward-only. Existing invoices keep their original due date.
+    if (!nextDuePeriod || selectedPeriod >= nextDuePeriod) {
+      customer.nextDue = dueDateForPeriod(addMonthsToPeriod(selectedPeriod, 1), dueDay);
+      customer.dueDate = customer.nextDue;
+      customer.updatedAt = invoice.updatedAt;
+    }
   }
 
   if (created.length) {
@@ -1160,6 +1172,24 @@ function cancelInvoice(data, invoiceId, payload = {}) {
   invoice.cancelledByName = actorName;
   invoice.cancelledByUsername = actorUsername;
   invoice.updatedAt = now;
+  const customer = (data.customers || []).find((item) => item.id === invoice.customerId);
+  if (customer) {
+    const releasedPeriod = invoiceCoveredPeriods(invoice)
+      .filter((period) => !(data.invoices || []).some((item) => (
+        item.id !== invoice.id
+        && item.customerId === customer.id
+        && invoiceBlocksPeriod(item)
+        && invoiceCoveredPeriods(item).includes(period)
+      )))
+      .sort()[0];
+    const currentNextPeriod = periodFromDateText(customer.nextDue || customer.dueDate || '');
+    if (releasedPeriod && (!currentNextPeriod || releasedPeriod < currentNextPeriod)) {
+      const dueDay = billingDueDayForCustomer(data.settings || {}, customer);
+      customer.nextDue = dueDateForPeriod(releasedPeriod, dueDay);
+      customer.dueDate = customer.nextDue;
+      customer.updatedAt = now;
+    }
+  }
   addActivity(data, 'invoice', `Invoice ${invoice.invoiceNo || invoice.externalId || invoice.id} dibatalkan oleh ${actorName || 'Admin'}`, {
     action: 'invoice-cancel',
     invoiceId: invoice.id,

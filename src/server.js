@@ -12,6 +12,7 @@ const { URL } = require('url');
 const ExcelJS = require('exceljs');
 const JSZip = require('jszip');
 const QRCode = require('qrcode');
+const webPush = require('web-push');
 const packageInfo = require('../package.json');
 
 const execFileAsync = promisify(execFile);
@@ -71,6 +72,7 @@ const MIGRATION_MODE = ['1', 'true', 'yes', 'on'].includes(String(process.env.MI
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const UPLOAD_ROOT = path.join(APP_ROOT, 'data', 'uploads');
+const WEB_PUSH_VAPID_PATH = path.join(APP_ROOT, 'data', 'webpush-vapid.json');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
 const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-20');
@@ -126,6 +128,7 @@ const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -1740,6 +1743,7 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
         coverageText: invoiceCoverageText(invoice),
         invoiceId: invoice.id,
         reminderId: invoice.id,
+        customerId: customer.id || invoice.customerId || '',
         radbooxInvoiceId: '',
         invoiceNo: publicInvoiceNo,
         externalId: publicInvoiceNo,
@@ -2343,6 +2347,11 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         isolatedByName: user.isolatedByName || '',
         isolatedByUsername: user.isolatedByUsername || '',
         isolatedByRole: user.isolatedByRole || '',
+        billingIsolationOverride: user.billingIsolationOverride === true,
+        manualActivatedAt: user.manualActivatedAt || '',
+        manualActivatedByName: user.manualActivatedByName || '',
+        manualActivatedByUsername: user.manualActivatedByUsername || '',
+        manualActivatedByRole: user.manualActivatedByRole || '',
         terminatedAt: user.terminatedAt || '',
         validUntil: user.validUntil || '',
         voucherMode: user.voucherMode || '',
@@ -3308,6 +3317,7 @@ const BACKUP_RECORD_KEYS = [
   'waMessages',
   'hotspotVoucherOrders',
   'paymentGatewayTransactions',
+  'webPushSubscriptions',
   'radiusVoucherRecords'
 ];
 
@@ -3426,13 +3436,35 @@ function syncRadiusCustomerStatus(data = {}, radiusUser = {}) {
         ? 'inactive'
         : 'active';
   customer.status = nextStatus;
+  if (nextStatus === 'active' && radiusUser.billingIsolationOverride === true) {
+    customer.billingIsolationOverride = true;
+    customer.manualActivatedAt = radiusUser.manualActivatedAt || customer.manualActivatedAt || new Date().toISOString();
+    customer.manualActivatedByName = radiusUser.manualActivatedByName || radiusUser.updatedBy || customer.manualActivatedByName || '';
+    customer.manualActivatedByUsername = radiusUser.manualActivatedByUsername || customer.manualActivatedByUsername || '';
+    customer.manualActivatedByRole = radiusUser.manualActivatedByRole || customer.manualActivatedByRole || '';
+  } else if (nextStatus !== 'active' || radiusUser.billingIsolationOverride === false) {
+    customer.billingIsolationOverride = false;
+    customer.manualActivatedAt = '';
+    customer.manualActivatedByName = '';
+    customer.manualActivatedByUsername = '';
+    customer.manualActivatedByRole = '';
+  }
   if (nextStatus === 'isolir') {
+    customer.isolatedAt = radiusUser.isolatedAt || customer.isolatedAt || localTodayIso();
     customer.isolationSource = radiusUser.isolationSource || '';
     customer.isolationReason = radiusUser.isolationReason || '';
     customer.isolatedByName = radiusUser.isolatedByName || radiusUser.updatedBy || '';
     customer.isolatedByUsername = radiusUser.isolatedByUsername || '';
     customer.isolatedByRole = radiusUser.isolatedByRole || '';
+  } else if (nextStatus === 'active') {
+    customer.isolatedAt = '';
+    customer.isolationSource = '';
+    customer.isolationReason = '';
+    customer.isolatedByName = '';
+    customer.isolatedByUsername = '';
+    customer.isolatedByRole = '';
   } else {
+    customer.isolatedAt = radiusUser.isolatedAt || customer.isolatedAt || '';
     customer.isolationSource = '';
     customer.isolationReason = '';
     customer.isolatedByName = '';
@@ -5433,6 +5465,7 @@ function sanitizeBillingSettings(payload = {}, current = {}) {
     postpaidDueDay: clampInteger(payload.postpaidDueDay ?? payload.defaultDueDay, 1, 28, current.postpaidDueDay || 10),
     fixedInvoiceAdvanceDays: clampInteger(payload.fixedInvoiceAdvanceDays, 0, 31, current.fixedInvoiceAdvanceDays ?? 7),
     suspendGraceDays: clampInteger(payload.suspendGraceDays, 0, 365, current.suspendGraceDays || 0),
+    autoTerminateAfterDays: clampInteger(payload.autoTerminateAfterDays, 0, 3650, current.autoTerminateAfterDays || 0),
     notificationBeforeDueDays: clampInteger(payload.notificationBeforeDueDays, 0, 31, current.notificationBeforeDueDays || 0),
     autoSuspendTime: sanitizeTime(payload.autoSuspendTime, current.autoSuspendTime || '00:00'),
     invoiceNumberFormat: 'XXXXXX',
@@ -5552,6 +5585,59 @@ function customerInvoiceGenerationDue(settings = {}, customer = {}, period = cur
   return today >= advanceStart;
 }
 
+function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, today = localTodayIso()) {
+  const terminateAfterDays = clampInteger(settings.autoTerminateAfterDays, 0, 3650, 0);
+  if (terminateAfterDays <= 0) return [];
+  const paidCoverage = paidInvoiceCoverageByCustomer(data);
+  const unpaidCustomerIds = new Set((data.invoices || [])
+    .filter((invoice) => ['pending', 'overdue'].includes(invoiceRuntimeStatus(invoice, today)))
+    .filter((invoice) => invoiceUncoveredPeriods(invoice, paidCoverage).length > 0)
+    .map((invoice) => String(invoice.customerId || '').trim())
+    .filter(Boolean));
+  const terminatedUsers = [];
+  const now = new Date().toISOString();
+
+  for (const customer of data.customers || []) {
+    if (!unpaidCustomerIds.has(String(customer.id || ''))) continue;
+    if (normalizeCustomerStatusLocal(customer.status) !== 'isolated') continue;
+    const user = radiusUserForCustomer(data, customer);
+    if (!user || radiusStatusForCustomer(user) !== 'isolated') continue;
+    const isolationSource = String(customer.isolationSource || user.isolationSource || '').trim().toLowerCase();
+    if (!['billing', 'overdue', 'system', 'auto'].includes(isolationSource)) continue;
+    const isolatedAt = String(user.isolatedAt || customer.isolatedAt || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(isolatedAt)) {
+      user.isolatedAt = today;
+      customer.isolatedAt = today;
+      continue;
+    }
+    if (today < addDaysIso(isolatedAt, terminateAfterDays)) continue;
+
+    user.status = 'terminated';
+    user.terminatedAt = today;
+    user.terminationSource = 'billing-auto-terminate';
+    user.terminationReason = `unpaid-${terminateAfterDays}-days-after-isolation`;
+    user.terminatedByName = actor.name || actor.username || 'Billing';
+    user.terminatedByUsername = actor.username || '';
+    user.terminatedByRole = actor.role || 'system';
+    user.billingIsolationOverride = false;
+    user.updatedAt = now;
+    user.updatedBy = actor.name || actor.username || 'Billing';
+
+    customer.status = 'terminate';
+    customer.terminatedAt = today;
+    customer.terminationSource = user.terminationSource;
+    customer.terminationReason = user.terminationReason;
+    customer.terminatedByName = user.terminatedByName;
+    customer.terminatedByUsername = user.terminatedByUsername;
+    customer.terminatedByRole = user.terminatedByRole;
+    customer.billingIsolationOverride = false;
+    customer.updatedAt = now;
+    customer.updatedBy = user.updatedBy;
+    terminatedUsers.push(user);
+  }
+  return terminatedUsers;
+}
+
 function activeHotspotVoucherUsersWithValidity(data = {}) {
   const profiles = radiusProfileDirectory(data);
   return (data.radiusUsers || []).filter((user) => {
@@ -5624,7 +5710,13 @@ function syncCustomerToRadiusActive(data = {}, customer = {}, actor = {}) {
   user.terminatedByRole = '';
   user.updatedAt = new Date().toISOString();
   user.updatedBy = actor.name || actor.username || 'Billing';
+  user.billingIsolationOverride = false;
+  user.manualActivatedAt = '';
+  user.manualActivatedByName = '';
+  user.manualActivatedByUsername = '';
+  user.manualActivatedByRole = '';
   customer.status = 'active';
+  customer.isolatedAt = '';
   customer.isolationSource = '';
   customer.isolationReason = '';
   customer.isolatedByName = '';
@@ -5638,6 +5730,11 @@ function syncCustomerToRadiusActive(data = {}, customer = {}, actor = {}) {
   customer.terminatedByRole = '';
   customer.updatedAt = user.updatedAt;
   customer.updatedBy = user.updatedBy;
+  customer.billingIsolationOverride = false;
+  customer.manualActivatedAt = '';
+  customer.manualActivatedByName = '';
+  customer.manualActivatedByUsername = '';
+  customer.manualActivatedByRole = '';
   return user;
 }
 
@@ -6024,10 +6121,11 @@ async function finalizePaidInvoiceRadiusActivation(data = {}, activation = {}, a
 }
 
 function standaloneBillingAutomation(data = {}, actor = { username: 'billing-auto', name: 'Billing Auto' }) {
-  if (!standaloneMode(data)) return { created: [], isolatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] } };
+  if (!standaloneMode(data)) return { created: [], isolatedUsers: [], terminatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] } };
   const settings = data.settings?.billing || {};
   const today = localTodayIso();
   const period = currentPeriod();
+  const terminatedUsers = autoTerminateOverdueCustomers(data, settings, actor, today);
   const created = generateInvoices(data, period, {
     shouldGenerateCustomerInvoice: (customer) => customerInvoiceGenerationDue(settings, customer, period, today)
   });
@@ -6093,6 +6191,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       if (!customer || normalizeCustomerStatusLocal(customer.status) === 'terminate') continue;
       const user = (data.radiusUsers || []).find((item) => item.customerId === customer.id || item.id === customer.radiusUserId || String(item.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase());
       if (!user || user.status === 'terminated') continue;
+      if (customer.billingIsolationOverride === true || user.billingIsolationOverride === true) continue;
       if (normalizeCustomerStatusLocal(customer.status) === 'isolated' && radiusStatusForCustomer(user) === 'isolated') continue;
       user.status = 'isolated';
       user.isolatedAt = user.isolatedAt || today;
@@ -6104,6 +6203,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       user.updatedAt = new Date().toISOString();
       user.updatedBy = actor.name || actor.username || 'Billing';
       customer.status = 'isolir';
+      customer.isolatedAt = user.isolatedAt;
       customer.isolationSource = 'billing';
       customer.isolationReason = 'overdue';
       customer.isolatedByName = user.isolatedByName;
@@ -6149,18 +6249,19 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     }
   }
 
-  if (created.length || reminderInvoices.length || isolatedUsers.length || activatedUsers.length) {
-    addActivity(data, 'invoice', `Billing otomatis: ${created.length} invoice, ${reminderInvoices.length} reminder, ${isolatedUsers.length} isolir, ${activatedUsers.length} aktif`, {
+  if (created.length || reminderInvoices.length || isolatedUsers.length || terminatedUsers.length || activatedUsers.length) {
+    addActivity(data, 'invoice', `Billing otomatis: ${created.length} invoice, ${reminderInvoices.length} reminder, ${isolatedUsers.length} isolir, ${terminatedUsers.length} terminated, ${activatedUsers.length} aktif`, {
       action: 'billing-automation',
       period,
       created: created.length,
       reminders: reminderInvoices.length,
       isolated: isolatedUsers.length,
+      terminated: terminatedUsers.length,
       activated: activatedUsers.length,
       expiredVouchers: voucherExpirations.removed.length + voucherExpirations.updated.length
     });
   }
-  return { created, reminderInvoices, isolatedUsers, activatedUsers, voucherExpirations };
+  return { created, reminderInvoices, isolatedUsers, terminatedUsers, activatedUsers, voucherExpirations };
 }
 
 function publicWaGatewaySettings(settings = {}) {
@@ -7750,6 +7851,15 @@ function createLocalManualInvoice(data = {}, customer = {}, subPeriod = 1, actor
     updatedAt: now
   };
   data.invoices.push(invoice);
+  const scheduledPeriod = periodFromDateInput(customer.nextDue || customer.dueDate || '');
+  const lastCoveredPeriod = coveredPeriods[coveredPeriods.length - 1] || preview.period;
+  if (!scheduledPeriod || lastCoveredPeriod >= scheduledPeriod) {
+    const nextPeriod = addMonthsToPeriod(lastCoveredPeriod, 1);
+    const nextDueDay = billingDueDayForCustomer(data.settings || {}, customer);
+    customer.nextDue = dueDateForPeriod(nextPeriod, nextDueDay);
+    customer.dueDate = customer.nextDue;
+    customer.updatedAt = now;
+  }
   const queued = options.queueWa === false ? null : queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
   if (queued) {
     invoice.invoiceIssuedSentAt = now;
@@ -9033,6 +9143,120 @@ async function mutate(mutator, saveOptions = {}) {
   return writeQueue;
 }
 
+let webPushVapidPromise = null;
+
+async function ensureWebPushVapid() {
+  if (webPushVapidPromise) return webPushVapidPromise;
+  webPushVapidPromise = (async () => {
+    let keys = null;
+    try {
+      keys = JSON.parse(await fs.readFile(WEB_PUSH_VAPID_PATH, 'utf8'));
+    } catch {
+      keys = null;
+    }
+    if (!keys?.publicKey || !keys?.privateKey) {
+      keys = webPush.generateVAPIDKeys();
+      await fs.mkdir(path.dirname(WEB_PUSH_VAPID_PATH), { recursive: true });
+      await fs.writeFile(WEB_PUSH_VAPID_PATH, `${JSON.stringify(keys, null, 2)}\n`, { mode: 0o600 });
+    }
+    webPush.setVapidDetails('mailto:notifications@fakehotspot.net', keys.publicKey, keys.privateKey);
+    return keys;
+  })().catch((error) => {
+    webPushVapidPromise = null;
+    throw error;
+  });
+  return webPushVapidPromise;
+}
+
+function normalizeWebPushSubscription(value = {}) {
+  const endpoint = String(value.endpoint || '').trim();
+  const p256dh = String(value.keys?.p256dh || '').trim();
+  const authKey = String(value.keys?.auth || '').trim();
+  let parsed;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new Error('Endpoint Web Push tidak valid');
+  }
+  if (parsed.protocol !== 'https:' || !p256dh || !authKey) {
+    throw new Error('Subscription Web Push tidak lengkap');
+  }
+  return {
+    endpoint: parsed.toString(),
+    expirationTime: Number.isFinite(Number(value.expirationTime)) ? Number(value.expirationTime) : null,
+    keys: { p256dh, auth: authKey }
+  };
+}
+
+function onlinePaymentPushPayload(data = {}, fulfilled = {}) {
+  if (fulfilled.status !== 'paid' || fulfilled.reused === true) return null;
+  const kind = fulfilled.type === 'hotspot-voucher' ? 'hotspot-voucher' : 'monthly-package';
+  const transaction = fulfilled.transaction
+    || (data.paymentGatewayTransactions || []).find((row) => (
+      String(row.reference || '') === String(fulfilled.reference || '')
+      && ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase())
+    ))
+    || {};
+  const order = fulfilled.order || {};
+  const invoice = fulfilled.invoice || {};
+  const customerName = transaction.customerName || order.buyerName || invoice.customerName || invoice.username || 'Pelanggan';
+  const amount = Number(transaction.amount || order.gatewayAmount || order.totalAmount || invoice.amount || 0);
+  const method = transaction.paymentMethod || transaction.method || order.paymentMethod || invoice.paymentMethod || 'Online';
+  const reference = fulfilled.reference || transaction.reference || invoice.invoiceNo || order.reference || '';
+  const eventId = String(transaction.id || order.id || invoice.id || `${kind}:${reference}:${Date.now()}`);
+  return {
+    id: eventId,
+    type: kind,
+    title: kind === 'hotspot-voucher' ? 'Voucher Online Dibayar' : 'Tagihan Online Dibayar',
+    body: `${customerName} - ${formatCurrencyText(amount)} via ${method}`,
+    reference,
+    customerName,
+    amount,
+    method,
+    url: '/#paymentGateway',
+    ttlMs: 3000
+  };
+}
+
+async function sendOnlinePaymentPushNotifications(data = {}, fulfilled = {}) {
+  const payload = onlinePaymentPushPayload(data, fulfilled);
+  if (!payload) return { sent: 0, failed: 0, removed: 0 };
+  await ensureWebPushVapid();
+  const users = new Map((data.users || []).map((user) => [String(user.id || ''), user]));
+  const subscriptions = (data.webPushSubscriptions || []).filter((item) => {
+    const user = users.get(String(item.userId || ''));
+    return item.enabled !== false && user?.active !== false && auth.hasPermission(user || {}, 'payment-gateway:manage');
+  });
+  const staleEndpoints = new Set();
+  let sent = 0;
+  let failed = 0;
+  await Promise.all(subscriptions.map(async (item) => {
+    try {
+      await webPush.sendNotification({
+        endpoint: item.endpoint,
+        expirationTime: item.expirationTime || null,
+        keys: item.keys
+      }, JSON.stringify(payload), {
+        TTL: 60,
+        urgency: 'high',
+        timeout: 5000
+      });
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      if ([404, 410].includes(Number(error.statusCode || error.status || 0))) {
+        staleEndpoints.add(item.endpoint);
+      }
+    }
+  }));
+  if (staleEndpoints.size) {
+    await mutate((store) => {
+      store.webPushSubscriptions = (store.webPushSubscriptions || []).filter((item) => !staleEndpoints.has(item.endpoint));
+    });
+  }
+  return { sent, failed, removed: staleEndpoints.size };
+}
+
 async function syncFreeradiusIfNeeded(data, actor, action) {
   if (!freeradiusSql.enabled()) {
     return null;
@@ -9045,7 +9269,7 @@ let billingAutomationTimer = null;
 
 async function runStandaloneBillingAutomation(reason = 'interval') {
   if (MIGRATION_MODE) {
-    return { created: [], isolatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] }, skipped: true, reason: 'migration-mode' };
+    return { created: [], isolatedUsers: [], terminatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] }, skipped: true, reason: 'migration-mode' };
   }
   if (billingAutomationRunning) return null;
   billingAutomationRunning = true;
@@ -9056,13 +9280,13 @@ async function runStandaloneBillingAutomation(reason = 'interval') {
       const automation = standaloneBillingAutomation(data, actor);
       automation.stampedVouchers = stampedVouchers;
       const expiredVouchers = (automation.voucherExpirations?.removed?.length || 0) + (automation.voucherExpirations?.updated?.length || 0);
-      if (automation.created.length || automation.isolatedUsers.length || automation.activatedUsers.length || expiredVouchers) {
+      if (automation.created.length || automation.isolatedUsers.length || automation.terminatedUsers.length || automation.activatedUsers.length || expiredVouchers) {
         await syncFreeradiusIfNeeded(data, actor, `billing-automation-${reason}`);
       }
-      if (freeradiusSql.enabled() && (automation.isolatedUsers.length || automation.activatedUsers.length)) {
+      if (freeradiusSql.enabled() && (automation.isolatedUsers.length || automation.terminatedUsers.length || automation.activatedUsers.length)) {
         automation.radiusStateDisconnects = await disconnectChangedRadiusUsers(
           data,
-          [...automation.isolatedUsers, ...automation.activatedUsers],
+          [...automation.isolatedUsers, ...automation.terminatedUsers, ...automation.activatedUsers],
           actor,
           `billing-automation-${reason}-coa`
         );
@@ -9846,21 +10070,31 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
   const breakdown = paymentGatewayAmountBreakdown(data.settings || {}, invoice.amount || 0, 'monthly');
   const periodText = periodDisplayText(invoiceCoverageText(invoice) || invoice.period || '');
   const customerStatus = strongestCustomerStatus(customer.status, invoice.customerStatus, radiusUser.status);
+  const invoiceStatus = invoiceRuntimeStatus(invoice);
+  const terminated = customerStatus === 'terminate';
   const isolationSource = String(radiusUser.isolationSource || customer.isolationSource || invoice.isolationSource || '').trim().toLowerCase();
   const manualIsolation = customerStatus === 'isolated' && ['manual', 'admin', 'operator'].includes(isolationSource);
+  const terminationSource = String(radiusUser.terminationSource || customer.terminationSource || invoice.terminationSource || '').trim().toLowerCase();
+  const payableStatus = ['pending', 'overdue', 'unpaid'].includes(invoiceStatus);
   return {
     id: invoice.id || '',
     invoiceNo,
     reference: invoiceNo,
-    status: invoiceRuntimeStatus(invoice),
+    status: invoiceStatus,
     customerStatus,
     isIsolated: customerStatus === 'isolated',
-    isolationMode: manualIsolation ? 'manual' : (customerStatus === 'isolated' ? (isolationSource || 'billing') : ''),
+    isTerminated: terminated,
+    isolationMode: terminated ? 'terminated' : (manualIsolation ? 'manual' : (customerStatus === 'isolated' ? (isolationSource || 'billing') : '')),
     manualIsolation,
-    canPay: !manualIsolation,
+    canPay: payableStatus && !manualIsolation,
+    requiresAdminActivation: terminated,
     isolationSource,
     isolationReason: radiusUser.isolationReason || customer.isolationReason || invoice.isolationReason || '',
     isolatedByName: radiusUser.isolatedByName || customer.isolatedByName || '',
+    terminationSource,
+    terminationReason: radiusUser.terminationReason || customer.terminationReason || invoice.terminationReason || '',
+    terminatedAt: radiusUser.terminatedAt || customer.terminatedAt || '',
+    terminatedByName: radiusUser.terminatedByName || customer.terminatedByName || '',
     customerName: customer.name || invoice.customerName || invoice.username || '',
     username: customer.username || invoice.username || '',
     phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
@@ -10232,7 +10466,7 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
     throw new Error('Sinkron riwayat hanya tersedia saat Tripay aktif');
   }
   const remote = await tripayTransactionHistory(dataSnapshot, options);
-  return mutate(async (store) => {
+  const synced = await mutate(async (store) => {
     const historyStartDate = String(store.settings?.paymentGateway?.historyStartDate || '').trim();
     const eligibleRows = tripayHistoryRowsFromDate(remote.rows, historyStartDate);
     const pruned = prunePaymentGatewayHistoryBefore(store, historyStartDate, 'tripay');
@@ -10271,9 +10505,18 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
       pruned,
       remoteFetched: remote.rows.length,
       totalRecords: eligibleRows.length,
-      syncedAt: remote.fetchedAt
+      syncedAt: remote.fetchedAt,
+      pushEvents: applied.fulfillments.filter((item) => item.status === 'paid' && !item.reused)
     };
   });
+  const pushEvents = Array.isArray(synced.result.pushEvents) ? synced.result.pushEvents : [];
+  for (const event of pushEvents) {
+    await sendOnlinePaymentPushNotifications(synced.data, event).catch((error) => {
+      console.error(`Web Push rekonsiliasi ${event.reference || '-'} gagal: ${error.message || error}`);
+    });
+  }
+  delete synced.result.pushEvents;
+  return synced;
 }
 
 let paymentGatewayHistorySyncRunning = false;
@@ -10674,7 +10917,7 @@ async function handlePaymentGatewayWebhook(req, res, url) {
   const payload = paymentGatewayCallbackPayload(rawPayload);
   const actor = { username: 'payment-gateway', name: 'Payment Gateway' };
   try {
-    const { result } = await mutate(async (store) => {
+    const { result, data } = await mutate(async (store) => {
       verifyPaymentGatewayCallback(req, payload, store.settings?.paymentGateway || {}, raw);
       const fulfilled = fulfillPaymentGatewayCallback(store, payload, actor);
       addActivity(store, 'monitoring', `Callback payment gateway ${fulfilled.reference}: ${fulfilled.status}`, {
@@ -10701,6 +10944,15 @@ async function handlePaymentGatewayWebhook(req, res, url) {
       status: result.status,
       voucherCount: Array.isArray(result.vouchers) ? result.vouchers.length : 0
     });
+    sendOnlinePaymentPushNotifications(data, result)
+      .then((push) => {
+        if (push.sent || push.failed) {
+          console.log(`Web Push pembayaran ${result.reference || '-'}: ${push.sent} terkirim, ${push.failed} gagal`);
+        }
+      })
+      .catch((error) => {
+        console.error(`Web Push pembayaran ${result.reference || '-'} gagal: ${error.message || error}`);
+      });
   } catch (error) {
     sendJson(res, 400, {
       ok: false,
@@ -11501,6 +11753,64 @@ async function handleApi(req, res, url) {
     });
     const crispSvg = svg.replace('<svg ', '<svg shape-rendering="crispEdges" text-rendering="geometricPrecision" ');
     sendBinary(res, 200, crispSvg, 'image/svg+xml; charset=utf-8');
+    return;
+  }
+
+  if (pathname === '/api/notifications/web-push' && ['GET', 'POST', 'DELETE'].includes(method)) {
+    const authContext = await requirePermission(req, res, 'payment-gateway:manage');
+    if (!authContext) return;
+    try {
+      const vapid = await ensureWebPushVapid();
+      if (method === 'GET') {
+        const subscriptions = (authContext.data.webPushSubscriptions || [])
+          .filter((item) => String(item.userId || '') === String(authContext.user.id || '') && item.enabled !== false);
+        sendJson(res, 200, {
+          ok: true,
+          enabled: true,
+          publicKey: vapid.publicKey,
+          subscriptionCount: subscriptions.length
+        });
+        return;
+      }
+      const payload = await readBody(req);
+      if (method === 'POST') {
+        const subscription = normalizeWebPushSubscription(payload.subscription || payload);
+        const { result } = await mutate((store) => {
+          store.webPushSubscriptions = Array.isArray(store.webPushSubscriptions) ? store.webPushSubscriptions : [];
+          const now = new Date().toISOString();
+          const existing = store.webPushSubscriptions.find((item) => item.endpoint === subscription.endpoint);
+          const next = {
+            ...(existing || {}),
+            id: existing?.id || createId('wps'),
+            ...subscription,
+            userId: authContext.user.id || '',
+            username: authContext.user.username || '',
+            role: authContext.user.role || '',
+            userAgent: String(req.headers['user-agent'] || '').slice(0, 240),
+            enabled: true,
+            createdAt: existing?.createdAt || now,
+            updatedAt: now
+          };
+          if (existing) Object.assign(existing, next);
+          else store.webPushSubscriptions.push(next);
+          store.webPushSubscriptions = store.webPushSubscriptions.slice(-1000);
+          return { id: next.id, endpoint: next.endpoint };
+        });
+        sendJson(res, 200, { ok: true, subscribed: true, id: result.id });
+        return;
+      }
+      const endpoint = String(payload.endpoint || payload.subscription?.endpoint || '').trim();
+      const { result } = await mutate((store) => {
+        const before = (store.webPushSubscriptions || []).length;
+        store.webPushSubscriptions = (store.webPushSubscriptions || []).filter((item) => !(
+          item.endpoint === endpoint && String(item.userId || '') === String(authContext.user.id || '')
+        ));
+        return before - store.webPushSubscriptions.length;
+      });
+      sendJson(res, 200, { ok: true, unsubscribed: result > 0 });
+    } catch (error) {
+      badRequest(res, error.message || 'Web Push tidak dapat dikonfigurasi');
+    }
     return;
   }
 
@@ -12522,8 +12832,16 @@ async function handleApi(req, res, url) {
         const automation = standaloneBillingAutomation(store, authContext.user);
         automation.stampedVouchers = stampedVouchers;
         const expiredVouchers = (automation.voucherExpirations?.removed?.length || 0) + (automation.voucherExpirations?.updated?.length || 0);
-        if (automation.created.length || automation.isolatedUsers.length || automation.activatedUsers.length || expiredVouchers) {
+        if (automation.created.length || automation.isolatedUsers.length || automation.terminatedUsers.length || automation.activatedUsers.length || expiredVouchers) {
           await syncFreeradiusIfNeeded(store, authContext.user, 'billing-settings-automation');
+        }
+        if (freeradiusSql.enabled() && (automation.isolatedUsers.length || automation.terminatedUsers.length || automation.activatedUsers.length)) {
+          automation.radiusStateDisconnects = await disconnectChangedRadiusUsers(
+            store,
+            [...automation.isolatedUsers, ...automation.terminatedUsers, ...automation.activatedUsers],
+            authContext.user,
+            'billing-settings-automation-coa'
+          );
         }
         if (expiredVouchers) {
           automation.expiredVoucherDisconnects = await disconnectExpiredVoucherSessions(store, automation.voucherExpirations, authContext.user);
@@ -12539,6 +12857,7 @@ async function handleApi(req, res, url) {
         automation: {
           created: result.created.length,
           isolated: result.isolatedUsers.length,
+          terminated: result.terminatedUsers.length,
           activated: result.activatedUsers.length
         }
       });
@@ -13203,6 +13522,7 @@ async function handleApi(req, res, url) {
           : method === 'PUT'
             ? (store.radiusUsers || []).find((user) => user.id === id)
             : null;
+        const previousStatus = String(existing?.status || '').trim().toLowerCase();
         if (existing && !resellerHotspotVoucherRowVisible(existing, authContext.user)) {
           throw new Error('Role user tidak memiliki akses ke voucher Hotspot ini');
         }
@@ -13214,6 +13534,24 @@ async function handleApi(req, res, url) {
           : method === 'PUT'
             ? freeradius.updateRadiusUser(store, id, radiusUserPayload(payload, 'pppoe', store), authContext.user)
             : freeradius.deleteRadiusUser(store, id);
+        if (method === 'PUT') {
+          const temporaryActivation = payloadEnabled(payload.temporaryActivation)
+            && ['isolated', 'isolir', 'suspend', 'suspended'].includes(previousStatus)
+            && next.status === 'active';
+          if (temporaryActivation) {
+            next.billingIsolationOverride = true;
+            next.manualActivatedAt = new Date().toISOString();
+            next.manualActivatedByName = authContext.user.name || authContext.user.username || '';
+            next.manualActivatedByUsername = authContext.user.username || '';
+            next.manualActivatedByRole = authContext.user.role || '';
+          } else if (['isolated', 'terminated'].includes(next.status)) {
+            next.billingIsolationOverride = false;
+            next.manualActivatedAt = '';
+            next.manualActivatedByName = '';
+            next.manualActivatedByUsername = '';
+            next.manualActivatedByRole = '';
+          }
+        }
         let member = null;
         let invoice = null;
         let waQueued = null;
@@ -13891,6 +14229,84 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'POST' && pathname === '/api/monitoring/billing-temporary-activation') {
+    const authContext = await requireAnyPermission(req, res, ['radius:write', 'radius:ppp-users:write']);
+    if (!authContext) return;
+    if (!standaloneMode(authContext.data)) {
+      badRequest(res, 'Aktivasi sementara hanya tersedia pada billing standalone');
+      return;
+    }
+    const payload = await readBody(req);
+    const invoiceId = String(payload.invoiceId || payload.invoiceNo || '').trim();
+    const customerId = String(payload.customerId || '').trim();
+    try {
+      const { result } = await mutate(async (data) => {
+        const invoice = (data.invoices || []).find((item) => (
+          item.id === invoiceId
+          || item.externalId === invoiceId
+          || item.invoiceNo === invoiceId
+          || displayBillingInvoiceNo(item.externalId || item.invoiceNo || item.id) === invoiceId
+        ));
+        const customer = (data.customers || []).find((item) => (
+          item.id === customerId || (invoice?.customerId && item.id === invoice.customerId)
+        ));
+        if (!customer) throw new Error('Member pelanggan tidak ditemukan');
+        const user = radiusUserForCustomer(data, customer);
+        if (!user) throw new Error('User PPP-DHCP pelanggan tidak ditemukan');
+        if (radiusStatusForCustomer(user) !== 'isolated') {
+          throw new Error('Hanya pelanggan berstatus Isolir yang dapat diaktifkan sementara');
+        }
+        const now = new Date().toISOString();
+        user.status = 'active';
+        user.isolatedAt = '';
+        user.isolationSource = '';
+        user.isolationReason = '';
+        user.isolatedByName = '';
+        user.isolatedByUsername = '';
+        user.isolatedByRole = '';
+        user.billingIsolationOverride = true;
+        user.manualActivatedAt = now;
+        user.manualActivatedByName = authContext.user.name || authContext.user.username || '';
+        user.manualActivatedByUsername = authContext.user.username || '';
+        user.manualActivatedByRole = authContext.user.role || '';
+        user.updatedAt = now;
+        user.updatedBy = user.manualActivatedByName;
+        syncRadiusCustomerStatus(data, user);
+        addActivity(data, 'monitoring', `${customer.name || customer.username} diaktifkan sementara oleh ${user.manualActivatedByName}`, {
+          action: 'billing-temporary-activation',
+          customerId: customer.id,
+          radiusUserId: user.id,
+          invoiceId: invoice?.id || '',
+          unlimited: true
+        });
+        await syncFreeradiusIfNeeded(data, authContext.user, 'billing-temporary-activation');
+        const coa = await freeradiusCoa.disconnectUser(data, user);
+        return { customer, user, invoice: invoice || null, coa };
+      });
+      sendJson(res, 200, {
+        ok: true,
+        source: 'standalone',
+        customer: {
+          id: result.customer.id,
+          name: result.customer.name || result.customer.username || '',
+          status: result.customer.status,
+          billingIsolationOverride: result.customer.billingIsolationOverride === true
+        },
+        user: {
+          id: result.user.id,
+          username: result.user.username,
+          status: result.user.status,
+          billingIsolationOverride: result.user.billingIsolationOverride === true
+        },
+        coa: result.coa,
+        message: 'Pelanggan aktif sementara tanpa batas waktu. Invoice dan reminder tetap berjalan.'
+      });
+    } catch (error) {
+      badRequest(res, error.message || 'Pelanggan gagal diaktifkan sementara');
+    }
+    return;
+  }
+
   if (method === 'POST' && pathname === '/api/monitoring/billing-action') {
     const authContext = await requirePermission(req, res, 'invoices:manage');
     if (!authContext) return;
@@ -14398,9 +14814,28 @@ async function handleApi(req, res, url) {
           const rawNextDue = normalizeImportDate(payload.nextDue || payload.dueDate || customer.nextDue || customer.dueDate || '');
           const nextDuePeriod = periodFromDateInput(rawNextDue);
           const fallbackDueDay = customer.dueDay || data.settings?.billing?.postpaidDueDay || 10;
-          const dueDay = memberDueDayForBilling(data, customer.activeDate || customer.installedAt || rawNextDue, billingMode.paymentType, billingMode.billingPeriod, fallbackDueDay);
+          const fixedSchedule = billingMode.billingPeriod === 'fixed';
+          if (fixedSchedule && !rawNextDue) {
+            throw new Error('Tanggal Next Invoice wajib diisi untuk Fixed Date');
+          }
+          const selectedDueDay = Math.max(1, Math.min(31, Number(String(rawNextDue).slice(8, 10)) || fallbackDueDay));
+          const dueDay = fixedSchedule
+            ? selectedDueDay
+            : memberDueDayForBilling(data, customer.activeDate || customer.installedAt || rawNextDue, billingMode.paymentType, billingMode.billingPeriod, fallbackDueDay);
           customer.dueDay = dueDay;
-          customer.nextDue = nextDuePeriod ? dueDateForPeriod(nextDuePeriod, dueDay) : rawNextDue;
+          if (fixedSchedule) {
+            customer.billingDueDayOverride = dueDay;
+            customer.billingScheduleSource = 'manual-next-invoice';
+            customer.billingScheduleUpdatedAt = new Date().toISOString();
+            customer.billingScheduleUpdatedBy = authContext.user.name || authContext.user.username;
+            customer.nextDue = rawNextDue;
+          } else {
+            delete customer.billingDueDayOverride;
+            customer.billingScheduleSource = billingMode.billingPeriod;
+            customer.billingScheduleUpdatedAt = new Date().toISOString();
+            customer.billingScheduleUpdatedBy = authContext.user.name || authContext.user.username;
+            customer.nextDue = nextDuePeriod ? dueDateForPeriod(nextDuePeriod, dueDay) : rawNextDue;
+          }
           customer.dueDate = customer.nextDue;
           customer.ppn = String(payload.ppn || '').trim();
           customer.discount = String(payload.discount || '').trim();
@@ -14412,7 +14847,14 @@ async function handleApi(req, res, url) {
           });
           return customer;
         });
-        sendJson(res, 200, { ok: true, source: 'local', payment: result, message: 'Payment detail berhasil diperbarui' });
+        sendJson(res, 200, {
+          ok: true,
+          source: 'local',
+          payment: result,
+          message: result.billingPeriod === 'fixed'
+            ? 'Next Invoice Fixed berhasil diperbarui. Invoice yang sudah terbit tidak diubah.'
+            : 'Payment detail berhasil diperbarui. Billing Cycle tetap mengikuti tanggal global.'
+        });
       } catch (error) {
         badRequest(res, error.message || 'Payment detail gagal diperbarui');
       }
@@ -15717,6 +16159,7 @@ if (require.main === module) {
 module.exports = {
   __test: {
     applyHotspotVoucherExpirations,
+    autoTerminateOverdueCustomers,
     changelogSummaryFromText,
     commitLogSummaryFromText,
     collectorReportPayments,
@@ -15749,6 +16192,7 @@ module.exports = {
     monthlyBillingDailyRows,
     monthlyVoucherDailyRows,
     migrateLegacyInlineImages,
+    onlinePaymentPushPayload,
     paymentCategoryForRecord,
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,

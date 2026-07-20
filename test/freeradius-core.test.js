@@ -50,6 +50,36 @@ test('hotspot radius users always use username as password', () => {
   ))?.value, 'legacy001');
 });
 
+test('terminated PPP keeps isolation portal access while terminated Hotspot stays blocked', () => {
+  const data = createDefaultStore();
+  data.settings.radius.isolationMikrotikGroup = 'EXPIRED';
+  data.settings.radius.isolationPool = 'pool-isolir';
+  data.radiusUsers.push(
+    {
+      id: 'terminated-ppp',
+      username: 'terminated@ppp.test',
+      password: 'secret',
+      serviceType: 'pppoe',
+      status: 'terminated',
+      terminationSource: 'manual'
+    },
+    {
+      id: 'terminated-hotspot',
+      username: 'terminated-hotspot',
+      password: 'terminated-hotspot',
+      serviceType: 'hotspot',
+      status: 'terminated'
+    }
+  );
+
+  const rows = freeradius.freeradiusRows(data);
+
+  assert.ok(rows.radcheck.some((row) => row.username === 'terminated@ppp.test' && row.attribute === 'Cleartext-Password'));
+  assert.ok(rows.radreply.some((row) => row.username === 'terminated@ppp.test' && row.attribute === 'Mikrotik-Group' && row.value === 'EXPIRED'));
+  assert.ok(rows.radreply.some((row) => row.username === 'terminated@ppp.test' && row.attribute === 'Framed-Pool' && row.value === 'pool-isolir'));
+  assert.equal(rows.radcheck.some((row) => row.username === 'terminated-hotspot'), false);
+});
+
 test('ppp static IP must be a usable host address', () => {
   const data = createDefaultStore();
 

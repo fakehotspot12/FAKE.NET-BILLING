@@ -240,9 +240,9 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '1.0.54',
-      buildVersion: '1.0.38',
-      releaseDate: '2026-07-17'
+      version: '2.3.0',
+      buildVersion: '2.3.0',
+      releaseDate: '2026-07-20'
     }
   },
   hotspotVoucherTemplates: [],
@@ -253,9 +253,9 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '1.0.54',
-    buildVersion: '1.0.38',
-    releaseDate: '2026-07-17',
+    appVersion: '2.3.0',
+    buildVersion: '2.3.0',
+    releaseDate: '2026-07-20',
     loginVerificationEnabled: true
   },
   notifications: null,
@@ -279,6 +279,9 @@ let dashboardRouterNasCharts = {};
 let notificationsTimer = null;
 let notificationsLoading = false;
 let lastNotificationsFetchAt = 0;
+let webPushRegistration = null;
+let webPushSyncing = null;
+let webPushSubscriptionActive = false;
 const paymentNotificationTimers = new Map();
 let topWaStatusTimer = null;
 let topWaStatusLoading = false;
@@ -988,37 +991,136 @@ function closePaymentNotification(id) {
   setNotificationMenu(state.notifications || notificationBasePayload());
 }
 
-function showBrowserPaymentNotification(item = {}) {
-  if (!('Notification' in window)) return;
-  const notify = () => {
-    if (window.Notification.permission !== 'granted') return;
-    try {
-      const browserNotification = new window.Notification(item.title || 'Pembayaran online masuk', {
-        body: item.description || 'Pembayaran online berhasil.',
-        tag: `fakenet-payment-${item.id || Date.now()}`
-      });
-      window.setTimeout(() => browserNotification.close(), PAYMENT_NOTIFICATION_TTL_MS);
-    } catch {
-      // Browser notification can be unavailable on insecure origins; bell notification still appears.
-    }
-  };
-  if (window.Notification.permission === 'granted') {
-    notify();
-    return;
+function webPushSupported() {
+  return window.isSecureContext
+    && 'Notification' in window
+    && 'serviceWorker' in navigator
+    && 'PushManager' in window;
+}
+
+function urlBase64ToUint8Array(value = '') {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4);
+  const base64 = `${value}${padding}`.replace(/-/g, '+').replace(/_/g, '/');
+  const raw = window.atob(base64);
+  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+}
+
+async function ensureWebPushRegistration() {
+  if (!webPushSupported()) return null;
+  if (!webPushRegistration) {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.3.0', {
+      scope: '/'
+    });
   }
-  if (window.Notification.permission === 'default') {
-    window.Notification.requestPermission()
-      .then((permission) => {
-        if (permission === 'granted') notify();
-      })
-      .catch(() => {});
+  return webPushRegistration;
+}
+
+async function syncWebPushSubscription(options = {}) {
+  if (!state.auth || !can('payment-gateway:manage') || !webPushSupported()) {
+    webPushSubscriptionActive = false;
+    return null;
+  }
+  if (webPushSyncing) return webPushSyncing;
+  webPushSyncing = (async () => {
+    if (window.Notification.permission === 'default' && options.requestPermission === true) {
+      await window.Notification.requestPermission();
+    }
+    if (window.Notification.permission !== 'granted') {
+      webPushSubscriptionActive = false;
+      return null;
+    }
+    const registration = await ensureWebPushRegistration();
+    if (!registration) return null;
+    const config = await api('/api/notifications/web-push', { skipAuthRedirect: true });
+    let subscription = await registration.pushManager.getSubscription();
+    const expectedKey = urlBase64ToUint8Array(config.publicKey || '');
+    const currentKey = subscription?.options?.applicationServerKey
+      ? new Uint8Array(subscription.options.applicationServerKey)
+      : null;
+    if (subscription && currentKey && (currentKey.length !== expectedKey.length
+      || currentKey.some((value, index) => value !== expectedKey[index]))) {
+      await subscription.unsubscribe().catch(() => false);
+      subscription = null;
+    }
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: expectedKey
+      });
+    }
+    await api('/api/notifications/web-push', {
+      method: 'POST',
+      skipAuthRedirect: true,
+      body: JSON.stringify({ subscription: subscription.toJSON() })
+    });
+    webPushSubscriptionActive = true;
+    return subscription;
+  })().catch(() => {
+    webPushSubscriptionActive = false;
+    return null;
+  }).finally(() => {
+    webPushSyncing = null;
+  });
+  return webPushSyncing;
+}
+
+async function disableWebPushSubscription() {
+  if (!webPushSupported()) return;
+  const registration = webPushRegistration || await navigator.serviceWorker.getRegistration('/');
+  const subscription = await registration?.pushManager?.getSubscription();
+  if (subscription && state.auth && can('payment-gateway:manage')) {
+    await api('/api/notifications/web-push', {
+      method: 'DELETE',
+      skipAuthRedirect: true,
+      body: JSON.stringify({ endpoint: subscription.endpoint })
+    }).catch(() => ({}));
+    await subscription.unsubscribe().catch(() => false);
+  }
+  webPushSubscriptionActive = false;
+}
+
+async function showBrowserPaymentNotification(item = {}) {
+  if (!('Notification' in window) || window.Notification.permission !== 'granted' || webPushSubscriptionActive) return;
+  const tag = `fakenet-payment-${item.id || Date.now()}`;
+  try {
+    const registration = await ensureWebPushRegistration();
+    if (registration) {
+      await registration.showNotification(item.title || 'Pembayaran online masuk', {
+        body: item.description || 'Pembayaran online berhasil.',
+        icon: '/fakenet-logo.png',
+        badge: '/fakenet-logo.png',
+        tag,
+        data: { url: '/#paymentGateway' }
+      });
+      window.setTimeout(async () => {
+        const notifications = await registration.getNotifications({ tag }).catch(() => []);
+        notifications.forEach((notification) => notification.close());
+      }, PAYMENT_NOTIFICATION_TTL_MS);
+      return;
+    }
+    const browserNotification = new window.Notification(item.title || 'Pembayaran online masuk', {
+      body: item.description || 'Pembayaran online berhasil.',
+      icon: '/fakenet-logo.png',
+      tag
+    });
+    window.setTimeout(() => browserNotification.close(), PAYMENT_NOTIFICATION_TTL_MS);
+  } catch {
+    // Notifikasi lonceng tetap menjadi fallback bila browser menolak notifikasi sistem.
   }
 }
 
 function ensureBrowserNotificationPermission() {
-  if (!('Notification' in window)) return;
-  if (window.Notification.permission !== 'default') return;
-  window.Notification.requestPermission().catch(() => {});
+  if (webPushSubscriptionActive) return;
+  if (!webPushSupported()) {
+    setToast('Notifikasi sistem memerlukan browser yang mendukung Web Push melalui HTTPS');
+    return;
+  }
+  syncWebPushSubscription({ requestPermission: true })
+    .then((subscription) => {
+      if (subscription) setToast('Notifikasi pembayaran online aktif di perangkat ini');
+      else if (window.Notification.permission === 'denied') setToast('Izin notifikasi diblokir pada pengaturan browser');
+    })
+    .catch(() => {});
 }
 
 function ingestPaymentNotifications(notifications = {}) {
@@ -1217,7 +1319,7 @@ async function refreshNotifications(options = {}) {
     return;
   }
   const now = Date.now();
-  if (!options.force && now - lastNotificationsFetchAt < 30000) {
+  if (!options.force && now - lastNotificationsFetchAt < 10000) {
     return;
   }
   if (notificationsLoading) return;
@@ -1245,7 +1347,10 @@ function startNotificationsTimer() {
   state.notifications = initialNotifications;
   setNotificationMenu(initialNotifications);
   refreshNotifications({ force: true });
-  notificationsTimer = window.setInterval(() => refreshNotifications(), 60000);
+  if (window.Notification?.permission === 'granted') {
+    syncWebPushSubscription().catch(() => {});
+  }
+  notificationsTimer = window.setInterval(() => refreshNotifications(), 15000);
 }
 
 function setTopWaStatus(status = {}) {
@@ -2552,9 +2657,9 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '1.0.54',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '1.0.54',
-    releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-17',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.3.0',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.3.0',
+    releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
       : settingVerification !== false
@@ -7970,6 +8075,7 @@ function radiusUserRows(rows = [], type = 'ppp', writeAllowed = false, startNo =
       </td>
       <td>
         <span class="badge ${radiusStatusBadge(row.status)}">${escapeHtml(radiusStatusLabel(row.status))}</span>
+        ${row.billingIsolationOverride ? '<div><span class="badge pending">Aktif manual</span></div>' : ''}
         ${row.isolatedAt ? `<div class="muted">Isolir: ${escapeHtml(dateText(row.isolatedAt))}</div>` : ''}
         ${row.terminatedAt ? `<div class="muted">Terminate: ${escapeHtml(dateText(row.terminatedAt))}</div>` : ''}
       </td>
@@ -7980,7 +8086,7 @@ function radiusUserRows(rows = [], type = 'ppp', writeAllowed = false, startNo =
             <summary aria-label="Aksi user">...</summary>
             <div class="action-menu-panel">
               <button type="button" data-edit-radius-${type}="${escapeHtml(row.id)}">Edit</button>
-              ${row.status === 'active' ? `<button type="button" data-status-radius-${type}="${escapeHtml(row.id)}" data-next-status="isolated">Isolir</button>` : `<button type="button" data-status-radius-${type}="${escapeHtml(row.id)}" data-next-status="active">Aktifkan</button>`}
+              ${row.status === 'active' ? `<button type="button" data-status-radius-${type}="${escapeHtml(row.id)}" data-next-status="isolated">Isolir</button>` : `<button type="button" data-status-radius-${type}="${escapeHtml(row.id)}" data-next-status="active">${type === 'ppp' && ['isolated', 'isolir', 'suspend', 'suspended'].includes(normalizedStatus) ? 'Aktifkan sementara' : 'Aktifkan'}</button>`}
               ${!['terminate', 'terminated'].includes(normalizedStatus) ? `<button type="button" class="danger-text" data-status-radius-${type}="${escapeHtml(row.id)}" data-next-status="terminated">Terminate</button>` : ''}
               <button type="button" class="danger-text" data-delete-radius-${type}="${escapeHtml(row.id)}" data-radius-username="${escapeHtml(row.username || '')}">Hapus</button>
             </div>
@@ -9601,7 +9707,10 @@ function selectedRadiusPppUsers(rows = []) {
     .filter(Boolean);
 }
 
-function radiusUserStatusPayload(user = {}, nextStatus = 'active') {
+function radiusUserStatusPayload(user = {}, nextStatus = 'active', type = 'ppp') {
+  const currentStatus = String(user.rawStatus || user.status || '').toLowerCase();
+  const temporaryActivation = type === 'ppp' && nextStatus === 'active'
+    && ['isolated', 'isolir', 'suspend', 'suspended'].includes(currentStatus);
   return {
     username: user.username || '',
     profile: user.profile || '',
@@ -9609,6 +9718,7 @@ function radiusUserStatusPayload(user = {}, nextStatus = 'active') {
     staticIp: user.staticIp || '',
     macAddress: user.callerId || '',
     status: nextStatus,
+    temporaryActivation,
     isolatedAt: nextStatus === 'isolated' ? (user.isolatedAt || todayInput()) : '',
     isolationSource: nextStatus === 'isolated' ? 'manual' : '',
     isolationReason: nextStatus === 'isolated' ? 'manual-admin' : '',
@@ -9629,13 +9739,19 @@ async function persistRadiusUserStatus(type = 'ppp', user = {}, nextStatus = 'ac
   const section = type === 'hotspot' ? 'hotspot' : 'ppp-dhcp';
   await api(`/api/radius/${section}/users/${encodeURIComponent(user.id)}`, {
     method: 'PUT',
-    body: JSON.stringify(radiusUserStatusPayload(user, nextStatus))
+    body: JSON.stringify(radiusUserStatusPayload(user, nextStatus, type))
   });
 }
 
 async function updateRadiusUserStatus(type = 'ppp', user = {}, nextStatus = 'active') {
+  const currentStatus = String(user.rawStatus || user.status || '').toLowerCase();
+  const temporaryActivation = type === 'ppp' && nextStatus === 'active'
+    && ['isolated', 'isolir', 'suspend', 'suspended'].includes(currentStatus);
+  if (temporaryActivation && !window.confirm(`Aktifkan sementara ${user.username || 'pelanggan'} tanpa batas waktu? Invoice dan reminder tetap berjalan sampai pelanggan diisolir kembali secara manual.`)) {
+    return;
+  }
   await persistRadiusUserStatus(type, user, nextStatus);
-  setToast(nextStatus === 'isolated' ? 'User diisolir' : nextStatus === 'terminated' ? 'User diterminate' : 'User diaktifkan');
+  setToast(nextStatus === 'isolated' ? 'User diisolir' : nextStatus === 'terminated' ? 'User diterminate' : temporaryActivation ? 'User diaktifkan sementara; tagihan tetap berjalan' : 'User diaktifkan');
   if (type === 'hotspot') {
     renderRadiusHotspot({ refresh: true });
   } else {
@@ -10551,6 +10667,11 @@ async function renderRadiusSettings(options = {}) {
             <label class="field">
               <span>Grace suspend setelah tempo</span>
               <input name="suspendGraceDays" type="number" min="0" max="365" value="${escapeHtml(billing.suspendGraceDays || 0)}">
+            </label>
+            <label class="field">
+              <span>Terminate otomatis setelah isolir</span>
+              <input name="autoTerminateAfterDays" type="number" min="0" max="3650" step="1" value="${escapeHtml(billing.autoTerminateAfterDays || 0)}">
+              <small class="muted">Hari sejak isolir karena tunggakan. Isi 0 agar tetap isolir dan invoice berikutnya terus berjalan.</small>
             </label>
             <label class="field">
               <span>Reminder sebelum tempo</span>
@@ -11929,6 +12050,13 @@ function billingActionButtons(invoice = {}, index = 0) {
       </button>
     `);
   }
+  if (invoice.isIsolated && canAny(['radius:write', 'radius:ppp-users:write'])) {
+    buttons.push(`
+      <button class="billing-action-button pay" type="button" data-billing-temporary-activation="${index}" title="Aktifkan sementara tanpa menghentikan tagihan" aria-label="Aktifkan sementara pelanggan invoice ${escapeHtml(invoiceLabel)}">
+        <span>Aktifkan sementara</span>
+      </button>
+    `);
+  }
   if (billingRollbackAllowed(invoice)) {
     buttons.push(`
       <button class="billing-action-button rollback" type="button" data-billing-rollback="${index}" title="Rollback pembayaran" aria-label="Rollback invoice ${escapeHtml(invoiceLabel)}">
@@ -12844,8 +12972,9 @@ function paymentModalBody(member = {}, payment = {}, editable = false) {
             </select>
           </label>
           <div class="field">
-            <span>Next Invoice</span>
+            <span>Next Invoice (khusus Fixed)</span>
             ${datePickerControl({ name: 'nextDue', value: payment.nextDue || member.nextDue || member.dueDate, required: true, disabled: !editable })}
+            ${editable ? '<small class="muted" data-next-invoice-hint>Perubahan berlaku mulai invoice berikutnya. Invoice yang sudah terbit tetap.</small>' : ''}
           </div>
           <label>Harga
             <input value="${escapeHtml(payment.price || (member.price ? rupiah(member.price) : '-'))}" disabled>
@@ -13053,8 +13182,9 @@ async function openMemberPaymentModal(member = {}) {
       submit.textContent = 'Menyimpan...';
     }
     try {
-      const nextDue = normalizeMemberDateDisplayInput(formPayload.nextDue);
-      if (!nextDue) {
+      const fixedSchedule = billingPeriodValue(formPayload.billingPeriod || payment.billingPeriod) === 'fixed';
+      const nextDue = normalizeMemberDateDisplayInput(formPayload.nextDue || payment.nextDue || member.nextDue || member.dueDate);
+      if (fixedSchedule && !nextDue) {
         throw new Error('Tanggal Next Invoice belum valid');
       }
       const result = await api('/api/monitoring/member-payment', {
@@ -13076,8 +13206,26 @@ async function openMemberPaymentModal(member = {}) {
   });
   const paymentTypeSelect = modalBody.querySelector('select[name="paymentType"]');
   const billingPeriodSelect = modalBody.querySelector('select[name="billingPeriod"]');
-  syncBillingPeriodSelect(paymentTypeSelect, billingPeriodSelect);
-  paymentTypeSelect?.addEventListener('change', () => syncBillingPeriodSelect(paymentTypeSelect, billingPeriodSelect));
+  const syncScheduleFields = () => {
+    const fixedSchedule = billingPeriodValue(billingPeriodSelect?.value) === 'fixed';
+    const picker = modalBody.querySelector('[name="nextDue"]')?.closest('[data-date-picker]');
+    picker?.querySelectorAll('[data-date-picker-value], [data-date-picker-toggle]').forEach((control) => {
+      control.disabled = !fixedSchedule;
+    });
+    const hint = modalBody.querySelector('[data-next-invoice-hint]');
+    if (hint) {
+      hint.textContent = fixedSchedule
+        ? 'Perubahan berlaku mulai invoice berikutnya. Invoice yang sudah terbit tetap.'
+        : 'Billing Cycle mengikuti tanggal global di Radius > Setting.';
+    }
+  };
+  const syncPaymentMode = () => {
+    syncBillingPeriodSelect(paymentTypeSelect, billingPeriodSelect);
+    syncScheduleFields();
+  };
+  syncPaymentMode();
+  paymentTypeSelect?.addEventListener('change', syncPaymentMode);
+  billingPeriodSelect?.addEventListener('change', syncScheduleFields);
 }
 
 async function renderMonitoringMembers(options = {}) {
@@ -13675,6 +13823,28 @@ async function renderMonitoringBilling(options = {}) {
         return;
       }
       openBillingRollbackModal(invoice);
+    });
+  });
+  app.querySelectorAll('[data-billing-temporary-activation]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const invoice = invoices[Number(button.dataset.billingTemporaryActivation || -1)];
+      if (!invoice) return;
+      if (!window.confirm(`Aktifkan sementara ${invoice.customerName || invoice.username || 'pelanggan'} tanpa batas waktu? Invoice dan reminder tetap berjalan sampai diisolir kembali secara manual.`)) return;
+      button.disabled = true;
+      try {
+        const result = await api('/api/monitoring/billing-temporary-activation', {
+          method: 'POST',
+          body: JSON.stringify({
+            invoiceId: invoice.invoiceId || invoice.id || invoice.invoiceNo || '',
+            customerId: invoice.customerId || ''
+          })
+        });
+        setToast(result.message || 'Pelanggan diaktifkan sementara');
+        renderMonitoringBilling({ refresh: true });
+      } catch (error) {
+        button.disabled = false;
+        setToast(error.message || 'Pelanggan gagal diaktifkan sementara');
+      }
     });
   });
   updateBillingBatchButtons();
@@ -14604,6 +14774,7 @@ function openAccountSettingsModal() {
 
 async function logoutCurrentUser() {
   rememberLoginReturnView();
+  await disableWebPushSubscription().catch(() => {});
   await api('/api/auth/logout', {
     method: 'POST',
     skipAuthRedirect: true
@@ -14673,6 +14844,11 @@ async function renderBillingSettings() {
           <label class="field">
             <span>Grace suspend setelah tempo</span>
             <input name="suspendGraceDays" type="number" min="0" max="365" value="${escapeHtml(settings.suspendGraceDays || 0)}">
+          </label>
+          <label class="field">
+            <span>Terminate otomatis setelah isolir</span>
+            <input name="autoTerminateAfterDays" type="number" min="0" max="3650" step="1" value="${escapeHtml(settings.autoTerminateAfterDays || 0)}">
+            <small class="muted">Hari sejak isolir karena tunggakan. Isi 0 agar tetap isolir dan invoice berikutnya terus berjalan.</small>
           </label>
           <label class="field">
             <span>Reminder sebelum tempo</span>

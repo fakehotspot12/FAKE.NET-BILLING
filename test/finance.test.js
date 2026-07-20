@@ -312,6 +312,91 @@ test('invoice generation respects a paid member next due period', () => {
   assert.deepEqual(august.map((invoice) => invoice.customerId).sort(), ['cus-migrated-paid', 'cus-migrated-unpaid']);
 });
 
+test('fixed member schedule moves only the next invoice and preserves existing invoice', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 15;
+  data.customers.push({
+    id: 'cus-fixed-shift',
+    username: 'fixed-shift@kampung.net',
+    name: 'Fixed Shift',
+    packageName: 'Paket Fixed',
+    status: 'active',
+    price: 150000,
+    paymentType: 'postpaid',
+    billingPeriod: 'fixed',
+    activeDate: '2026-01-10',
+    firstInvoiceStatus: 'paid',
+    nextDue: '2026-08-24',
+    dueDate: '2026-08-24',
+    dueDay: 24,
+    billingDueDayOverride: 24
+  });
+  data.invoices.push({
+    id: 'inv-fixed-july',
+    customerId: 'cus-fixed-shift',
+    period: '2026-07',
+    amount: 150000,
+    status: 'pending',
+    dueDate: '2026-07-10'
+  });
+
+  assert.equal(generateInvoices(data, '2026-07').length, 0);
+  assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-fixed-july').dueDate, '2026-07-10');
+  assert.equal(data.customers[0].nextDue, '2026-08-24');
+
+  const august = generateInvoices(data, '2026-08');
+  assert.equal(august.length, 1);
+  assert.equal(august[0].dueDate, '2026-08-24');
+  assert.equal(data.customers[0].nextDue, '2026-09-24');
+});
+
+test('postpaid billing cycle ignores a fixed-date customer override', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 15;
+  data.customers.push({
+    id: 'cus-cycle-global',
+    username: 'cycle-global@kampung.net',
+    name: 'Cycle Global',
+    status: 'active',
+    price: 150000,
+    paymentType: 'postpaid',
+    billingPeriod: 'cycle',
+    activeDate: '2026-01-10',
+    firstInvoiceStatus: 'paid',
+    nextDue: '2026-08-24',
+    billingDueDayOverride: 24
+  });
+
+  const august = generateInvoices(data, '2026-08');
+  assert.equal(august.length, 1);
+  assert.equal(august[0].dueDate, '2026-08-15');
+});
+
+test('manual fixed invoice advances the customer next invoice date', () => {
+  const data = createDefaultStore();
+  const customer = {
+    id: 'cus-manual-fixed-shift',
+    username: 'manual-fixed-shift@kampung.net',
+    name: 'Manual Fixed Shift',
+    status: 'active',
+    price: 150000,
+    paymentType: 'postpaid',
+    billingPeriod: 'fixed',
+    activeDate: '2026-01-24',
+    firstInvoiceStatus: 'paid',
+    nextDue: '2026-08-24',
+    dueDate: '2026-08-24',
+    dueDay: 24,
+    billingDueDayOverride: 24
+  };
+  data.customers.push(customer);
+
+  const result = serverInternals.createLocalManualInvoice(data, customer, 1, { name: 'Admin' }, { queueWa: false });
+
+  assert.equal(result.invoice.dueDate, '2026-08-24');
+  assert.equal(customer.nextDue, '2026-09-24');
+});
+
 test('generates invoices only after the active date month', () => {
   const data = createDefaultStore();
   data.customers.push(
@@ -1113,6 +1198,48 @@ test('standalone billing automation isolates unpaid overdue and reactivates full
   assert.equal(result.activatedUsers.some((user) => user.id === 'rad-paid'), true);
 });
 
+test('manual temporary activation remains active while unpaid billing continues', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.billing.suspendGraceDays = 1;
+  data.settings.billing.autoSuspendTime = '00:00';
+  data.customers.push({
+    id: 'cus-manual-active',
+    username: 'manual-active@ppp.test',
+    name: 'Manual Active',
+    status: 'active',
+    billingIsolationOverride: true,
+    manualActivatedAt: '2026-07-20T00:00:00.000Z',
+    price: 100000
+  });
+  data.radiusUsers.push({
+    id: 'rad-manual-active',
+    serviceType: 'pppoe',
+    username: 'manual-active@ppp.test',
+    customerId: 'cus-manual-active',
+    status: 'active',
+    billingIsolationOverride: true
+  });
+  data.invoices.push({
+    id: 'inv-manual-active',
+    customerId: 'cus-manual-active',
+    customerName: 'Manual Active',
+    username: 'manual-active@ppp.test',
+    period: '2000-01',
+    amount: 100000,
+    status: 'pending',
+    dueDate: '2000-01-01'
+  });
+
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' });
+
+  assert.equal(data.radiusUsers[0].status, 'active');
+  assert.equal(data.customers[0].status, 'active');
+  assert.equal(result.isolatedUsers.length, 0);
+  assert.equal(data.invoices[0].status, 'pending');
+});
+
 test('standalone billing automation does not requeue suspension for an already isolated member', () => {
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';
@@ -1150,6 +1277,134 @@ test('standalone billing automation does not requeue suspension for an already i
 
   assert.equal(result.isolatedUsers.length, 0);
   assert.equal(data.waMessages.filter((message) => message.type === 'accountSuspend').length, 0);
+});
+
+test('auto termination stops future invoices but preserves the last unpaid invoice', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.billing.autoTerminateAfterDays = 30;
+  data.settings.billing.fixedInvoiceAdvanceDays = 31;
+  data.customers.push({
+    id: 'cus-auto-terminated',
+    source: 'radius',
+    username: 'auto-terminated@ppp.test',
+    name: 'Auto Terminated',
+    status: 'isolir',
+    isolatedAt: '2000-02-01',
+    isolationSource: 'billing',
+    price: 100000
+  });
+  data.radiusUsers.push({
+    id: 'rad-auto-terminated',
+    serviceType: 'pppoe',
+    username: 'auto-terminated@ppp.test',
+    password: 'secret',
+    customerId: 'cus-auto-terminated',
+    status: 'isolated',
+    isolatedAt: '2000-02-01',
+    isolationSource: 'billing'
+  });
+  data.invoices.push({
+    id: 'inv-auto-terminated',
+    customerId: 'cus-auto-terminated',
+    customerName: 'Auto Terminated',
+    username: 'auto-terminated@ppp.test',
+    period: '2000-02',
+    amount: 100000,
+    status: 'pending',
+    dueDate: '2000-02-10'
+  });
+
+  const result = serverInternals.standaloneBillingAutomation(data, {
+    username: 'billing-auto',
+    name: 'Billing Auto',
+    role: 'system'
+  });
+
+  assert.equal(result.terminatedUsers.length, 1);
+  assert.equal(data.radiusUsers[0].status, 'terminated');
+  assert.equal(data.radiusUsers[0].terminationSource, 'billing-auto-terminate');
+  assert.equal(data.customers[0].status, 'terminate');
+  assert.equal(data.invoices.length, 1);
+  assert.equal(data.invoices[0].status, 'pending');
+  assert.equal(generateInvoices(data, addMonthsToPeriod(currentPeriod(), 1)).length, 0);
+
+  const publicInvoice = serverInternals.publicPaymentGatewayInvoicePayload(data, data.invoices[0]);
+  assert.equal(publicInvoice.isTerminated, true);
+  assert.equal(publicInvoice.canPay, true);
+  assert.equal(publicInvoice.requiresAdminActivation, true);
+});
+
+test('auto termination default zero keeps billing-isolated customers invoiced', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.billing.autoTerminateAfterDays = 0;
+  data.customers.push({
+    id: 'cus-isolated-continue',
+    username: 'isolated-continue@ppp.test',
+    status: 'isolir',
+    isolationSource: 'billing',
+    price: 100000
+  });
+  data.radiusUsers.push({
+    id: 'rad-isolated-continue',
+    serviceType: 'pppoe',
+    username: 'isolated-continue@ppp.test',
+    customerId: 'cus-isolated-continue',
+    status: 'isolated',
+    isolatedAt: '2000-01-01',
+    isolationSource: 'billing'
+  });
+  data.invoices.push({
+    id: 'inv-isolated-continue',
+    customerId: 'cus-isolated-continue',
+    username: 'isolated-continue@ppp.test',
+    period: '2000-01',
+    amount: 100000,
+    status: 'pending',
+    dueDate: '2000-01-10'
+  });
+
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Auto' });
+
+  assert.equal(result.terminatedUsers.length, 0);
+  assert.equal(data.radiusUsers[0].status, 'isolated');
+  assert.equal(data.customers[0].status, 'isolir');
+  assert.ok(result.created.some((invoice) => invoice.customerId === 'cus-isolated-continue'));
+});
+
+test('manual isolation is never auto terminated by billing threshold', () => {
+  const data = createDefaultStore();
+  data.settings.billing.autoTerminateAfterDays = 1;
+  data.customers.push({
+    id: 'cus-manual-isolation-no-terminate',
+    username: 'manual-isolation-no-terminate',
+    status: 'isolir',
+    isolationSource: 'manual'
+  });
+  data.radiusUsers.push({
+    id: 'rad-manual-isolation-no-terminate',
+    customerId: 'cus-manual-isolation-no-terminate',
+    username: 'manual-isolation-no-terminate',
+    serviceType: 'pppoe',
+    status: 'isolated',
+    isolatedAt: '2000-01-01',
+    isolationSource: 'manual'
+  });
+  data.invoices.push({
+    id: 'inv-manual-isolation-no-terminate',
+    customerId: 'cus-manual-isolation-no-terminate',
+    username: 'manual-isolation-no-terminate',
+    period: '2000-01',
+    amount: 100000,
+    status: 'pending',
+    dueDate: '2000-01-10'
+  });
+
+  assert.equal(serverInternals.autoTerminateOverdueCustomers(data, data.settings.billing, {}).length, 0);
+  assert.equal(data.radiusUsers[0].status, 'isolated');
 });
 
 test('daily report uses payment creation time when paidAt only contains a date', () => {
@@ -1657,6 +1912,7 @@ test('billing settings allow H-1 invoice generation and disabled reminders', () 
 
   assert.equal(sanitized.fixedInvoiceAdvanceDays, 1);
   assert.equal(sanitized.notificationBeforeDueDays, 0);
+  assert.equal(sanitized.autoTerminateAfterDays, 0);
   assert.equal(serverInternals.invoiceGenerationDue(sanitized, '2026-08', '2026-08-08'), false);
   assert.equal(serverInternals.invoiceGenerationDue(sanitized, '2026-08', '2026-08-09'), true);
   assert.equal(serverInternals.invoiceGenerationDue({ ...sanitized, fixedInvoiceAdvanceDays: 0 }, '2026-08', '2026-08-09'), false);
@@ -5622,6 +5878,62 @@ test('Tripay history cutoff removes older provider tests without affecting other
   ];
   assert.equal(serverInternals.prunePaymentGatewayHistoryBefore(data, '2026-07-18'), 1);
   assert.deepEqual(data.paymentGatewayTransactions.map((row) => row.id), ['new-tripay', 'old-xendit']);
+});
+
+test('online payment Web Push is emitted only once for paid billing and voucher callbacks', () => {
+  const data = createDefaultStore();
+  data.paymentGatewayTransactions.push({
+    id: 'pg-push-monthly',
+    reference: '000456',
+    customerName: 'Pelanggan Online',
+    amount: 155000,
+    paymentMethod: 'QRIS',
+    status: 'paid'
+  });
+  const monthly = serverInternals.onlinePaymentPushPayload(data, {
+    type: 'monthly-package',
+    status: 'paid',
+    reused: false,
+    reference: '000456'
+  });
+  const voucher = serverInternals.onlinePaymentPushPayload(data, {
+    type: 'hotspot-voucher',
+    status: 'paid',
+    reused: false,
+    reference: 'VO-20260720-001',
+    order: {
+      id: 'voucher-order-push',
+      buyerName: 'Pembeli Voucher',
+      gatewayAmount: 10750,
+      paymentMethod: 'QRIS'
+    }
+  });
+
+  assert.equal(monthly.title, 'Tagihan Online Dibayar');
+  assert.match(monthly.body, /Pelanggan Online/);
+  assert.match(monthly.body, /QRIS/);
+  assert.equal(voucher.title, 'Voucher Online Dibayar');
+  assert.match(voucher.body, /Pembeli Voucher/);
+  assert.equal(serverInternals.onlinePaymentPushPayload(data, {
+    type: 'monthly-package',
+    status: 'paid',
+    reused: true,
+    reference: '000456'
+  }), null);
+  assert.equal(serverInternals.onlinePaymentPushPayload(data, {
+    type: 'monthly-package',
+    status: 'pending',
+    reused: false,
+    reference: '000457'
+  }), null);
+});
+
+test('Web Push service worker handles background push and notification clicks', async () => {
+  const source = await fs.readFile(path.join(__dirname, '..', 'public', 'service-worker.js'), 'utf8');
+  assert.match(source, /addEventListener\('push'/);
+  assert.match(source, /showNotification/);
+  assert.match(source, /addEventListener\('notificationclick'/);
+  assert.match(source, /#paymentGateway/);
 });
 
 test('unified payment gateway callback pays monthly invoice without duplicating payment', () => {

@@ -214,9 +214,12 @@ Field tanggal di Billing Setting berfungsi sebagai berikut:
 - `Generate invoice sebelum tempo`: jumlah hari sebelum jatuh tempo saat invoice otomatis mulai dibuat. Nilai `1` berarti H-1, nilai `0` berarti tepat hari jatuh tempo.
 - `Reminder sebelum tempo`: jumlah hari sebelum jatuh tempo untuk mengirim pengingat Whatsapp. Nilai `0` berarti reminder otomatis dimatikan.
 - `Grace suspend setelah tempo`: masa tenggang setelah jatuh tempo sebelum pelanggan diisolir otomatis. Nilai `0` berarti auto isolir karena telat bayar dimatikan.
+- `Terminate otomatis setelah isolir`: jumlah hari sejak isolir otomatis sebelum akun PPP-DHCP diubah menjadi terminated. Nilai `0` adalah default: pelanggan tetap isolir dan invoice periode berikutnya terus diterbitkan.
 - `Jam isolir otomatis`: jam eksekusi isolir otomatis setelah masa tenggang terpenuhi.
 
 Invoice otomatis dibuat per pelanggan sesuai tanggal jatuh temponya masing-masing. Untuk pelanggan prorata Billing Cycle, invoice pertama tidak dibuat sebelum `Active Date`, meskipun window generate invoice sudah masuk H-minus jatuh tempo.
+
+Jika batas terminate diisi lebih dari `0`, hanya isolir yang dibuat sistem karena tunggakan yang dapat berubah otomatis menjadi terminated. Isolir manual oleh admin tidak ikut diproses. Setelah terminated, invoice baru berhenti dibuat tetapi invoice terakhir yang belum lunas tetap tersimpan dan dapat dibayar. PPP-DHCP terminated tetap diarahkan ke profile/group isolir Radius agar halaman isolir dan tombol pembayaran dapat diakses. Pembayaran tidak langsung mengaktifkan akun terminated; aktivasi kembali harus dikonfirmasi admin. Voucher Hotspot terminated tetap diblokir dan tidak mendapatkan akses portal.
 
 ## Voucher Hotspot
 
@@ -316,6 +319,8 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Copy source aplikasi ke `/opt/fakenet-billing` tanpa membawa data runtime.
 - Install dependency Node dari `package-lock.json`.
 - Memasang dan memverifikasi BullMQ; antrean WhatsApp memakai Redis yang sama tanpa field konfigurasi tambahan di UI.
+- Memasang dan memverifikasi Web Push; kunci VAPID dibuat otomatis saat dipakai pertama kali dan disimpan persisten di `data/`.
+- Memvalidasi kelengkapan source, lockfile, service worker, manifest, SQL FreeRADIUS, helper command, dan unit service sebelum instalasi dilanjutkan.
 - Membuat `/etc/fakenet-billing.env` dan `/etc/fakenet-billing-waha.env`.
 - Membuat password random untuk database aplikasi, database Radius, dan WAHA.
 - Membuat database PostgreSQL `fakenet_billing` dan `radius`.
@@ -330,6 +335,7 @@ Yang tetap perlu diatur setelah install:
 
 - Aktivasi aplikasi jika diminta oleh penyedia.
 - Domain/subdomain publik dan HTTPS reverse proxy jika aplikasi dipublish ke internet.
+- HTTPS wajib untuk notifikasi pembayaran pada Chrome/mobile. Pada iPhone/iPad, portal perlu ditambahkan ke Home Screen agar Web Push tersedia.
 - Payment gateway merchant key, private key, dan callback domain.
 - Scan Whatsapp API Gateway dari menu aplikasi.
 - Site/NAS, secret Radius, SNMP community, profile PPP-DHCP/Hotspot, dan rule MikroTik.
@@ -387,7 +393,7 @@ Updater akan:
 3. Mengambil source terbaru via Git jika folder punya `.git`.
 4. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
 5. Menjalankan `npm ci --omit=dev` atau `npm install --omit=dev`.
-6. Memverifikasi modul BullMQ sebelum service direstart.
+6. Memverifikasi modul BullMQ dan Web Push sebelum service direstart.
 7. Restart service aplikasi tanpa me-restart Redis, PostgreSQL, Docker, atau FreeRADIUS.
 8. Menjalankan repair ringan untuk menyelaraskan helper command, systemd unit, dan konfigurasi FreeRADIUS tanpa menghapus data.
 9. Memastikan health check aplikasi dan worker BullMQ berhasil sebelum update dinyatakan selesai.

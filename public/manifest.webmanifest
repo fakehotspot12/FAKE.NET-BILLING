@@ -1,0 +1,18 @@
+{
+  "name": "FAKE.NET Billing",
+  "short_name": "Billing",
+  "description": "Billing dan operasional ISP/RT/RW Net",
+  "start_url": "/#dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#08204f",
+  "icons": [
+    {
+      "src": "/fakenet-logo.png",
+      "sizes": "640x640",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

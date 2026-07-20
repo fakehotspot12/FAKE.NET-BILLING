@@ -211,13 +211,19 @@ else
 fi
 
 cd "$APP_DIR"
+for required_file in package.json package-lock.json src/server.js public/app.js public/service-worker.js public/manifest.webmanifest; do
+  if [ ! -f "$APP_DIR/$required_file" ]; then
+    echo "Update dibatalkan: file repository tidak lengkap ($required_file)." >&2
+    exit 1
+  fi
+done
 if command -v npm >/dev/null 2>&1; then
   if [ -f package-lock.json ]; then
     npm ci --omit=dev
   else
     npm install --omit=dev
   fi
-  node -e "require('bullmq'); require('./src/whatsapp-queue')" >/dev/null
+  node -e "require('bullmq'); require('web-push'); require('./src/whatsapp-queue')" >/dev/null
 fi
 
 if [ -f "$APP_DIR/deploy/bin/fakenet-billing-update" ]; then

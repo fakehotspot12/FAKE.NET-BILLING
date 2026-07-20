@@ -7,6 +7,54 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.3.0] - 2026-07-20
+
+### Added
+
+- Billing Setting memiliki batas terminate otomatis berdasarkan jumlah hari sejak pelanggan diisolir karena tunggakan; nilai default `0` menonaktifkan terminate otomatis.
+- Halaman isolir menampilkan status terminated, invoice terakhir, tombol pembayaran, dan informasi bahwa aktivasi kembali memerlukan konfirmasi admin.
+
+### Changed
+
+- Pelanggan PPP-DHCP terminated tetap diarahkan ke group/pool isolir Radius agar portal isolir dapat diakses, sedangkan Hotspot terminated tetap diblokir.
+- Akun yang diterminate berhenti menerima invoice periode baru, tetapi invoice lama dan riwayat transaksi tetap dipertahankan.
+
+### Fixed
+
+- Metadata tanggal isolir dibersihkan secara konsisten setelah akun aktif kembali sehingga scheduler tidak memakai tanggal status lama.
+
+## [2.2.0] - 2026-07-20
+
+### Added
+
+- Notifikasi sistem Web Push untuk pembayaran online paket bulanan dan voucher, termasuk saat dashboard tidak sedang terbuka.
+- Service worker dan web app manifest untuk dukungan notifikasi Chrome/mobile dengan subscription terpisah per akun dan perangkat.
+
+### Changed
+
+- Fallback notifikasi lonceng memeriksa transaksi online setiap 15 detik tanpa menambah notifikasi untuk pembayaran manual.
+- Installer dan updater memverifikasi dependensi Web Push dari `package-lock.json`; kunci VAPID tersimpan di data persisten dan ikut backup.
+
+### Security
+
+- Subscription push hanya dibuat untuk user aktif yang memiliki izin Payment Gateway, serta dilepas dari akun ketika Logout.
+
+## [2.1.0] - 2026-07-20
+
+### Added
+
+- Pelanggan PPP-DHCP yang sedang diisolir dapat diaktifkan sementara tanpa batas waktu; invoice dan reminder tetap berjalan sampai petugas mengisolirnya kembali.
+- Status `Aktif manual` ditampilkan pada user Radius sebagai penanda pengecualian auto-isolir yang dapat diaudit.
+
+### Changed
+
+- Perubahan tanggal `Next Invoice` khusus Fixed Date berlaku mulai invoice berikutnya dan tidak mengubah invoice yang sudah terbit.
+- Billing Cycle tetap mengikuti tanggal global di Radius > Setting dan tidak memakai override tanggal per pelanggan.
+
+### Fixed
+
+- Scheduler tidak lagi mengisolir ulang pelanggan yang sengaja diaktifkan sementara, tanpa mengubah auto-isolir pelanggan lainnya.
+
 ## [2.0.7] - 2026-07-20
 
 ### Added

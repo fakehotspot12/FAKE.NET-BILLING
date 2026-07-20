@@ -168,6 +168,38 @@ check_node() {
   fi
 }
 
+verify_repository_payload() {
+  local missing=() file
+  local required_files=(
+    package.json
+    package-lock.json
+    src/server.js
+    src/subweb-server.js
+    src/radius-connector-service.js
+    src/whatsapp-queue.js
+    public/index.html
+    public/app.js
+    public/styles.css
+    public/service-worker.js
+    public/manifest.webmanifest
+    deploy/fakenet-billing.env
+    deploy/fakenet-billing-waha.env
+    deploy/sql/freeradius-postgresql.sql
+    deploy/bin/fakenet-billing-stack
+    deploy/bin/fakenet-billing-update
+    deploy/systemd/fakenet-billing.service
+    deploy/systemd/fakenet-billing-stack.target
+  )
+  for file in "${required_files[@]}"; do
+    [ -f "$SOURCE_DIR/$file" ] || missing+=("$file")
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Repository tidak lengkap. File berikut tidak ditemukan: ${missing[*]}" >&2
+    echo "Unduh/clone ulang repository lengkap, lalu jalankan install.sh kembali." >&2
+    exit 1
+  fi
+}
+
 copy_source() {
   mkdir -p "$APP_DIR"
   rsync -a --delete \
@@ -186,7 +218,7 @@ install_node_deps() {
   else
     npm install --omit=dev
   fi
-  node -e "require('bullmq'); require('./src/whatsapp-queue')" >/dev/null
+  node -e "require('bullmq'); require('web-push'); require('./src/whatsapp-queue')" >/dev/null
 }
 
 verify_billing_health() {
@@ -833,6 +865,7 @@ main() {
       exit 2
       ;;
   esac
+  verify_repository_payload
   install_packages
   install_node_runtime
   check_node

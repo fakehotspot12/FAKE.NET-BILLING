@@ -67,8 +67,11 @@
 
   function adminMessage(invoice = {}) {
     const manualIsolation = invoice.manualIsolation === true || invoice.isolationMode === 'manual';
+    const terminated = invoice.isTerminated === true || invoice.isolationMode === 'terminated';
     const parts = [
-      manualIsolation
+      terminated
+        ? 'Halo Admin, layanan saya berstatus terminated. Mohon dibantu pengecekan dan aktivasi kembali.'
+        : manualIsolation
         ? 'Halo Admin, layanan saya sedang ditangguhkan. Mohon dibantu pengecekan dan aktivasi kembali.'
         : 'Halo Admin, layanan saya sedang diisolir. Mohon dibantu cek tagihan.',
       invoice.invoiceNo || invoice.reference || invoiceRef ? `No Invoice: ${invoice.invoiceNo || invoice.reference || invoiceRef}` : '',
@@ -102,6 +105,23 @@
       : 'Layanan ditangguhkan manual. Silakan hubungi admin layanan.');
   }
 
+  function applyTerminatedText(invoice = {}) {
+    const paid = String(invoice.status || '').toLowerCase() === 'paid';
+    setText('statusPill', paid ? 'Pembayaran Diterima' : 'Layanan Terminated');
+    setText('heroTitle', paid ? 'Aktivasi menunggu konfirmasi admin' : 'Layanan dihentikan sementara');
+    setText('heroMessage', paid
+      ? 'Pembayaran tagihan terakhir sudah diterima. Hubungi admin untuk verifikasi dan mengaktifkan kembali layanan.'
+      : 'Invoice baru telah dihentikan. Selesaikan tagihan terakhir lalu hubungi admin untuk mengaktifkan kembali layanan.');
+    setText('amountLabel', paid ? 'Tagihan Terbayar' : 'Total Tagihan Terakhir');
+    setText('footerLineOne', paid
+      ? 'Status layanan tetap terminated sampai diverifikasi admin.'
+      : 'Pembayaran tagihan tidak langsung mengaktifkan akun terminated.');
+    setText('footerLineTwo', 'Gunakan tombol Hubungi Admin setelah pembayaran selesai.');
+    const amountRow = byId('amountRow');
+    if (amountRow) amountRow.hidden = false;
+    showNotice(paid ? 'Pembayaran berhasil dicatat. Aktivasi layanan memerlukan persetujuan admin.' : 'Invoice berikutnya tidak akan diterbitkan selama layanan berstatus terminated.');
+  }
+
   function updateAdminLink(invoice = {}) {
     const link = byId('adminLink');
     if (!link) return;
@@ -123,9 +143,11 @@
 
   function renderInvoice(payload = {}) {
     const invoice = payload.invoice || {};
-    const manualIsolation = invoice.manualIsolation === true || invoice.isolationMode === 'manual' || invoice.canPay === false;
+    const terminated = invoice.isTerminated === true || invoice.isolationMode === 'terminated';
+    const manualIsolation = invoice.manualIsolation === true || invoice.isolationMode === 'manual';
     const invoiceNo = invoice.invoiceNo || invoice.reference || invoiceRef || '-';
-    if (manualIsolation) applyManualIsolationText(invoice);
+    if (terminated) applyTerminatedText(invoice);
+    else if (manualIsolation) applyManualIsolationText(invoice);
     else applyBillingIsolationText();
     setText('invoiceNo', invoiceNo);
     setText('customerName', invoice.customerName || '-');
@@ -136,8 +158,8 @@
     if (invoiceBox) invoiceBox.hidden = false;
     const payLink = byId('payLink');
     if (payLink) {
-      payLink.hidden = manualIsolation;
-      if (!manualIsolation) {
+      payLink.hidden = invoice.canPay !== true;
+      if (invoice.canPay === true) {
         const target = new URL(paymentUrl, window.location.href);
         target.searchParams.set('id', invoice.reference || invoiceNo);
         payLink.href = target.toString();
