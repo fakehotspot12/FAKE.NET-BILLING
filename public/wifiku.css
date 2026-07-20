@@ -276,7 +276,6 @@ small {
   width: auto;
   max-width: 100%;
   height: auto;
-  min-height: 180px;
   max-height: 420px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -287,10 +286,13 @@ small {
 
 .customer-map-wrap iframe {
   width: 100%;
+  min-height: 220px;
 }
 
 .customer-house-photo-wrap img {
   image-rendering: auto;
+  min-height: 0;
+  display: block;
 }
 
 .customer-map-wrap a {

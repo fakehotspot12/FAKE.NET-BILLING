@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.5.7] - 2026-07-21
+
+### Fixed
+
+- Preview foto rumah WifiKu tidak lagi memiliki tinggi minimum yang memaksa gambar diperbesar.
+
 ## [2.5.6] - 2026-07-21
 
 ### Fixed
