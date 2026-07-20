@@ -239,6 +239,23 @@ FROM (
 ) first_online`;
 }
 
+function lastSeenQuery(usernames = []) {
+  const values = [...new Set(usernames.map((username) => cleanText(username).toLowerCase()).filter(Boolean))]
+    .slice(0, 5000);
+  if (!values.length) return '';
+  return `
+SELECT COALESCE(json_agg(row_to_json(last_seen)), '[]'::json)::text
+FROM (
+  SELECT
+    lower(username) AS username_key,
+    min(username) AS username,
+    to_char(MAX(COALESCE(acctstoptime, acctupdatetime, acctstarttime)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
+  FROM radacct
+  WHERE lower(username) IN (${values.map(sqlLiteral).join(',')})
+  GROUP BY lower(username)
+) last_seen`;
+}
+
 function normalizedPeriod(value = '') {
   const text = cleanText(value);
   if (/^\d{4}-\d{2}$/.test(text)) return text;
@@ -578,6 +595,53 @@ async function firstOnlineByUsernames(usernames = []) {
   }
 }
 
+async function lastSeenByUsernames(usernames = []) {
+  const values = [...new Set((usernames || []).map((username) => cleanText(username)).filter(Boolean))];
+  if (!values.length) {
+    return { ok: true, enabled: enabled(), configured: configured(), source: 'freeradius-radacct', rows: [] };
+  }
+  if (!enabled()) {
+    return {
+      ok: false,
+      enabled: false,
+      configured: configured(),
+      rows: [],
+      error: 'FreeRADIUS SQL sync belum aktif'
+    };
+  }
+  if (!configured()) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: false,
+      rows: [],
+      error: 'FREERADIUS_DATABASE_URL belum diisi'
+    };
+  }
+  try {
+    const rows = await psqlJson(lastSeenQuery(values));
+    return {
+      ok: true,
+      enabled: true,
+      configured: true,
+      source: 'freeradius-radacct',
+      rows: rows.map((row) => ({
+        username: cleanText(row.username),
+        usernameKey: cleanText(row.username_key),
+        lastSeenAt: cleanText(row.last_seen_at)
+      }))
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: true,
+      rows: [],
+      error: error.message || 'Session terakhir FreeRADIUS tidak bisa dibaca'
+    };
+  }
+}
+
 async function monthlyUsageByUsernames(usernames = [], period = normalizedPeriod()) {
   const values = [...new Set((usernames || []).map((username) => cleanText(username)).filter(Boolean))];
   if (!values.length) {
@@ -697,6 +761,7 @@ module.exports = {
   configured,
   enabled,
   firstOnlineByUsernames,
+  lastSeenByUsernames,
   monthlyUsageByUsernames,
   usageHistoryByUsername,
   __test: {

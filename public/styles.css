@@ -651,6 +651,50 @@ button.user-chip:hover {
   display: none;
 }
 
+.user-table-name {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.user-table-name > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.user-table-name strong,
+.user-table-name .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-table-avatar {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 1px solid var(--line);
+  background: #e2e8f0;
+}
+
+.radius-internet-cell {
+  min-width: 88px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.radius-last-active {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .control,
 .field input,
 .field select,
@@ -8490,6 +8534,34 @@ dialog::backdrop {
   .radius-user-table.has-row-actions th:last-child {
     background: var(--surface-soft);
     z-index: 5;
+  }
+
+  .radius-user-table {
+    min-width: 920px;
+  }
+
+  .radius-user-table th,
+  .radius-user-table td {
+    vertical-align: top;
+  }
+
+  .radius-user-table .badge,
+  .radius-last-active {
+    white-space: nowrap;
+  }
+
+  .radius-internet-cell {
+    min-width: 104px;
+  }
+
+  .user-table-name {
+    max-width: 210px;
+  }
+
+  .user-table-avatar {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
   }
 
   table {

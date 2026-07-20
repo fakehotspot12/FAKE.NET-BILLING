@@ -485,13 +485,21 @@ function createUser(data, payload = {}) {
   const now = new Date().toISOString();
   const role = normalizeRole(payload.role || 'viewer');
   const lockedNasId = String(payload.lockedNasId || payload.resellerNasId || payload.voucherNasId || '').trim();
+  const employeeId = cleanText(payload.employeeId ?? payload.nik, 60);
   const user = {
     id: createId('usr'),
     username,
     name: String(payload.name || username).trim(),
+    employeeId,
+    nik: employeeId,
+    position: cleanText(payload.position, 80),
     role,
     unit: roleUnitLabel(role),
     department: roleUnitLabel(role),
+    email: validateEmail(payload.email),
+    phone: cleanText(payload.phone, 40),
+    address: cleanMultilineText(payload.address, 320),
+    photoUrl: payload.photoUrl ? sanitizeProfilePhotoUrl(payload.photoUrl) : '',
     active: payload.active !== false && payload.active !== 'false',
     passwordHash: hashPassword(validatePassword(payload.password)),
     radbooxUsername: String(payload.radbooxUsername || '').trim(),

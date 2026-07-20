@@ -7588,6 +7588,21 @@ function hotspotVoucherInternetLabel(row = {}) {
   return row.sessionOnline === true || String(row.internetStatus || '').toLowerCase() === 'online' ? 'Online' : 'Offline';
 }
 
+function radiusLastActiveText(row = {}) {
+  const source = row.lastActiveAt || row.lastSeenAt || row.updatedAt || row.startedAt || row.createdAt || '';
+  return source ? dateTimeText(source) : '-';
+}
+
+function radiusInternetCell(row = {}) {
+  const online = row.sessionOnline === true || String(row.internetStatus || '').toLowerCase() === 'online';
+  return `
+    <div class="radius-internet-cell">
+      <span class="badge ${online ? 'active' : 'inactive'}">${online ? 'Online' : 'Offline'}</span>
+      ${online ? '' : `<span class="radius-last-active">${escapeHtml(radiusLastActiveText(row))}</span>`}
+    </div>
+  `;
+}
+
 function hotspotVoucherDateSource(row = {}) {
   return row.createdAt || row.updatedAt || new Date().toISOString();
 }
@@ -7947,7 +7962,7 @@ function radiusUserRows(rows = [], type = 'ppp', writeAllowed = false, startNo =
         ${row.isolatedAt ? `<div class="muted">Isolir: ${escapeHtml(dateText(row.isolatedAt))}</div>` : ''}
         ${row.terminatedAt ? `<div class="muted">Terminate: ${escapeHtml(dateText(row.terminatedAt))}</div>` : ''}
       </td>
-      <td><span class="badge ${online ? 'active' : 'inactive'}">${online ? 'Online' : 'Offline'}</span></td>
+      <td>${radiusInternetCell(row)}</td>
       ${writeAllowed ? `
         <td class="radius-actions-cell">
           ${canWriteRow ? `<details class="action-menu">
@@ -14064,7 +14079,15 @@ async function renderUsers() {
           <tbody>
             ${users.length ? users.map((user) => `
               <tr>
-                <td>${escapeHtml(user.name)}</td>
+                <td>
+                  <div class="user-table-name">
+                    ${userAvatarMarkup(user, 'user-table-avatar')}
+                    <div>
+                      <strong>${escapeHtml(user.name || user.username || '-')}</strong>
+                      <div class="muted">${escapeHtml(user.employeeId || user.nik || user.position || '-')}</div>
+                    </div>
+                  </div>
+                </td>
                 <td>${escapeHtml(user.username)}</td>
                 <td>${escapeHtml(user.roleLabel || roleLabel(user.role))}</td>
                 <td>${user.role === 'reseller_voucher' ? escapeHtml(user.lockedNasName || user.lockedNasAddress || user.lockedNasId || '-') : '<span class="muted">-</span>'}</td>
@@ -14114,8 +14137,29 @@ function userFormBody(user = {}, options = {}) {
   const nasOptions = Array.isArray(options.nas) ? options.nas : [];
   const selectedNasId = user.lockedNasId || user.resellerNasId || '';
   const resellerRole = (user.role || 'viewer') === 'reseller_voucher';
+  const roleText = user.roleLabel || roleLabel(user.role || 'viewer');
+  const photoUrl = safeProfilePhotoUrl(user.photoUrl || user.avatarUrl);
+  const previewUrl = profilePhotoDisplayUrl(user);
   return `
-    <div class="form-grid">
+    <div class="account-settings-modal managed-user-modal">
+      <section class="account-profile-head">
+        <div class="account-photo-preview" id="accountPhotoPreview">
+          ${avatarImageMarkup(previewUrl, `Foto ${user.name || user.username || 'default user'}`)}
+        </div>
+        <div class="account-profile-title">
+          <strong>${escapeHtml(user.name || user.username || (isEdit ? '-' : 'User baru'))}</strong>
+          <span>${escapeHtml(roleText)} · ${escapeHtml(user.username || 'username')}</span>
+        </div>
+        <div class="account-photo-actions">
+          <label class="ghost-button compact account-photo-upload">
+            <span>Upload Foto</span>
+            <input id="accountPhotoInput" name="photoUpload" type="file" accept="image/png,image/jpeg,image/webp">
+          </label>
+          <button class="ghost-button compact" id="accountPhotoClear" type="button">Hapus</button>
+        </div>
+      </section>
+      <input name="photoUrl" type="hidden" value="${escapeHtml(photoUrl)}">
+      <div class="form-grid">
       <label class="field">
         <span>Nama</span>
         <input name="name" value="${escapeHtml(user.name || '')}" required>
@@ -14137,20 +14181,45 @@ function userFormBody(user = {}, options = {}) {
         </select>
       </label>
       <label class="field">
+        <span>ID Karyawan (NIK)</span>
+        <input name="employeeId" value="${escapeHtml(user.employeeId || user.nik || '')}" inputmode="numeric" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Jabatan</span>
+        <input name="position" value="${escapeHtml(user.position || '')}" autocomplete="organization-title">
+      </label>
+      <label class="field">
+        <span>Unit/Divisi</span>
+        <input data-user-role-unit value="${escapeHtml(roleText || '-')}" autocomplete="organization" readonly disabled>
+      </label>
+      <label class="field">
         <span>Status</span>
         <select name="active">
           <option value="true" ${user.active !== false ? 'selected' : ''}>Aktif</option>
           <option value="false" ${user.active === false ? 'selected' : ''}>Nonaktif</option>
         </select>
       </label>
+      <label class="field">
+        <span>Email</span>
+        <input name="email" type="email" value="${escapeHtml(user.email || '')}" autocomplete="email">
+      </label>
+      <label class="field">
+        <span>No. HP/Whatsapp</span>
+        <input name="phone" value="${escapeHtml(user.phone || '')}" inputmode="tel" autocomplete="tel">
+      </label>
+      <label class="field full">
+        <span>Alamat</span>
+        <textarea name="address" autocomplete="street-address">${escapeHtml(user.address || '')}</textarea>
+      </label>
       <label class="field full">
         <span>${isEdit ? 'Password baru' : 'Password'}</span>
         <input name="password" type="password" autocomplete="new-password" ${isEdit ? 'placeholder="Kosongkan jika tidak diganti"' : 'required'}>
       </label>
-    </div>
-    <div class="modal-actions">
-      <button class="ghost-button" value="cancel" type="submit">Batal</button>
-      <button class="button" type="submit">Simpan</button>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" value="cancel" type="submit">Batal</button>
+        <button class="button" type="submit">Simpan</button>
+      </div>
     </div>
   `;
 }
@@ -14159,12 +14228,16 @@ function bindUserRoleNasLock() {
   const roleSelect = modalBody.querySelector('select[name="role"]');
   const lockField = modalBody.querySelector('[data-reseller-nas-lock]');
   const lockSelect = modalBody.querySelector('select[name="lockedNasId"]');
+  const unitInput = modalBody.querySelector('[data-user-role-unit]');
   const sync = () => {
     const reseller = roleSelect?.value === 'reseller_voucher';
     if (lockField) lockField.hidden = !reseller;
     if (lockSelect) {
       lockSelect.required = reseller;
       if (!reseller) lockSelect.value = '';
+    }
+    if (unitInput) {
+      unitInput.value = roleLabel(roleSelect?.value || 'viewer');
     }
   };
   roleSelect?.addEventListener('change', sync);
@@ -14355,11 +14428,16 @@ async function logoutCurrentUser() {
 
 async function openUserModal(user = null) {
   const nasOptions = await loadRadiusNasOptions();
-  openModal(user ? 'Edit User' : 'Tambah User', userFormBody(user || {}, { nas: nasOptions }), async (payload) => {
+  openModal(user ? 'Edit User' : 'Tambah User', userFormBody(user || {}, { nas: nasOptions }), async (payload, form) => {
+    const photoFile = form.querySelector('#accountPhotoInput')?.files?.[0];
     const body = {
       ...payload,
-      active: payload.active === 'true'
+      active: payload.active === 'true',
+      nik: payload.employeeId
     };
+    if (photoFile) {
+      body.photoUrl = await uploadImageFile(photoFile, 'profile', { label: 'Foto profil' });
+    }
     if (user && !body.password) {
       delete body.password;
     }
@@ -14371,6 +14449,7 @@ async function openUserModal(user = null) {
     renderUsers();
   });
   bindUserRoleNasLock();
+  bindAccountSettingsPhotoInput(user || {});
 }
 
 async function renderBillingSettings() {
@@ -15429,6 +15508,10 @@ function paymentGatewayKindBadge(row = {}) {
   return '';
 }
 
+function paymentGatewayPendingStatus(row = {}) {
+  return ['pending', 'waiting', 'unpaid'].includes(String(row.status || '').toLowerCase());
+}
+
 function paymentGatewayRows(rows = []) {
   return rows.map((row) => `
     <tr>
@@ -15477,16 +15560,17 @@ async function renderPaymentGateway() {
   const provider = settings.provider || 'tripay';
   const callbackExampleBase = String(settings.publicBaseUrl || '').trim().replace(/\/+$/, '') || 'https://billing.example.net';
   const callbackExample = `${callbackExampleBase}/payment-gateway/webhook`;
+  const pendingRows = payload.pending || [];
   const tabs = [
     { value: 'transactions', label: 'Transaction' },
     { value: 'balance', label: 'Balance History' },
-    { value: 'pending', label: 'Pending' },
+    { value: 'pending', label: `Pending (${displayNumber(pendingRows.length)})` },
     { value: 'fees', label: 'Fees Report' }
   ];
   const rowsByTab = {
-    transactions: payload.transactions || [],
+    transactions: (payload.transactions || []).filter((row) => !paymentGatewayPendingStatus(row)),
     balance: payload.balanceHistory || [],
-    pending: payload.pending || [],
+    pending: pendingRows,
     fees: payload.reports || []
   };
   const tabRows = rowsByTab[state.paymentGatewayTab] || rowsByTab.transactions;

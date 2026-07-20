@@ -2325,6 +2325,7 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         sessionOnline: Boolean(session),
         sessionId: session?.sessionId || '',
         startedAt: session?.startedAt || '',
+        lastActiveAt: session?.updatedAt || session?.startedAt || user.lastActiveAt || user.updatedAt || user.createdAt || '',
         uptime: session?.uptime || '',
         upload: session?.upload || '',
         download: session?.download || '',
@@ -2364,6 +2365,24 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         note: user.note || ''
       };
     });
+}
+
+async function enrichRadiusUserLastActiveRows(rows = []) {
+  const offlineRows = rows.filter((row) => !row.sessionOnline && radiusSessionUsername(row.username));
+  if (!offlineRows.length) return rows;
+  try {
+    const payload = await freeradiusSessions.lastSeenByUsernames(offlineRows.map((row) => row.username));
+    const lastSeenByUsername = new Map((payload.rows || [])
+      .map((row) => [radiusSessionUsername(row.usernameKey || row.username), row.lastSeenAt])
+      .filter(([key, value]) => key && value));
+    offlineRows.forEach((row) => {
+      const lastSeenAt = lastSeenByUsername.get(radiusSessionUsername(row.username));
+      if (lastSeenAt) row.lastActiveAt = lastSeenAt;
+    });
+  } catch {
+    // The UI can still show the local updatedAt fallback when radacct history is unavailable.
+  }
+  return rows;
 }
 
 function radiusSessionRowsLocal(data = {}, serviceType = 'pppoe', sessions = []) {
@@ -2514,6 +2533,9 @@ async function radiusPayloadLocal(data = {}, section = 'ppp-dhcp', query = {}) {
     : { ...query, nas: '', profile: '', internet: '' };
   rows = radiusFilterRows(rows, filterQuery);
   const paged = radiusPagination(rows, page, limit);
+  if (tab === 'users') {
+    paged.rows = await enrichRadiusUserLastActiveRows(paged.rows);
+  }
   return {
     ok: sessionPayload.ok !== false,
     source: tab === 'sessions' ? 'freeradius-radacct' : 'freeradius-local',

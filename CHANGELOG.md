@@ -7,6 +7,15 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.0.6] - 2026-07-20
+
+### Fixed
+
+- Basis rilis dikembalikan ke layout stabil `2.0.0` dan menghapus regresi print/mobile yang muncul setelahnya.
+- Tabel Radius PPP-DHCP dan Hotspot lebih rapi di mobile; status Offline menampilkan tanggal dan jam terakhir aktif di bawah badge.
+- Menu User menampilkan foto profil di sebelah nama, dan edit user memakai field profil yang sama seperti Akun Saya.
+- Payment Gateway menjaga transaksi pending tetap di tab Pending dengan penanda jumlah pending.
+
 ## [2.0.0] - 2026-07-20
 
 ### Added
