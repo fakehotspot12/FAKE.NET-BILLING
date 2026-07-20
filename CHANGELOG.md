@@ -19,6 +19,13 @@ Format versi memakai pola `major.minor.patch`:
 - Nomor WhatsApp tetap terkunci sebagai identitas OTP; fitur foto pribadi pelanggan tidak ditambahkan.
 - Endpoint pembaruan profil WifiKu dibatasi pada sesi pelanggan yang sedang login.
 
+## [2.5.1] - 2026-07-21
+
+### Changed
+
+- WifiKu menampilkan preview peta dan foto rumah dari data Member.
+- Pembaruan data rumah dan peta diarahkan melalui admin.
+
 ## [2.4.1] - 2026-07-20
 
 ### Fixed
