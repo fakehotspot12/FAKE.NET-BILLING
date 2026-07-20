@@ -31,6 +31,7 @@ const {
   generateInvoices,
   invoiceBlocksPeriod,
   invoiceCoveredPeriods,
+  invoicePaymentRollbackLocked,
   invoiceRuntimeStatus,
   markInvoicePaid,
   markInvoiceUnpaid,
@@ -1731,6 +1732,7 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
       const runtimeStatus = invoiceRuntimeStatus(invoice);
       const customerStatus = resolver.statusForInvoice(invoice, customer);
       const site = localBillingSite(data, customer, invoice);
+      const paymentCategory = paymentCategoryForRecord({ ...invoice, ...payment }, invoice.paymentMethod || payment.method || '');
       return {
         ...invoice,
         period: selectedPeriod,
@@ -1763,6 +1765,8 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
         lastActiveAt: customer.lastActiveAt || '',
         paidAt: invoice.paidAt || payment.paidAt || '',
         paymentMethod: invoice.paymentMethod || payment.method || '',
+        paymentCategory,
+        rollbackLocked: invoicePaymentRollbackLocked(data, invoice),
         paidByName: invoice.paidByName || payment.createdByName || payment.admin || '',
         paidByUsername: invoice.paidByUsername || payment.createdByUsername || ''
       };
@@ -12278,12 +12282,16 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'invoices:manage');
     if (!authContext) return;
     const invoiceId = decodeURIComponent(unpayMatch[1]);
-    const { result } = await mutate((data) => markInvoiceUnpaid(data, invoiceId));
-    if (!result) {
-      notFound(res);
-      return;
+    try {
+      const { result } = await mutate((data) => markInvoiceUnpaid(data, invoiceId));
+      if (!result) {
+        notFound(res);
+        return;
+      }
+      sendJson(res, 200, { invoice: result });
+    } catch (error) {
+      badRequest(res, error.message || 'Pembayaran tidak bisa di-rollback');
     }
-    sendJson(res, 200, { invoice: result });
     return;
   }
 

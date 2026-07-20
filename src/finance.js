@@ -540,6 +540,42 @@ function paymentIsActive(payment) {
   return normalizeStatus(payment.status || 'paid') === 'paid';
 }
 
+function onlinePaymentRecord(record = {}) {
+  const category = cleanText(record.paymentCategory || record.payment_category || record.methodGroup)
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+  if (['online', 'digital', 'gateway', 'paymentgateway'].includes(category)) return true;
+
+  const source = cleanText(record.source || record.sourceType || record.type).toLowerCase();
+  const actor = cleanText(record.createdByUsername || record.paidByUsername || record.updatedByUsername || record.admin).toLowerCase();
+  const hasGatewayReference = [
+    record.paymentProvider,
+    record.provider,
+    record.gatewayProvider,
+    record.paymentGatewayReference,
+    record.gatewayReference,
+    record.onlineOrderId,
+    record.onlineOrderReference
+  ].some((value) => cleanText(value));
+  if (['online', 'payment-gateway', 'billing-online', 'hotspot-voucher-online'].includes(source)
+    || actor === 'payment-gateway'
+    || hasGatewayReference) {
+    return true;
+  }
+
+  const method = cleanText(record.method || record.paymentMethod || record.payment_method).toLowerCase();
+  return /online|qris|ovo|dana|linkaja|shopeepay|gopay|alfamart|alfamidi|indomaret|tripay|xendit|midtrans|duitku|doku|ipaymu|virtual\s*account|\b(?:bri|bni|bca|mandiri|permata|cimb|danamon|maybank|bsi)\s*va\b/i.test(method);
+}
+
+function invoicePaymentRollbackLocked(data = {}, invoice = {}) {
+  if (onlinePaymentRecord(invoice)) return true;
+  return (data.payments || []).some((payment) => (
+    payment.invoiceId === invoice.id
+    && paymentIsActive(payment)
+    && onlinePaymentRecord(payment)
+  ));
+}
+
 function standaloneBillingSource(settings = {}) {
   const mode = cleanText(settings.appMode).toLowerCase();
   const source = cleanText(settings.billingSource).toLowerCase();
@@ -1077,6 +1113,9 @@ function markInvoiceUnpaid(data, invoiceId) {
   if (!invoice) {
     return null;
   }
+  if (invoicePaymentRollbackLocked(data, invoice)) {
+    throw new Error('Pembayaran online dikunci dan tidak bisa di-rollback manual');
+  }
 
   const now = new Date().toISOString();
   invoice.status = 'pending';
@@ -1387,6 +1426,7 @@ module.exports = {
   invoiceRuntimeStatus,
   invoiceCoveredPeriods,
   invoiceBlocksPeriod,
+  invoicePaymentRollbackLocked,
   markInvoicePaid,
   markInvoiceUnpaid,
   normalizeBillingPeriodForType,

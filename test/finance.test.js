@@ -4571,6 +4571,36 @@ test('rollback payment removes collector dashboard earnings', () => {
   assert.equal(legacyRollbackScope.transactionCount, 0);
 });
 
+test('online payment cannot be rolled back manually', () => {
+  const data = createDefaultStore();
+  data.invoices.push({
+    id: 'inv-online-locked',
+    customerId: 'cus-online-locked',
+    customerName: 'Pelanggan Online',
+    period: '2026-07',
+    amount: 155000,
+    status: 'pending',
+    dueDate: '2026-07-20'
+  });
+
+  markInvoicePaid(data, 'inv-online-locked', {
+    amount: 155000,
+    paidAt: '2026-07-20',
+    paymentMethod: 'QRIS',
+    paymentCategory: 'online',
+    provider: 'tripay',
+    actorUsername: 'payment-gateway'
+  });
+
+  assert.throws(
+    () => markInvoiceUnpaid(data, 'inv-online-locked'),
+    /Pembayaran online dikunci/
+  );
+  assert.equal(data.invoices[0].status, 'paid');
+  assert.equal(data.payments[0].status, 'paid');
+  assert.equal(paymentIsActive(data.payments[0]), true);
+});
+
 test('paying the same invoice twice stays idempotent and preserves the first actor', () => {
   const data = createDefaultStore();
   data.invoices.push({

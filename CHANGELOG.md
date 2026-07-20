@@ -7,6 +7,22 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.0.7] - 2026-07-20
+
+### Added
+
+- Menu User dilengkapi ringkasan akun, pencarian stabil, filter role/status, pilihan jumlah baris, dan lompatan halaman.
+- Tabel User menampilkan identitas petugas, kontak, unit, pembatasan NAS reseller, status, serta login terakhir secara lebih terstruktur.
+- Form tambah/edit User menampilkan penjelasan kewenangan role sebelum akun disimpan.
+
+### Security
+
+- Pembayaran online/payment gateway tidak dapat di-rollback manual; tombol Rollback tampil terkunci dan backend menolak bypass endpoint.
+
+### Fixed
+
+- Cache key CSS dan JavaScript dashboard disamakan dengan versi rilis agar browser/Cloudflare tidak mempertahankan tampilan lama setelah update.
+
 ## [2.0.6] - 2026-07-20
 
 ### Fixed

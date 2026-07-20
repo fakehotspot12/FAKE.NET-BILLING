@@ -133,6 +133,12 @@ function saveMonitoringBillingPeriod(period) {
 const state = {
   auth: null,
   roles: [],
+  userRows: null,
+  userPage: 1,
+  userLimit: 10,
+  userRole: 'all',
+  userStatus: 'all',
+  userSearch: '',
   view: 'dashboard',
   period: todayInput().slice(0, 7),
   receiptPrintMode: 'a4',
@@ -1428,6 +1434,11 @@ function toggleMenu() {
 function roleLabel(role) {
   const found = state.roles.find((item) => item.value === role);
   return found ? found.label : role;
+}
+
+function roleDescription(role) {
+  const found = state.roles.find((item) => item.value === role);
+  return found?.description || 'Akses mengikuti role yang dipilih.';
 }
 
 function setPeriodPickerOpen(open) {
@@ -11878,9 +11889,20 @@ function billingCancelAllowed(invoice = {}) {
     && ['unpaid', 'pending', 'overdue'].includes(status));
 }
 
+function billingOnlinePayment(invoice = {}) {
+  if (invoice.rollbackLocked === true) return true;
+  const category = String(invoice.paymentCategory || invoice.methodGroup || '').trim().toLowerCase();
+  if (['online', 'digital', 'gateway', 'payment-gateway'].includes(category)) return true;
+  const method = String(invoice.paymentMethod || invoice.method || '').trim().toLowerCase();
+  return /online|qris|ovo|dana|linkaja|shopeepay|gopay|alfamart|alfamidi|indomaret|tripay|xendit|midtrans|duitku|doku|ipaymu|virtual\s*account|\b(?:bri|bni|bca|mandiri|permata|cimb|danamon|maybank|bsi)\s*va\b/i.test(method);
+}
+
 function billingRollbackAllowed(invoice = {}) {
   const status = String(invoice.status || '').toLowerCase();
-  return Boolean(can('invoices:manage') && billingInvoiceNo(invoice) && status === 'paid');
+  return Boolean(can('invoices:manage')
+    && billingInvoiceNo(invoice)
+    && status === 'paid'
+    && !billingOnlinePayment(invoice));
 }
 
 function billingReceiptAllowed(invoice = {}) {
@@ -11910,6 +11932,13 @@ function billingActionButtons(invoice = {}, index = 0) {
   if (billingRollbackAllowed(invoice)) {
     buttons.push(`
       <button class="billing-action-button rollback" type="button" data-billing-rollback="${index}" title="Rollback pembayaran" aria-label="Rollback invoice ${escapeHtml(invoiceLabel)}">
+        <span class="billing-action-icon rollback" aria-hidden="true"></span>
+        <span>Rollback</span>
+      </button>
+    `);
+  } else if (can('invoices:manage') && String(invoice.status || '').toLowerCase() === 'paid' && billingOnlinePayment(invoice)) {
+    buttons.push(`
+      <button class="billing-action-button rollback is-locked" type="button" disabled title="Pembayaran online terkunci" aria-label="Rollback invoice ${escapeHtml(invoiceLabel)} terkunci">
         <span class="billing-action-icon rollback" aria-hidden="true"></span>
         <span>Rollback</span>
       </button>
@@ -14048,28 +14077,125 @@ async function renderMonitoringServices(options = {}) {
   scheduleMonitoringServicesRefresh();
 }
 
-async function renderUsers() {
-  app.innerHTML = '<div class="empty">Memuat user...</div>';
-  const payload = await api('/api/users');
-  const users = payload.users || [];
-  state.roles = payload.roles || state.roles;
+function filteredUserRows(users = []) {
+  const query = String(state.userSearch || '').trim().toLowerCase();
+  return [...users]
+    .filter((user) => state.userRole === 'all' || user.role === state.userRole)
+    .filter((user) => state.userStatus === 'all'
+      || (state.userStatus === 'active' ? user.active !== false : user.active === false))
+    .filter((user) => {
+      if (!query) return true;
+      return [
+        user.name,
+        user.username,
+        user.employeeId,
+        user.nik,
+        user.position,
+        user.unit,
+        user.department,
+        user.roleLabel,
+        roleLabel(user.role),
+        user.email,
+        user.phone,
+        user.address,
+        user.lockedNasName,
+        user.lockedNasAddress
+      ].some((value) => String(value || '').toLowerCase().includes(query));
+    })
+    .sort((left, right) => {
+      if ((left.active !== false) !== (right.active !== false)) return left.active === false ? 1 : -1;
+      return String(left.name || left.username || '').localeCompare(String(right.name || right.username || ''), 'id');
+    });
+}
+
+function userPaginationControls(pagination = {}) {
+  const page = Number(pagination.page || 1);
+  const totalPages = Number(pagination.totalPages || 1);
+  const total = Number(pagination.total || 0);
+  return `
+    <div class="pager user-pager">
+      <button class="ghost-button compact" type="button" data-user-page="${page - 1}" ${page > 1 ? '' : 'disabled'}>Sebelumnya</button>
+      <span class="pager-info">Halaman ${page} dari ${totalPages} - ${total} user</span>
+      <label class="pager-jump">
+        <span>Ke halaman</span>
+        <select class="control compact" data-user-page-jump>
+          ${Array.from({ length: totalPages }, (_, index) => index + 1)
+            .map((value) => `<option value="${value}" ${value === page ? 'selected' : ''}>${value}</option>`)
+            .join('')}
+        </select>
+      </label>
+      ${pagerLimitControl('user', pagination.limit || state.userLimit || 10, 10)}
+      <button class="ghost-button compact" type="button" data-user-page="${page + 1}" ${page < totalPages ? '' : 'disabled'}>Berikutnya</button>
+    </div>
+  `;
+}
+
+async function renderUsers(options = {}) {
+  if (options.refresh || !Array.isArray(state.userRows)) {
+    app.innerHTML = '<div class="empty">Memuat user...</div>';
+    const payload = await api('/api/users');
+    state.userRows = Array.isArray(payload.users) ? payload.users : [];
+    state.roles = payload.roles || state.roles;
+  }
+
+  const users = state.userRows || [];
+  const filteredRows = filteredUserRows(users);
+  const selectedLimit = pagerLimitValue(state.userLimit || 10, 10);
+  const limit = effectivePagerLimit(selectedLimit, filteredRows.length, 10);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / limit));
+  const page = Math.min(Math.max(1, Number(state.userPage || 1)), totalPages);
+  const offset = (page - 1) * limit;
+  const pageRows = filteredRows.slice(offset, offset + limit);
+  const activeCount = users.filter((user) => user.active !== false).length;
+  const inactiveCount = users.length - activeCount;
+  state.userPage = page;
 
   app.innerHTML = `
-    <div class="stack">
-      <div class="toolbar">
+    <div class="stack user-management-page">
+      <div class="toolbar user-page-head">
         <div>
           <h2 class="page-section-title">User aplikasi</h2>
-          <p class="muted compact-text">Atur akses owner, admin, finance, teknisi, NOC, dan viewer.</p>
+          <p class="muted compact-text">Kelola akun, identitas petugas, role, dan pembatasan NAS reseller.</p>
         </div>
-        <button class="button" id="addUser" type="button">Tambah User</button>
+        <div class="row-actions">
+          <button class="ghost-button" id="refreshUsers" type="button">Refresh</button>
+          <button class="button" id="addUser" type="button">Tambah User</button>
+        </div>
       </div>
-      <div class="table-wrap">
-        <table>
+
+      <section class="user-summary-grid" aria-label="Ringkasan user">
+        <article class="user-summary-card"><span>Total user</span><strong>${displayNumber(users.length)}</strong></article>
+        <article class="user-summary-card is-active"><span>Aktif</span><strong>${displayNumber(activeCount)}</strong></article>
+        <article class="user-summary-card is-inactive"><span>Nonaktif</span><strong>${displayNumber(inactiveCount)}</strong></article>
+        <article class="user-summary-card is-filtered"><span>Hasil filter</span><strong>${displayNumber(filteredRows.length)}</strong></article>
+      </section>
+
+      <form class="user-filter-bar" id="userFilterForm">
+        <label class="user-search-field">
+          <span class="sr-only">Cari user</span>
+          <input class="control" id="userSearchInput" value="${escapeHtml(state.userSearch)}" placeholder="Cari nama, username, NIK, kontak, atau NAS" autocomplete="off">
+        </label>
+        <select class="control" id="userRoleFilter" aria-label="Filter role user">
+          <option value="all">Semua role</option>
+          ${state.roles.map((role) => `<option value="${escapeHtml(role.value)}" ${state.userRole === role.value ? 'selected' : ''}>${escapeHtml(role.label)}</option>`).join('')}
+        </select>
+        <select class="control" id="userStatusFilter" aria-label="Filter status user">
+          <option value="all" ${state.userStatus === 'all' ? 'selected' : ''}>Semua status</option>
+          <option value="active" ${state.userStatus === 'active' ? 'selected' : ''}>Aktif</option>
+          <option value="inactive" ${state.userStatus === 'inactive' ? 'selected' : ''}>Nonaktif</option>
+        </select>
+        <button class="ghost-button" type="submit">Cari</button>
+        <button class="ghost-button" id="resetUserFilters" type="button">Reset</button>
+      </form>
+
+      <div class="table-wrap user-table-wrap">
+        <table class="user-management-table">
           <thead>
             <tr>
-              <th>Nama</th>
-              <th>Username</th>
-              <th>Role</th>
+              <th>Pengguna</th>
+              <th>Kepegawaian</th>
+              <th>Role / Unit</th>
+              <th>Kontak</th>
               <th>NAS Lock</th>
               <th>Status</th>
               <th>Login terakhir</th>
@@ -14077,57 +14203,117 @@ async function renderUsers() {
             </tr>
           </thead>
           <tbody>
-            ${users.length ? users.map((user) => `
+            ${pageRows.length ? pageRows.map((user) => `
               <tr>
                 <td>
                   <div class="user-table-name">
                     ${userAvatarMarkup(user, 'user-table-avatar')}
                     <div>
-                      <strong>${escapeHtml(user.name || user.username || '-')}</strong>
-                      <div class="muted">${escapeHtml(user.employeeId || user.nik || user.position || '-')}</div>
+                      <strong title="${escapeHtml(user.name || user.username || '-')}">${escapeHtml(user.name || user.username || '-')}</strong>
+                      <div class="muted">@${escapeHtml(user.username || '-')} ${user.id === state.auth.id ? '<span class="badge user-current-badge">Anda</span>' : ''}</div>
                     </div>
                   </div>
                 </td>
-                <td>${escapeHtml(user.username)}</td>
-                <td>${escapeHtml(user.roleLabel || roleLabel(user.role))}</td>
-                <td>${user.role === 'reseller_voucher' ? escapeHtml(user.lockedNasName || user.lockedNasAddress || user.lockedNasId || '-') : '<span class="muted">-</span>'}</td>
-                <td><span class="badge ${user.active ? 'active' : 'inactive'}">${user.active ? 'Aktif' : 'Nonaktif'}</span></td>
-                <td>${dateTimeText(user.lastLoginAt)}</td>
                 <td>
+                  <div class="user-table-details">
+                    <strong>${escapeHtml(user.employeeId || user.nik || '-')}</strong>
+                    <span>${escapeHtml(user.position || 'Jabatan belum diisi')}</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="user-table-details">
+                    <strong>${escapeHtml(user.roleLabel || roleLabel(user.role))}</strong>
+                    <span>${escapeHtml(user.unit || user.department || roleLabel(user.role))}</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="user-table-details user-table-contact" title="${escapeHtml(user.address || '')}">
+                    <strong>${escapeHtml(user.phone || '-')}</strong>
+                    <span>${escapeHtml(user.email || 'Email belum diisi')}</span>
+                    ${user.address ? `<span>${escapeHtml(user.address)}</span>` : ''}
+                  </div>
+                </td>
+                <td>${user.role === 'reseller_voucher' ? nasActiveBadge(user.lockedNasName || user.lockedNasAddress || user.lockedNasId || '-') : '<span class="muted">-</span>'}</td>
+                <td><span class="badge ${user.active !== false ? 'active' : 'inactive'}">${user.active !== false ? 'Aktif' : 'Nonaktif'}</span></td>
+                <td><span class="user-last-login">${dateTimeText(user.lastLoginAt)}</span></td>
+                <td class="user-actions-cell">
                   <div class="row-actions">
                     <button class="ghost-button compact" type="button" data-edit-user="${escapeHtml(user.id)}">Edit</button>
                     ${user.id === state.auth.id ? '' : `<button class="danger-button compact" type="button" data-delete-user="${escapeHtml(user.id)}">Hapus</button>`}
                   </div>
                 </td>
               </tr>
-            `).join('') : '<tr><td colspan="7">Belum ada user.</td></tr>'}
+            `).join('') : '<tr><td colspan="8"><div class="empty compact-empty">Tidak ada user sesuai filter.</div></td></tr>'}
           </tbody>
         </table>
       </div>
+      ${userPaginationControls({ page, totalPages, total: filteredRows.length, limit: selectedLimit })}
     </div>
   `;
 
-  document.getElementById('addUser').addEventListener('click', () => openUserModal());
+  if (options.focusSearch) {
+    const searchInput = document.getElementById('userSearchInput');
+    searchInput?.focus();
+    searchInput?.setSelectionRange(searchInput.value.length, searchInput.value.length);
+  }
+  document.getElementById('addUser')?.addEventListener('click', () => openUserModal());
+  document.getElementById('refreshUsers')?.addEventListener('click', () => renderUsers({ refresh: true }));
+  document.getElementById('userFilterForm')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    state.userSearch = document.getElementById('userSearchInput')?.value.trim() || '';
+    state.userPage = 1;
+    renderUsers({ focusSearch: true });
+  });
+  document.getElementById('userRoleFilter')?.addEventListener('change', (event) => {
+    state.userRole = event.target.value || 'all';
+    state.userPage = 1;
+    renderUsers();
+  });
+  document.getElementById('userStatusFilter')?.addEventListener('change', (event) => {
+    state.userStatus = event.target.value || 'all';
+    state.userPage = 1;
+    renderUsers();
+  });
+  document.getElementById('resetUserFilters')?.addEventListener('click', () => {
+    state.userSearch = '';
+    state.userRole = 'all';
+    state.userStatus = 'all';
+    state.userPage = 1;
+    renderUsers();
+  });
+  app.querySelectorAll('[data-user-page]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.userPage = Math.max(1, Number(button.dataset.userPage || 1));
+      renderUsers();
+    });
+  });
+  app.querySelector('[data-user-page-jump]')?.addEventListener('change', (event) => {
+    state.userPage = Math.max(1, Number(event.target.value || 1));
+    renderUsers();
+  });
+  bindPagerLimit('user', (value) => {
+    state.userLimit = value;
+  }, (value) => {
+    state.userPage = value;
+  }, renderUsers, 10);
   app.querySelectorAll('[data-edit-user]').forEach((button) => {
     button.addEventListener('click', () => {
       const user = users.find((item) => item.id === button.dataset.editUser);
-      if (user) {
-        openUserModal(user);
-      }
+      if (user) openUserModal(user);
     });
   });
   app.querySelectorAll('[data-delete-user]').forEach((button) => {
     button.addEventListener('click', async () => {
       const user = users.find((item) => item.id === button.dataset.deleteUser);
-      if (!user) return;
-      if (!window.confirm(`Hapus user ${user.username}?`)) {
-        return;
+      if (!user || !window.confirm(`Hapus user ${user.username}?`)) return;
+      try {
+        await api(`/api/users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+        state.userRows = null;
+        setToast('User dihapus');
+        renderUsers({ refresh: true });
+      } catch (error) {
+        setToast(error.message);
       }
-      await api(`/api/users/${encodeURIComponent(user.id)}`, {
-        method: 'DELETE'
-      });
-      setToast('User dihapus');
-      renderUsers();
     });
   });
 }
@@ -14138,6 +14324,7 @@ function userFormBody(user = {}, options = {}) {
   const selectedNasId = user.lockedNasId || user.resellerNasId || '';
   const resellerRole = (user.role || 'viewer') === 'reseller_voucher';
   const roleText = user.roleLabel || roleLabel(user.role || 'viewer');
+  const roleHelp = roleDescription(user.role || 'viewer');
   const photoUrl = safeProfilePhotoUrl(user.photoUrl || user.avatarUrl);
   const previewUrl = profilePhotoDisplayUrl(user);
   return `
@@ -14180,6 +14367,10 @@ function userFormBody(user = {}, options = {}) {
           ${nasLockOptionTags(nasOptions, selectedNasId, nasOptions.length ? 'Pilih NAS' : 'Belum ada NAS')}
         </select>
       </label>
+      <div class="user-role-description field full" data-user-role-description>
+        <strong>${escapeHtml(roleText)}</strong>
+        <span>${escapeHtml(roleHelp)}</span>
+      </div>
       <label class="field">
         <span>ID Karyawan (NIK)</span>
         <input name="employeeId" value="${escapeHtml(user.employeeId || user.nik || '')}" inputmode="numeric" autocomplete="off">
@@ -14229,6 +14420,7 @@ function bindUserRoleNasLock() {
   const lockField = modalBody.querySelector('[data-reseller-nas-lock]');
   const lockSelect = modalBody.querySelector('select[name="lockedNasId"]');
   const unitInput = modalBody.querySelector('[data-user-role-unit]');
+  const roleHelp = modalBody.querySelector('[data-user-role-description]');
   const sync = () => {
     const reseller = roleSelect?.value === 'reseller_voucher';
     if (lockField) lockField.hidden = !reseller;
@@ -14238,6 +14430,10 @@ function bindUserRoleNasLock() {
     }
     if (unitInput) {
       unitInput.value = roleLabel(roleSelect?.value || 'viewer');
+    }
+    if (roleHelp) {
+      const selectedRole = roleSelect?.value || 'viewer';
+      roleHelp.innerHTML = `<strong>${escapeHtml(roleLabel(selectedRole))}</strong><span>${escapeHtml(roleDescription(selectedRole))}</span>`;
     }
   };
   roleSelect?.addEventListener('change', sync);
@@ -14399,6 +14595,7 @@ function openAccountSettingsModal() {
       body: JSON.stringify(body)
     });
     state.auth = result.user || state.auth;
+    state.userRows = null;
     configureShell();
     setToast('Akun diperbarui');
   });
@@ -14414,6 +14611,7 @@ async function logoutCurrentUser() {
   setMenuOpen(false);
   setAccountMenuOpen(false);
   state.auth = null;
+  state.userRows = null;
   abortPageRequests();
   clearRealtimeTimers();
   window.clearInterval(notificationsTimer);
@@ -14445,8 +14643,9 @@ async function openUserModal(user = null) {
       method: user ? 'PUT' : 'POST',
       body: JSON.stringify(body)
     });
+    state.userRows = null;
     setToast(user ? 'User diperbarui' : 'User dibuat');
-    renderUsers();
+    renderUsers({ refresh: true });
   });
   bindUserRoleNasLock();
   bindAccountSettingsPhotoInput(user || {});
