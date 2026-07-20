@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.5.3] - 2026-07-21
+
+### Fixed
+
+- Preview foto rumah WifiKu mempertahankan rasio asli agar tidak terpotong atau tampak pecah karena pembesaran paksa.
+
+## [2.5.2] - 2026-07-21
+
+### Changed
+
+- Lokasi dan foto rumah WifiKu hanya tampil di menu Akun Saya, bukan di halaman utama portal.
+
 Format versi memakai pola `major.minor.patch`:
 
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
