@@ -131,11 +131,13 @@ function wifiBandLabel(value = '') {
 function wifiNetworkForBand(device = {}, band = '2.4g') {
   const key = wifiBandKey(band);
   const networks = Array.isArray(device.wifiNetworks) ? device.wifiNetworks : [];
-  return networks.find((item) => wifiBandKey(item.band) === key)
+  const primaryParameter = key === '5g' ? device.ssid5Parameter : device.ssid24Parameter;
+  return networks.find((item) => item.ssidParameter && item.ssidParameter === primaryParameter)
+    || networks.find((item) => wifiBandKey(item.band) === key && item.index === (key === '5g' ? 5 : 1))
     || {
       band: key === '5g' ? '5G' : '2.4G',
       ssid: key === '5g' ? device.ssid5 : device.ssid24,
-      ssidParameter: key === '5g' ? device.ssid5Parameter : device.ssid24Parameter,
+      ssidParameter: primaryParameter,
       passwordParameter: ''
     };
 }

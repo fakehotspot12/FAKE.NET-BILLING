@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.6.0] - 2026-07-21
+
+### Changed
+
+- WifiKu hanya menampilkan SSID utama 2.4G/5G berdasarkan parameter utama GenieACS.
+- SSID tambahan atau hotspot seperti `wifimurah` tidak lagi dipilih sebagai jaringan utama pelanggan.
+
 ## [2.5.9] - 2026-07-21
 
 ### Fixed
