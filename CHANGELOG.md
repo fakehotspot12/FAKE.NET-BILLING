@@ -14,6 +14,10 @@ Format versi memakai pola `major.minor.patch`:
 - Opsi BHP USO pada Billing Settings, default nonaktif dengan tarif bawaan 1,25% yang dapat diubah.
 - Preview BHP USO pada wizard Tambah Member PPP-DHCP.
 - Invoice baru dan invoice terbuka menghitung BHP USO saat opsi diaktifkan; invoice Paid tetap tidak diubah.
+- WifiKu memiliki dropdown profil topbar dengan menu Akun Saya dan Logout.
+- Pelanggan WifiKu dapat memperbarui nama, nomor KTP, email, alamat, latitude, dan longitude.
+- Nomor WhatsApp tetap terkunci sebagai identitas OTP; fitur foto pribadi pelanggan tidak ditambahkan.
+- Endpoint pembaruan profil WifiKu dibatasi pada sesi pelanggan yang sedang login.
 
 ## [2.4.1] - 2026-07-20
 
