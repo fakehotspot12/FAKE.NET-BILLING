@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.3.9] - 2026-07-20
+
+### Fixed
+
+- Struktur print thermal Tagihan Harian disamakan dengan voucher agar tinggi nota otomatis dan tidak mewarisi tinggi A4.
+
 ## [2.3.8] - 2026-07-20
 
 ### Fixed

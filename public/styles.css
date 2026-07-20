@@ -11726,6 +11726,33 @@ dialog::backdrop {
     font-size: 5pt !important;
     padding: .55mm .8mm !important;
   }
+
+  /* Daily thermal receipts follow the same auto-height model as voucher thermal print. */
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 dialog,
+  body.printing-daily-billing-receipts.receipt-print-58 .modal-frame,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .modal-frame,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 #modalBody,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-preview,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-stack,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-page,
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 dialog,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .modal-frame,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 #modalBody,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-preview,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-stack,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-page,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  body.printing-daily-billing-receipts.receipt-print-thermal-58 .daily-billing-receipt-page,
+  body.printing-daily-billing-receipts.receipt-print-thermal-80 .daily-billing-receipt-page {
+    display: block !important;
+    grid-template-rows: none !important;
+  }
 }
 
 .hotspot-voucher-activation,
