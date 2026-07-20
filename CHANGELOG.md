@@ -7,6 +7,14 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.5.0] - 2026-07-21
+
+### Added
+
+- Opsi BHP USO pada Billing Settings, default nonaktif dengan tarif bawaan 1,25% yang dapat diubah.
+- Preview BHP USO pada wizard Tambah Member PPP-DHCP.
+- Invoice baru dan invoice terbuka menghitung BHP USO saat opsi diaktifkan; invoice Paid tetap tidak diubah.
+
 ## [2.4.1] - 2026-07-20
 
 ### Fixed

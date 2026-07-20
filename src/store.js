@@ -145,7 +145,9 @@ function createDefaultStore() {
         notifyInvoiceIssued: true,
         notifyPaymentStatus: true,
         notifyMemberStatus: true,
-        mergeInvoice: false
+        mergeInvoice: false,
+        bhpUsoEnabled: false,
+        bhpUsoRate: 1.25
       },
       waGateway: {
         enabled: true,

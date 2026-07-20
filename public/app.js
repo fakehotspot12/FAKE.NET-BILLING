@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.4.1', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.5.0', {
       scope: '/'
     });
   }
@@ -2654,8 +2654,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.4.1',
-    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.4.1',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.5.0',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.5.0',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -8516,7 +8516,10 @@ function radiusNasIpForRow(row = {}, nasOptions = []) {
   return match ? match.ip : '';
 }
 
-function radiusMemberFieldsMarkup() {
+function radiusMemberFieldsMarkup(options = {}) {
+  const billing = options.billing || {};
+  const bhpUsoEnabled = billing.bhpUsoEnabled === true;
+  const bhpUsoRate = Number(billing.bhpUsoRate || 1.25);
   return `
     <section class="form-grid radius-wizard-panel compact-wizard-panel" id="radiusMemberFields" data-radius-wizard-panel="member" data-member-wizard-fields hidden>
       <div class="field full radius-wizard-title"><strong>Member</strong><span>Identitas, kontak, alamat, lokasi, dan dokumentasi pelanggan.</span></div>
@@ -8595,6 +8598,10 @@ function radiusMemberFieldsMarkup() {
         <span>Discount (%)</span>
         <input name="memberDiscount" type="number" min="0" max="100" step="0.01" value="" data-member-field autocomplete="off" disabled>
       </label>
+      <div class="field full notice ${bhpUsoEnabled ? 'info' : ''}">
+        <strong>BHP USO</strong>
+        <span>${bhpUsoEnabled ? `Aktif ${bhpUsoRate}% dan otomatis ditambahkan ke total tagihan.` : 'Tidak aktif pada Billing Settings.'}</span>
+      </div>
       <label class="field">
         <span>Status Invoice Awal</span>
         <select name="memberInvoiceStatus" data-member-field disabled>
@@ -8616,6 +8623,7 @@ function radiusMemberFieldsMarkup() {
         <div><span>Harga Profile</span><strong data-radius-review="price">-</strong></div>
         <div><span>PPN</span><strong data-radius-review="ppn">-</strong></div>
         <div><span>Diskon</span><strong data-radius-review="discount">-</strong></div>
+        <div><span>BHP USO</span><strong data-radius-review="bhpUso">-</strong></div>
         <div><span>Total Tagihan Perbulan</span><strong data-radius-review="total">-</strong></div>
         <div><span>Active Date</span><strong data-radius-review="activeDate">-</strong></div>
         <div><span>Status Invoice</span><strong data-radius-review="invoiceStatus">-</strong></div>
@@ -8630,6 +8638,8 @@ function radiusMemberFieldsMarkup() {
 
 function radiusPppUserFormBody(user = null, options = {}) {
   const type = user?.service === 'DHCP' || user?.type === 'DHCP' ? 'DHCP' : 'PPPoE';
+  const bhpUsoEnabled = options.billing?.bhpUsoEnabled === true;
+  const bhpUsoRate = Number(options.billing?.bhpUsoRate || 1.25);
   const selectedNas = user ? radiusNasIpForRow(user, options.nas || []) : '';
   const canAddMember = !user && state.auth?.role !== 'reseller_voucher' && canAny([
     'customers:manage',
@@ -8688,7 +8698,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
   }
 
   return `
-    <div class="radius-user-wizard" data-radius-ppp-wizard>
+    <div class="radius-user-wizard" data-radius-ppp-wizard data-bhp-uso-enabled="${bhpUsoEnabled ? '1' : '0'}" data-bhp-uso-rate="${escapeHtml(String(bhpUsoRate))}">
       <div class="radius-wizard-steps MuiStepper-root MuiStepper-horizontal">
         ${['Account', 'Member', 'Payment', 'Review'].map((label, index) => `
           <button class="radius-wizard-step MuiStep-root MuiStep-horizontal ${index === 0 ? 'is-active' : ''}" type="button" data-radius-wizard-goto="${index}" ${!canAddMember && index > 0 ? 'disabled' : ''}>
@@ -8885,7 +8895,11 @@ function radiusProfileFormBody(profile = null, type = 'ppp') {
 }
 
 async function openRadiusPppUserModal(user = null) {
-  const options = await loadRadiusOptions('ppp');
+  const [options, billingPayload] = await Promise.all([
+    loadRadiusOptions('ppp'),
+    api('/api/billing/settings').catch(() => ({ settings: {} }))
+  ]);
+  options.billing = billingPayload.settings || {};
   openModal(user ? 'Edit User PPP-DHCP' : 'Tambah User PPP-DHCP', radiusPppUserFormBody(user, options), async (payload, form) => {
     const type = String(payload.type || '').toLowerCase();
     if (!user && payload.addToMember && typeof form?._radiusPppWizardFinalize === 'function') {
@@ -9007,10 +9021,14 @@ function bindRadiusPppWizard() {
     const discountAmount = Math.round((subtotal * discountRate) / 100);
     const taxableAmount = Math.max(0, subtotal - discountAmount);
     const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
-    const totalAmount = Math.max(0, taxableAmount + ppnAmount);
+    const bhpUsoEnabled = wizard.dataset.bhpUsoEnabled === '1';
+    const bhpUsoRate = bhpUsoEnabled ? Math.max(0, Math.min(100, numberValue(wizard.dataset.bhpUsoRate || 1.25))) : 0;
+    const bhpUsoAmount = Math.round((taxableAmount * bhpUsoRate) / 100);
+    const totalAmount = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount);
     reviewValue('price', moneyValue(subtotal));
     reviewValue('ppn', ppnRate > 0 ? `${ppnRate}% / ${rupiah(ppnAmount)}` : '-');
     reviewValue('discount', discountRate > 0 ? `${discountRate}% / ${rupiah(discountAmount)}` : '-');
+    reviewValue('bhpUso', bhpUsoAmount > 0 ? `${bhpUsoRate}% / ${rupiah(bhpUsoAmount)}` : '-');
     reviewValue('total', totalAmount > 0 ? rupiah(totalAmount) : '-');
     reviewValue('activeDate', dateText(modalBody.querySelector('input[name="memberActiveDate"]')?.value || '') || '-');
     reviewValue('invoiceStatus', selectedText('select[name="memberInvoiceStatus"]'));
@@ -12876,7 +12894,7 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
           <label>Email
             <input name="email" type="email" value="${escapeHtml(contact.email || member.email || '')}" ${disabled}>
           </label>
-          <label>ID Card
+          <label>Nomor KTP
             <input name="ktp" value="${escapeHtml(contact.ktp || member.ktp || '')}" inputmode="numeric" ${disabled}>
           </label>
           <label class="span-2">Alamat
@@ -14934,6 +14952,15 @@ async function renderBillingSettings() {
           <label class="field checkbox-field full">
             <input name="mergeInvoice" type="checkbox" value="true" ${settings.mergeInvoice ? 'checked' : ''}>
             <span>Merge invoice bulan sebelumnya jika belum dibayar</span>
+          </label>
+          <label class="field checkbox-field">
+            <input name="bhpUsoEnabled" type="checkbox" value="true" ${settings.bhpUsoEnabled === true ? 'checked' : ''}>
+            <span>Aktifkan BHP USO</span>
+          </label>
+          <label class="field">
+            <span>BHP USO (%)</span>
+            <input name="bhpUsoRate" type="number" min="0" max="100" step="0.01" value="${escapeHtml(settings.bhpUsoRate ?? 1.25)}">
+            <small class="muted">Default 1,25%. Berlaku pada invoice baru dan invoice yang masih belum lunas.</small>
           </label>
           <div class="modal-actions field full">
             <button class="button" type="submit">Simpan Billing</button>

@@ -61,6 +61,7 @@ function showLogin() {
   byId('loginView').hidden = false;
   byId('portalView').hidden = true;
   byId('logoutButton').hidden = true;
+  byId('accountMenuWrap').hidden = true;
   syncOtpFormVisibility(Boolean(state.challengeId));
 }
 
@@ -68,6 +69,7 @@ function showPortal() {
   byId('loginView').hidden = true;
   byId('portalView').hidden = false;
   byId('logoutButton').hidden = false;
+  byId('accountMenuWrap').hidden = false;
   state.challengeId = '';
   syncOtpFormVisibility(false);
 }
@@ -182,6 +184,7 @@ function renderPortal(payload) {
   byId('memberId').textContent = customer.memberId || customer.id || '-';
   byId('memberName').textContent = memberName;
   byId('memberPackage').textContent = customer.packageName || '-';
+  byId('accountMenuName').textContent = memberName;
   byId('usageTotal').textContent = usage.totalUsageText || '0 B';
   byId('usageDetail').textContent = `U ${usage.upload || '0 B'} / D ${usage.download || '0 B'}`;
   byId('rxPower').textContent = device.rxPowerText || '-';
@@ -207,6 +210,21 @@ function renderPortal(payload) {
   });
   renderBillingSummary(payload.billing || {});
   showPortal();
+}
+
+function openAccountDialog() {
+  const customer = state.portal?.customer || {};
+  const dialog = byId('accountDialog');
+  const form = byId('accountForm');
+  if (!dialog || !form) return;
+  form.name.value = customer.name || '';
+  form.ktp.value = customer.ktp || '';
+  form.phone.value = customer.phone || '';
+  form.email.value = customer.email || '';
+  form.address.value = customer.address || '';
+  form.latitude.value = customer.latitude || '';
+  form.longitude.value = customer.longitude || '';
+  dialog.showModal();
 }
 
 async function loadSettings() {
@@ -299,10 +317,38 @@ byId('otpForm').addEventListener('submit', async (event) => {
 
 byId('periodInput').addEventListener('change', () => loadMe());
 
+byId('accountMenuButton').addEventListener('click', () => {
+  const menu = byId('accountMenu');
+  const button = byId('accountMenuButton');
+  menu.hidden = !menu.hidden;
+  button.setAttribute('aria-expanded', String(!menu.hidden));
+});
+
+byId('accountButton').addEventListener('click', () => {
+  byId('accountMenu').hidden = true;
+  openAccountDialog();
+});
+
 byId('logoutButton').addEventListener('click', () => {
   state.token = '';
   localStorage.removeItem(TOKEN_KEY);
   showLogin();
+});
+
+byId('closeAccountDialog').addEventListener('click', () => byId('accountDialog').close());
+byId('accountForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form).entries());
+  delete payload.phone;
+  try {
+    await api('/api/public/wifiku/profile', { method: 'PATCH', body: JSON.stringify(payload) });
+    byId('accountDialog').close();
+    toast('Data Akun Saya berhasil diperbarui');
+    await loadMe();
+  } catch (error) {
+    toast(error.message);
+  }
 });
 
 byId('billingPayButton').addEventListener('click', () => {

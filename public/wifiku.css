@@ -61,6 +61,54 @@ button[value="cancel"],
   color: var(--text);
 }
 
+.account-menu {
+  position: relative;
+}
+
+.account-menu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  max-width: min(260px, 48vw);
+  padding: 0 11px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.account-menu-button span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+  min-width: 150px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(12, 32, 62, .16);
+}
+
+.account-menu-list button {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+}
+
+.account-menu-list button:hover {
+  background: var(--bg);
+}
+
 input {
   width: 100%;
   min-height: 44px;
@@ -137,6 +185,34 @@ small {
 
 .panel {
   padding: 20px;
+}
+
+.account-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.account-form-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.account-form-grid label.full {
+  grid-column: 1 / -1;
+}
+
+.account-form-grid textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.account-form-grid input[readonly] {
+  background: #edf2f6;
+  color: var(--muted);
 }
 
 .login-panel {
@@ -559,5 +635,17 @@ dialog::backdrop {
   .dialog-actions button,
   .checkout-actions button {
     flex: 1 1 100%;
+  }
+
+  .account-menu-button {
+    max-width: 48vw;
+  }
+
+  .account-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-form-grid label.full {
+    grid-column: auto;
   }
 }

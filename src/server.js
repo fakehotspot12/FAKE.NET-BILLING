@@ -25,6 +25,7 @@ const {
   addManualCustomer,
   billingDueDayForCustomer,
   billingAmountBreakdownForPeriods,
+  applyBhpUsoToOpenInvoice,
   cancelInvoice,
   currentPeriod,
   customerBillableInPeriod,
@@ -1404,7 +1405,11 @@ function publicWifiKuCustomer(data = {}, customer = {}, radiusUser = {}) {
     name: customer.name || customer.customerName || customer.username || '',
     username: radiusUser.username || customer.username || '',
     phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
+    ktp: customer.ktp || '',
+    email: customer.email || '',
     address: customer.address || '',
+    latitude: customer.latitude || '',
+    longitude: customer.longitude || '',
     status: customer.status || radiusUser.status || '',
     packageName: wifiKuPackageName(data, customer, radiusUser),
     dueDate: customer.dueDate || customer.nextDue || ''
@@ -5473,7 +5478,9 @@ function sanitizeBillingSettings(payload = {}, current = {}) {
     notifyInvoiceIssued: payload.notifyInvoiceIssued !== false,
     notifyPaymentStatus: payload.notifyPaymentStatus !== false,
     notifyMemberStatus: payload.notifyMemberStatus !== false,
-    mergeInvoice: payload.mergeInvoice === true
+    mergeInvoice: payload.mergeInvoice === true,
+    bhpUsoEnabled: payload.bhpUsoEnabled === true,
+    bhpUsoRate: Math.max(0, Math.min(100, Number(payload.bhpUsoRate ?? current.bhpUsoRate ?? 1.25) || 0))
   };
 }
 
@@ -7841,6 +7848,9 @@ function createLocalManualInvoice(data = {}, customer = {}, subPeriod = 1, actor
     vatAmount: Number(preview.vatAmount || preview.ppnAmount || 0),
     taxRate: Number(preview.taxRate || preview.ppnRate || 0),
     taxAmount: Number(preview.taxAmount || preview.ppnAmount || 0),
+    bhpUsoEnabled: preview.bhpUsoEnabled === true,
+    bhpUsoRate: Number(preview.bhpUsoRate || 0),
+    bhpUsoAmount: Number(preview.bhpUsoAmount || 0),
     discountRate: Number(preview.discountRate || 0),
     discountAmount: Number(preview.discountAmount || 0),
     total: Number(preview.totalAmount || 0),
@@ -11498,6 +11508,45 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'PATCH' && pathname === '/api/public/wifiku/profile') {
+    const authContext = await requireWifiKuSession(req, res);
+    if (!authContext) return;
+    const payload = await readBody(req);
+    try {
+      const { data } = await mutate((store) => {
+        const customer = (store.customers || []).find((item) => item.id === authContext.customer.id);
+        if (!customer) throw new Error('Data pelanggan tidak ditemukan');
+        const clean = (value, max = 500) => String(value || '').trim().slice(0, max);
+        const name = clean(payload.name, 120);
+        if (!name) throw new Error('Nama wajib diisi');
+        customer.name = name;
+        customer.customerName = name;
+        customer.ktp = clean(payload.ktp, 32);
+        customer.email = clean(payload.email, 160);
+        customer.address = clean(payload.address, 500);
+        customer.latitude = clean(payload.latitude, 40);
+        customer.longitude = clean(payload.longitude, 40);
+        customer.locationUrl = customer.latitude && customer.longitude
+          ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}`
+          : '';
+        customer.updatedAt = new Date().toISOString();
+        customer.updatedBy = 'WifiKu';
+        addActivity(store, 'customer', `Data Akun Saya ${customer.name} diperbarui melalui WifiKu`, {
+          action: 'wifiku-profile-update',
+          customerId: customer.id
+        });
+        return customer;
+      });
+      sendJson(res, 200, {
+        ok: true,
+        customer: publicWifiKuCustomer(data, data.customers.find((item) => item.id === authContext.customer.id), radiusUserForCustomer(data, authContext.customer) || {})
+      });
+    } catch (error) {
+      badRequest(res, error.message || 'Data Akun Saya tidak dapat diperbarui');
+    }
+    return;
+  }
+
   if (method === 'POST' && pathname === '/api/public/wifiku/reboot') {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
@@ -12848,9 +12897,17 @@ async function handleApi(req, res, url) {
         store.settings = store.settings || {};
         store.settings.billing = sanitizeBillingSettings(payload.billing || payload, store.settings.billing || {});
         store.settings.defaultDueDay = store.settings.billing.postpaidDueDay;
+        const bhpUsoUpdatedInvoices = (store.invoices || []).filter((invoice) => {
+          const status = invoiceRuntimeStatus(invoice);
+          if (!['pending', 'overdue', 'unpaid'].includes(status)) return false;
+          const before = Number(invoice.amount || invoice.totalAmount || 0);
+          applyBhpUsoToOpenInvoice(store.settings, invoice);
+          return before !== Number(invoice.amount || invoice.totalAmount || 0);
+        }).length;
         const stampedVouchers = await stampHotspotVoucherValidityFromSessions(store, authContext.user);
         const automation = standaloneBillingAutomation(store, authContext.user);
         automation.stampedVouchers = stampedVouchers;
+        automation.bhpUsoUpdatedInvoices = bhpUsoUpdatedInvoices;
         const expiredVouchers = (automation.voucherExpirations?.removed?.length || 0) + (automation.voucherExpirations?.updated?.length || 0);
         if (automation.created.length || automation.isolatedUsers.length || automation.terminatedUsers.length || automation.activatedUsers.length || expiredVouchers) {
           await syncFreeradiusIfNeeded(store, authContext.user, 'billing-settings-automation');

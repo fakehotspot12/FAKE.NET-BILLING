@@ -621,7 +621,12 @@ function billingAmountBreakdown(settings = {}, customer = {}, months = 1, option
   const taxableAmount = Math.max(0, subtotal - discountAmount);
   const ppnRate = percentValue(customer.ppn ?? customer.vat ?? customer.taxRate);
   const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
-  const total = Math.max(0, taxableAmount + ppnAmount);
+  const bhpUsoEnabled = settings?.billing?.bhpUsoEnabled === true || settings?.bhpUsoEnabled === true;
+  const bhpUsoRate = bhpUsoEnabled
+    ? percentValue(settings?.billing?.bhpUsoRate ?? settings?.bhpUsoRate ?? 1.25)
+    : 0;
+  const bhpUsoAmount = Math.round((taxableAmount * bhpUsoRate) / 100);
+  const total = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount);
   return {
     unitPrice,
     months: quantity,
@@ -636,11 +641,42 @@ function billingAmountBreakdown(settings = {}, customer = {}, months = 1, option
     vatAmount: ppnAmount,
     taxRate: ppnRate,
     taxAmount: ppnAmount,
+    bhpUsoEnabled,
+    bhpUsoRate,
+    bhpUsoAmount,
     total,
     totalAmount: total,
     amount: total,
     proration: options.proration || null
   };
+}
+
+function applyBhpUsoToOpenInvoice(settings = {}, invoice = {}) {
+  const status = normalizeStatus(invoice.status);
+  if (['paid', 'cancelled'].includes(status)) return invoice;
+  const baseAmount = Math.max(0, Math.round(toNumber(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount)));
+  const discountRate = percentValue(invoice.discountRate);
+  const discountAmount = Math.round((baseAmount * discountRate) / 100);
+  const taxableAmount = Math.max(0, baseAmount - discountAmount);
+  const ppnRate = percentValue(invoice.ppnRate ?? invoice.taxRate ?? invoice.vatRate);
+  const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
+  const enabled = settings?.billing?.bhpUsoEnabled === true || settings?.bhpUsoEnabled === true;
+  const bhpUsoRate = enabled ? percentValue(settings?.billing?.bhpUsoRate ?? settings?.bhpUsoRate ?? 1.25) : 0;
+  const bhpUsoAmount = Math.round((taxableAmount * bhpUsoRate) / 100);
+  invoice.subtotal = baseAmount;
+  invoice.baseAmount = baseAmount;
+  invoice.discountAmount = discountAmount;
+  invoice.taxableAmount = taxableAmount;
+  invoice.ppnAmount = ppnAmount;
+  invoice.vatAmount = ppnAmount;
+  invoice.taxAmount = ppnAmount;
+  invoice.bhpUsoEnabled = enabled;
+  invoice.bhpUsoRate = bhpUsoRate;
+  invoice.bhpUsoAmount = bhpUsoAmount;
+  invoice.total = taxableAmount + ppnAmount + bhpUsoAmount;
+  invoice.totalAmount = invoice.total;
+  invoice.amount = invoice.total;
+  return invoice;
 }
 
 function billingAmountBreakdownForPeriods(settings = {}, customer = {}, periods = []) {
@@ -865,6 +901,9 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       vatAmount: billingAmount.vatAmount,
       taxRate: billingAmount.taxRate,
       taxAmount: billingAmount.taxAmount,
+      bhpUsoEnabled: billingAmount.bhpUsoEnabled,
+      bhpUsoRate: billingAmount.bhpUsoRate,
+      bhpUsoAmount: billingAmount.bhpUsoAmount,
       discountRate: billingAmount.discountRate,
       discountAmount: billingAmount.discountAmount,
       total: billingAmount.total,
@@ -1447,6 +1486,7 @@ module.exports = {
   addManualCustomer,
   billingAmountBreakdown,
   billingAmountBreakdownForPeriods,
+  applyBhpUsoToOpenInvoice,
   currentPeriod,
   customerBillableInPeriod,
   dueDateForPeriod,
