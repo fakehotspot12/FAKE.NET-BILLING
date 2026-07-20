@@ -13555,10 +13555,9 @@ async function handleApi(req, res, url) {
             ? freeradius.updateRadiusUser(store, id, radiusUserPayload(payload, 'pppoe', store), authContext.user)
             : freeradius.deleteRadiusUser(store, id);
         if (method === 'PUT') {
-          const temporaryActivation = payloadEnabled(payload.temporaryActivation)
-            && ['isolated', 'isolir', 'suspend', 'suspended'].includes(previousStatus)
+          const reactivationFromIsolation = ['isolated', 'isolir', 'suspend', 'suspended'].includes(previousStatus)
             && next.status === 'active';
-          if (temporaryActivation) {
+          if (reactivationFromIsolation) {
             next.billingIsolationOverride = true;
             next.manualActivatedAt = new Date().toISOString();
             next.manualActivatedByName = authContext.user.name || authContext.user.username || '';

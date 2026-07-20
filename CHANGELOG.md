@@ -7,6 +7,19 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.3.1] - 2026-07-20
+
+### Changed
+
+- Web isolir mendukung pilihan target HTTP lokal port 8892 atau HTTPS domain publik.
+- Script redirect MikroTik membersihkan rule isolir Billing sebelumnya sebelum memasang rule baru.
+- Tampilan tombol Bayar Tagihan dan Hubungi Admin diperbaiki agar sejajar di mobile.
+
+### Fixed
+
+- Perhitungan nominal bersih pembayaran Tripay dan settlement voucher disimpan untuk pelaporan tanpa mengubah riwayat lama.
+- Alamat pelanggan tersedia pada template pesan invoice Whatsapp.
+
 ## [2.3.0] - 2026-07-20
 
 ### Added

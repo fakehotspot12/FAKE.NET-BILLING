@@ -240,8 +240,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '2.3.0',
-      buildVersion: '2.3.0',
+      version: '2.3.1',
+      buildVersion: '2.3.1',
       releaseDate: '2026-07-20'
     }
   },
@@ -253,8 +253,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '2.3.0',
-    buildVersion: '2.3.0',
+    appVersion: '2.3.1',
+    buildVersion: '2.3.1',
     releaseDate: '2026-07-20',
     loginVerificationEnabled: true
   },
@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.3.0', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.3.1', {
       scope: '/'
     });
   }
@@ -2657,8 +2657,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.3.0',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.3.0',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.3.1',
+    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.3.1',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
