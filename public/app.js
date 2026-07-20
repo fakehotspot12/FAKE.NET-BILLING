@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.3.4', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.3.5', {
       scope: '/'
     });
   }
@@ -2657,8 +2657,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.3.4',
-    buildVersion: state.branding.buildVersion || state.settings.appInfo?.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.3.4',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.3.5',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.3.5',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -4304,9 +4304,12 @@ async function printReceiptWithMode(printClass, mode = 'a4', rootSelector = '.re
 }
 
 function dailyReceiptTransaction(item = {}, report = {}) {
+  const rawPlan = item.packageName || item.profileName || item.profile || item.item || '';
+  const planParts = String(rawPlan || '').split('|').map((part) => part.trim()).filter(Boolean);
   return {
     ...item,
     admin: dailyAdminLabel(item, report),
+    planName: planParts.length > 1 ? planParts[planParts.length - 1] : (planParts[0] || 'Tagihan internet'),
     amountText: rupiah(item.amount || item.income || 0),
     receiptTitle: 'KUITANSI PEMBAYARAN',
     receiptLabel: `Payment Invoice #${billingInvoiceNo(item) || item.invoiceNo || item.externalId || '-'}`
@@ -4318,7 +4321,7 @@ function dailyBillingReceiptBody(transaction = {}) {
   const signer = transaction.admin || state.auth?.name || state.auth?.username || 'Admin';
   const invoiceNo = transaction.invoiceNo || transaction.externalId || transaction.id || '-';
   const customerName = transaction.customerName || transaction.description || transaction.info || '-';
-  const itemName = transaction.item || transaction.packageName || transaction.profileName || transaction.profile || 'Tagihan internet';
+  const itemName = transaction.planName || transaction.packageName || transaction.profileName || transaction.profile || transaction.item || 'Tagihan internet';
   const periodSource = transaction.coverageText
     || transaction.coveredPeriodText
     || transaction.period

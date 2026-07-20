@@ -7,6 +7,12 @@ Format versi memakai pola `major.minor.patch`:
 - Patch/minor kecil: `1.0.0` ke `1.0.1`
 - Perubahan besar fitur/struktur: `1.0.0` ke `1.1.0`
 
+## [2.3.5] - 2026-07-20
+
+### Fixed
+
+- Print Tagihan Harian hanya menampilkan nama paket/profile dan menghapus prefix username seperti `username@domain |`.
+
 ## [2.3.4] - 2026-07-20
 
 ### Changed
