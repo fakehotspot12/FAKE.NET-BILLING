@@ -2781,6 +2781,74 @@ input[type="checkbox"] {
   color: var(--danger);
 }
 
+.payment-gateway-table {
+  min-width: 1500px;
+  table-layout: fixed;
+}
+
+.payment-gateway-col-reference {
+  width: 580px;
+}
+
+.payment-gateway-col-kind {
+  width: 132px;
+}
+
+.payment-gateway-col-provider {
+  width: 92px;
+}
+
+.payment-gateway-col-method {
+  width: 180px;
+}
+
+.payment-gateway-col-status {
+  width: 108px;
+}
+
+.payment-gateway-col-amount,
+.payment-gateway-col-fee {
+  width: 132px;
+}
+
+.payment-gateway-col-date {
+  width: 144px;
+}
+
+.payment-gateway-table th,
+.payment-gateway-table td {
+  max-width: none;
+  overflow-wrap: normal;
+  vertical-align: middle;
+  word-break: normal;
+}
+
+.payment-gateway-reference {
+  min-width: 0;
+}
+
+.payment-gateway-reference strong,
+.payment-gateway-reference .muted {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-gateway-reference strong {
+  margin-bottom: 4px;
+}
+
+.payment-gateway-kind,
+.payment-gateway-provider,
+.payment-gateway-method,
+.payment-gateway-status,
+.payment-gateway-date {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .panel,
 .form-panel {
   padding: 16px;
@@ -3381,6 +3449,8 @@ dialog:has(.changelog-preview) {
   font-weight: 800;
   color: #314134;
   background: #e6eadf;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .badge.paid,
@@ -4827,12 +4897,15 @@ th {
   font-size: 12px;
   font-weight: 800;
   background: var(--surface-soft);
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 td {
   font-size: 14px;
   max-width: 280px;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .activity-list {
@@ -4910,6 +4983,8 @@ td {
 .amount {
   font-variant-numeric: tabular-nums;
   font-weight: 800;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .row-actions {
@@ -11874,4 +11949,90 @@ dialog::backdrop {
 .hotspot-voucher-print-stack.print-mode-thermal-80 .hotspot-voucher-template-thermal .hotspot-voucher-footer {
   color: #f8fafc !important;
   text-shadow: 0 0 1px rgba(0, 0, 0, 0.35) !important;
+}
+
+@media (max-width: 720px) {
+  .payment-gateway-table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .payment-gateway-table {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .payment-gateway-table colgroup,
+  .payment-gateway-table thead {
+    display: none;
+  }
+
+  .payment-gateway-table tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .payment-gateway-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+
+  .payment-gateway-table td {
+    display: grid;
+    gap: 4px;
+    max-width: none;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+  }
+
+  .payment-gateway-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .payment-gateway-table .payment-gateway-reference,
+  .payment-gateway-table .payment-gateway-method,
+  .payment-gateway-table .payment-gateway-date {
+    grid-column: 1 / -1;
+  }
+
+  .payment-gateway-reference .muted,
+  .payment-gateway-method,
+  .payment-gateway-date {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .payment-gateway-table .payment-gateway-amount,
+  .payment-gateway-table .payment-gateway-fee {
+    text-align: left;
+  }
+
+  .payment-gateway-empty {
+    display: block !important;
+  }
+
+  .payment-gateway-empty td {
+    display: block;
+    padding: 8px;
+  }
+
+  .payment-gateway-empty td::before {
+    content: none;
+  }
 }

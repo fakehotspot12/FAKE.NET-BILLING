@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
 const { URL } = require('url');
+const zlib = require('zlib');
 const ExcelJS = require('exceljs');
 const JSZip = require('jszip');
 const QRCode = require('qrcode');
@@ -17,6 +18,8 @@ const webPush = require('web-push');
 const packageInfo = require('../package.json');
 
 const execFileAsync = promisify(execFile);
+const gzipAsync = promisify(zlib.gzip);
+const brotliCompressAsync = promisify(zlib.brotliCompress);
 
 const {
   addActivity,
@@ -141,14 +144,44 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
+const STATIC_COMPRESSIBLE_EXTENSIONS = new Set(['.html', '.css', '.js', '.json', '.webmanifest', '.svg']);
+const STATIC_COMPRESSION_MIN_BYTES = 1024;
+const STATIC_COMPRESSION_CACHE_LIMIT = 32;
+const staticCompressionCache = new Map();
+
 function staticCacheControl(ext) {
   if (ext === '.html') return 'no-store';
   if (['.js', '.css'].includes(ext)) return 'public, max-age=0, must-revalidate';
   return 'public, max-age=86400';
 }
 
-function staticEtag(stat) {
-  return `W/"${Number(stat.size).toString(16)}-${Math.floor(Number(stat.mtimeMs)).toString(16)}"`;
+function staticEtag(stat, encoding = '') {
+  const suffix = encoding ? `-${encoding}` : '';
+  return `W/"${Number(stat.size).toString(16)}-${Math.floor(Number(stat.mtimeMs)).toString(16)}${suffix}"`;
+}
+
+function staticResponseEncoding(req = {}, ext = '', size = 0) {
+  if (!STATIC_COMPRESSIBLE_EXTENSIONS.has(ext) || Number(size || 0) < STATIC_COMPRESSION_MIN_BYTES) return '';
+  const accepted = String(req.headers?.['accept-encoding'] || '').toLowerCase();
+  if (/\bbr\b/.test(accepted)) return 'br';
+  if (/\bgzip\b/.test(accepted)) return 'gzip';
+  return '';
+}
+
+async function compressedStaticBody(filePath = '', stat = {}, body = Buffer.alloc(0), encoding = '') {
+  if (!encoding) return body;
+  const key = `${filePath}:${Number(stat.size || 0)}:${Math.floor(Number(stat.mtimeMs || 0))}:${encoding}`;
+  if (staticCompressionCache.has(key)) return staticCompressionCache.get(key);
+  const compressed = encoding === 'br'
+    ? await brotliCompressAsync(body, {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 }
+    })
+    : await gzipAsync(body, { level: 6 });
+  staticCompressionCache.set(key, compressed);
+  while (staticCompressionCache.size > STATIC_COMPRESSION_CACHE_LIMIT) {
+    staticCompressionCache.delete(staticCompressionCache.keys().next().value);
+  }
+  return compressed;
 }
 
 let writeQueue = Promise.resolve();
@@ -5667,7 +5700,7 @@ function customerInvoiceGenerationDue(settings = {}, customer = {}, period = cur
   return today >= advanceStart;
 }
 
-function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, today = localTodayIso()) {
+function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, today = localTodayIso(), dateInitializations = []) {
   const terminateAfterDays = clampInteger(settings.autoTerminateAfterDays, 0, 3650, 0);
   if (terminateAfterDays <= 0) return [];
   const paidCoverage = paidInvoiceCoverageByCustomer(data);
@@ -5690,6 +5723,7 @@ function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, tod
     if (!/^\d{4}-\d{2}-\d{2}$/.test(isolatedAt)) {
       user.isolatedAt = today;
       customer.isolatedAt = today;
+      dateInitializations.push(user);
       continue;
     }
     if (today < addDaysIso(isolatedAt, terminateAfterDays)) continue;
@@ -6207,7 +6241,8 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   const settings = data.settings?.billing || {};
   const today = localTodayIso();
   const period = currentPeriod();
-  const terminatedUsers = autoTerminateOverdueCustomers(data, settings, actor, today);
+  const terminationDateInitializations = [];
+  const terminatedUsers = autoTerminateOverdueCustomers(data, settings, actor, today, terminationDateInitializations);
   const created = generateInvoices(data, period, {
     shouldGenerateCustomerInvoice: (customer) => customerInvoiceGenerationDue(settings, customer, period, today)
   });
@@ -6343,7 +6378,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       expiredVouchers: voucherExpirations.removed.length + voucherExpirations.updated.length
     });
   }
-  return { created, reminderInvoices, isolatedUsers, terminatedUsers, activatedUsers, voucherExpirations };
+  return { created, reminderInvoices, isolatedUsers, terminatedUsers, activatedUsers, voucherExpirations, terminationDateInitializations };
 }
 
 function publicWaGatewaySettings(settings = {}) {
@@ -6884,10 +6919,10 @@ function paymentGatewayTransactionKind(row = {}) {
 
 function paymentGatewayTransactionKindLabel(kind = '') {
   const labels = {
-    'hotspot-voucher': 'Hotspot Voucher',
+    'hotspot-voucher': 'Voucher Hotspot',
     'monthly-package': 'Paket Bulanan',
-    balance: 'Balance',
-    fee: 'Fee',
+    balance: 'Saldo',
+    fee: 'Biaya',
     other: 'Lainnya'
   };
   return labels[kind] || labels.other;
@@ -9224,7 +9259,16 @@ async function mutate(mutator, saveOptions = {}) {
       }, { ...current })
       : structuredClone(current);
     const result = await mutator(data);
-    const saved = await saveStore(data, saveOptions);
+    if (typeof saveOptions.shouldPersist === 'function' && saveOptions.shouldPersist(result, data, current) === false) {
+      return { data: current, result };
+    }
+    const persistOptions = { ...saveOptions };
+    delete persistOptions.shouldPersist;
+    if (typeof persistOptions.persistCollections === 'function') {
+      persistOptions.collections = persistOptions.persistCollections(result, data, current);
+    }
+    delete persistOptions.persistCollections;
+    const saved = await saveStore(data, persistOptions);
     return { data: saved, result };
   };
 
@@ -9425,6 +9469,24 @@ async function runStandaloneBillingAutomation(reason = 'interval') {
         automation.expiredVoucherDisconnects = await disconnectExpiredVoucherSessions(data, automation.voucherExpirations, actor);
       }
       return automation;
+    }, {
+      collections: ['customers', 'radiusUsers', 'radiusVoucherRecords', 'invoices', 'waMessages', 'activity'],
+      includeCore: false,
+      shouldPersist: (automation) => {
+        const voucherExpirations = automation?.voucherExpirations || {};
+        return Boolean(
+          automation?.created?.length
+          || automation?.reminderInvoices?.length
+          || automation?.isolatedUsers?.length
+          || automation?.terminatedUsers?.length
+          || automation?.activatedUsers?.length
+          || automation?.stampedVouchers?.length
+          || automation?.terminationDateInitializations?.length
+          || voucherExpirations.removed?.length
+          || voucherExpirations.updated?.length
+          || voucherExpirations.notices?.length
+        );
+      }
     });
     return result;
   } finally {
@@ -9569,7 +9631,18 @@ function takeXenditWithdrawRequest(userId, token) {
   return request;
 }
 
+const notificationSummaryCache = new Map();
+const NOTIFICATION_SUMMARY_CACHE_MS = 20_000;
+
 async function notificationSummary(data = {}, user = {}) {
+  const permissionKey = [
+    'inventory:read',
+    'network-assets:read',
+    'billing-monitor:read',
+    'payment-gateway:manage'
+  ].map((permission) => auth.hasPermission(user, permission) ? '1' : '0').join('');
+  const cached = notificationSummaryCache.get(permissionKey);
+  if (cached && cached.expiresAt > Date.now()) return structuredClone(cached.value);
   const notifications = {
     inventory: {
       visible: auth.hasPermission(user, 'inventory:read'),
@@ -9675,6 +9748,10 @@ async function notificationSummary(data = {}, user = {}) {
     });
   }
 
+  notificationSummaryCache.set(permissionKey, {
+    expiresAt: Date.now() + NOTIFICATION_SUMMARY_CACHE_MS,
+    value: structuredClone(notifications)
+  });
   return notifications;
 }
 
@@ -10553,13 +10630,27 @@ function upsertTripayHistoryTransaction(data = {}, row = {}) {
     paidAt: paidAt || existing?.paidAt || '',
     paymentAt: paidAt || existing?.paymentAt || '',
     createdAt,
-    updatedAt: new Date().toISOString(),
+    updatedAt: existing?.updatedAt || new Date().toISOString(),
     date: timestampLocalDateKey(paidAt || createdAt),
     historySource: 'tripay-api'
   };
-  if (existing) Object.assign(existing, next);
-  else data.paymentGatewayTransactions.push(next);
-  return { transaction: existing || next, inserted: !existing };
+  if (existing) {
+    const comparableFields = [
+      'kind', 'transactionKind', 'sourceType', 'provider', 'method', 'paymentMethod',
+      'reference', 'invoiceNo', 'description', 'customerId', 'invoiceId', 'voucherOrderId',
+      'customerName', 'amount', 'baseAmount', 'fee', 'providerFee', 'feeMerchant',
+      'feeCustomer', 'status', 'externalId', 'providerReference', 'paidAt', 'paymentAt',
+      'createdAt', 'date', 'historySource'
+    ];
+    const updated = comparableFields.some((field) => JSON.stringify(existing[field] ?? null) !== JSON.stringify(next[field] ?? null));
+    if (updated) {
+      next.updatedAt = new Date().toISOString();
+      Object.assign(existing, next);
+    }
+    return { transaction: existing, inserted: false, updated };
+  }
+  data.paymentGatewayTransactions.push(next);
+  return { transaction: next, inserted: true, updated: false };
 }
 
 function applyTripayTransactionHistory(data = {}, rows = [], actor = {}) {
@@ -10570,8 +10661,14 @@ function applyTripayTransactionHistory(data = {}, rows = [], actor = {}) {
   const fulfillments = [];
   for (const row of ordered) {
     const merchantReference = String(row.merchant_ref || row.merchantRef || '').trim();
-    if (tripayHistoryStatus(row.status) === 'paid'
-      && (findHotspotVoucherOrder(data, merchantReference) || findBillingInvoiceByReference(data, merchantReference))) {
+    const voucherOrder = findHotspotVoucherOrder(data, merchantReference);
+    const invoice = findBillingInvoiceByReference(data, merchantReference);
+    const targetAlreadyPaid = voucherOrder
+      ? String(voucherOrder.status || '').toLowerCase() === 'paid'
+      : invoice
+        ? invoiceRuntimeStatus(invoice) === 'paid'
+        : false;
+    if (tripayHistoryStatus(row.status) === 'paid' && (voucherOrder || invoice) && !targetAlreadyPaid) {
       try {
         const fulfilled = fulfillPaymentGatewayCallback(data, {
           merchant_ref: merchantReference,
@@ -10594,7 +10691,7 @@ function applyTripayTransactionHistory(data = {}, rows = [], actor = {}) {
     const result = upsertTripayHistoryTransaction(data, row);
     if (result.transaction) {
       if (result.inserted) summary.inserted += 1;
-      else summary.updated += 1;
+      else if (result.updated) summary.updated += 1;
     }
   }
   data.paymentGatewayTransactions = (data.paymentGatewayTransactions || [])
@@ -10651,6 +10748,17 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
       syncedAt: remote.fetchedAt,
       pushEvents: applied.fulfillments.filter((item) => item.status === 'paid' && !item.reused)
     };
+  }, {
+    collections: ['paymentGatewayTransactions', 'invoices', 'payments', 'customers', 'radiusUsers', 'hotspotVoucherOrders', 'waMessages', 'activity'],
+    includeCore: true,
+    persistCollections: (result) => {
+      const collections = ['paymentGatewayTransactions'];
+      if (result?.inserted || result?.reconciled || result?.errors?.length || result?.pruned) collections.push('activity');
+      if (result?.reconciled) {
+        collections.push('invoices', 'payments', 'customers', 'radiusUsers', 'hotspotVoucherOrders', 'waMessages');
+      }
+      return collections;
+    }
   });
   const pushEvents = Array.isArray(synced.result.pushEvents) ? synced.result.pushEvents : [];
   for (const event of pushEvents) {
@@ -15829,35 +15937,14 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/payment-gateway') {
     const authContext = await requirePermission(req, res, 'payment-gateway:manage');
     if (!authContext) return;
-    let reportData = authContext.data;
+    const reportData = authContext.data;
     const currentSettings = reportData.settings?.paymentGateway || {};
-    const lastSyncAt = Date.parse(currentSettings.lastHistorySyncAt || '');
-    const syncDue = currentSettings.enabled === true
-      && String(currentSettings.provider || '').toLowerCase() === 'tripay'
-      && Date.now() >= paymentGatewayHistorySyncPausedUntil
-      && (!Number.isFinite(lastSyncAt) || Date.now() - lastSyncAt >= PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS);
-    let historySync = {
-      ok: true,
+    const historySync = {
+      ok: !currentSettings.lastHistorySyncError,
       syncedAt: currentSettings.lastHistorySyncAt || '',
-      count: Number(currentSettings.lastHistorySyncCount || 0)
+      count: Number(currentSettings.lastHistorySyncCount || 0),
+      error: currentSettings.lastHistorySyncError || ''
     };
-    if (syncDue) {
-      try {
-        const synced = await syncTripayTransactionHistory(reportData, authContext.user);
-        reportData = synced.data;
-        historySync = { ok: true, ...synced.result };
-      } catch (error) {
-        if (isTripayUnauthorizedIpError(error)) {
-          paymentGatewayHistorySyncPausedUntil = Date.now() + (6 * 60 * 60 * 1000);
-        }
-        historySync = {
-          ok: false,
-          syncedAt: currentSettings.lastHistorySyncAt || '',
-          count: Number(currentSettings.lastHistorySyncCount || 0),
-          error: error.message || 'Riwayat Tripay gagal disinkron'
-        };
-      }
-    }
     const report = paymentGatewayReportPayload(reportData, {
       from: url.searchParams.get('from') || '',
       to: url.searchParams.get('to') || '',
@@ -16255,22 +16342,27 @@ async function serveStatic(req, res, url) {
       return;
     }
     const ext = path.extname(filePath);
-    const etag = staticEtag(stat);
+    const encoding = staticResponseEncoding(req, ext, stat.size);
+    const etag = staticEtag(stat, encoding);
     if (req.headers['if-none-match'] === etag) {
       res.writeHead(304, {
         ETag: etag,
-        'Cache-Control': staticCacheControl(ext)
+        'Cache-Control': staticCacheControl(ext),
+        Vary: 'Accept-Encoding'
       });
       res.end();
       return;
     }
-    const body = await fs.readFile(filePath);
+    const sourceBody = await fs.readFile(filePath);
+    const body = await compressedStaticBody(filePath, stat, sourceBody, encoding);
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': body.length,
       'Cache-Control': staticCacheControl(ext),
       ETag: etag,
-      'Last-Modified': stat.mtime.toUTCString()
+      'Last-Modified': stat.mtime.toUTCString(),
+      Vary: 'Accept-Encoding',
+      ...(encoding ? { 'Content-Encoding': encoding } : {})
     });
     res.end(body);
   } catch (error) {

@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.8.2', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.8.3', {
       scope: '/'
     });
   }
@@ -1347,7 +1347,7 @@ function startNotificationsTimer() {
   if (window.Notification?.permission === 'granted') {
     syncWebPushSubscription().catch(() => {});
   }
-  notificationsTimer = window.setInterval(() => refreshNotifications(), 15000);
+  notificationsTimer = window.setInterval(() => refreshNotifications(), 30000);
 }
 
 function setTopWaStatus(status = {}) {
@@ -2654,8 +2654,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.8.2',
-    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.8.2',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.8.3',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.8.3',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -15954,22 +15954,39 @@ function paymentGatewayKindLabel(row = {}) {
   const reference = String(row.reference || row.invoiceNo || '').toLowerCase();
   if (row.transactionKindLabel) return row.transactionKindLabel;
   if (['hotspot-voucher', 'voucher-hotspot', 'voucher-online', 'hotspot', 'voucher'].includes(value) || value.includes('voucher') || row.voucherOrderId || reference.startsWith('vo-')) {
-    return 'Hotspot Voucher';
+    return 'Voucher Hotspot';
   }
   if (['monthly-package', 'monthly-invoice', 'billing-invoice', 'paket-bulanan', 'invoice', 'billing'].includes(value) || value.includes('invoice') || value.includes('billing') || value.includes('monthly') || row.invoiceId || row.customerId) {
     return 'Paket Bulanan';
   }
-  if (value === 'balance') return 'Balance';
-  if (value === 'fee') return 'Fee';
+  if (value === 'balance') return 'Saldo';
+  if (value === 'fee') return 'Biaya';
   return 'Lainnya';
 }
 
 function paymentGatewayKindBadge(row = {}) {
   const label = paymentGatewayKindLabel(row);
-  if (label === 'Hotspot Voucher') return 'pending';
+  if (label === 'Voucher Hotspot') return 'pending';
   if (label === 'Paket Bulanan') return 'active';
-  if (label === 'Fee') return 'inactive';
+  if (label === 'Biaya') return 'inactive';
   return '';
+}
+
+function paymentGatewayStatusLabel(status = '') {
+  const value = String(status || '').trim().toLowerCase();
+  if (['paid', 'settled', 'success'].includes(value)) return 'Lunas';
+  if (['pending', 'waiting', 'unpaid'].includes(value)) return 'Menunggu';
+  if (['expired', 'expire'].includes(value)) return 'Kedaluwarsa';
+  if (['cancelled', 'canceled'].includes(value)) return 'Dibatalkan';
+  if (['failed', 'failure'].includes(value)) return 'Gagal';
+  if (['refunded', 'refund'].includes(value)) return 'Dikembalikan';
+  return status || '-';
+}
+
+function paymentGatewayProviderLabel(provider = '') {
+  const value = String(provider || '').trim();
+  if (!value) return '-';
+  return value.toLowerCase() === 'tripay' ? 'Tripay' : value;
 }
 
 function paymentGatewayPendingStatus(row = {}) {
@@ -15979,17 +15996,17 @@ function paymentGatewayPendingStatus(row = {}) {
 function paymentGatewayRows(rows = []) {
   return rows.map((row) => `
     <tr>
-      <td>
-        <strong>${escapeHtml(row.reference || row.invoiceNo || row.id || '-')}</strong>
-        <div class="muted">${escapeHtml(row.description || row.customerName || '-')}</div>
+      <td class="payment-gateway-reference" data-label="Referensi">
+        <strong title="${escapeHtml(row.reference || row.invoiceNo || row.id || '-')}">${escapeHtml(row.reference || row.invoiceNo || row.id || '-')}</strong>
+        <div class="muted" title="${escapeHtml(row.description || row.customerName || '-')}">${escapeHtml(row.description || row.customerName || '-')}</div>
       </td>
-      <td><span class="badge ${paymentGatewayKindBadge(row)}">${escapeHtml(paymentGatewayKindLabel(row))}</span></td>
-      <td>${escapeHtml(row.provider || '-')}</td>
-      <td>${escapeHtml(row.method || row.paymentMethod || '-')}</td>
-      <td><span class="badge ${xenditStatusBadge(row.status)}">${escapeHtml(row.status || '-')}</span></td>
-      <td class="amount">${rupiah(row.amount || 0)}</td>
-      <td class="amount">${Number(row.providerFee ?? row.fee ?? 0) ? rupiah(row.providerFee ?? row.fee) : '-'}</td>
-      <td>${row.paidAt || row.paymentAt || row.createdAt || row.date ? dateTimeText(row.paidAt || row.paymentAt || row.createdAt || row.date) : '-'}</td>
+      <td class="payment-gateway-kind" data-label="Jenis"><span class="badge ${paymentGatewayKindBadge(row)}">${escapeHtml(paymentGatewayKindLabel(row))}</span></td>
+      <td class="payment-gateway-provider" data-label="Penyedia">${escapeHtml(paymentGatewayProviderLabel(row.provider))}</td>
+      <td class="payment-gateway-method" data-label="Metode" title="${escapeHtml(row.method || row.paymentMethod || '-')}">${escapeHtml(row.method || row.paymentMethod || '-')}</td>
+      <td class="payment-gateway-status" data-label="Status"><span class="badge ${xenditStatusBadge(row.status)}">${escapeHtml(paymentGatewayStatusLabel(row.status))}</span></td>
+      <td class="amount payment-gateway-amount" data-label="Nominal">${rupiah(row.amount || 0)}</td>
+      <td class="amount payment-gateway-fee" data-label="Biaya Provider">${Number(row.providerFee ?? row.fee ?? 0) ? rupiah(row.providerFee ?? row.fee) : '-'}</td>
+      <td class="payment-gateway-date" data-label="Tanggal">${row.paidAt || row.paymentAt || row.createdAt || row.date ? dateTimeText(row.paidAt || row.paymentAt || row.createdAt || row.date) : '-'}</td>
     </tr>
   `).join('');
 }
@@ -16026,10 +16043,10 @@ async function renderPaymentGateway() {
   const callbackExample = `${callbackExampleBase}/payment-gateway/webhook`;
   const pendingRows = payload.pending || [];
   const tabs = [
-    { value: 'transactions', label: 'Transaction' },
-    { value: 'balance', label: 'Balance History' },
-    { value: 'pending', label: `Pending (${displayNumber(pendingRows.length)})` },
-    { value: 'fees', label: 'Fees Report' }
+    { value: 'transactions', label: 'Transaksi' },
+    { value: 'balance', label: 'Riwayat Saldo' },
+    { value: 'pending', label: `Tertunda (${displayNumber(pendingRows.length)})` },
+    { value: 'fees', label: 'Laporan Biaya' }
   ];
   const rowsByTab = {
     transactions: (payload.transactions || []).filter((row) => !paymentGatewayPendingStatus(row)),
@@ -16053,9 +16070,9 @@ async function renderPaymentGateway() {
     <div class="stack">
       <section class="metrics">
         ${metric('Transaksi', displayNumber(summary.total || 0), rupiah(summary.totalAmount || 0))}
-        ${metric('Paid', displayNumber(summary.paid || 0), rupiah(summary.paidAmount || 0), 'positive')}
-        ${metric('Pending', displayNumber(summary.pending || 0), rupiah(summary.pendingAmount || 0), 'warning-card')}
-        ${metric('Fees', rupiah(summary.fees || 0), 'Total fee')}
+        ${metric('Lunas', displayNumber(summary.paid || 0), rupiah(summary.paidAmount || 0), 'positive')}
+        ${metric('Tertunda', displayNumber(summary.pending || 0), rupiah(summary.pendingAmount || 0), 'warning-card')}
+        ${metric('Biaya', rupiah(summary.fees || 0), 'Total biaya provider')}
       </section>
       <section class="form-panel">
         <div class="section-head">
@@ -16073,7 +16090,7 @@ async function renderPaymentGateway() {
         <form id="paymentGatewayForm" class="form-grid">
           <label class="field checkbox-field">
             <input name="enabled" type="checkbox" value="true" ${settings.enabled ? 'checked' : ''}>
-            <span>Enable gateway</span>
+            <span>Aktifkan gateway</span>
           </label>
           <label class="field">
             <span>Provider</span>
@@ -16105,7 +16122,7 @@ async function renderPaymentGateway() {
           ${paymentProviderFields(settings, provider)}
           ${paymentProviderNotice(provider)}
           <div class="field payment-gateway-settings-field">
-            <span>Settings</span>
+            <span>Pengaturan</span>
             <button class="icon-button payment-gateway-settings-button" id="paymentGatewayAdvancedButton" type="button" title="Settings Payment Gateway" aria-label="Settings Payment Gateway">
               <span aria-hidden="true"></span>
             </button>
@@ -16124,29 +16141,39 @@ async function renderPaymentGateway() {
             <select class="control" id="paymentGatewayKind">
               <option value="all" ${state.paymentGatewayKind === 'all' ? 'selected' : ''}>Semua transaksi</option>
               <option value="monthly-package" ${state.paymentGatewayKind === 'monthly-package' ? 'selected' : ''}>Paket Bulanan</option>
-              <option value="hotspot-voucher" ${state.paymentGatewayKind === 'hotspot-voucher' ? 'selected' : ''}>Hotspot Voucher</option>
-              <option value="balance" ${state.paymentGatewayKind === 'balance' ? 'selected' : ''}>Balance</option>
-              <option value="fee" ${state.paymentGatewayKind === 'fee' ? 'selected' : ''}>Fee</option>
+              <option value="hotspot-voucher" ${state.paymentGatewayKind === 'hotspot-voucher' ? 'selected' : ''}>Voucher Hotspot</option>
+              <option value="balance" ${state.paymentGatewayKind === 'balance' ? 'selected' : ''}>Saldo</option>
+              <option value="fee" ${state.paymentGatewayKind === 'fee' ? 'selected' : ''}>Biaya</option>
               <option value="other" ${state.paymentGatewayKind === 'other' ? 'selected' : ''}>Lainnya</option>
             </select>
             <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari reference, invoice, deskripsi" autocomplete="off">
           </div>
         </div>
-        <div class="table-wrap">
-          <table class="xendit-table">
+        <div class="table-wrap payment-gateway-table-wrap">
+          <table class="xendit-table payment-gateway-table">
+            <colgroup>
+              <col class="payment-gateway-col-reference">
+              <col class="payment-gateway-col-kind">
+              <col class="payment-gateway-col-provider">
+              <col class="payment-gateway-col-method">
+              <col class="payment-gateway-col-status">
+              <col class="payment-gateway-col-amount">
+              <col class="payment-gateway-col-fee">
+              <col class="payment-gateway-col-date">
+            </colgroup>
             <thead>
               <tr>
-                <th>Reference</th>
+                <th>Referensi</th>
                 <th>Jenis</th>
-                <th>Provider</th>
-                <th>Method</th>
+                <th>Penyedia</th>
+                <th>Metode</th>
                 <th>Status</th>
-                <th class="amount">Amount</th>
-                <th class="amount">Provider Fee</th>
+                <th class="amount">Nominal</th>
+                <th class="amount">Biaya Provider</th>
                 <th>Tanggal</th>
               </tr>
             </thead>
-            <tbody>${pageRows.length ? paymentGatewayRows(pageRows) : '<tr><td colspan="8">Belum ada transaksi payment gateway.</td></tr>'}</tbody>
+            <tbody>${pageRows.length ? paymentGatewayRows(pageRows) : '<tr class="payment-gateway-empty"><td colspan="8">Belum ada transaksi payment gateway.</td></tr>'}</tbody>
           </table>
         </div>
         ${paymentGatewayPager(tabRows.length, limit, state.paymentGatewayPage)}

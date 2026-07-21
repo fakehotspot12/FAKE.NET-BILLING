@@ -2,6 +2,22 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.8.3] - 2026-07-21
+
+### Changed
+
+- Tabel Payment Gateway memakai susunan kolom tetap di desktop dan kartu ringkas di mobile.
+- Istilah transaksi Payment Gateway diselaraskan ke bahasa Indonesia, termasuk Voucher Hotspot, Lunas, Menunggu, Saldo, dan Biaya.
+- Referensi transaksi ditampilkan sebagai nomor referensi dan deskripsi pada dua baris yang jelas.
+- Header, status, metode, nominal, dan tanggal pada tabel tidak lagi terpotong di tengah kata.
+
+### Performance
+
+- Asset JS, CSS, HTML, JSON, manifest, dan SVG dikirim dengan kompresi Brotli atau gzip serta cache yang mengikuti perubahan file.
+- Pembukaan menu Payment Gateway tidak lagi menunggu sinkronisasi Tripay; sinkronisasi tetap berjalan di background.
+- Sinkronisasi Tripay dibuat idempoten dan tidak memproses ulang invoice atau voucher yang sudah lunas.
+- Scheduler billing hanya menyimpan koleksi yang benar-benar berubah, sedangkan ringkasan notifikasi memakai cache singkat dan polling yang lebih ringan.
+
 ## [2.8.2] - 2026-07-21
 
 ### Fixed

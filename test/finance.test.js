@@ -5854,7 +5854,7 @@ test('Tripay history import is idempotent and preserves provider status and fee'
   const second = serverInternals.applyTripayTransactionHistory(data, rows, { username: 'admin' });
 
   assert.equal(first.summary.inserted, 1);
-  assert.equal(second.summary.updated, 1);
+  assert.equal(second.summary.updated, 0);
   assert.equal(data.paymentGatewayTransactions.length, 1);
   assert.equal(data.paymentGatewayTransactions[0].externalId, 'T-HISTORY-001');
   assert.equal(data.paymentGatewayTransactions[0].status, 'expired');
