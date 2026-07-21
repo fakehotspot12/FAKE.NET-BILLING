@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.8.5] - 2026-07-21
+
+### Performance
+
+- Status pembayaran aktif memakai indeks invoice agar laporan tidak melakukan pencarian berulang pada ribuan invoice.
+- Formatter tanggal zona Asia/Makassar dipakai ulang untuk mengurangi beban CPU pada laporan, monitoring, dan scheduler.
+
 ## [2.8.4] - 2026-07-21
 
 ### Fixed

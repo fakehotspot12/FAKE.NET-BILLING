@@ -4227,16 +4227,23 @@ function collectorDailyBonusForAmount(amount = 0, settings = {}) {
   return tier ? tier.bonusAmount : 0;
 }
 
-function paymentCountsAsPaid(data = {}, payment = {}) {
+function paymentCountsAsPaid(data = {}, payment = {}, invoicesById = null) {
   if (!paymentIsActive(payment)) return false;
   const invoiceId = String(payment.invoiceId || '');
   if (!invoiceId) return true;
-  const invoice = (data.invoices || []).find((item) => item.id === invoiceId);
+  const invoice = invoicesById
+    ? invoicesById.get(invoiceId)
+    : (data.invoices || []).find((item) => item.id === invoiceId);
   return invoice ? invoiceRuntimeStatus(invoice) === 'paid' : true;
 }
 
 function activePayments(data = {}) {
-  return (data.payments || []).filter((payment) => paymentCountsAsPaid(data, payment));
+  const invoicesById = new Map();
+  for (const invoice of data.invoices || []) {
+    const id = String(invoice.id || '');
+    if (id && !invoicesById.has(id)) invoicesById.set(id, invoice);
+  }
+  return (data.payments || []).filter((payment) => paymentCountsAsPaid(data, payment, invoicesById));
 }
 
 function userIsCollector(user = {}) {

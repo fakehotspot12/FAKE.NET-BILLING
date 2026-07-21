@@ -1,6 +1,6 @@
 {
   "name": "fakenet-billing",
-  "version": "2.8.4",
+  "version": "2.8.5",
   "description": "FAKE.NET Billing and Office ISP dan RT/RW Net solution",
   "main": "src/server.js",
   "scripts": {

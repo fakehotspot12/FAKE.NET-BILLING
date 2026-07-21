@@ -2,13 +2,15 @@
 
 const { createId } = require('./store');
 
+const MAKASSAR_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Makassar',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
 function localDateParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Makassar',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date);
+  const parts = MAKASSAR_DATE_FORMATTER.formatToParts(date);
   return Object.fromEntries(parts.map((part) => [part.type, part.value]));
 }
 
