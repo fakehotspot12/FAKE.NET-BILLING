@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.8.4] - 2026-07-21
+
+### Fixed
+
+- Kontrol aktif/nonaktif dan persentase BHP USO sekarang tampil pada menu Radius > Setting > Billing Settings yang digunakan aplikasi.
+
 ## [2.8.3] - 2026-07-21
 
 ### Changed

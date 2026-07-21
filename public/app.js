@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.8.3', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.8.4', {
       scope: '/'
     });
   }
@@ -2654,8 +2654,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.8.3',
-    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.8.3',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.8.4',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.8.4',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -10775,6 +10775,15 @@ async function renderRadiusSettings(options = {}) {
             <label class="field checkbox-field full">
               <input name="mergeInvoice" type="checkbox" value="true" ${billing.mergeInvoice ? 'checked' : ''}>
               <span>Merge invoice bulan sebelumnya jika belum dibayar</span>
+            </label>
+            <label class="field checkbox-field">
+              <input name="bhpUsoEnabled" type="checkbox" value="true" ${billing.bhpUsoEnabled === true ? 'checked' : ''}>
+              <span>Aktifkan BHP USO</span>
+            </label>
+            <label class="field">
+              <span>BHP USO (%)</span>
+              <input name="bhpUsoRate" type="number" min="0" max="100" step="0.01" value="${escapeHtml(billing.bhpUsoRate ?? 1.25)}">
+              <small class="muted">Default 1,25%. Berlaku pada invoice baru dan invoice yang masih belum lunas.</small>
             </label>
             <div class="modal-actions field full">
               <button class="ghost-button" id="refreshRadiusSettings" type="button">Refresh</button>
