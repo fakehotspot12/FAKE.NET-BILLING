@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.7.3', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.7.4', {
       scope: '/'
     });
   }
@@ -2654,8 +2654,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.7.3',
-    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.7.3',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.7.4',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.7.4',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false

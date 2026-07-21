@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.7.4] - 2026-07-21
+
+### Changed
+
+- Template import PPP-DHCP diringkas tanpa kolom redundant dan harga tetap mengikuti Profile.
+- Baris contoh template memakai latar putih, sedangkan header dan penanda mulai import tetap memiliki warna pembeda.
+- Parser tetap menerima nama kolom legacy agar file import lama tetap dapat digunakan.
+
 ## [2.7.3] - 2026-07-21
 
 ### Fixed

@@ -178,7 +178,7 @@ test('PPP-DHCP XLSX template uses styled headers and local date format', async (
   assert.equal(worksheet.getCell('A4').value, 'Data Import Terbaca mulai dari 5');
   assert.equal(worksheet.getCell('A4').isMerged, true);
   assert.equal(worksheet.getRow(4).height, 34);
-  assert.ok(headers.includes('service_name'));
+  assert.ok(!headers.includes('service_name'));
   assert.ok(headers.includes('count_as_psb'));
 
   const templateRows = await serverInternals.readWorkbookRowsFromBase64(buffer.toString('base64'));

@@ -2671,22 +2671,16 @@ function radiusProfilePayload(payload = {}, serviceType = 'pppoe') {
 
 const PPP_IMPORT_COLUMNS = [
   'no',
-  'type_user',
   'username',
   'password',
   'type',
   'profile',
   'nas',
-  'ip_address',
   'static_ip',
-  'service_name',
   'mac_address',
   'status',
-  'add_on_billing',
   'add_to_member',
-  'full_name',
   'member_name',
-  'no_ktp_sim',
   'ktp',
   'whatsapp',
   'no_whatsapp',
@@ -2702,7 +2696,6 @@ const PPP_IMPORT_COLUMNS = [
   'ppn_%',
   'discount_%',
   'discount',
-  'price',
   'note'
 ];
 
@@ -2800,7 +2793,6 @@ async function pppImportTemplateBuffer() {
         profile: 'Nama Profile PPP',
         nas: 'Nama NAS atau IP NAS',
         static_ip: '',
-        service_name: '',
         mac_address: '',
         status: 'active',
         add_to_member: 'yes',
@@ -2816,7 +2808,6 @@ async function pppImportTemplateBuffer() {
         count_as_psb: 'no',
         ppn: '',
         discount: '',
-        price: '150000',
         note: 'Contoh PPPoE: username dan password wajib'
       },
       {
@@ -2827,7 +2818,6 @@ async function pppImportTemplateBuffer() {
         profile: 'Nama Profile DHCP',
         nas: 'Nama NAS atau IP NAS',
         static_ip: '',
-        service_name: '',
         mac_address: 'AA:BB:CC:DD:EE:FF',
         status: 'active',
         add_to_member: 'yes',
@@ -2843,7 +2833,6 @@ async function pppImportTemplateBuffer() {
         count_as_psb: 'no',
         ppn: '',
         discount: '',
-        price: '150000',
         note: 'Contoh DHCP: MAC address wajib, username boleh kosong'
       },
       {
@@ -2858,7 +2847,6 @@ async function pppImportTemplateBuffer() {
       { kolom: 'profile', wajib: 'Ya', contoh: '10M', keterangan: 'Harus sama dengan nama profile PPP-DHCP yang sudah dibuat.' },
       { kolom: 'nas', wajib: 'Ya', contoh: 'FAKE.NET atau 10.1.13.14', keterangan: 'Harus sama dengan nama/IP NAS di Monitoring > Site.' },
       { kolom: 'static_ip', wajib: 'Tidak', contoh: '172.16.7.10', keterangan: 'Kosongkan jika IP dinamis.' },
-      { kolom: 'service_name', wajib: 'Tidak', contoh: '', keterangan: 'Nama service PPPoE jika NAS membutuhkannya. Kosong berarti Any.' },
       { kolom: 'mac_address', wajib: 'Wajib jika DHCP', contoh: 'AA:BB:CC:DD:EE:FF', keterangan: 'Dipakai sebagai Caller-ID DHCP.' },
       { kolom: 'status', wajib: 'Tidak', contoh: 'active', keterangan: 'active, isolated, terminated, disabled, pending.' },
       { kolom: 'add_to_member', wajib: 'Tidak', contoh: 'yes', keterangan: 'Isi yes jika user juga dibuatkan data member.' },
@@ -2874,7 +2862,6 @@ async function pppImportTemplateBuffer() {
       { kolom: 'count_as_psb', wajib: 'Tidak', contoh: 'no', keterangan: 'Default no agar data impor dianggap pelanggan existing. Isi yes hanya untuk pemasangan baru yang harus masuk statistik PSB.' },
       { kolom: 'ppn', wajib: 'Tidak', contoh: '11', keterangan: 'PPN persen jika dipakai.' },
       { kolom: 'discount', wajib: 'Tidak', contoh: '0', keterangan: 'Diskon persen jika dipakai.' },
-      { kolom: 'price', wajib: 'Tidak', contoh: '150000', keterangan: 'Harga manual jika diperlukan, biasanya ikut profile.' },
       { kolom: 'note', wajib: 'Tidak', contoh: 'Catatan opsional', keterangan: 'Catatan internal.' }
     ]
   });
@@ -2901,28 +2888,29 @@ async function pppImportTemplateBuffer() {
       const key = normalizeImportKey(cell.value);
       if (widthByHeader[key]) worksheet.getColumn(columnNumber).width = widthByHeader[key];
     });
-    [2, 3].forEach((rowNumber) => {
-      const row = worksheet.getRow(rowNumber);
-      row.eachCell({ includeEmpty: true }, (cell) => {
-        cell.font = { color: { argb: 'FF000000' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
-      });
-    });
     worksheet.mergeCells(4, 1, 4, lastColumn);
     const markerCell = worksheet.getCell(4, 1);
     markerCell.value = 'Data Import Terbaca mulai dari 5';
-    markerCell.font = { bold: true, color: { argb: 'FF0F4F82' }, size: 12 };
-    markerCell.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFDCEEFF' }
-    };
-    markerCell.alignment = { vertical: 'middle', horizontal: 'center' };
-    markerCell.border = {
-      top: { style: 'medium', color: { argb: 'FF1769AA' } },
-      left: { style: 'medium', color: { argb: 'FF1769AA' } },
-      bottom: { style: 'medium', color: { argb: 'FF1769AA' } },
-      right: { style: 'medium', color: { argb: 'FF1769AA' } }
+    [2, 3].forEach((rowNumber) => {
+      const row = worksheet.getRow(rowNumber);
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.style = {
+          ...cell.style,
+          font: { color: { argb: 'FF000000' }, bold: false },
+          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } }
+        };
+      });
+    });
+    markerCell.style = {
+      font: { bold: true, color: { argb: 'FF0F4F82' }, size: 12 },
+      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCEEFF' } },
+      alignment: { vertical: 'middle', horizontal: 'center' },
+      border: {
+        top: { style: 'medium', color: { argb: 'FF1769AA' } },
+        left: { style: 'medium', color: { argb: 'FF1769AA' } },
+        bottom: { style: 'medium', color: { argb: 'FF1769AA' } },
+        right: { style: 'medium', color: { argb: 'FF1769AA' } }
+      }
     };
     worksheet.getRow(4).height = 34;
     worksheet.getRow(5).height = 22;
