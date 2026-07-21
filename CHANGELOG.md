@@ -2,6 +2,21 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.7.1] - 2026-07-21
+
+### Fixed
+
+- Sesi login aplikasi disimpan persisten agar tetap aktif setelah restart atau update.
+- Pembayaran online tetap terdeteksi sampai 24 jam ketika browser sempat offline.
+- Statistik PSB dan import PPP-DHCP kembali lolos seluruh pengujian.
+- WifiKu mempertahankan month picker native dan pemilihan SSID 5G pribadi.
+
+## [2.7.0] - 2026-07-21
+
+### Changed
+
+- Statistik PSB bulan berjalan kini hanya menghitung akun PPP-DHCP baru yang linked ke Member, aktif pada bulan tersebut, bukan data import/migrasi, dan belum memiliki invoice periode sebelumnya.
+
 ## [2.6.0] - 2026-07-21
 
 ### Changed

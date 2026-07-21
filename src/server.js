@@ -2793,7 +2793,7 @@ async function pppImportTemplateBuffer() {
   const buffer = await workbookBuffer({
     ppp_dhcp_users: [
       {
-        no: 'Contoh 1',
+        no: '1',
         username: 'pppoe-contoh',
         password: 'password-ppp',
         type: 'PPPoE',
@@ -2820,7 +2820,7 @@ async function pppImportTemplateBuffer() {
         note: 'Contoh PPPoE: username dan password wajib'
       },
       {
-        no: 'Contoh 2',
+        no: '2',
         username: '',
         password: '',
         type: 'DHCP',
@@ -2900,6 +2900,13 @@ async function pppImportTemplateBuffer() {
     worksheet.getRow(1).eachCell((cell, columnNumber) => {
       const key = normalizeImportKey(cell.value);
       if (widthByHeader[key]) worksheet.getColumn(columnNumber).width = widthByHeader[key];
+    });
+    [2, 3].forEach((rowNumber) => {
+      const row = worksheet.getRow(rowNumber);
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.font = { color: { argb: 'FF000000' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+      });
     });
     worksheet.mergeCells(4, 1, 4, lastColumn);
     const markerCell = worksheet.getCell(4, 1);
@@ -4483,6 +4490,19 @@ function radiusRemovedRecordCount(data = {}, serviceType = 'pppoe', period = cur
   }).length;
 }
 
+function isNewPsbPppAccount(data = {}, user = {}, period = currentPeriod()) {
+  if (String(user.serviceType || '').trim().toLowerCase() !== 'pppoe') return false;
+  const customer = (data.customers || []).find((item) => item.id === user.customerId);
+  if (!customer || customer.countsAsPsb === false || !user.customerId) return false;
+  const createdPeriod = String(user.createdAt || '').slice(0, 7);
+  const activePeriod = String(customer.activeDate || customer.installedAt || user.activeDate || '').slice(0, 7);
+  const origin = String(customer.recordOrigin || customer.migrationSource || '').trim().toLowerCase();
+  const importedAsNew = ['import', 'migration', 'radboox'].includes(origin) && customer.countsAsPsb === true;
+  if ((!importedAsNew && createdPeriod !== period) || activePeriod !== period) return false;
+  if (['import', 'migration', 'radboox'].includes(origin) && !importedAsNew) return false;
+  return !['terminate', 'terminated', 'removed', 'cabut'].includes(String(user.status || '').trim().toLowerCase());
+}
+
 function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period);
   const users = (data.radiusUsers || []).filter((user) => user.serviceType === serviceType);
@@ -4504,11 +4524,7 @@ function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period 
     if (String(user.createdAt || '').slice(0, 7) === selectedPeriod) counts.new += 1;
     if (serviceType === 'pppoe' && user.customerId && !psbCustomerIds.has(user.customerId)) {
       const customer = customersById.get(user.customerId);
-      const countsAsPsb = customer?.countsAsPsb !== false;
-      const psbDate = customer
-        ? (customer.activeDate || customer.installedAt || customer.createdAt || user.createdAt || '')
-        : '';
-      if (countsAsPsb && String(psbDate || '').slice(0, 7) === selectedPeriod) {
+      if (customer && isNewPsbPppAccount(data, user, selectedPeriod)) {
         psbCustomerIds.add(user.customerId);
         counts.psb += 1;
       }
@@ -7492,8 +7508,8 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   for (const user of data.radiusUsers || []) {
     if (user.serviceType !== 'pppoe') continue;
     const customer = statisticsLinkedPppCustomer(data, user);
-    if (!customer || customer.countsAsPsb === false) continue;
     const date = pppInstallDateForUser(data, user);
+    if (!customer || !isNewPsbPppAccount(data, user, date.slice(0, 7))) continue;
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     const key = statisticsRecordKey('active', customer);
     if (!key || newInstallKeys.has(key)) continue;
@@ -9530,7 +9546,9 @@ async function notificationSummary(data = {}, user = {}) {
   }
 
   if (notifications.onlinePayments.visible) {
-    const cutoff = Date.now() - (10 * 60 * 1000);
+    // Simpan jendela pembayaran online selama 24 jam agar pembayaran tetap
+    // dapat muncul saat browser sempat offline atau aplikasi baru selesai restart.
+    const cutoff = Date.now() - (24 * 60 * 60 * 1000);
     const rows = (data.paymentGatewayTransactions || [])
       .filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()))
       .filter((row) => {

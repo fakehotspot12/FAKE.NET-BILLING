@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#08204f">
     <title>WifiKu</title>
     <link id="appFavicon" rel="icon" href="/fakenet-logo.png">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-2.6.0">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-2.7.0">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -163,11 +163,11 @@
         <h2>Akun Saya</h2>
         <p class="muted">Perbarui data pelanggan. Nomor WhatsApp tetap menjadi identitas OTP dan tidak dapat diubah di sini.</p>
         <div class="account-form-grid">
-          <label><span>Nama</span><input name="name" required maxlength="120"></label>
-          <label><span>Nomor KTP</span><input name="ktp" inputmode="numeric" maxlength="32"></label>
+          <label><span>Nama</span><input name="name" readonly required maxlength="120"></label>
+          <label><span>Nomor KTP</span><input name="ktp" readonly inputmode="numeric" maxlength="32"></label>
           <label><span>Nomor WhatsApp</span><input name="phone" readonly></label>
-          <label><span>Email</span><input name="email" type="email" maxlength="160"></label>
-          <label class="full"><span>Alamat</span><textarea name="address" rows="3" maxlength="500"></textarea></label>
+          <label><span>Email</span><input name="email" readonly type="email" maxlength="160"></label>
+          <label class="full"><span>Alamat</span><textarea name="address" readonly rows="3" maxlength="500"></textarea></label>
           <div class="field full account-admin-note">Pembaruan data rumah dan peta dilakukan oleh admin. Silakan hubungi admin jika ada perubahan.</div>
           <div class="field full account-location-section">
             <strong>Lokasi & Foto Rumah</strong>
@@ -187,12 +187,11 @@
         </div>
         <div class="dialog-actions">
           <button value="cancel" type="button" id="closeAccountDialog">Batal</button>
-          <button value="confirm" type="submit">Simpan</button>
         </div>
       </form>
     </dialog>
 
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-2.6.0" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-2.7.0" defer></script>
   </body>
 </html>

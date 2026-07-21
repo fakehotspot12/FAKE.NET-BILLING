@@ -202,6 +202,28 @@ small {
   grid-column: 1 / -1;
 }
 
+.account-form-grid .field.full {
+  grid-column: 1 / -1;
+}
+
+.period-select-label {
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.period-select-label select {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--panel);
+  color: var(--text);
+}
+
 .account-form-grid textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -211,6 +233,11 @@ small {
 }
 
 .account-form-grid input[readonly] {
+  background: #edf2f6;
+  color: var(--muted);
+}
+
+.account-form-grid textarea[readonly] {
   background: #edf2f6;
   color: var(--muted);
 }

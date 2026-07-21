@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { createId } = require('./store');
 const secureSecrets = require('./secure-secrets');
 
@@ -9,6 +11,8 @@ const SESSION_DEFAULT_HOURS = Math.min(72, Math.max(1, Number(process.env.APP_SE
 const SESSION_DEFAULT_AGE_SECONDS = SESSION_DEFAULT_HOURS * 60 * 60;
 const PASSWORD_MIN_LENGTH = 6;
 const PROFILE_PHOTO_URL_MAX_LENGTH = 240;
+const SESSION_STORE_PATH = process.env.AUTH_SESSION_STORE_PATH
+  || path.join(process.env.APP_ROOT || path.resolve(__dirname, '..'), 'data', 'auth-sessions.json');
 
 const ROLE_DEFINITIONS = {
   admin: {
@@ -170,6 +174,40 @@ const ROLE_DEFINITIONS = {
 };
 
 const sessions = new Map();
+let sessionsLoaded = false;
+
+function loadSessions() {
+  if (sessionsLoaded) return;
+  sessionsLoaded = true;
+  try {
+    const stored = JSON.parse(fs.readFileSync(SESSION_STORE_PATH, 'utf8'));
+    for (const item of Array.isArray(stored) ? stored : []) {
+      if (item?.id && item.userId && Number(item.expiresAt) > Date.now()) {
+        sessions.set(String(item.id), {
+          userId: String(item.userId),
+          maxAgeSeconds: Number(item.maxAgeSeconds) || SESSION_DEFAULT_AGE_SECONDS,
+          expiresAt: Number(item.expiresAt)
+        });
+      }
+    }
+  } catch {
+    // Sesi lama yang hilang atau file belum ada tidak boleh menghalangi login.
+  }
+}
+
+function saveSessions() {
+  try {
+    fs.mkdirSync(path.dirname(SESSION_STORE_PATH), { recursive: true });
+    const rows = [...sessions.entries()]
+      .filter(([, session]) => Number(session.expiresAt) > Date.now())
+      .map(([id, session]) => ({ id, ...session }));
+    const temporaryPath = `${SESSION_STORE_PATH}.tmp`;
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(rows)}\n`, { mode: 0o600 });
+    fs.renameSync(temporaryPath, SESSION_STORE_PATH);
+  } catch {
+    // Login tetap berjalan apabila storage sesi sementara tidak dapat ditulis.
+  }
+}
 
 function normalizeRole(role) {
   return ROLE_DEFINITIONS[role] ? role : 'viewer';
@@ -318,6 +356,7 @@ function sessionMaxAgeSeconds() {
 }
 
 function createSession(user) {
+  loadSessions();
   const sessionId = crypto.randomBytes(32).toString('hex');
   const maxAgeSeconds = sessionMaxAgeSeconds();
   sessions.set(sessionId, {
@@ -325,12 +364,15 @@ function createSession(user) {
     maxAgeSeconds,
     expiresAt: Date.now() + maxAgeSeconds * 1000
   });
+  saveSessions();
   return sessionId;
 }
 
 function destroySession(sessionId) {
+  loadSessions();
   if (sessionId) {
     sessions.delete(sessionId);
+    saveSessions();
   }
 }
 
@@ -349,6 +391,7 @@ function clearSessionCookie() {
 }
 
 function requestUser(req, data) {
+  loadSessions();
   const sessionId = getSessionId(req);
   const session = sessions.get(sessionId);
   if (!session) {
@@ -357,16 +400,19 @@ function requestUser(req, data) {
 
   if (session.expiresAt <= Date.now()) {
     sessions.delete(sessionId);
+    saveSessions();
     return null;
   }
 
   const user = (data.users || []).find((item) => item.id === session.userId && item.active !== false);
   if (!user) {
     sessions.delete(sessionId);
+    saveSessions();
     return null;
   }
 
   session.expiresAt = Date.now() + Number(session.maxAgeSeconds || SESSION_DEFAULT_AGE_SECONDS) * 1000;
+  saveSessions();
   return userWithSession(user);
 }
 
