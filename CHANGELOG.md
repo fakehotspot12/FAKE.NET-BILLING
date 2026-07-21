@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.8.2] - 2026-07-21
+
+### Fixed
+
+- Notifikasi pembayaran online Chrome sekarang mengenali permission admin, owner, dan finance dari role aplikasi dengan benar.
+- Web Push tetap dikirim melalui Service Worker ketika halaman billing tidak sedang terbuka.
+- Pengiriman ke FCM memakai retry terbatas untuk gangguan sementara dan membersihkan subscription yang sudah kedaluwarsa.
+- Log Web Push mencatat jumlah penerima, keberhasilan, dan ringkasan kegagalan tanpa membocorkan endpoint browser.
+
 ## [2.8.1] - 2026-07-21
 
 ### Fixed

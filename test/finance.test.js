@@ -5928,6 +5928,32 @@ test('online payment Web Push is emitted only once for paid billing and voucher 
   }), null);
 });
 
+test('online payment Web Push resolves role permissions from stored users', () => {
+  const data = createDefaultStore();
+  data.users = [
+    { id: 'admin-id', username: 'admin', role: 'admin', active: true },
+    { id: 'owner-id', username: 'owner', role: 'owner', active: true },
+    { id: 'finance-id', username: 'finance', role: 'finance', active: true },
+    { id: 'viewer-id', username: 'viewer', role: 'viewer', active: true },
+    { id: 'inactive-id', username: 'inactive', role: 'admin', active: false }
+  ];
+  data.webPushSubscriptions = data.users.map((user) => ({
+    id: `push-${user.id}`,
+    userId: user.id,
+    endpoint: `https://push.example.test/${user.id}`,
+    enabled: true
+  }));
+  data.webPushSubscriptions.push({
+    id: 'push-disabled',
+    userId: 'admin-id',
+    endpoint: 'https://push.example.test/disabled',
+    enabled: false
+  });
+
+  const recipients = serverInternals.eligibleWebPushSubscriptions(data);
+  assert.deepEqual(recipients.map((row) => row.userId), ['admin-id', 'owner-id', 'finance-id']);
+});
+
 test('Web Push service worker handles background push and notification clicks', async () => {
   const source = await fs.readFile(path.join(__dirname, '..', 'public', 'service-worker.js'), 'utf8');
   assert.match(source, /addEventListener\('push'/);

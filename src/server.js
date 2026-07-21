@@ -9307,34 +9307,75 @@ function onlinePaymentPushPayload(data = {}, fulfilled = {}) {
   };
 }
 
+function eligibleWebPushSubscriptions(data = {}) {
+  const paymentNotificationRoles = new Set(['admin', 'owner', 'finance']);
+  const users = new Map((data.users || []).map((user) => [String(user.id || ''), user]));
+  return (data.webPushSubscriptions || []).filter((item) => {
+    const user = users.get(String(item.userId || ''));
+    const permissionUser = auth.publicUser(user);
+    return item.enabled !== false
+      && permissionUser?.active !== false
+      && paymentNotificationRoles.has(String(permissionUser?.role || '').toLowerCase())
+      && auth.hasPermission(permissionUser, 'payment-gateway:manage');
+  });
+}
+
+function webPushEndpointHost(endpoint = '') {
+  try {
+    return new URL(endpoint).host || 'unknown';
+  } catch {
+    return 'invalid';
+  }
+}
+
+function webPushErrorStatus(error = null) {
+  return Number(error?.statusCode || error?.status || 0) || 0;
+}
+
+function webPushRetryable(error = null) {
+  const status = webPushErrorStatus(error);
+  return !status || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
 async function sendOnlinePaymentPushNotifications(data = {}, fulfilled = {}) {
   const payload = onlinePaymentPushPayload(data, fulfilled);
-  if (!payload) return { sent: 0, failed: 0, removed: 0 };
+  if (!payload) return { eligible: 0, sent: 0, failed: 0, removed: 0, errors: [] };
   await ensureWebPushVapid();
-  const users = new Map((data.users || []).map((user) => [String(user.id || ''), user]));
-  const subscriptions = (data.webPushSubscriptions || []).filter((item) => {
-    const user = users.get(String(item.userId || ''));
-    return item.enabled !== false && user?.active !== false && auth.hasPermission(user || {}, 'payment-gateway:manage');
-  });
+  const subscriptions = eligibleWebPushSubscriptions(data);
   const staleEndpoints = new Set();
+  const errors = [];
   let sent = 0;
   let failed = 0;
   await Promise.all(subscriptions.map(async (item) => {
-    try {
-      await webPush.sendNotification({
-        endpoint: item.endpoint,
-        expirationTime: item.expirationTime || null,
-        keys: item.keys
-      }, JSON.stringify(payload), {
-        TTL: 60,
-        urgency: 'high',
-        timeout: 5000
-      });
-      sent += 1;
-    } catch (error) {
-      failed += 1;
-      if ([404, 410].includes(Number(error.statusCode || error.status || 0))) {
-        staleEndpoints.add(item.endpoint);
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await webPush.sendNotification({
+          endpoint: item.endpoint,
+          expirationTime: item.expirationTime || null,
+          keys: item.keys
+        }, JSON.stringify(payload), {
+          TTL: 300,
+          urgency: 'high',
+          timeout: 8000
+        });
+        sent += 1;
+        return;
+      } catch (error) {
+        const status = webPushErrorStatus(error);
+        if ([404, 410].includes(status)) staleEndpoints.add(item.endpoint);
+        const retry = attempt < maxAttempts && webPushRetryable(error);
+        if (retry) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+          continue;
+        }
+        failed += 1;
+        errors.push({
+          host: webPushEndpointHost(item.endpoint),
+          status,
+          message: String(error?.message || 'Web Push gagal').slice(0, 180)
+        });
+        return;
       }
     }
   }));
@@ -9343,7 +9384,7 @@ async function sendOnlinePaymentPushNotifications(data = {}, fulfilled = {}) {
       store.webPushSubscriptions = (store.webPushSubscriptions || []).filter((item) => !staleEndpoints.has(item.endpoint));
     });
   }
-  return { sent, failed, removed: staleEndpoints.size };
+  return { eligible: subscriptions.length, sent, failed, removed: staleEndpoints.size, errors };
 }
 
 async function syncFreeradiusIfNeeded(data, actor, action) {
@@ -10613,9 +10654,16 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
   });
   const pushEvents = Array.isArray(synced.result.pushEvents) ? synced.result.pushEvents : [];
   for (const event of pushEvents) {
-    await sendOnlinePaymentPushNotifications(synced.data, event).catch((error) => {
-      console.error(`Web Push rekonsiliasi ${event.reference || '-'} gagal: ${error.message || error}`);
-    });
+    await sendOnlinePaymentPushNotifications(synced.data, event)
+      .then((push) => {
+        console.log(`Web Push rekonsiliasi ${event.reference || '-'}: ${push.sent}/${push.eligible} terkirim, ${push.failed} gagal, ${push.removed} subscription dibersihkan`);
+        for (const detail of push.errors || []) {
+          console.error(`Web Push ${detail.host}: HTTP ${detail.status || '-'} ${detail.message}`);
+        }
+      })
+      .catch((error) => {
+        console.error(`Web Push rekonsiliasi ${event.reference || '-'} gagal: ${error.message || error}`);
+      });
   }
   delete synced.result.pushEvents;
   return synced;
@@ -11048,8 +11096,9 @@ async function handlePaymentGatewayWebhook(req, res, url) {
     });
     sendOnlinePaymentPushNotifications(data, result)
       .then((push) => {
-        if (push.sent || push.failed) {
-          console.log(`Web Push pembayaran ${result.reference || '-'}: ${push.sent} terkirim, ${push.failed} gagal`);
+        console.log(`Web Push pembayaran ${result.reference || '-'}: ${push.sent}/${push.eligible} terkirim, ${push.failed} gagal, ${push.removed} subscription dibersihkan`);
+        for (const detail of push.errors || []) {
+          console.error(`Web Push ${detail.host}: HTTP ${detail.status || '-'} ${detail.message}`);
         }
       })
       .catch((error) => {
@@ -16348,6 +16397,7 @@ module.exports = {
     monthlyBillingDailyRows,
     monthlyVoucherDailyRows,
     migrateLegacyInlineImages,
+    eligibleWebPushSubscriptions,
     onlinePaymentPushPayload,
     paymentCategoryForRecord,
     paymentGatewayPayloadMerchantReference,
