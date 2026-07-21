@@ -133,11 +133,13 @@ function wifiNetworkForBand(device = {}, band = '2.4g') {
   const networks = Array.isArray(device.wifiNetworks) ? device.wifiNetworks : [];
   const primaryParameter = key === '5g' ? device.ssid5Parameter : device.ssid24Parameter;
   const bandNetworks = networks.filter((item) => wifiBandKey(item.band) === key && item.enabled !== false);
+  const namedPrivateNetwork = bandNetworks.find((item) => !/wifimurah|open/i.test(String(item.ssid || '')));
   const privateNetwork = bandNetworks.find((item) => item.securityEnabled && !/wifimurah|open/i.test(String(item.ssid || '')));
   return networks.find((item) => item.ssidParameter && item.ssidParameter === primaryParameter)
     && !(/wifimurah|open/i.test(String(device.ssid5 || '')) && key === '5g')
     ? networks.find((item) => item.ssidParameter && item.ssidParameter === primaryParameter)
     : privateNetwork
+      || namedPrivateNetwork
       || bandNetworks.find((item) => item.index === (key === '5g' ? 5 : 1))
       || bandNetworks[0]
     || networks.find((item) => wifiBandKey(item.band) === key && item.index === (key === '5g' ? 5 : 1))

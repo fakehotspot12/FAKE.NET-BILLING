@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.7.2] - 2026-07-21
+
+### Fixed
+
+- WifiKu tidak lagi memprioritaskan SSID 5G `wifimurah` atau jaringan open jika SSID 5G pribadi tersedia.
+- Cache asset WifiKu dan Service Worker diperbarui agar perubahan frontend langsung terbaca setelah update.
+
 ## [2.7.1] - 2026-07-21
 
 ### Fixed
