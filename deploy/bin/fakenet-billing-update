@@ -7,6 +7,7 @@ LOG_DIR="${FAKENET_LOG_DIR:-/var/log/fakenet-billing}"
 LOG_FILE="${FAKENET_UPDATE_LOG:-$LOG_DIR/update.log}"
 LOCK_FILE="${FAKENET_UPDATE_LOCK:-/tmp/fakenet-billing-update.lock}"
 LOCK_MAX_AGE_SECONDS="${FAKENET_UPDATE_LOCK_MAX_AGE_SECONDS:-3600}"
+NPM_INSTALL_TIMEOUT_SECONDS="${FAKENET_NPM_INSTALL_TIMEOUT_SECONDS:-600}"
 STACK_CMD="${FAKENET_STACK_CMD:-/usr/local/bin/fakenet-billing-stack}"
 ARCHIVE_URL="${FAKENET_UPDATE_ARCHIVE_URL:-}"
 BRANCH="${FAKENET_UPDATE_BRANCH:-}"
@@ -66,6 +67,7 @@ release_update_lock() {
 
 tmp_backup_dir=""
 tmpdir=""
+dependency_stage=""
 cleanup_update() {
   release_update_lock
   if [ -n "$tmp_backup_dir" ]; then
@@ -73,6 +75,9 @@ cleanup_update() {
   fi
   if [ -n "$tmpdir" ]; then
     rm -rf "$tmpdir"
+  fi
+  if [ -n "$dependency_stage" ]; then
+    rm -rf "$dependency_stage"
   fi
   return 0
 }
@@ -181,6 +186,68 @@ create_pre_update_backup() {
 
 create_pre_update_backup
 
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout --help 2>&1 | grep -q -- '--foreground'; then
+      timeout --foreground --signal=TERM --kill-after=30s "$seconds" "$@"
+    else
+      timeout -s TERM -k 30 "$seconds" "$@"
+    fi
+  else
+    "$@"
+  fi
+}
+
+install_node_dependencies() {
+  local install_status previous_modules
+  dependency_stage="$(mktemp -d "$APP_DIR/.update-deps.XXXXXX")"
+  cp "$APP_DIR/package.json" "$dependency_stage/package.json"
+  [ ! -f "$APP_DIR/package-lock.json" ] || cp "$APP_DIR/package-lock.json" "$dependency_stage/package-lock.json"
+
+  echo "Instal dependency di staging (timeout ${NPM_INSTALL_TIMEOUT_SECONDS}s)"
+  set +e
+  if [ -f "$dependency_stage/package-lock.json" ]; then
+    run_with_timeout "$NPM_INSTALL_TIMEOUT_SECONDS" npm ci --prefix "$dependency_stage" --omit=dev --no-audit --no-fund --prefer-offline --fetch-retries=2 --fetch-timeout=60000
+  else
+    run_with_timeout "$NPM_INSTALL_TIMEOUT_SECONDS" npm install --prefix "$dependency_stage" --omit=dev --no-audit --no-fund --prefer-offline --fetch-retries=2 --fetch-timeout=60000
+  fi
+  install_status=$?
+  set -e
+  if [ "$install_status" -eq 124 ] || [ "$install_status" -eq 137 ]; then
+    echo "Instal dependency melewati timeout ${NPM_INSTALL_TIMEOUT_SECONDS}s; dependency aktif tidak diubah." >&2
+    return 1
+  fi
+  if [ "$install_status" -ne 0 ]; then
+    echo "Instal dependency gagal (exit $install_status); dependency aktif tidak diubah." >&2
+    return "$install_status"
+  fi
+
+  (cd "$dependency_stage" && node -e "require('bullmq'); require('web-push'); require('sharp')") >/dev/null
+  previous_modules="$APP_DIR/.node_modules.previous.$$"
+  if [ -d "$APP_DIR/node_modules" ]; then
+    mv "$APP_DIR/node_modules" "$previous_modules"
+  fi
+  if mv "$dependency_stage/node_modules" "$APP_DIR/node_modules"; then
+    :
+  else
+    [ ! -d "$previous_modules" ] || mv "$previous_modules" "$APP_DIR/node_modules"
+    echo "Aktivasi dependency baru gagal; dependency lama dipulihkan." >&2
+    return 1
+  fi
+  rm -rf "$dependency_stage"
+  dependency_stage=""
+  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue')" >/dev/null; then
+    rm -rf "$APP_DIR/node_modules"
+    [ ! -d "$previous_modules" ] || mv "$previous_modules" "$APP_DIR/node_modules"
+    echo "Verifikasi dependency baru gagal; dependency lama dipulihkan." >&2
+    return 1
+  fi
+  rm -rf "$previous_modules"
+  echo "Dependency baru berhasil diverifikasi dan diaktifkan"
+}
+
 if [ -d "$APP_DIR/.git" ]; then
   echo "Update via git pull"
   git -C "$APP_DIR" fetch --all --prune
@@ -218,12 +285,7 @@ for required_file in package.json package-lock.json src/server.js public/app.js 
   fi
 done
 if command -v npm >/dev/null 2>&1; then
-  if [ -f package-lock.json ]; then
-    npm ci --omit=dev
-  else
-    npm install --omit=dev
-  fi
-  node -e "require('bullmq'); require('web-push'); require('./src/whatsapp-queue')" >/dev/null
+  install_node_dependencies
 fi
 
 if [ -f "$APP_DIR/deploy/bin/fakenet-billing-update" ]; then

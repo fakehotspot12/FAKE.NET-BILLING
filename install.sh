@@ -212,13 +212,32 @@ copy_source() {
 }
 
 install_node_deps() {
+  local npm_timeout_seconds install_status
+  local -a timeout_command
+  npm_timeout_seconds="${FAKENET_NPM_INSTALL_TIMEOUT_SECONDS:-600}"
   cd "$APP_DIR"
-  if [ -f package-lock.json ]; then
-    npm ci --omit=dev
+  echo "Instal dependency Node.js (timeout ${npm_timeout_seconds}s)"
+  set +e
+  if command -v timeout >/dev/null 2>&1 && timeout --help 2>&1 | grep -q -- '--foreground'; then
+    timeout_command=(timeout --foreground --signal=TERM --kill-after=30s "$npm_timeout_seconds")
+  elif command -v timeout >/dev/null 2>&1; then
+    timeout_command=(timeout -s TERM -k 30 "$npm_timeout_seconds")
   else
-    npm install --omit=dev
+    timeout_command=()
   fi
-  node -e "require('bullmq'); require('web-push'); require('./src/whatsapp-queue')" >/dev/null
+  if [ -f package-lock.json ]; then
+    "${timeout_command[@]}" npm ci --omit=dev --no-audit --no-fund --prefer-offline --fetch-retries=2 --fetch-timeout=60000
+  else
+    "${timeout_command[@]}" npm install --omit=dev --no-audit --no-fund --prefer-offline --fetch-retries=2 --fetch-timeout=60000
+  fi
+  install_status=$?
+  set -e
+  if [ "$install_status" -eq 124 ] || [ "$install_status" -eq 137 ]; then
+    echo "Instal dependency melewati timeout ${npm_timeout_seconds}s." >&2
+    return 1
+  fi
+  [ "$install_status" -eq 0 ] || return "$install_status"
+  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue')" >/dev/null
 }
 
 verify_billing_health() {

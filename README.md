@@ -392,13 +392,15 @@ Updater akan:
 2. Backup mencakup `data/`, env `/etc/fakenet-billing.env`, env WAHA, metadata source, serta dump PostgreSQL aplikasi dan Radius jika `pg_dump` tersedia.
 3. Mengambil source terbaru via Git jika folder punya `.git`.
 4. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
-5. Menjalankan `npm ci --omit=dev` atau `npm install --omit=dev`.
+5. Memasang dependency di staging directory dengan timeout, lalu mengaktifkannya secara atomik hanya setelah verifikasi berhasil.
 6. Memverifikasi modul BullMQ dan Web Push sebelum service direstart.
 7. Restart service aplikasi tanpa me-restart Redis, PostgreSQL, Docker, atau FreeRADIUS.
 8. Menjalankan repair ringan untuk menyelaraskan helper command, systemd unit, dan konfigurasi FreeRADIUS tanpa menghapus data.
 9. Memastikan health check aplikasi dan worker BullMQ berhasil sebelum update dinyatakan selesai.
 
 Updater memakai aksi internal `restart-app`, sehingga Redis, PostgreSQL, Docker, dan FreeRADIUS tidak direstart saat pembaruan source. Perintah `restart` tetap tersedia untuk restart penuh ketika memang diperlukan oleh administrator.
+
+Timeout instal dependency default adalah 600 detik dan dapat diubah lewat `FAKENET_NPM_INSTALL_TIMEOUT_SECONDS`. Jika instalasi gagal atau timeout, dependency aktif tetap dipertahankan, service tidak direstart memakai dependency setengah terpasang, dan lock update dilepas otomatis.
 
 Data aplikasi di `data/` tidak dihapus oleh updater. Untuk install PostgreSQL, file backup berisi:
 

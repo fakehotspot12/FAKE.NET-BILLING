@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.8.1] - 2026-07-21
+
+### Fixed
+
+- Instal dependency saat update memakai staging directory dan baru diaktifkan setelah verifikasi berhasil.
+- `npm ci` dan `npm install` memiliki timeout agar update tidak menggantung tanpa batas.
+- Kegagalan atau timeout dependency mempertahankan `node_modules` aktif dan melepas lock update secara aman.
+- Timeout mendukung GNU coreutils serta BusyBox pada Alpine Linux.
+
 ## [2.8.0] - 2026-07-21
 
 ### Added
