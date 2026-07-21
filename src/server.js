@@ -12,6 +12,7 @@ const { URL } = require('url');
 const ExcelJS = require('exceljs');
 const JSZip = require('jszip');
 const QRCode = require('qrcode');
+const sharp = require('sharp');
 const webPush = require('web-push');
 const packageInfo = require('../package.json');
 
@@ -87,8 +88,10 @@ const RADBOOX_DASHBOARD_MEMBER_MAX_PAGES = 1;
 const BODY_LIMIT_BYTES = 3 * 1024 * 1024;
 const BACKUP_RESTORE_LIMIT_BYTES = 25 * 1024 * 1024;
 const LOGO_DATA_URL_LIMIT_BYTES = 2 * 1024 * 1024;
-const IMAGE_UPLOAD_LIMIT_BYTES = 3 * 1024 * 1024;
-const IMAGE_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
+const IMAGE_UPLOAD_LIMIT_BYTES = 12 * 1024 * 1024;
+const IMAGE_UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
+const IMAGE_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+const IMAGE_ORPHAN_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const XENDIT_WITHDRAW_TTL_MS = 10 * 60 * 1000;
 const WA_GATEWAY_SEND_INTERVAL_MS = Math.max(15_000, Number(process.env.WA_GATEWAY_SEND_INTERVAL_MS || 30_000) || 30_000);
 const WA_GATEWAY_HTTP_TIMEOUT_MS = Math.max(5_000, Number(process.env.WA_GATEWAY_HTTP_TIMEOUT_MS || 15_000) || 15_000);
@@ -856,7 +859,7 @@ function parseImageDataUrl(value = '') {
   const base64 = match[2].replace(/\s+/g, '');
   const buffer = Buffer.from(base64, 'base64');
   if (!buffer.length || buffer.length > IMAGE_UPLOAD_MAX_BYTES) {
-    throw new Error('Ukuran gambar maksimal 2 MB');
+    throw new Error(`Ukuran gambar maksimal ${Math.round(IMAGE_UPLOAD_MAX_BYTES / 1024 / 1024)} MB`);
   }
   const signatures = {
     png: (bytes) => bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47,
@@ -874,16 +877,75 @@ function parseImageDataUrl(value = '') {
 
 async function saveUploadedImage(payload = {}) {
   const directory = uploadPurposeDirectory(payload.purpose || payload.folder);
-  const { buffer, extension } = parseImageDataUrl(payload.image || payload.dataUrl || payload.file);
+  const { buffer } = parseImageDataUrl(payload.image || payload.dataUrl || payload.file);
+  const profilePhoto = directory === 'profile';
+  const optimized = await sharp(buffer, { failOn: 'error', limitInputPixels: 40_000_000 })
+    .rotate()
+    .resize({
+      width: profilePhoto ? 512 : 1600,
+      height: profilePhoto ? 512 : 1600,
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    .webp({ quality: profilePhoto ? 80 : 82, effort: 4 })
+    .toBuffer({ resolveWithObject: true });
+  const output = optimized.data;
+  const hash = crypto.createHash('sha256').update(output).digest('hex').slice(0, 24);
   const targetDir = path.join(UPLOAD_ROOT, directory);
   await fs.mkdir(targetDir, { recursive: true });
-  const filename = `${Date.now().toString(36)}-${crypto.randomBytes(8).toString('hex')}${extension}`;
+  const filename = `${hash}.webp`;
   const targetPath = path.join(targetDir, filename);
-  await fs.writeFile(targetPath, buffer, { flag: 'wx' });
+  try {
+    await fs.writeFile(targetPath, output, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
   return {
     url: `/uploads/${directory}/${filename}`,
-    size: buffer.length
+    size: output.length,
+    originalSize: buffer.length,
+    width: optimized.info.width,
+    height: optimized.info.height,
+    format: 'webp'
   };
+}
+
+function referencedUploadUrls(data = {}) {
+  const urls = new Set();
+  const add = (value) => {
+    const url = String(value || '').trim();
+    if (url.startsWith('/uploads/profile/') || url.startsWith('/uploads/member-house/')) urls.add(url);
+  };
+  for (const user of data.users || []) {
+    add(user.photoUrl);
+    add(user.avatarUrl);
+  }
+  for (const customer of data.customers || []) {
+    add(customer.housePhotoUrl);
+    add(customer.memberHousePhotoUrl);
+    add(customer.photoUrl);
+  }
+  return urls;
+}
+
+async function cleanupOrphanUploads(data = {}, options = {}) {
+  const references = referencedUploadUrls(data);
+  const cutoff = Date.now() - Math.max(60_000, Number(options.graceMs || IMAGE_ORPHAN_GRACE_MS));
+  let removed = 0;
+  for (const directory of ['profile', 'member-house']) {
+    const targetDir = path.join(UPLOAD_ROOT, directory);
+    const files = await fs.readdir(targetDir, { withFileTypes: true }).catch(() => []);
+    for (const file of files) {
+      if (!file.isFile()) continue;
+      const url = `/uploads/${directory}/${file.name}`;
+      if (references.has(url)) continue;
+      const targetPath = path.join(targetDir, file.name);
+      const stat = await fs.stat(targetPath).catch(() => null);
+      if (!stat || stat.mtimeMs > cutoff) continue;
+      await fs.unlink(targetPath).then(() => { removed += 1; }).catch(() => {});
+    }
+  }
+  return { removed, referenced: references.size };
 }
 
 function isInlineImageDataUrl(value = '') {
@@ -16204,14 +16266,25 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
+  let imageCleanupTimer = null;
+  const runImageCleanup = async () => {
+    const data = await loadStore();
+    const result = await cleanupOrphanUploads(data);
+    if (result.removed) console.log(`Pembersihan upload: ${result.removed} file yatim dihapus`);
+  };
   const startMainServer = async () => {
     await loadStore();
     await ensureStartupData();
+    await runImageCleanup().catch((error) => console.error(`Pembersihan upload gagal: ${error.message || error}`));
     server.listen(PORT, HOST, () => {
       console.log(`FAKE.NET Billing berjalan di http://${HOST}:${PORT}`);
       startStandaloneBillingAutomation();
       startWaGatewaySender();
       startPaymentGatewayHistorySync();
+      imageCleanupTimer = setInterval(() => {
+        runImageCleanup().catch((error) => console.error(`Pembersihan upload gagal: ${error.message || error}`));
+      }, IMAGE_ORPHAN_CLEANUP_INTERVAL_MS);
+      imageCleanupTimer.unref?.();
     });
   };
   startMainServer().catch((error) => {
@@ -16227,6 +16300,7 @@ if (require.main === module) {
     if (waGatewaySenderTimer) clearInterval(waGatewaySenderTimer);
     if (billingAutomationTimer) clearInterval(billingAutomationTimer);
     if (paymentGatewayHistorySyncTimer) clearInterval(paymentGatewayHistorySyncTimer);
+    if (imageCleanupTimer) clearInterval(imageCleanupTimer);
     server.close();
     await waGatewayQueue?.close().catch((error) => {
       console.error(`BullMQ Whatsapp gagal ditutup: ${error.message || error}`);
@@ -16260,6 +16334,7 @@ module.exports = {
     hotspotVoucherPublicStatusUrl,
     hotspotFreeUserWritable,
     hasLegacyInlineImages,
+    cleanupOrphanUploads,
     customerInvoiceGenerationDue,
     invoiceGenerationDue,
     importPppUsers,
@@ -16291,6 +16366,7 @@ module.exports = {
     radiusUserRowsLocal,
     radiusNasAddressKey,
     reportStatisticsPayload,
+    saveUploadedImage,
     radiusMemberFromPayload,
     readWorkbookRowsFromBase64,
     requireRadiusUserProfile,

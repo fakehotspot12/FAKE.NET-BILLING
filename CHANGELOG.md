@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.8.0] - 2026-07-21
+
+### Added
+
+- Upload foto rumah dan foto profil otomatis dikompresi ke WEBP dengan resolusi sesuai kebutuhan.
+- File gambar identik memakai hash yang sama agar tidak tersimpan berulang.
+- File upload yatim dibersihkan otomatis setelah masa aman 24 jam.
+
+### Changed
+
+- Batas file sumber dinaikkan menjadi 8 MB; hasil simpan foto rumah maksimal 1600x1600 dan foto profil maksimal 512x512.
+
 ## [2.7.4] - 2026-07-21
 
 ### Changed
