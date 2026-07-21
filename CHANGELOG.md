@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.7.3] - 2026-07-21
+
+### Fixed
+
+- Month picker WifiKu diberi label jelas pada tampilan desktop.
+- Menu Akun Saya tertutup saat klik di luar area atau menekan Escape.
+- Nama SSID WifiKu sekarang sama dengan SSID yang digunakan pada tombol Edit, termasuk pemilihan SSID 5G pribadi.
+
 ## [2.7.2] - 2026-07-21
 
 ### Fixed

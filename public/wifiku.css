@@ -392,6 +392,21 @@ small {
   max-width: 180px;
 }
 
+.period-picker-label {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.period-picker-label input[type="month"] {
+  max-width: none;
+  color: var(--text);
+  appearance: auto;
+}
+
 .member-info-panel {
   display: grid;
   grid-template-columns: minmax(120px, .8fr) minmax(0, 1.1fr) minmax(0, 1.2fr);

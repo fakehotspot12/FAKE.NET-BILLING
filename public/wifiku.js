@@ -229,12 +229,14 @@ function renderPortal(payload) {
   byId('deviceStatus').textContent = device.id ? (device.online ? 'Online' : 'Offline') : (payload.genieAcs?.error || 'Device belum ditemukan');
   const clients24 = Number(device.wifiClients24 || 0);
   const clients5 = Number(device.wifiClients5 || 0);
+  const network24 = wifiNetworkForBand(device, '2.4g');
+  const network5 = wifiNetworkForBand(device, '5g');
   const hasWifi24 = wifiNetworkAvailable(device, '2.4g');
   const hasWifi5 = wifiNetworkAvailable(device, '5g');
   byId('wifiTotal').textContent = `${clients24 + clients5} user`;
   byId('wifiDetail').textContent = hasWifi5 ? `2.4G ${clients24} / 5G ${clients5}` : `2.4G ${clients24}`;
-  byId('ssid24').textContent = device.ssid24 || '-';
-  byId('ssid5').textContent = device.ssid5 || '-';
+  byId('ssid24').textContent = network24.ssid || device.ssid24 || '-';
+  byId('ssid5').textContent = network5.ssid || device.ssid5 || '-';
   document.querySelectorAll('[data-wifi-row]').forEach((row) => {
     const band = row.dataset.wifiRow || '';
     const available = band === '5g' ? hasWifi5 : hasWifi24;
@@ -358,6 +360,24 @@ byId('accountMenuButton').addEventListener('click', () => {
   const button = byId('accountMenuButton');
   menu.hidden = !menu.hidden;
   button.setAttribute('aria-expanded', String(!menu.hidden));
+});
+
+document.addEventListener('click', (event) => {
+  const wrap = byId('accountMenuWrap');
+  const menu = byId('accountMenu');
+  const button = byId('accountMenuButton');
+  if (!wrap || wrap.hidden || wrap.contains(event.target)) return;
+  menu.hidden = true;
+  button.setAttribute('aria-expanded', 'false');
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  const menu = byId('accountMenu');
+  const button = byId('accountMenuButton');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  button.setAttribute('aria-expanded', 'false');
 });
 
 byId('accountButton').addEventListener('click', () => {
