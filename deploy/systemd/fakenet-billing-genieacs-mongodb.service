@@ -1,0 +1,21 @@
+[Unit]
+Description=MongoDB for FAKE.NET Billing GenieACS
+PartOf=fakenet-billing-stack.target
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/fakenet-billing-genieacs.env
+ExecStartPre=/usr/bin/mkdir -p /opt/fakenet-billing-genieacs/mongodb
+ExecStartPre=-/usr/bin/docker rm -f fakenet-billing-genieacs-mongodb
+ExecStart=/usr/bin/docker run --name fakenet-billing-genieacs-mongodb --rm -p 127.0.0.1:27017:27017 -v /opt/fakenet-billing-genieacs/mongodb:/data/db ${GENIEACS_MONGODB_IMAGE}
+ExecStop=/usr/bin/docker stop fakenet-billing-genieacs-mongodb
+Restart=always
+RestartSec=10
+TimeoutStartSec=0
+SyslogIdentifier=fakenet-billing-genieacs-mongodb
+
+[Install]
+WantedBy=multi-user.target

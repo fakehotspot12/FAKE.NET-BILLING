@@ -2,6 +2,35 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.0] - 2026-07-23
+
+### Added
+
+- Installer baru memasang GenieACS 1.2.16, MongoDB persisten, akun UI awal, autentikasi Inform CPE, dan seluruh service CWMP/NBI/FS/UI secara otomatis.
+- Virtual Parameters `RXPower` dan `gettemp` beserta provision/preset global dipasang otomatis untuk membaca redaman dan suhu lintas vendor ONU.
+- Payment Gateway menampilkan Total Bersih Transaksi, estimasi Saldo Dalam Kliring, dan Biaya Merchant berdasarkan transaksi yang sudah dibayar.
+- Metode `Tunai - Loket` tersedia untuk pencatatan kas tunai yang diterima di rumah/loket beserta user yang mengonfirmasi pembayaran.
+- Jabatan user mengikuti pilihan terkontrol berdasarkan role operasional ISP.
+
+### Changed
+
+- Referensi Payment Gateway dibakukan menjadi `Internet Bulanan: Nama Member — Nama Paket` atau `Voucher Hotspot: Nama — Paket`.
+- Ringkasan Hotspot memisahkan voucher Tersedia, Aktif, Expired, Nonaktif, serta session Online/Offline.
+- Nama pembuat user tampil di bawah Profile PPP-DHCP dan Hotspot untuk kebutuhan audit.
+- Whatsapp Gateway memakai rentang kirim penuh 24 jam sebagai default; laju dan retry tetap dikelola BullMQ.
+- Sinkron FreeRADIUS tetap berjalan otomatis/event-driven dan endpoint darurat tetap tersedia, sedangkan tombol manual di UI dihilangkan.
+- Tampilan tabel Payment Gateway, Monitoring, dan Laporan dirapikan pada desktop maupun mobile.
+
+### Security
+
+- GenieACS NBI `7557` dan MongoDB `27017` hanya bind ke localhost; port tersebut tidak dipublikasikan langsung ke jaringan.
+- Update menyimpan backup env GenieACS dan tidak memasang ACS lokal pada mesin lama yang sudah memakai ACS eksternal.
+
+### Fixed
+
+- Nominal bersih transaksi memakai `amount_received` dari callback provider bila tersedia dan tidak mengubah transaksi hasil migrasi lama.
+- Status voucher membedakan masa berlaku voucher dari status session agar data Expired dan Offline tidak tercampur.
+
 ## [2.8.5] - 2026-07-21
 
 ### Performance

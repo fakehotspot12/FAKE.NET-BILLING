@@ -1,0 +1,20 @@
+[Unit]
+Description=FAKE.NET Billing GenieACS UI
+PartOf=fakenet-billing-stack.target
+Requires=fakenet-billing-genieacs-mongodb.service
+After=network-online.target fakenet-billing-genieacs-mongodb.service
+
+[Service]
+Type=simple
+User=genieacs
+Group=genieacs
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/fakenet-billing-genieacs.env
+ExecStart=/usr/bin/env genieacs-ui
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+SyslogIdentifier=fakenet-billing-genieacs-ui
+
+[Install]
+WantedBy=multi-user.target

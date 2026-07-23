@@ -1,5 +1,5 @@
 data/*
 !data/.gitkeep
-node_modules/
+node_modules
 .env
 src/license-server.js

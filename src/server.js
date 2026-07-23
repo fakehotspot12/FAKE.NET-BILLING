@@ -2458,6 +2458,8 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         manualActivatedByRole: user.manualActivatedByRole || '',
         terminatedAt: user.terminatedAt || '',
         validUntil: user.validUntil || '',
+        voucherFirstOnlineAt: user.voucherFirstOnlineAt || user.voucherValidityStartedAt || '',
+        voucherExpiredAt: user.voucherExpiredAt || '',
         voucherMode: user.voucherMode || '',
         voucherBatchId: user.voucherBatchId || '',
         onlineOrderId: user.onlineOrderId || '',
@@ -2611,14 +2613,58 @@ function radiusFilterRows(rows = [], query = {}) {
   });
 }
 
-function radiusSummaryInfo(rows = []) {
-  return {
+function radiusSummaryInfo(rows = [], options = {}) {
+  const base = {
     total: rows.length,
     active: rows.filter((row) => radiusUiStatus(row.status) === 'active').length,
     online: rows.filter((row) => row.sessionOnline === true || String(row.internetStatus || '').toLowerCase() === 'online').length,
     suspend: rows.filter((row) => radiusUiStatus(row.status) === 'suspend').length,
     terminate: rows.filter((row) => radiusUiStatus(row.status) === 'terminate').length
   };
+  if (options.serviceType !== 'hotspot') return base;
+  const nowIso = new Date().toISOString();
+  const archivedExpired = Number(options.archivedExpired || 0);
+  const expired = rows.filter((row) => {
+    if (row.voucherExpiredAt) return true;
+    return row.validUntil && String(row.validUntil) <= nowIso;
+  }).length + archivedExpired;
+  const available = rows.filter((row) => {
+    return radiusUiStatus(row.status) === 'active'
+      && !row.voucherFirstOnlineAt
+      && !row.validUntil;
+  }).length;
+  const running = rows.filter((row) => {
+    if (radiusUiStatus(row.status) !== 'active') return false;
+    if (row.validUntil) return String(row.validUntil) > nowIso;
+    return Boolean(row.voucherFirstOnlineAt);
+  }).length;
+  const inactive = rows.filter((row) => {
+    const status = radiusUiStatus(row.status);
+    if (!['suspend', 'terminate'].includes(status)) return false;
+    return !row.voucherExpiredAt && !(row.validUntil && String(row.validUntil) <= nowIso);
+  }).length;
+  return {
+    ...base,
+    total: rows.length + archivedExpired,
+    available,
+    running,
+    expired,
+    inactive,
+    offline: Math.max(0, rows.length - base.online)
+  };
+}
+
+function radiusVoucherRecordSummaryRows(data = {}) {
+  const profiles = radiusProfileDirectory(data);
+  const nas = radiusNasDirectory(data);
+  return (data.radiusVoucherRecords || []).map((row) => ({
+    ...row,
+    profile: row.profileName || profiles.get(row.profileId)?.name || '',
+    nas: row.nasName || nas.get(row.nasId)?.name || '',
+    site: row.site || nas.get(row.nasId)?.site || '',
+    status: 'expired',
+    voucherExpiredAt: row.voucherExpiredAt || row.archivedAt || row.terminatedAt || ''
+  }));
 }
 
 async function radiusPayloadLocal(data = {}, section = 'ppp-dhcp', query = {}) {
@@ -2653,13 +2699,21 @@ async function radiusPayloadLocal(data = {}, section = 'ppp-dhcp', query = {}) {
   if (tab === 'users') {
     paged.rows = await enrichRadiusUserLastActiveRows(paged.rows);
   }
+  let topInfo = radiusSummaryInfo(rows);
+  if (serviceType === 'hotspot' && tab === 'users') {
+    const archivedRows = radiusFilterRows(radiusVoucherRecordSummaryRows(data), query);
+    topInfo = radiusSummaryInfo(rows, {
+      serviceType,
+      archivedExpired: archivedRows.length
+    });
+  }
   return {
     ok: sessionPayload.ok !== false,
     source: tab === 'sessions' ? 'freeradius-radacct' : 'freeradius-local',
     section,
     tab,
     rows: paged.rows,
-    topInfo: radiusSummaryInfo(rows),
+    topInfo,
     pagination: paged.pagination,
     sessionSource: sessionPayload.source || 'freeradius-radacct',
     sessionError: sessionPayload.ok === false ? sessionPayload.error || 'Session FreeRADIUS tidak bisa dibaca' : '',
@@ -6891,6 +6945,9 @@ function upsertPaidHotspotVoucherPaymentGatewayTransaction(data = {}, order = {}
     baseAmount: Number(order.baseAmount || order.amount || 0),
     fee: Number(order.adminFee ?? existing?.fee ?? 0),
     adminFee: Number(order.adminFee ?? existing?.adminFee ?? 0),
+    providerFee: Number(order.providerFee ?? existing?.providerFee ?? 0),
+    feeMerchant: Number(order.feeMerchant ?? order.providerFee ?? existing?.feeMerchant ?? 0),
+    amountReceived: Number(order.amountReceived ?? order.netAmount ?? existing?.amountReceived ?? 0),
     status: 'paid',
     voucherOrderId: order.id || '',
     paidAt: order.paidAt || now,
@@ -7001,6 +7058,8 @@ function fulfillHotspotVoucherOrder(data = {}, value = '', payment = {}, actor =
   order.paymentExternalId = payment.externalId || payment.transactionId || order.paymentExternalId || '';
   order.netAmount = Number(payment.settlementAmount || order.netAmount || order.gatewayAmount || order.totalAmount || order.amount || 0);
   order.providerFee = Number(payment.providerFee || order.providerFee || 0);
+  order.feeMerchant = Number(payment.feeMerchant ?? payment.providerFee ?? order.feeMerchant ?? order.providerFee ?? 0);
+  order.amountReceived = Number(payment.amountReceived ?? payment.settlementAmount ?? order.amountReceived ?? order.netAmount ?? 0);
   order.paidByName = actor.name || actor.username || order.paidByName || '';
   order.paidByUsername = actor.username || order.paidByUsername || '';
   order.paidByRole = actor.role || order.paidByRole || '';
@@ -9104,6 +9163,89 @@ function startWaGatewaySender() {
   console.log(`Whatsapp Gateway BullMQ relay aktif setiap ${Math.round(WA_GATEWAY_SEND_INTERVAL_MS / 1000)} detik`);
 }
 
+function paymentGatewayPackageLabel(value = '') {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  text = text.replace(/^paket\s+bulanan\s*/i, '').trim();
+  if (/^internet\s*:/i.test(text) && text.includes(' - ')) {
+    text = text.slice(text.lastIndexOf(' - ') + 3).trim();
+  }
+  return text;
+}
+
+function paymentGatewayDescription(data = {}, row = {}) {
+  const kind = paymentGatewayTransactionKind(row);
+  const reference = row.reference || row.invoiceNo || '';
+  if (kind === 'monthly-package') {
+    const invoice = findBillingInvoiceByReference(data, reference) || {};
+    const customer = customerForInvoice(data, invoice);
+    const customerName = String(
+      row.customerName
+      || invoice.customerName
+      || customer.name
+      || customer.customerName
+      || row.username
+      || invoice.username
+      || '-'
+    ).trim();
+    const packageName = paymentGatewayPackageLabel(
+      invoice.packageName
+      || customer.packageName
+      || row.packageName
+      || row.item
+      || row.description
+      || ''
+    );
+    if (packageName) return `Internet Bulanan: ${customerName} — ${packageName}`;
+    return `Internet Bulanan: ${customerName}`;
+  }
+  if (kind === 'hotspot-voucher') {
+    const order = findHotspotVoucherOrder(data, reference) || {};
+    const buyerName = String(row.customerName || order.buyerName || row.username || '-').trim();
+    const packageName = String(order.packageLabel || order.profileName || row.packageName || row.item || '').trim();
+    if (packageName) return `Voucher Hotspot: ${buyerName} — ${packageName}`;
+    return `Voucher Hotspot: ${buyerName}`;
+  }
+  return String(row.description || row.customerName || '-').trim() || '-';
+}
+
+function tripayAmountReceived(row = {}) {
+  const explicit = Number(row.amountReceived ?? row.amount_received ?? row.netAmount);
+  if (Number.isFinite(explicit) && explicit >= 0) return Math.round(explicit);
+  const amount = Math.max(0, Number(row.amount || row.gatewayAmount || 0) || 0);
+  const fee = Math.max(0, Number(row.feeMerchant ?? row.providerFee ?? row.fee ?? 0) || 0);
+  return Math.max(0, Math.round(amount - fee));
+}
+
+function addBusinessDays(value, days = 3) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  let remaining = Math.max(0, Math.trunc(Number(days || 0)));
+  while (remaining > 0) {
+    date.setUTCDate(date.getUTCDate() + 1);
+    const weekday = date.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) remaining -= 1;
+  }
+  return date;
+}
+
+function tripayClearingSummary(rows = []) {
+  const now = Date.now();
+  let clearingBalance = 0;
+  for (const row of rows) {
+    if (String(row.provider || '').trim().toLowerCase() !== 'tripay') continue;
+    if (!['paid', 'settled', 'success'].includes(String(row.status || '').trim().toLowerCase())) continue;
+    if (!['monthly-package', 'hotspot-voucher'].includes(paymentGatewayTransactionKind(row))) continue;
+    const paidAt = row.paidAt || row.paymentAt || row.updatedAt || row.createdAt || row.date;
+    const clearingUntil = addBusinessDays(paidAt, 3);
+    if (clearingUntil && clearingUntil.getTime() > now) clearingBalance += tripayAmountReceived(row);
+  }
+  return {
+    clearingBalance: Math.round(clearingBalance),
+    clearingBalanceSource: 'tripay-webhook-estimate'
+  };
+}
+
 function paymentGatewayReportPayload(data = {}, query = {}) {
   const from = String(query.from || '').trim();
   const to = String(query.to || '').trim();
@@ -9111,10 +9253,12 @@ function paymentGatewayReportPayload(data = {}, query = {}) {
   const method = String(query.method || 'all').trim().toLowerCase();
   const kind = String(query.kind || 'all').trim().toLowerCase();
   const allRows = Array.isArray(data.paymentGatewayTransactions) ? data.paymentGatewayTransactions : [];
+  const balanceSummary = tripayClearingSummary(allRows);
   let rows = allRows.map((row) => {
     const transactionKind = paymentGatewayTransactionKind(row);
     return {
       ...row,
+      description: paymentGatewayDescription(data, row),
       transactionKind,
       transactionKindLabel: paymentGatewayTransactionKindLabel(transactionKind)
     };
@@ -9140,7 +9284,7 @@ function paymentGatewayReportPayload(data = {}, query = {}) {
   rows = sortByDateDesc(rows, 'createdAt');
   const pending = rows.filter((row) => ['pending', 'waiting', 'unpaid'].includes(String(row.status || '').toLowerCase()));
   const paid = rows.filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()));
-  const fees = paid.reduce((sum, row) => sum + Number(row.providerFee ?? row.fee ?? 0), 0);
+  const fees = paid.reduce((sum, row) => sum + Number(row.feeMerchant ?? row.providerFee ?? row.fee ?? 0), 0);
   return {
     transactions: rows,
     balanceHistory: rows.filter((row) => row.kind === 'balance'),
@@ -9154,7 +9298,10 @@ function paymentGatewayReportPayload(data = {}, query = {}) {
       paidAmount: paid.reduce((sum, row) => sum + Number(row.amount || 0), 0),
       pending: pending.length,
       pendingAmount: pending.reduce((sum, row) => sum + Number(row.amount || 0), 0),
-      fees
+      netReceivedAmount: paid.reduce((sum, row) => sum + tripayAmountReceived(row), 0),
+      fees,
+      merchantFees: fees,
+      ...balanceSummary
     }
   };
 }
@@ -10044,6 +10191,12 @@ function paymentGatewayPayloadFee(payload = {}) {
   ) || 0);
 }
 
+function paymentGatewayPayloadAmountReceived(payload = {}) {
+  const value = payload.amountReceived ?? payload.amount_received ?? payload.net_amount ?? payload.netAmount;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : null;
+}
+
 function paymentGatewayPayloadMethod(payload = {}, fallback = 'Payment Gateway') {
   return paymentMethodDisplayLabel(
     payload.payment_name
@@ -10131,6 +10284,8 @@ function upsertPaidBillingPaymentGatewayTransaction(data = {}, invoice = {}, pay
     fee: Number(payment.adminFee ?? payment.fee ?? existing?.fee ?? 0),
     adminFee: Number(payment.adminFee ?? payment.fee ?? existing?.adminFee ?? 0),
     providerFee: Number(payment.providerFee ?? payment.fee ?? existing?.providerFee ?? 0),
+    feeMerchant: Number(payment.feeMerchant ?? payment.providerFee ?? payment.fee ?? existing?.feeMerchant ?? 0),
+    amountReceived: Number(payment.amountReceived ?? existing?.amountReceived ?? payment.amount ?? invoice.amount ?? 0),
     cashierFee: Number(payment.cashierFee ?? existing?.cashierFee ?? 0),
     status: 'paid',
     paidAt: payment.paidAt || now,
@@ -10247,6 +10402,8 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
     method: paymentGatewayPayloadMethod(payload, 'Payment Gateway'),
     amount: paymentGatewayPayloadAmount(payload),
     fee: paymentGatewayPayloadFee(payload),
+    feeMerchant: Math.round(Number(payload.fee_merchant ?? payload.feeMerchant ?? paymentGatewayPayloadFee(payload)) || 0),
+    amountReceived: paymentGatewayPayloadAmountReceived(payload),
     paidAt: paymentGatewayPayloadPaidAt(payload),
     externalId: externalReference || merchantReference,
     merchantReference
@@ -10259,14 +10416,16 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
       throw new Error('Nominal pembayaran lebih kecil dari order');
     }
     const settlementAmount = provider === 'tripay'
-      ? Math.max(0, payment.amount - Math.max(0, payment.fee || 0))
+      ? Math.max(0, payment.amountReceived ?? (payment.amount - Math.max(0, payment.fee || 0)))
       : payment.amount;
     const fulfilled = fulfillHotspotVoucherOrder(data, voucherOrder.id, {
       status,
       paidAt: payment.paidAt,
       externalId: payment.externalId,
       settlementAmount,
-      providerFee: payment.fee
+      providerFee: payment.fee,
+      feeMerchant: payment.feeMerchant,
+      amountReceived: payment.amountReceived
     }, actor);
     return {
       type: 'hotspot-voucher',
@@ -10603,6 +10762,7 @@ function upsertTripayHistoryTransaction(data = {}, row = {}) {
   const paidAt = tripayTimestampIso(row.paid_at || row.paidAt);
   const providerFee = Math.max(0, Math.round(Number(row.total_fee ?? row.totalFee ?? row.fee_merchant ?? row.feeMerchant ?? 0) || 0));
   const amount = Math.max(0, Math.round(Number(row.amount ?? row.total_amount ?? row.totalAmount ?? 0) || 0));
+  const amountReceived = Math.max(0, Math.round(Number(row.amount_received ?? row.amountReceived ?? (amount - providerFee)) || 0));
   const method = String(row.payment_name || row.paymentName || row.payment_method || row.paymentMethod || '-').trim() || '-';
   const customerName = String(row.customer_name || row.customerName || invoice?.customerName || voucherOrder?.buyerName || '').trim();
   const next = {
@@ -10631,6 +10791,7 @@ function upsertTripayHistoryTransaction(data = {}, row = {}) {
     providerFee,
     feeMerchant: Math.max(0, Math.round(Number(row.fee_merchant ?? row.feeMerchant ?? 0) || 0)),
     feeCustomer: Math.max(0, Math.round(Number(row.fee_customer ?? row.feeCustomer ?? 0) || 0)),
+    amountReceived,
     status: tripayHistoryStatus(row.status),
     externalId: externalReference || existing?.externalId || '',
     providerReference: externalReference || existing?.providerReference || '',
@@ -10646,7 +10807,7 @@ function upsertTripayHistoryTransaction(data = {}, row = {}) {
       'kind', 'transactionKind', 'sourceType', 'provider', 'method', 'paymentMethod',
       'reference', 'invoiceNo', 'description', 'customerId', 'invoiceId', 'voucherOrderId',
       'customerName', 'amount', 'baseAmount', 'fee', 'providerFee', 'feeMerchant',
-      'feeCustomer', 'status', 'externalId', 'providerReference', 'paidAt', 'paymentAt',
+      'feeCustomer', 'amountReceived', 'status', 'externalId', 'providerReference', 'paidAt', 'paymentAt',
       'createdAt', 'date', 'historySource'
     ];
     const updated = comparableFields.some((field) => JSON.stringify(existing[field] ?? null) !== JSON.stringify(next[field] ?? null));
@@ -16512,6 +16673,7 @@ module.exports = {
     publicPaymentGatewayInvoicePayload,
     publicMonitoringTarget,
     radiusProfileRowsLocal,
+    radiusSummaryInfo,
     radiusUserRowsLocal,
     radiusNasAddressKey,
     reportStatisticsPayload,

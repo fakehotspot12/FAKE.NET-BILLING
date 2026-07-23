@@ -64,7 +64,12 @@ Web isolir    : http://IP-SERVER:8892/isolir
 Beli voucher  : http://IP-SERVER:8893/voucher
 WifiKu        : http://IP-SERVER:8894/wifiku
 WAHA lokal    : 127.0.0.1:8895
+GenieACS CWMP : http://IP-SERVER:7547
+GenieACS NBI  : 127.0.0.1:7557
+GenieACS UI   : http://IP-SERVER:7568
 ```
+
+Login awal GenieACS UI adalah `billing` / `billing123`. Autentikasi Inform CPE adalah `admin` / `1sampai10`. Ubah kredensial awal setelah instalasi dan batasi akses UI menggunakan firewall/VPN atau reverse proxy ber-HTTPS.
 
 Cek status service:
 
@@ -119,6 +124,7 @@ Hal yang perlu diatur setelah install:
 - Payment Gateway terpusat untuk paket bulanan dan voucher. Provider awal: Tripay, struktur siap untuk provider lain.
 - Whatsapp Gateway API memakai WAHA lokal: template, pesan terkirim, resend, broadcast, dan notifikasi tagihan/voucher.
 - Monitoring: Site/NAS, pelanggan online, tagihan pelanggan, member, dan GenieACS.
+- GenieACS lokal: manajemen ONU, redaman, suhu, status perangkat, SSID/password, reboot, dan portal WifiKu.
 - Portal publik:
   - Isolir untuk pelanggan yang ditangguhkan.
   - Voucher untuk pembelian voucher Hotspot.
@@ -269,6 +275,11 @@ Role barang dapat disesuaikan: teknisi dapat mengelola kebutuhan lapangan, admin
 | Voucher | 8893 | Web beli voucher |
 | WifiKu | 8894 | Portal pelanggan |
 | WAHA lokal | 8895 | Whatsapp API lokal, bind ke 127.0.0.1 |
+| GenieACS CWMP | 7547 | Inform CPE/ONU, perlu dijangkau perangkat |
+| GenieACS NBI | 7557 | API internal Billing, bind ke 127.0.0.1 |
+| GenieACS FS | 7567 | File server perangkat, buka hanya bila dibutuhkan CPE |
+| GenieACS UI | 7568 | Antarmuka admin ACS; lindungi dengan firewall/VPN/HTTPS |
+| MongoDB GenieACS | 27017 | Database lokal ACS, bind ke 127.0.0.1 |
 
 Contoh subdomain:
 
@@ -288,6 +299,7 @@ Minimal setara Ubuntu 22.04:
 - Redis sebagai cache dan backend antrean BullMQ
 - FreeRADIUS
 - Docker untuk WAHA
+- GenieACS 1.2.16 dan MongoDB 7; dipasang otomatis oleh installer
 - Git, curl, rsync, tar, gzip
 
 `install.sh` mendukung keluarga:
@@ -322,14 +334,18 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Memasang dan memverifikasi Web Push; kunci VAPID dibuat otomatis saat dipakai pertama kali dan disimpan persisten di `data/`.
 - Memvalidasi kelengkapan source, lockfile, service worker, manifest, SQL FreeRADIUS, helper command, dan unit service sebelum instalasi dilanjutkan.
 - Membuat `/etc/fakenet-billing.env` dan `/etc/fakenet-billing-waha.env`.
+- Membuat `/etc/fakenet-billing-genieacs.env` dengan permission `600` dan secret JWT acak.
 - Membuat password random untuk database aplikasi, database Radius, dan WAHA.
 - Membuat database PostgreSQL `fakenet_billing` dan `radius`.
 - Membuat schema FreeRADIUS dasar: `nas`, `radcheck`, `radreply`, `radusergroup`, `radgroupcheck`, `radgroupreply`, dan `radacct`.
 - Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS, termasuk `read_clients = yes` agar Site/NAS dari aplikasi dibaca sebagai client Radius.
 - Memasang service Billing, Isolir, Voucher, WifiKu, Radius Connector, dan WAHA.
+- Memasang GenieACS CWMP/NBI/FS/UI, MongoDB persisten, akun awal, autentikasi Inform, serta Virtual Parameters redaman dan suhu.
+- Mengunci GenieACS NBI dan MongoDB ke localhost agar API/database tidak terbuka ke jaringan.
 - Memasang command stack `fakenet-billing-stack`.
 - Menyesuaikan unit systemd atau OpenRC sesuai distro yang dipakai.
 - Menjalankan health check aplikasi dan worker BullMQ sebelum instalasi dinyatakan selesai.
+- Menjalankan health check GenieACS UI/NBI dan bootstrap parameter sebelum instalasi dinyatakan selesai.
 
 Yang tetap perlu diatur setelah install:
 
@@ -345,7 +361,31 @@ Env utama:
 ```bash
 /etc/fakenet-billing.env
 /etc/fakenet-billing-waha.env
+/etc/fakenet-billing-genieacs.env
 ```
+
+### GenieACS Lokal
+
+Instalasi baru memasang GenieACS lokal secara default. MongoDB dijalankan dalam container dengan data persisten di `/opt/fakenet-billing-genieacs/mongodb`; proses CWMP, NBI, FS, dan UI berjalan sebagai user sistem `genieacs`.
+
+Konfigurasi awal:
+
+| Komponen | Nilai awal |
+| --- | --- |
+| Login UI | `billing` / `billing123` |
+| Inform CPE | `admin` / `1sampai10` |
+| URL Inform | `http://IP-SERVER:7547` |
+| NBI untuk Billing | `http://127.0.0.1:7557` |
+
+Virtual Parameters `RXPower` dan `gettemp` dipasang bersama provision harian agar aplikasi dapat membaca redaman dan suhu dari beberapa keluarga ONU. Nilai tetap berasal dari parameter perangkat yang tersedia di GenieACS; perangkat yang tidak mengekspos parameter terkait akan tampil kosong.
+
+Jika sudah memiliki GenieACS terpisah, instal aplikasi tanpa membuat ACS lokal:
+
+```bash
+sudo INSTALL_GENIEACS=0 bash install.sh
+```
+
+Setelah itu isi URL NBI eksternal dari menu `GenieACS > Pengaturan`. Gunakan jaringan privat/VPN dan firewall; jangan membuka NBI `7557` langsung ke internet.
 
 ## Service
 
@@ -367,6 +407,11 @@ Service utama:
 - `fakenet-billing-wifiku.service`
 - `fakenet-billing-radius-connector.service`
 - `fakenet-billing-waha.service`
+- `fakenet-billing-genieacs-mongodb.service`
+- `fakenet-billing-genieacs-cwmp.service`
+- `fakenet-billing-genieacs-nbi.service`
+- `fakenet-billing-genieacs-fs.service`
+- `fakenet-billing-genieacs-ui.service`
 
 Worker BullMQ Whatsapp berjalan di dalam `fakenet-billing.service`. Billing Setting tetap menentukan kapan invoice, reminder, isolir, aktivasi, dan notifikasi dibuat. Menu Whatsapp Gateway tetap menjadi pengendali enable, jeda minimum, maksimum per batch, jam kirim, serta template. WAHA berfungsi sebagai pengirim, sedangkan BullMQ menyimpan jadwal dan retry di Redis dengan concurrency satu.
 
@@ -389,7 +434,7 @@ sudo fakenet-billing-stack update
 Updater akan:
 
 1. Membuat backup pre-update ke `/var/backups/fakenet-billing`.
-2. Backup mencakup `data/`, env `/etc/fakenet-billing.env`, env WAHA, metadata source, serta dump PostgreSQL aplikasi dan Radius jika `pg_dump` tersedia.
+2. Backup mencakup `data/`, env aplikasi/WAHA/GenieACS, metadata source, serta dump PostgreSQL aplikasi dan Radius jika `pg_dump` tersedia.
 3. Mengambil source terbaru via Git jika folder punya `.git`.
 4. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
 5. Memasang dependency di staging directory dengan timeout, lalu mengaktifkannya secara atomik hanya setelah verifikasi berhasil.
@@ -408,6 +453,7 @@ Data aplikasi di `data/` tidak dihapus oleh updater. Untuk install PostgreSQL, f
 - `db/radius.dump`
 - `etc/fakenet-billing.env`
 - `etc/fakenet-billing-waha.env`
+- `etc/fakenet-billing-genieacs.env`
 - `manifest.txt`
 
 Log update:
@@ -473,7 +519,7 @@ Jika `fakenet-billing-stack update` masih gagal, cek poin berikut:
 
 ## Uninstall Total
 
-Gunakan uninstall total jika ingin menghapus aplikasi dari mesin yang sama, misalnya sebelum install ulang dari awal. Perintah ini menghapus service aplikasi, source di `/opt/fakenet-billing`, env, database aplikasi, database Radius, session WAHA, log, backup, dan command helper `fakenet-billing-stack`/`fakenet-billing-update`.
+Gunakan uninstall total jika ingin menghapus aplikasi dari mesin yang sama, misalnya sebelum install ulang dari awal. Perintah ini menghapus service aplikasi, source di `/opt/fakenet-billing`, env, database aplikasi, database Radius, data GenieACS lokal, session WAHA, log, backup, dan command helper `fakenet-billing-stack`/`fakenet-billing-update`.
 
 ```bash
 cd /root/FAKE.NET-BILLING
@@ -503,8 +549,10 @@ Yang dihapus:
 
 - `/opt/fakenet-billing`
 - `/opt/fakenet-billing-waha`
+- `/opt/fakenet-billing-genieacs`
 - `/etc/fakenet-billing.env`
 - `/etc/fakenet-billing-waha.env`
+- `/etc/fakenet-billing-genieacs.env`
 - `/var/log/fakenet-billing`
 - `/var/backups/fakenet-billing`
 - Database PostgreSQL `fakenet_billing` dan `radius`

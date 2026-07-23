@@ -13,6 +13,7 @@ ARCHIVE_URL="${FAKENET_UPDATE_ARCHIVE_URL:-}"
 BRANCH="${FAKENET_UPDATE_BRANCH:-}"
 ENV_FILE="${FAKENET_ENV_FILE:-/etc/fakenet-billing.env}"
 WAHA_ENV_FILE="${FAKENET_WAHA_ENV_FILE:-/etc/fakenet-billing-waha.env}"
+GENIEACS_ENV_FILE="${FAKENET_GENIEACS_ENV_FILE:-/etc/fakenet-billing-genieacs.env}"
 
 mkdir -p "$BACKUP_DIR" "$LOG_DIR"
 exec >>"$LOG_FILE" 2>&1
@@ -171,6 +172,7 @@ create_pre_update_backup() {
   safe_copy_if_exists "$APP_DIR/deploy/fakenet-billing-waha.env" "$tmp_backup_dir/app/deploy"
   safe_copy_if_exists "$ENV_FILE" "$tmp_backup_dir/etc"
   safe_copy_if_exists "$WAHA_ENV_FILE" "$tmp_backup_dir/etc"
+  safe_copy_if_exists "$GENIEACS_ENV_FILE" "$tmp_backup_dir/etc"
   write_manifest "$tmp_backup_dir/manifest.txt"
 
   app_db_url="$(database_url_for_name "${DATABASE_URL:-${POSTGRES_URL:-}}" "${APP_DATABASE_NAME:-}" "${APP_DATABASE_USER:-}" "${APP_DATABASE_PASSWORD:-}")"
@@ -296,7 +298,7 @@ if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
 fi
 
 if [ -f "$APP_DIR/install.sh" ]; then
-  APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 bash "$APP_DIR/install.sh" repair || true
+  APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 INSTALL_GENIEACS=0 bash "$APP_DIR/install.sh" repair || true
 fi
 
 if command -v systemctl >/dev/null 2>&1; then

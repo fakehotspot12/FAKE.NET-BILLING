@@ -240,8 +240,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '2.3.1',
-      buildVersion: '2.3.1',
+      version: '2.9.0',
+      buildVersion: '2.9.0',
       releaseDate: '2026-07-20'
     }
   },
@@ -253,8 +253,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '2.3.1',
-    buildVersion: '2.3.1',
+    appVersion: '2.9.0',
+    buildVersion: '2.9.0',
     releaseDate: '2026-07-20',
     loginVerificationEnabled: true
   },
@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.8.5', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.9.0', {
       scope: '/'
     });
   }
@@ -2654,8 +2654,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.8.5',
-    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.8.5',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.9.0',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.9.0',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -3282,7 +3282,12 @@ async function renderReportsDaily(options = {}) {
                   <td>${escapeHtml(item.info || item.externalId || '-')}</td>
                   <td class="site-cell"><span class="site-pill" title="${escapeHtml(dailySiteLabel(item, reportSites) || '-')}">${escapeHtml(dailySiteLabel(item, reportSites) || '-')}</span></td>
                   <td class="nowrap">${escapeHtml(dailyPaymentTime(item))}</td>
-                  <td>${escapeHtml(item.method || '-')}</td>
+                  <td>
+                    <strong>${escapeHtml(item.method || '-')}</strong>
+                    ${String(item.method || '').trim().toLowerCase() === 'tunai - loket'
+                      ? `<div class="muted">Dikonfirmasi oleh: ${escapeHtml(dailyAdminLabel(item, report || {}))}</div>`
+                      : ''}
+                  </td>
                   <td><span class="badge ${billingStatusBadge(item.status)}">${escapeHtml(billingStatusLabel(item.status || (Number(item.income || 0) > 0 ? 'paid' : 'pending')))}</span></td>
                   <td>${escapeHtml(dailyAdminLabel(item, report || {}))}</td>
                   <td class="amount positive">${rupiah(item.amount || item.income || 0)}</td>
@@ -4506,7 +4511,12 @@ async function renderReportsTransactions(options = {}) {
                   <td><span class="badge ${transaction.source === 'voucher' ? 'pending' : transaction.paymentCategory === 'online' ? 'active' : ''}">${escapeHtml(transaction.sourceLabel || transaction.type || '-')}</span></td>
                   <td>${escapeHtml(transaction.item || '-')}</td>
                   <td>${escapeHtml(transaction.description || '-')}</td>
-                  <td><span class="badge ${reportTransactionMethodClass(transaction.method)}">${escapeHtml(transaction.method || '-')}</span></td>
+                  <td>
+                    <span class="badge ${reportTransactionMethodClass(transaction.method)}">${escapeHtml(transaction.method || '-')}</span>
+                    ${String(transaction.method || '').trim().toLowerCase() === 'tunai - loket'
+                      ? `<div class="muted">Dikonfirmasi oleh: ${escapeHtml(transaction.admin || '-')}</div>`
+                      : ''}
+                  </td>
                   <td>${escapeHtml(transaction.admin || '-')}</td>
                   <td class="amount positive">${transaction.amountText ? escapeHtml(transaction.amountText) : rupiah(transaction.amount || 0)}</td>
                 </tr>
@@ -6196,6 +6206,26 @@ function roleOptions(selected) {
   `).join('');
 }
 
+const USER_POSITION_OPTIONS = Object.freeze({
+  admin: ['CEO/Direktur'],
+  owner: ['CEO/Direktur'],
+  finance: ['Sekretaris', 'Kepala Subbagian Keuangan dan Aset'],
+  technician: ['Kepala Teknisi dan Perlengkapan', 'Staf Teknisi dan Perlengkapan'],
+  noc: ['Kepala Teknisi dan Perlengkapan', 'Staf Teknisi dan Perlengkapan'],
+  collector: ['Staf Penagihan'],
+  reseller_voucher: ['Reseller Voucher'],
+  viewer: ['Staf']
+});
+
+function userPositionOptions(role = 'viewer', selected = '') {
+  const options = [...(USER_POSITION_OPTIONS[role] || ['Staf'])];
+  const current = String(selected || '').trim();
+  const effective = options.includes(current) ? current : options[0];
+  return options.map((position) => `
+    <option value="${escapeHtml(position)}" ${position === effective ? 'selected' : ''}>${escapeHtml(position)}</option>
+  `).join('');
+}
+
 function expenseFormBody(expense = {}) {
   const method = expense.paymentMethod || 'Tunai';
   const items = expenseItems(expense);
@@ -6696,6 +6726,20 @@ function radiusSummary(payload = {}, labels = {}) {
       ${metric(labels.active || 'Aktif', displayNumber(active), labels.activeSub || 'Online/aktif', active ? 'positive' : '')}
       ${metric(labels.suspend || 'Isolir', displayNumber(suspend), labels.suspendSub || 'Suspend/isolir', suspend ? 'warning-card' : '')}
       ${metric(labels.terminate || 'Terminate', displayNumber(terminate), labels.terminateSub || 'Diberhentikan', terminate ? 'negative' : '')}
+    </section>
+  `;
+}
+
+function hotspotRadiusSummary(payload = {}) {
+  const topInfo = payload.topInfo || {};
+  return `
+    <section class="metrics radius-hotspot-summary">
+      ${metric('Tersedia', displayNumber(topInfo.available || 0), 'Belum pernah digunakan')}
+      ${metric('Aktif', displayNumber(topInfo.running || 0), 'Masa berlaku berjalan', Number(topInfo.running || 0) ? 'positive' : '')}
+      ${metric('Expired', displayNumber(topInfo.expired || 0), 'Masa berlaku habis', Number(topInfo.expired || 0) ? 'warning-card' : '')}
+      ${metric('Nonaktif', displayNumber(topInfo.inactive || 0), 'Dinonaktifkan manual', Number(topInfo.inactive || 0) ? 'negative' : '')}
+      ${metric('Online', displayNumber(topInfo.online || 0), 'Session tersambung', Number(topInfo.online || 0) ? 'positive' : '')}
+      ${metric('Offline', displayNumber(topInfo.offline || 0), 'Session tidak tersambung')}
     </section>
   `;
 }
@@ -8077,12 +8121,15 @@ function radiusUserRows(rows = [], type = 'ppp', writeAllowed = false, startNo =
       <td>${hotspotUsers ? hotspotVoucherQrButton(row, index) : escapeHtml(row.type || row.service || 'PPPoE')}</td>
       <td>
         <strong>${escapeHtml(row.username || '-')}</strong>
-        <div class="muted">${escapeHtml(row.customerName || row.owner || '-')}</div>
+        ${hotspotUsers ? '' : (row.customerName || row.owner ? `<div class="muted">${escapeHtml(row.customerName || row.owner)}</div>` : '')}
       </td>
       <td>
         ${password ? `<span class="password-text">${escapeHtml(password)}</span>` : '<span class="muted">-</span>'}
       </td>
-      <td>${escapeHtml(row.profile || '-')}</td>
+      <td>
+        <strong>${escapeHtml(row.profile || '-')}</strong>
+        ${(row.createdByName || row.createdByUsername) ? `<div class="muted">Dibuat oleh ${escapeHtml(row.createdByName || row.createdByUsername)}</div>` : ''}
+      </td>
       <td>
         ${nasActiveBadge(row.nas || row.site || '-')}
         ${sessionIp || staticIp ? `<div class="muted">${sessionIp ? 'Session' : 'Static'} IP: ${escapeHtml(sessionIp || staticIp)}</div>` : '<div class="muted">IP dinamis</div>'}
@@ -10257,12 +10304,12 @@ async function renderRadiusHotspot(options = {}) {
 
   app.innerHTML = `
     <div class="stack">
-      ${radiusSummary(payload, {
+      ${state.radiusHotspotTab === 'users' ? hotspotRadiusSummary(payload) : radiusSummary(payload, {
         total: 'Hotspot',
-        totalSub: 'Total voucher/user',
+        totalSub: 'Total data',
         active: 'Aktif',
-        suspend: 'Expired',
-        terminate: 'Terminate'
+        suspend: 'Isolir',
+        terminate: 'Nonaktif'
       })}
       ${payload.ok === false ? `<div class="notice warning">${escapeHtml(payload.error || 'Data Radius belum bisa dibaca')}</div>` : ''}
       <div class="toolbar radius-toolbar">
@@ -10720,7 +10767,6 @@ async function renderRadiusSettings(options = {}) {
             </label>
             <div class="modal-actions field full">
               <button class="ghost-button" id="openIsolirRouterGuide" type="button">Panduan Redirect Isolir</button>
-              <button class="ghost-button" id="syncFreeradius" type="button">Sinkron FreeRADIUS</button>
               <button class="button" type="submit">Simpan Radius</button>
             </div>
           </form>
@@ -10821,14 +10867,6 @@ async function renderRadiusSettings(options = {}) {
       body: JSON.stringify(formData(event.currentTarget))
     });
     setToast('Billing settings tersimpan');
-    renderRadiusSettings({ refresh: true });
-  });
-  document.getElementById('syncFreeradius')?.addEventListener('click', async () => {
-    await api('/api/radius/sync', {
-      method: 'POST',
-      body: JSON.stringify({})
-    });
-    setToast('Sinkron FreeRADIUS selesai');
     renderRadiusSettings({ refresh: true });
   });
 }
@@ -12231,6 +12269,7 @@ function billingActionPreviewRows(invoice = {}, extraRows = []) {
 function billingPaymentMethodChoices(selected = 'Tunai') {
   const methods = [
     { value: 'Tunai', title: 'Tunai', subtitle: 'Pembayaran cash/manual' },
+    { value: 'Tunai - Loket', title: 'Tunai - Loket', subtitle: 'Pembayaran diterima di loket/rumah' },
     { value: 'Transfer', title: 'Transfer', subtitle: 'Pembayaran transfer/bank' }
   ];
   return `
@@ -14635,7 +14674,9 @@ function userFormBody(user = {}, options = {}) {
       </label>
       <label class="field">
         <span>Jabatan</span>
-        <input name="position" value="${escapeHtml(user.position || '')}" autocomplete="organization-title">
+        <select name="position" autocomplete="organization-title">
+          ${userPositionOptions(user.role || 'viewer', user.position || '')}
+        </select>
       </label>
       <label class="field">
         <span>Unit/Divisi</span>
@@ -14678,6 +14719,7 @@ function bindUserRoleNasLock() {
   const lockField = modalBody.querySelector('[data-reseller-nas-lock]');
   const lockSelect = modalBody.querySelector('select[name="lockedNasId"]');
   const unitInput = modalBody.querySelector('[data-user-role-unit]');
+  const positionSelect = modalBody.querySelector('select[name="position"]');
   const roleHelp = modalBody.querySelector('[data-user-role-description]');
   const sync = () => {
     const reseller = roleSelect?.value === 'reseller_voucher';
@@ -14688,6 +14730,14 @@ function bindUserRoleNasLock() {
     }
     if (unitInput) {
       unitInput.value = roleLabel(roleSelect?.value || 'viewer');
+    }
+    if (positionSelect) {
+      const selectedRole = roleSelect?.value || 'viewer';
+      const current = positionSelect.value;
+      const allowed = USER_POSITION_OPTIONS[selectedRole] || ['Staf'];
+      const next = allowed.includes(current) ? current : allowed[0];
+      positionSelect.innerHTML = userPositionOptions(selectedRole, next);
+      positionSelect.value = next;
     }
     if (roleHelp) {
       const selectedRole = roleSelect?.value || 'viewer';
@@ -14732,7 +14782,9 @@ function accountSettingsFormBody(user = {}) {
         </label>
         <label class="field">
           <span>Jabatan</span>
-          <input name="position" value="${escapeHtml(user.position || '')}" autocomplete="organization-title">
+          <select name="position" autocomplete="organization-title">
+            ${userPositionOptions(user.role || 'viewer', user.position || '')}
+          </select>
         </label>
         <label class="field">
           <span>Unit/Divisi</span>
@@ -15560,14 +15612,8 @@ async function renderWaGateway() {
             <span>Maksimal per batch</span>
             <input name="maxPerBatch" type="number" min="1" max="200" value="${escapeHtml(settings.maxPerBatch || 20)}">
           </label>
-          <label class="field">
-            <span>Jam kirim mulai</span>
-            <input name="quietStart" type="time" value="${escapeHtml(settings.quietStart || '00:00')}">
-          </label>
-          <label class="field">
-            <span>Jam kirim akhir</span>
-            <input name="quietEnd" type="time" value="${escapeHtml(settings.quietEnd || '23:59')}">
-          </label>
+          <input name="quietStart" type="hidden" value="00:00">
+          <input name="quietEnd" type="hidden" value="23:59">
           <div class="field full">
             <span>Template pesan</span>
             <div class="row-actions">
@@ -15983,7 +16029,7 @@ function paymentGatewayKindBadge(row = {}) {
 
 function paymentGatewayStatusLabel(status = '') {
   const value = String(status || '').trim().toLowerCase();
-  if (['paid', 'settled', 'success'].includes(value)) return 'Lunas';
+  if (['paid', 'settled', 'success'].includes(value)) return 'Dibayar';
   if (['pending', 'waiting', 'unpaid'].includes(value)) return 'Menunggu';
   if (['expired', 'expire'].includes(value)) return 'Kedaluwarsa';
   if (['cancelled', 'canceled'].includes(value)) return 'Dibatalkan';
@@ -16014,7 +16060,7 @@ function paymentGatewayRows(rows = []) {
       <td class="payment-gateway-method" data-label="Metode" title="${escapeHtml(row.method || row.paymentMethod || '-')}">${escapeHtml(row.method || row.paymentMethod || '-')}</td>
       <td class="payment-gateway-status" data-label="Status"><span class="badge ${xenditStatusBadge(row.status)}">${escapeHtml(paymentGatewayStatusLabel(row.status))}</span></td>
       <td class="amount payment-gateway-amount" data-label="Nominal">${rupiah(row.amount || 0)}</td>
-      <td class="amount payment-gateway-fee" data-label="Biaya Provider">${Number(row.providerFee ?? row.fee ?? 0) ? rupiah(row.providerFee ?? row.fee) : '-'}</td>
+      <td class="amount payment-gateway-fee" data-label="Biaya Merchant">${Number(row.feeMerchant ?? row.providerFee ?? row.fee ?? 0) ? rupiah(row.feeMerchant ?? row.providerFee ?? row.fee) : '-'}</td>
       <td class="payment-gateway-date" data-label="Tanggal">${row.paidAt || row.paymentAt || row.createdAt || row.date ? dateTimeText(row.paidAt || row.paymentAt || row.createdAt || row.date) : '-'}</td>
     </tr>
   `).join('');
@@ -16078,10 +16124,9 @@ async function renderPaymentGateway() {
   app.innerHTML = `
     <div class="stack">
       <section class="metrics">
-        ${metric('Transaksi', displayNumber(summary.total || 0), rupiah(summary.totalAmount || 0))}
-        ${metric('Lunas', displayNumber(summary.paid || 0), rupiah(summary.paidAmount || 0), 'positive')}
-        ${metric('Tertunda', displayNumber(summary.pending || 0), rupiah(summary.pendingAmount || 0), 'warning-card')}
-        ${metric('Biaya', rupiah(summary.fees || 0), 'Total biaya provider')}
+        ${metric('Total Bersih Transaksi', rupiah(summary.netReceivedAmount || 0), 'Setelah biaya merchant, sesuai filter')}
+        ${metric('Saldo Dalam Kliring', rupiah(summary.clearingBalance || 0), 'Estimasi 3 hari kerja dari webhook', Number(summary.clearingBalance || 0) ? 'warning-card' : '')}
+        ${metric('Biaya Merchant', rupiah(summary.merchantFees || summary.fees || 0), 'Biaya pada transaksi dibayar')}
       </section>
       <section class="form-panel">
         <div class="section-head">
@@ -16178,7 +16223,7 @@ async function renderPaymentGateway() {
                 <th>Metode</th>
                 <th>Status</th>
                 <th class="amount">Nominal</th>
-                <th class="amount">Biaya Provider</th>
+                <th class="amount">Biaya Merchant</th>
                 <th>Tanggal</th>
               </tr>
             </thead>

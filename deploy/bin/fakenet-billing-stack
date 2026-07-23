@@ -10,6 +10,11 @@ APP_UNITS=(
   fakenet-billing-wifiku.service
   fakenet-billing-radius-connector.service
   fakenet-billing-waha.service
+  fakenet-billing-genieacs-mongodb.service
+  fakenet-billing-genieacs-cwmp.service
+  fakenet-billing-genieacs-nbi.service
+  fakenet-billing-genieacs-fs.service
+  fakenet-billing-genieacs-ui.service
 )
 
 APP_SERVICES=(
@@ -19,6 +24,11 @@ APP_SERVICES=(
   fakenet-billing-wifiku
   fakenet-billing-radius-connector
   fakenet-billing-waha
+  fakenet-billing-genieacs-mongodb
+  fakenet-billing-genieacs-cwmp
+  fakenet-billing-genieacs-nbi
+  fakenet-billing-genieacs-fs
+  fakenet-billing-genieacs-ui
 )
 
 SYSTEMD_BASE_GROUPS=(
@@ -74,8 +84,11 @@ systemd_base_units() {
 }
 
 systemd_units() {
+  local unit
   systemd_base_units
-  printf '%s\n' "${APP_UNITS[@]}"
+  for unit in "${APP_UNITS[@]}"; do
+    systemd_unit_exists "$unit" && printf '%s\n' "$unit"
+  done
 }
 
 restart_unit() {
@@ -114,12 +127,15 @@ run_systemd() {
     restart-app)
       failed=0
       for unit in "${APP_UNITS[@]}"; do
+        systemd_unit_exists "$unit" || continue
         restart_unit "$unit" || failed=1
       done
       return "$failed"
       ;;
     stop)
-      systemctl stop "${APP_UNITS[@]}" || true
+      for unit in "${APP_UNITS[@]}"; do
+        systemd_unit_exists "$unit" && systemctl stop "$unit" || true
+      done
       ;;
     status)
       systemctl status "${units[@]}" --no-pager

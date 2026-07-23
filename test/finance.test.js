@@ -5664,6 +5664,96 @@ test('online voucher order only creates payment gateway transaction after paid',
   assert.equal(serverInternals.hotspotVoucherRevision(data, { role: 'finance' }), paidRevision);
 });
 
+test('payment gateway report normalizes billing and voucher references without losing merchant fee', () => {
+  const data = createDefaultStore();
+  const paidAt = new Date().toISOString();
+  data.customers.push({
+    id: 'customer-agus',
+    name: 'Agus Budi Utomo',
+    username: 'agusbudiutomo@fake.net',
+    packageName: 'Paket Bronze 10 Mbps'
+  });
+  data.invoices.push({
+    id: 'invoice-agus',
+    externalId: '010224',
+    invoiceNo: '010224',
+    customerId: 'customer-agus',
+    customerName: 'Agus Budi Utomo',
+    username: 'agusbudiutomo@fake.net',
+    packageName: 'Internet : agusbudiutomo@fake.net - Paket Bronze 10 Mbps',
+    amount: 150000,
+    status: 'paid'
+  });
+  data.hotspotVoucherOrders.push({
+    id: 'voucher-order-q',
+    reference: 'VO-20260723-001',
+    buyerName: 'q',
+    packageLabel: 'V-12 Jam'
+  });
+  data.paymentGatewayTransactions.push(
+    {
+      id: 'pg-monthly',
+      provider: 'tripay',
+      transactionKind: 'monthly-package',
+      reference: '010224',
+      description: 'Paket Bulanan Internet : agusbudiutomo@fake.net - Paket Bronze 10 Mbps',
+      amount: 155000,
+      feeMerchant: 4250,
+      amountReceived: 150750,
+      status: 'paid',
+      paidAt,
+      createdAt: paidAt
+    },
+    {
+      id: 'pg-voucher',
+      provider: 'tripay',
+      transactionKind: 'hotspot-voucher',
+      reference: 'VO-20260723-001',
+      voucherOrderId: 'voucher-order-q',
+      customerName: 'q',
+      amount: 3771,
+      feeMerchant: 777,
+      amountReceived: 2994,
+      status: 'paid',
+      paidAt,
+      createdAt: paidAt
+    }
+  );
+
+  const report = serverInternals.paymentGatewayReportPayload(data, {});
+  const monthly = report.transactions.find((row) => row.id === 'pg-monthly');
+  const voucher = report.transactions.find((row) => row.id === 'pg-voucher');
+  assert.equal(monthly.description, 'Internet Bulanan: Agus Budi Utomo — Paket Bronze 10 Mbps');
+  assert.equal(voucher.description, 'Voucher Hotspot: q — V-12 Jam');
+  assert.equal(report.summary.merchantFees, 5027);
+  assert.equal(report.summary.netReceivedAmount, 153744);
+  assert.equal(report.summary.clearingBalance, 153744);
+  const monthlyReport = serverInternals.paymentGatewayReportPayload(data, { kind: 'monthly-package' });
+  assert.equal(monthlyReport.summary.netReceivedAmount, 150750);
+});
+
+test('Tunai - Loket remains grouped as cash', () => {
+  assert.equal(serverInternals.paymentCategoryForRecord({}, 'Tunai - Loket'), 'cash');
+});
+
+test('hotspot summary separates available, running, expired, inactive, online and offline users', () => {
+  const future = new Date(Date.now() + 86400000).toISOString();
+  const past = new Date(Date.now() - 86400000).toISOString();
+  const rows = [
+    { username: 'available', status: 'active', sessionOnline: false },
+    { username: 'running', status: 'active', voucherFirstOnlineAt: past, validUntil: future, sessionOnline: true },
+    { username: 'expired', status: 'terminated', validUntil: past, voucherExpiredAt: past, sessionOnline: false },
+    { username: 'disabled', status: 'terminated', sessionOnline: false }
+  ];
+  const summary = serverInternals.radiusSummaryInfo(rows, { serviceType: 'hotspot', archivedExpired: 2 });
+  assert.equal(summary.available, 1);
+  assert.equal(summary.running, 1);
+  assert.equal(summary.expired, 3);
+  assert.equal(summary.inactive, 1);
+  assert.equal(summary.online, 1);
+  assert.equal(summary.offline, 3);
+});
+
 test('Tripay voucher checkout resolves QRIS before creating the transaction', async () => {
   const data = createDefaultStore();
   data.settings.paymentGateway.enabled = true;

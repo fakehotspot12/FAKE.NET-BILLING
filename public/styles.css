@@ -2830,13 +2830,19 @@ input[type="checkbox"] {
 .payment-gateway-reference strong,
 .payment-gateway-reference .muted {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .payment-gateway-reference strong {
   margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.payment-gateway-reference .muted {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .payment-gateway-kind,
@@ -2844,8 +2850,8 @@ input[type="checkbox"] {
 .payment-gateway-method,
 .payment-gateway-status,
 .payment-gateway-date {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
   white-space: nowrap;
 }
 
@@ -12034,5 +12040,55 @@ dialog::backdrop {
 
   .payment-gateway-empty td::before {
     content: none;
+  }
+}
+
+@media (min-width: 1121px) {
+  .metrics.radius-hotspot-summary {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 721px) and (max-width: 1120px) {
+  .metrics.radius-hotspot-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .metrics.radius-hotspot-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) table {
+    min-width: 100%;
+    width: max-content;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) th,
+  .table-wrap:not(.payment-gateway-table-wrap) td,
+  .table-wrap:not(.payment-gateway-table-wrap) td strong,
+  .table-wrap:not(.payment-gateway-table-wrap) td .muted,
+  .table-wrap:not(.payment-gateway-table-wrap) .cell-title,
+  .table-wrap:not(.payment-gateway-table-wrap) .cell-subline {
+    max-width: none;
+    overflow: visible;
+    overflow-wrap: normal;
+    text-overflow: clip;
+    white-space: nowrap;
+    word-break: normal;
+  }
+
+  .payment-gateway-reference .muted {
+    overflow-wrap: normal;
+    white-space: normal;
+    word-break: normal;
+  }
+
+  .payment-gateway-kind .badge,
+  .payment-gateway-status .badge,
+  .payment-gateway-amount,
+  .payment-gateway-fee {
+    white-space: nowrap;
   }
 }
