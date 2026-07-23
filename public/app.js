@@ -10654,7 +10654,8 @@ function openRadiusIsolirGuideModal() {
   try {
     savedIsolirGuide = JSON.parse(localStorage.getItem('fakenetBillingIsolirGuide') || '{}');
   } catch {}
-  const defaults = { ...defaultIsolirGuide, ...savedIsolirGuide };
+  const defaults = { ...defaultIsolirGuide, ...(state.settings?.isolirGuide || {}), ...savedIsolirGuide };
+  let saveTimer = null;
   openModal('Panduan Redirect Isolir MikroTik', `
     <div class="stack routeros-guide">
       <div class="notice">
@@ -10718,6 +10719,13 @@ function openRadiusIsolirGuideModal() {
     try {
       localStorage.setItem('fakenetBillingIsolirGuide', JSON.stringify(values));
     } catch {}
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      if (!can('settings:write')) return;
+      api('/api/settings', { method: 'PUT', body: JSON.stringify({ isolirGuide: values }) })
+        .then((result) => { state.settings = { ...state.settings, ...(result.settings || {}) }; })
+        .catch(() => {});
+    }, 500);
     output.value = buildIsolirRouterOsScript(values);
   };
   fields.forEach((input) => {

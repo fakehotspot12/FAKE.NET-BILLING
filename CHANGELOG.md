@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.3] - 2026-07-23
+
+### Fixed
+
+- Pengaturan panduan redirect isolir sekarang disimpan di database aplikasi, sehingga tetap tersedia saat berganti browser atau perangkat.
+
 ## [2.9.2] - 2026-07-23
 
 ### Fixed
