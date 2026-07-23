@@ -60,6 +60,26 @@ function rowCounts(rows = {}) {
   };
 }
 
+function reloadFreeradiusIfNasChanged(previous = {}, current = {}) {
+  if (String(process.env.FREERADIUS_AUTO_RELOAD || '1') === '0') return Promise.resolve(false);
+  const before = unique(previous.nasnames || []).sort().join('|');
+  const after = unique(current.nasnames || []).sort().join('|');
+  if (before === after) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const child = spawn('systemctl', ['reload', 'freeradius.service']);
+    child.once('close', (code) => {
+      if (code === 0) {
+        resolve(true);
+        return;
+      }
+      const fallback = spawn('systemctl', ['restart', 'freeradius.service']);
+      fallback.once('close', () => resolve(true));
+      fallback.once('error', () => resolve(false));
+    });
+    child.once('error', () => resolve(false));
+  });
+}
+
 function managedKeys(rows = {}) {
   return {
     usernames: unique([
@@ -305,6 +325,7 @@ async function syncAll(data = {}, context = {}) {
     } else {
       await runPostgres(built.sql);
     }
+    const previousManaged = state.managed;
     state.managed = built.currentManaged;
     state.rowCounts = counts;
     state.lastSyncAt = new Date().toISOString();
@@ -312,6 +333,7 @@ async function syncAll(data = {}, context = {}) {
     state.lastError = '';
     state.lastAction = context.action || '';
     state.lastActor = context.actor?.name || context.actor?.username || '';
+    await reloadFreeradiusIfNasChanged(previousManaged, built.currentManaged);
     return {
       ok: true,
       rowCounts: counts,

@@ -2013,10 +2013,14 @@ function hotspotVoucherRevision(data = {}, user = {}) {
 }
 
 function radiusPagination(rows = [], page = 1, limit = 10) {
-  const pagination = paginationPayload(page, limit, rows.length);
-  const offset = (pagination.page - 1) * limit;
+  // `All` is represented by a very large limit at the query boundary. Keep
+  // the sentinel out of slice/pagination math so bulk actions receive every row.
+  const allRows = Number(limit) >= Number.MAX_SAFE_INTEGER;
+  const effectiveLimit = allRows ? Math.max(1, rows.length) : Math.max(1, Number(limit) || 10);
+  const pagination = paginationPayload(page, effectiveLimit, rows.length);
+  const offset = (pagination.page - 1) * effectiveLimit;
   return {
-    rows: rows.slice(offset, offset + limit),
+    rows: allRows ? rows : rows.slice(offset, offset + effectiveLimit),
     pagination
   };
 }
@@ -14280,6 +14284,65 @@ async function handleApi(req, res, url) {
         ok: false,
         error: error.message || 'Generate voucher Hotspot gagal'
       });
+    }
+    return;
+  }
+
+  const radiusBulkDeleteMatch = pathname.match(/^\/api\/radius\/(ppp-dhcp|hotspot)\/users\/bulk-delete$/);
+  if (method === 'POST' && radiusBulkDeleteMatch) {
+    const section = radiusBulkDeleteMatch[1];
+    const serviceType = section === 'hotspot' ? 'hotspot' : 'pppoe';
+    const authContext = await requireAnyPermission(req, res, ['radius:write', 'radius:ppp-users:write', 'radius:hotspot-free:write']);
+    if (!authContext || !radiusSectionAllowedForUser(authContext.user, section)) return;
+    const payload = await readBody(req);
+    const requested = Array.isArray(payload.users) ? payload.users : [];
+    if (!requested.length) {
+      badRequest(res, 'User yang dipilih tidak tersedia');
+      return;
+    }
+    try {
+      const { data, result } = await mutate(async (store) => {
+        const deleted = [];
+        const failed = [];
+        for (const item of requested) {
+          const id = String(item?.id || '').trim();
+          if (!id) continue;
+          const existing = (store.radiusUsers || []).find((user) => user.id === id);
+          if (!existing || String(existing.serviceType || '').toLowerCase() !== serviceType) {
+            failed.push({ id, error: 'User tidak ditemukan' });
+            continue;
+          }
+          if (!canManageHotspotUser(authContext.user, existing) && section === 'hotspot') {
+            failed.push({ id, error: 'Tidak memiliki akses' });
+            continue;
+          }
+          try {
+            const next = freeradius.deleteRadiusUser(store, id);
+            deleteRadiusLinkedMember(store, next, authContext.user);
+            deleted.push({ id, username: next.username || item.username || id, user: next });
+          } catch (error) {
+            failed.push({ id, error: error.message || 'Gagal menghapus user' });
+          }
+        }
+        deleteOrphanRadiusMembers(store, authContext.user);
+        addActivity(store, 'monitoring', `Bulk delete ${section} ${deleted.length} user oleh ${authContext.user.name || authContext.user.username}`, {
+          action: `radius-${section}-bulk-delete`,
+          deleted: deleted.length,
+          failed: failed.length
+        });
+        await syncFreeradiusIfNeeded(store, authContext.user, `radius-${section}-bulk-delete`);
+        return { deleted, failed };
+      });
+      const disconnectResults = await Promise.allSettled((result.deleted || []).map((item) => freeradiusCoa.disconnectUser(data, item.user)));
+      const disconnectFailed = disconnectResults.filter((item) => item.status === 'rejected').length;
+      sendJson(res, 200, {
+        ok: true,
+        deleted: result.deleted?.length || 0,
+        failed: (result.failed?.length || 0) + disconnectFailed,
+        errors: result.failed || []
+      });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message || 'Bulk delete Radius gagal' });
     }
     return;
   }

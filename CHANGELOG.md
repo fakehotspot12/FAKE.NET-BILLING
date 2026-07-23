@@ -2,6 +2,17 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.1] - 2026-07-23
+
+### Fixed
+
+- Bulk delete PPP-DHCP dan Hotspot memproses seluruh pilihan `All` melalui satu request, dengan notifikasi progres dan hasil sukses/gagal.
+- Generator koneksi RADIUS MikroTik memakai separator command yang aman untuk copy-paste, rebuild entry berdasarkan IP, dan kompatibel RouterOS v6.49/v7.
+- DHCP RADIUS memakai sintaks `use-radius=yes` yang benar tanpa property `accounting` yang tidak valid.
+- Checklist PPP, Hotspot, dan DHCP langsung memperbarui script saat berubah.
+
+- Menetapkan `require-message-auth=no` pada entry RADIUS agar kompatibel dengan FreeRADIUS standar.
+
 ## [2.9.0] - 2026-07-23
 
 ### Added

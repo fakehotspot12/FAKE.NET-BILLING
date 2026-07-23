@@ -240,8 +240,8 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '2.9.0',
-      buildVersion: '2.9.0',
+      version: '2.9.1',
+      buildVersion: '2.9.1',
       releaseDate: '2026-07-20'
     }
   },
@@ -253,8 +253,8 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '2.9.0',
-    buildVersion: '2.9.0',
+    appVersion: '2.9.1',
+    buildVersion: '2.9.1',
     releaseDate: '2026-07-20',
     loginVerificationEnabled: true
   },
@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.9.0', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.9.1', {
       scope: '/'
     });
   }
@@ -2654,8 +2654,8 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.9.0',
-    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.9.0',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.9.1',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.9.1',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
@@ -9873,11 +9873,19 @@ function bindRadiusHotspotBatchActions(rows = [], writeAllowed = false) {
       const selected = selectedRadiusHotspotUsers(rows);
       if (!selected.length) return;
       if (!window.confirm(`Hapus ${displayNumber(selected.length)} user Hotspot terpilih?`)) return;
-      for (const user of selected) {
-        await api(`/api/radius/hotspot/users/${encodeURIComponent(user.id)}?username=${encodeURIComponent(user.username || '')}`, { method: 'DELETE' });
+      setToast(`Menghapus ${displayNumber(selected.length)} user Hotspot...`);
+      let deleted = 0;
+      let failed = 0;
+      try {
+        const result = await api('/api/radius/hotspot/users/bulk-delete', { method: 'POST', body: JSON.stringify({ users: selected.map((user) => ({ id: user.id, username: user.username || '' })) }) });
+        deleted = Number(result.deleted || 0);
+        failed = Number(result.failed || 0);
+      } catch (error) {
+        failed = selected.length;
+        setToast(error.message || 'Bulk delete Hotspot gagal');
       }
-      setToast(`${displayNumber(selected.length)} user Hotspot dihapus`);
-      renderRadiusHotspot({ refresh: true });
+      setToast(failed ? `${displayNumber(deleted)} user Hotspot dihapus, ${displayNumber(failed)} gagal` : `${displayNumber(deleted)} user Hotspot berhasil dihapus`);
+      await renderRadiusHotspot({ refresh: true });
     });
     document.getElementById('radiusHotspotBatchIsolate')?.addEventListener('click', async () => {
       const selected = selectedRadiusHotspotUsers(rows);
@@ -9932,11 +9940,19 @@ function bindRadiusPppBatchActions(rows = [], writeAllowed = false) {
     const selected = selectedRadiusPppUsers(rows);
     if (!selected.length) return;
     if (!window.confirm(`Hapus ${displayNumber(selected.length)} user PPP-DHCP terpilih? Member terkait ikut dihapus, transaksi tetap disimpan.`)) return;
-    for (const user of selected) {
-      await api(`/api/radius/ppp-dhcp/users/${encodeURIComponent(user.id)}?username=${encodeURIComponent(user.username || '')}`, { method: 'DELETE' });
+    setToast(`Menghapus ${displayNumber(selected.length)} user PPP-DHCP...`);
+    let deleted = 0;
+    let failed = 0;
+    try {
+      const result = await api('/api/radius/ppp-dhcp/users/bulk-delete', { method: 'POST', body: JSON.stringify({ users: selected.map((user) => ({ id: user.id, username: user.username || '' })) }) });
+      deleted = Number(result.deleted || 0);
+      failed = Number(result.failed || 0);
+    } catch (error) {
+      failed = selected.length;
+      setToast(error.message || 'Bulk delete PPP-DHCP gagal');
     }
-    setToast(`${displayNumber(selected.length)} user PPP-DHCP dihapus`);
-    renderRadiusPppDhcp({ refresh: true });
+    setToast(failed ? `${displayNumber(deleted)} user PPP-DHCP dihapus, ${displayNumber(failed)} gagal` : `${displayNumber(deleted)} user PPP-DHCP berhasil dihapus`);
+    await renderRadiusPppDhcp({ refresh: true });
   });
   document.getElementById('radiusPppBatchIsolate')?.addEventListener('click', async () => {
     const selected = selectedRadiusPppUsers(rows);
@@ -11193,9 +11209,11 @@ function buildRadiusRouterOsScript(options = {}) {
   const radiusServer = String(options.radiusServer || 'ISI_IP_SERVER_BILLING').trim();
   const nasAddress = String(options.nasAddress || 'ISI_IP_NAS').trim();
   const radiusSecret = String(options.radiusSecret || 'ISI_SECRET_RADIUS').trim();
-  const services = Array.isArray(options.services) && options.services.length
-    ? options.services.join(',')
-    : 'ppp,hotspot,dhcp';
+  const services = (Array.isArray(options.services) && options.services.length
+    ? options.services
+    : ['ppp', 'hotspot', 'dhcp'])
+    .filter((service) => ['ppp', 'hotspot', 'dhcp'].includes(service))
+    .join(',') || 'ppp,hotspot,dhcp';
   const includesPpp = services.includes('ppp');
   const includesHotspot = services.includes('hotspot');
   const includesDhcp = services.includes('dhcp');
@@ -11209,55 +11227,49 @@ function buildRadiusRouterOsScript(options = {}) {
     const queueValue = routerOsQuoted(profile.queueRouterValue);
     const queueTypes = String(profile.queueRouterValue || '').split('/').filter(Boolean);
     for (const queueType of [...new Set(queueTypes)]) {
-      queueProfileLines.push(`:if ([:len [/queue type find where name=${routerOsQuoted(queueType)}]] = 0) do={ :error ${routerOsQuoted(`Queue type ${queueType} belum tersedia di NAS`)} }`);
+      queueProfileLines.push(`:if ([:len [/queue type find where name=${routerOsQuoted(queueType)}]] = 0) do={ :error ${routerOsQuoted(`Queue type ${queueType} belum tersedia di NAS`)} };`);
     }
     if (profile.serviceType === 'hotspot') {
       queueProfileLines.push(
         '{',
-        `:local queueProfile ${queueGroup}`,
-        `:local queueValue ${queueValue}`,
-        ':local queueProfileId [/ip hotspot user profile find where name=$queueProfile]',
+        `:local queueProfile ${queueGroup};`,
+        `:local queueValue ${queueValue};`,
+        ':local queueProfileId [/ip hotspot user profile find where name=$queueProfile];',
         ':if ([:len $queueProfileId] = 0) do={',
-        '  /ip hotspot user profile add name=$queueProfile queue-type=$queueValue shared-users=1000',
+        '  /ip hotspot user profile add name=$queueProfile queue-type=$queueValue shared-users=1000;',
         '} else={',
-        '  /ip hotspot user profile set $queueProfileId queue-type=$queueValue',
-        '}',
+        '  /ip hotspot user profile set $queueProfileId queue-type=$queueValue;',
+        '};',
         '}'
       );
     } else {
       queueProfileLines.push(
         '{',
-        `:local queueProfile ${queueGroup}`,
-        `:local queueValue ${queueValue}`,
-        ':local queueProfileId [/ppp profile find where name=$queueProfile]',
+        `:local queueProfile ${queueGroup};`,
+        `:local queueValue ${queueValue};`,
+        ':local queueProfileId [/ppp profile find where name=$queueProfile];',
         ':if ([:len $queueProfileId] = 0) do={',
-        '  /ppp profile add name=$queueProfile queue-type=$queueValue',
+        '  /ppp profile add name=$queueProfile queue-type=$queueValue;',
         '} else={',
-        '  /ppp profile set $queueProfileId queue-type=$queueValue',
-        '}',
-        '}'
+        '  /ppp profile set $queueProfileId queue-type=$queueValue;',
+        '};',
+        '};'
       );
     }
   }
   return [
-    '# Konfigurasi RADIUS MikroTik - Generated by Billing',
-    '# Aman dijalankan ulang: entry server yang sama diperbarui, bukan diduplikasi.',
-    `:local radiusServer ${routerOsQuoted(radiusServer)}`,
-    `:local nasAddress ${routerOsQuoted(nasAddress)}`,
-    `:local radiusSecret ${routerOsQuoted(radiusSecret)}`,
-    ':local radiusId [/radius find where address=$radiusServer]',
-    ':if ([:len $radiusId] = 0) do={',
-    `  /radius add address=$radiusServer secret=$radiusSecret service=${services} authentication-port=1812 accounting-port=1813 timeout=3s src-address=$nasAddress disabled=no`,
-    '} else={',
-    `  /radius set $radiusId secret=$radiusSecret service=${services} authentication-port=1812 accounting-port=1813 timeout=3s src-address=$nasAddress disabled=no`,
-    '}',
-    '/radius incoming set accept=yes port=3799',
-    includesPpp ? '/ppp aaa set use-radius=yes accounting=yes interim-update=5m' : '',
-    includesHotspot ? '/ip hotspot profile set [find] use-radius=yes radius-accounting=yes radius-interim-update=received' : '',
-    includesDhcp ? '/ip dhcp-server set [find] use-radius=yes accounting=yes' : '',
-    queueProfileLines.length ? '# Profile pembawa Queue Type untuk profil manual Billing' : '',
+    `:local radiusServer ${routerOsQuoted(radiusServer)};`,
+    `:local nasAddress ${routerOsQuoted(nasAddress)};`,
+    `:local radiusSecret ${routerOsQuoted(radiusSecret)};`,
+    ':local radiusId [/radius find where address=$radiusServer];',
+    ':if ([:len $radiusId] > 0) do={ /radius remove $radiusId; };',
+    ` /radius add address=$radiusServer secret=$radiusSecret service=${services} authentication-port=1812 accounting-port=1813 timeout=3s src-address=$nasAddress disabled=no require-message-auth=no;`,
+    '/radius incoming set accept=yes port=3799;',
+    includesPpp ? '/ppp aaa set use-radius=yes accounting=yes interim-update=5m;' : '',
+    includesHotspot ? '/ip hotspot profile set [find] use-radius=yes radius-accounting=yes radius-interim-update=received;' : '',
+    includesDhcp ? '/ip dhcp-server set [find] use-radius=yes;' : '',
     ...queueProfileLines,
-    ':put "RADIUS Billing sudah diterapkan. Jalankan /radius monitor 0 once untuk memeriksa counter."'
+    ':put "RADIUS Billing sudah diterapkan. Jalankan /radius monitor 0 once untuk memeriksa counter.";'
   ].filter(Boolean).join('\n');
 }
 
@@ -11284,7 +11296,7 @@ async function openRadiusConnectModal(target = {}) {
     radiusServer: radius.serverAddress || defaultBillingServerIp(),
     nasAddress: target.host || radius.address || '',
     radiusSecret: radius.secret || '',
-    services: ['ppp', 'hotspot', 'dhcp'],
+    services: ['ppp', 'hotspot'],
     queueProfiles
   };
   openModal('Hubungkan RADIUS MikroTik', `
@@ -11321,7 +11333,7 @@ async function openRadiusConnectModal(target = {}) {
         <button class="button compact" type="button" id="copyRadiusRouterOsScript">Salin Script</button>
       </div>
       <textarea class="routeros-script-output" id="radiusRouterOsScript" readonly spellcheck="false">${escapeHtml(buildRadiusRouterOsScript(defaults))}</textarea>
-      <p class="muted">Source MikroTik harus sama dengan IP NAS pada Site. Perbedaan source adalah penyebab umum status radius timeout.</p>
+      <p class="muted">Kompatibel dengan RouterOS v6.49+. Entry RADIUS dengan IP yang sama akan dihapus lalu dibuat ulang agar koreksi konfigurasi langsung bersih. DHCP memakai use-radius=yes tanpa property accounting terpisah.</p>
     </div>
   `, async () => {});
 
@@ -11333,10 +11345,21 @@ async function openRadiusConnectModal(target = {}) {
       .map((input) => [input.name, input.value]));
     output.value = buildRadiusRouterOsScript({ ...values, services, queueProfiles });
   };
-  modalBody.querySelectorAll('.routeros-guide-grid input').forEach((input) => input.addEventListener('input', updateScript));
+  modalBody.querySelectorAll('.routeros-guide-grid input').forEach((input) => {
+    input.addEventListener('input', updateScript);
+    input.addEventListener('change', updateScript);
+  });
   modalBody.querySelector('#copyRadiusRouterOsScript')?.addEventListener('click', async () => {
-    await copyTextToClipboard(output?.value || '');
-    setToast('Script koneksi RADIUS disalin');
+    try {
+      await copyTextToClipboard(output?.value || '');
+      setToast('Script koneksi RADIUS disalin');
+    } catch (error) {
+      // HTTP/local browser fallback: keep the complete script selected so the
+      // user can press Ctrl+C even when the Clipboard API is unavailable.
+      output?.focus();
+      output?.select();
+      setToast(`${error.message}. Script sudah dipilih, tekan Ctrl+C.`);
+    }
   });
   if (frame) frame.onsubmit = (event) => event.preventDefault();
 }
