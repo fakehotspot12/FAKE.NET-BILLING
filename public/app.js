@@ -4327,7 +4327,7 @@ function dailyBillingReceiptBody(transaction = {}) {
   const branding = currentBranding();
   const signer = transaction.admin || state.auth?.name || state.auth?.username || 'Admin';
   const invoiceNo = transaction.invoiceNo || transaction.externalId || transaction.id || '-';
-  const customerName = transaction.customerName || transaction.description || transaction.info || '-';
+  const customerName = displayCustomerName(transaction.customerName || transaction.description || transaction.info || '-');
   const itemName = transaction.planName || transaction.packageName || transaction.profileName || transaction.profile || transaction.item || 'Tagihan internet';
   const periodSource = transaction.coverageText
     || transaction.coveredPeriodText
@@ -4374,6 +4374,15 @@ function dailyBillingReceiptBody(transaction = {}) {
       </div>
     </div>
   `;
+}
+
+function displayCustomerName(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  if (text !== text.toLocaleUpperCase('id-ID')) return text;
+  return text
+    .toLocaleLowerCase('id-ID')
+    .replace(/(^|[\s'(-])([a-zà-ÿ])/gi, (_, prefix, letter) => `${prefix}${letter.toLocaleUpperCase('id-ID')}`);
 }
 
 function openDailyBillingReceiptsModal(transactions = [], report = {}) {
@@ -4511,7 +4520,7 @@ async function renderReportsTransactions(options = {}) {
                   <td class="nowrap">${escapeHtml(reportTransactionDateText(transaction))}</td>
                   <td><span class="badge ${transaction.source === 'voucher' ? 'pending' : transaction.paymentCategory === 'online' ? 'active' : ''}">${escapeHtml(transaction.sourceLabel || transaction.type || '-')}</span></td>
                   <td>${escapeHtml(transaction.item || '-')}</td>
-                  <td>${escapeHtml(transaction.description || '-')}</td>
+                  <td>${escapeHtml(displayCustomerName(transaction.description || transaction.customerName || '-'))}</td>
                   <td>
                     <span class="badge ${reportTransactionMethodClass(transaction.method)}">${escapeHtml(transaction.method || '-')}</span>
                     ${String(transaction.method || '').trim().toLowerCase() === 'tunai - loket'
@@ -4822,7 +4831,7 @@ function renderXenditTransactions(transactions = [], cursor = {}) {
                 <td class="amount ${xenditAmountClass(transaction)}">${transaction.moneyOut ? '-' : ''}${rupiah(transaction.amount)}</td>
                 <td>
                   <strong class="cell-title">${escapeHtml(transaction.reference || '-')}</strong>
-                  <div class="muted">${escapeHtml(transaction.description || transaction.customerName || '-')}</div>
+                  <div class="muted">${escapeHtml(displayCustomerName(transaction.description || transaction.customerName || '-'))}</div>
                 </td>
                 <td class="nowrap">${escapeHtml(xenditDateText(transaction.date, transaction.dateRaw))}</td>
               </tr>
@@ -16095,7 +16104,7 @@ function paymentGatewayRows(rows = []) {
     <tr>
       <td class="payment-gateway-reference" data-label="Referensi">
         <strong title="${escapeHtml(row.reference || row.invoiceNo || row.id || '-')}">${escapeHtml(row.reference || row.invoiceNo || row.id || '-')}</strong>
-        <div class="muted" title="${escapeHtml(row.description || row.customerName || '-')}">${escapeHtml(row.description || row.customerName || '-')}</div>
+        <div class="muted" title="${escapeHtml(displayCustomerName(row.description || row.customerName || '-'))}">${escapeHtml(displayCustomerName(row.description || row.customerName || '-'))}</div>
       </td>
       <td class="payment-gateway-kind" data-label="Jenis"><span class="badge ${paymentGatewayKindBadge(row)}">${escapeHtml(paymentGatewayKindLabel(row))}</span></td>
       <td class="payment-gateway-provider" data-label="Penyedia">${escapeHtml(paymentGatewayProviderLabel(row.provider))}</td>
