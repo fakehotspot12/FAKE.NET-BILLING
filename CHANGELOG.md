@@ -2,12 +2,6 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
-## [2.9.6] - 2026-07-23
-
-### Changed
-
-- Nama pelanggan pada laporan transaksi dan pratinjau pembayaran ditampilkan dalam format Title Case agar lebih mudah dibaca.
-
 ## [2.9.5] - 2026-07-23
 
 ### Fixed
