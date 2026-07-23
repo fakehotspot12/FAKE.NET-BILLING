@@ -3070,8 +3070,9 @@ function dailyReportSummary(report = {}, transactionCount = Number(report.transa
 
 function reportPaymentCategory(item = {}) {
   const explicit = String(item.paymentCategory || item.methodGroup || '').trim().toLowerCase();
-  if (['cash', 'transfer', 'online'].includes(explicit)) return explicit;
   const method = String(item.method || item.paymentMethod || '').trim().toLowerCase();
+  if (method.includes('loket')) return 'transfer';
+  if (['cash', 'transfer', 'online'].includes(explicit)) return explicit;
   if (method.includes('tunai') || method.includes('cash')) return 'cash';
   if (/qris|virtual\s*account|e-?wallet|retail\s*outlet|qr\s*code|briva|bniva|bcava|mandiriva|permatava|muamalatva|cimbva|danamonva|maybankva|bsi(?:va)?|ovo|dana|linkaja|shopeepay|gopay|alfamart|alfamidi|indomaret|tripay|xendit|midtrans|duitku|doku|ipaymu/i.test(method)) return 'online';
   return 'transfer';
@@ -12310,8 +12311,8 @@ function billingActionPreviewRows(invoice = {}, extraRows = []) {
 function billingPaymentMethodChoices(selected = 'Tunai') {
   const methods = [
     { value: 'Tunai', title: 'Tunai', subtitle: 'Pembayaran cash/manual' },
-    { value: 'Tunai - Loket', title: 'Tunai - Loket', subtitle: 'Pembayaran diterima di loket/rumah' },
-    { value: 'Transfer', title: 'Transfer', subtitle: 'Pembayaran transfer/bank' }
+    { value: 'Tunai - Loket', title: 'Loket', subtitle: 'Pembayaran diterima di rumah/loket' },
+    { value: 'Transfer Manual', title: 'Transfer Manual', subtitle: 'Transfer manual yang dikonfirmasi user billing' }
   ];
   return `
     <div class="billing-method-options" role="radiogroup" aria-label="Metode bayar">

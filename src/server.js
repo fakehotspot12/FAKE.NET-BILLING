@@ -7138,6 +7138,14 @@ function normalizePaymentCategory(value = '') {
 }
 
 function paymentCategoryForRecord(record = {}, fallbackMethod = '') {
+  const rawMethod = String(
+    fallbackMethod
+    || record.method
+    || record.paymentMethod
+    || record.payment_method
+    || ''
+  ).trim().toLowerCase();
+  if (rawMethod.includes('loket')) return 'transfer';
   const explicit = normalizePaymentCategory(
     record.paymentCategory
     || record.payment_category
@@ -7176,13 +7184,7 @@ function paymentCategoryForRecord(record = {}, fallbackMethod = '') {
     return 'online';
   }
 
-  const method = String(
-    fallbackMethod
-    || record.method
-    || record.paymentMethod
-    || record.payment_method
-    || ''
-  ).trim().toLowerCase();
+  const method = rawMethod;
   if (method.includes('tunai') || method.includes('cash')) return 'cash';
   if (['manual', 'generated'].includes(source) && /^(paid|first online)$/.test(method)) return 'cash';
   if (
@@ -8288,6 +8290,8 @@ function radiusUserForInvoice(data = {}, invoice = {}, customer = {}) {
 function paymentMethodDisplayLabel(value = '', provider = '') {
   const raw = String(value || '').trim();
   if (!raw) return '-';
+  if (/^tunai\s*-\s*loket$/i.test(raw)) return 'Loket';
+  if (/^(transfer\s*manual|transfer)$/i.test(raw)) return 'Transfer Manual';
   const code = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const labels = {
     QRIS: 'QRIS',

@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.5] - 2026-07-23
+
+### Fixed
+
+- Klasifikasi laporan lama `Tunai - Loket` dipaksa masuk kelompok Transfer Manual meskipun metadata lama masih menyimpan kategori Tunai.
+
+## [2.9.4] - 2026-07-23
+
+### Changed
+
+- Pembayaran loket dan transfer manual disatukan sebagai `Transfer Manual`; catatan konfirmasi tetap dipertahankan untuk audit.
+
 ## [2.9.3] - 2026-07-23
 
 ### Fixed
