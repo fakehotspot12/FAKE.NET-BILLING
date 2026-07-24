@@ -2886,6 +2886,36 @@ const PPP_IMPORT_COLUMNS = [
 
 const MAX_IMPORT_XLSX_BYTES = 2 * 1024 * 1024;
 const MAX_IMPORT_XLSX_ROWS = 2000;
+const PPP_IMPORT_PHONE_KEYS = [
+  'whatsapp',
+  'no_whatsapp',
+  'nomor_whatsapp',
+  'nomor_wa',
+  'no_wa',
+  'wa',
+  'phone',
+  'mobile',
+  'handphone',
+  'hp',
+  'no_hp',
+  'nomor_hp',
+  'telepon',
+  'telephone',
+  'no_telepon',
+  'nomor_telepon',
+  'telepon_whatsapp',
+  'no_telepon_whatsapp',
+  'nomor_telepon_whatsapp'
+];
+
+function importPhoneValue(row = {}) {
+  for (const key of PPP_IMPORT_PHONE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(row, key)) continue;
+    const value = row[key];
+    if (String(value ?? '').trim()) return value;
+  }
+  return '';
+}
 
 function excelCellText(value) {
   if (value === null || value === undefined) return '';
@@ -3037,7 +3067,7 @@ async function pppImportTemplateBuffer() {
       { kolom: 'add_to_member', wajib: 'Tidak', contoh: 'yes', keterangan: 'Isi yes jika user juga dibuatkan data member.' },
       { kolom: 'member_name', wajib: 'Jika add_to_member yes', contoh: 'Budi', keterangan: 'Nama pelanggan/member.' },
       { kolom: 'ktp', wajib: 'Tidak', contoh: '6472xxxxxxxxxxxx', keterangan: 'Nomor identitas pelanggan jika tersedia.' },
-      { kolom: 'whatsapp', wajib: 'Jika add_to_member yes', contoh: '080000000001 / 6280000000001', keterangan: 'Boleh isi 08..., 628..., +628..., 8..., atau awali apostrophe seperti \'08... di Excel. Saat import otomatis disimpan menjadi format 08....' },
+      { kolom: 'whatsapp', wajib: 'Jika add_to_member yes', contoh: '080000000001 / 6280000000001', keterangan: 'Boleh isi 08..., 628..., +628..., 8..., atau awali apostrophe seperti \'08... di Excel. Header lama seperti No Whatsapp, No WA, Nomor WA, No HP, Telepon juga tetap dibaca. Saat import otomatis disimpan menjadi format 08....' },
       { kolom: 'email', wajib: 'Tidak', contoh: 'budi@example.net', keterangan: 'Email pelanggan jika tersedia.' },
       { kolom: 'address', wajib: 'Tidak', contoh: 'Jl. Contoh No. 1', keterangan: 'Alamat pelanggan.' },
       { kolom: 'payment_type', wajib: 'Tidak', contoh: 'postpaid / prepaid', keterangan: 'Bisa juga memakai PASCABAYAR / PRABAYAR dari format Radboox.' },
@@ -3387,7 +3417,7 @@ function importPppUsers(data = {}, rows = [], actor = {}) {
       const serviceName = String(row.service_name || row.service || '').trim();
       const addToMember = row.add_to_member || row.add_on_billing || row.member || '';
       const memberName = String(row.member_name || row.full_name || row.name || username || '').trim();
-      const memberPhone = normalizeLocalPhone(row.whatsapp || row.no_whatsapp || row.phone || row.no_hp || row.telepon || '');
+      const memberPhone = normalizeLocalPhone(importPhoneValue(row));
       const activeDate = normalizeImportDate(row.active_date || row.tanggal_aktif || row.installed_at || row.install_date || '');
       const invoiceStatus = String(row.invoice_status || row.status_invoice || '').trim();
       const importedPaymentType = normalizeImportPaymentType(row.payment_type || row.tipe_pembayaran || '');

@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.7] - 2026-07-24
+
+### Fixed
+
+- Import PPP-DHCP menerima alias kolom nomor Whatsapp yang lebih luas seperti `No WA`, `Nomor WA`, `No HP`, dan `Telepon`.
+- File XLSX dengan nomor Whatsapp diawali apostrophe Excel tetap terbaca saat `add_to_member` bernilai `yes`.
+
 ## [2.9.6] - 2026-07-24
 
 ### Fixed
