@@ -80,7 +80,7 @@ const UPLOAD_ROOT = path.join(APP_ROOT, 'data', 'uploads');
 const WEB_PUSH_VAPID_PATH = path.join(APP_ROOT, 'data', 'webpush-vapid.json');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-20');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-25');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
@@ -145,6 +145,7 @@ const MIME_TYPES = {
 };
 
 const STATIC_COMPRESSIBLE_EXTENSIONS = new Set(['.html', '.css', '.js', '.json', '.webmanifest', '.svg']);
+const STATIC_RUNTIME_TOKEN_EXTENSIONS = new Set(['.html', '.js', '.webmanifest']);
 const STATIC_COMPRESSION_MIN_BYTES = 1024;
 const STATIC_COMPRESSION_CACHE_LIMIT = 32;
 const staticCompressionCache = new Map();
@@ -157,6 +158,15 @@ function staticCacheControl(ext) {
 
 function staticEtag(stat, encoding = '') {
   const suffix = encoding ? `-${encoding}` : '';
+  return `W/"${Number(stat.size).toString(16)}-${Math.floor(Number(stat.mtimeMs)).toString(16)}${suffix}"`;
+}
+
+function staticRuntimeTokenSuffix(dynamic = false) {
+  return dynamic ? `-${APP_VERSION}-${APP_BUILD_VERSION}-${APP_RELEASE_DATE}` : '';
+}
+
+function staticRuntimeEtag(stat, encoding = '', dynamic = false) {
+  const suffix = `${staticRuntimeTokenSuffix(dynamic)}${encoding ? `-${encoding}` : ''}`;
   return `W/"${Number(stat.size).toString(16)}-${Math.floor(Number(stat.mtimeMs)).toString(16)}${suffix}"`;
 }
 
@@ -182,6 +192,22 @@ async function compressedStaticBody(filePath = '', stat = {}, body = Buffer.allo
     staticCompressionCache.delete(staticCompressionCache.keys().next().value);
   }
   return compressed;
+}
+
+function staticRuntimeBody(ext = '', sourceBody = Buffer.alloc(0)) {
+  if (!STATIC_RUNTIME_TOKEN_EXTENSIONS.has(ext)) {
+    return { body: sourceBody, dynamic: false };
+  }
+  const original = sourceBody.toString('utf8');
+  const next = original
+    .replace(/__FAKENET_APP_VERSION__/g, APP_VERSION)
+    .replace(/__FAKENET_BUILD_VERSION__/g, APP_BUILD_VERSION)
+    .replace(/__FAKENET_RELEASE_DATE__/g, APP_RELEASE_DATE)
+    .replace(/fakenet-billing-\d+\.\d+\.\d+/g, `fakenet-billing-${APP_VERSION}`);
+  return {
+    body: Buffer.from(next, 'utf8'),
+    dynamic: next !== original
+  };
 }
 
 let writeQueue = Promise.resolve();
@@ -16701,23 +16727,27 @@ async function serveStatic(req, res, url) {
     }
     const ext = path.extname(filePath);
     const encoding = staticResponseEncoding(req, ext, stat.size);
-    const etag = staticEtag(stat, encoding);
-    if (req.headers['if-none-match'] === etag) {
+    const sourceBody = await fs.readFile(filePath);
+    const runtime = staticRuntimeBody(ext, sourceBody);
+    const runtimeStat = runtime.dynamic
+      ? { ...stat, size: runtime.body.length }
+      : stat;
+    const runtimeEtag = staticRuntimeEtag(runtimeStat, encoding, runtime.dynamic);
+    if (req.headers['if-none-match'] === runtimeEtag) {
       res.writeHead(304, {
-        ETag: etag,
+        ETag: runtimeEtag,
         'Cache-Control': staticCacheControl(ext),
         Vary: 'Accept-Encoding'
       });
       res.end();
       return;
     }
-    const sourceBody = await fs.readFile(filePath);
-    const body = await compressedStaticBody(filePath, stat, sourceBody, encoding);
+    const body = await compressedStaticBody(filePath, runtimeStat, runtime.body, encoding);
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': body.length,
       'Cache-Control': staticCacheControl(ext),
-      ETag: etag,
+      ETag: runtimeEtag,
       'Last-Modified': stat.mtime.toUTCString(),
       Vary: 'Accept-Encoding',
       ...(encoding ? { 'Content-Encoding': encoding } : {})

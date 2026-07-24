@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.10] - 2026-07-25
+
+### Fixed
+
+- Frontend memakai versi aplikasi dari runtime server untuk cache-buster, fallback tampilan versi, dan service worker.
+- ETag static file yang berisi token runtime ikut berubah sesuai versi aplikasi agar browser tidak tertahan di bundle lama setelah update.
+
 ## [2.9.9] - 2026-07-25
 
 ### Fixed

@@ -240,9 +240,9 @@ const state = {
       loginVerificationEnabled: true
     },
     appInfo: {
-      version: '2.9.2',
-      buildVersion: '2.9.2',
-      releaseDate: '2026-07-20'
+      version: '__FAKENET_APP_VERSION__',
+      buildVersion: '__FAKENET_BUILD_VERSION__',
+      releaseDate: '__FAKENET_RELEASE_DATE__'
     }
   },
   hotspotVoucherTemplates: [],
@@ -253,9 +253,9 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
-    appVersion: '2.9.2',
-    buildVersion: '2.9.2',
-    releaseDate: '2026-07-20',
+    appVersion: '__FAKENET_APP_VERSION__',
+    buildVersion: '__FAKENET_BUILD_VERSION__',
+    releaseDate: '__FAKENET_RELEASE_DATE__',
     loginVerificationEnabled: true
   },
   notifications: null,
@@ -1008,7 +1008,7 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-2.9.2', {
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-__FAKENET_APP_VERSION__', {
       scope: '/'
     });
   }
@@ -2654,9 +2654,9 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: state.branding.copyrightName || 'FAKE.NET',
-    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '2.9.2',
-    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '2.9.2',
-    releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '2026-07-20',
+    appVersion: state.branding.appVersion || state.settings.appInfo?.version || '__FAKENET_APP_VERSION__',
+    buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '__FAKENET_BUILD_VERSION__',
+    releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '__FAKENET_RELEASE_DATE__',
     loginVerificationEnabled: settingVerification === undefined
       ? state.branding.loginVerificationEnabled !== false
       : settingVerification !== false
