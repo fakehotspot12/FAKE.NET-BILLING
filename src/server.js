@@ -1391,8 +1391,24 @@ function findCustomerForRadiusUser(data = {}, radiusUser = {}) {
   }) || null;
 }
 
+function phoneDigitsFromInput(value = '') {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const cleaned = text.replace(/^'/, '').replace(/\s+/g, '');
+  if (/^\d+[.,]0+$/.test(cleaned)) {
+    return cleaned.replace(/[.,]0+$/, '');
+  }
+  if (/^\d+(?:[.,]\d+)?e[+-]?\d+$/i.test(cleaned)) {
+    const numeric = Number(cleaned.replace(',', '.'));
+    if (Number.isFinite(numeric) && numeric > 0 && numeric < Number.MAX_SAFE_INTEGER) {
+      return Math.trunc(numeric).toString();
+    }
+  }
+  return cleaned.replace(/\D/g, '');
+}
+
 function normalizeIndonesianPhone(value = '') {
-  const digits = String(value || '').replace(/\D/g, '');
+  const digits = phoneDigitsFromInput(value);
   if (!digits) return '';
   if (digits.startsWith('62')) return digits;
   if (digits.startsWith('0')) return `62${digits.slice(1)}`;
@@ -1401,7 +1417,7 @@ function normalizeIndonesianPhone(value = '') {
 }
 
 function normalizeLocalPhone(value = '') {
-  const digits = String(value || '').replace(/\D/g, '');
+  const digits = phoneDigitsFromInput(value);
   if (!digits) return '';
   if (digits.startsWith('62') && digits.length >= 10) return `0${digits.slice(2)}`;
   if (digits.startsWith('8') && digits.length >= 9) return `0${digits}`;
@@ -3021,7 +3037,7 @@ async function pppImportTemplateBuffer() {
       { kolom: 'add_to_member', wajib: 'Tidak', contoh: 'yes', keterangan: 'Isi yes jika user juga dibuatkan data member.' },
       { kolom: 'member_name', wajib: 'Jika add_to_member yes', contoh: 'Budi', keterangan: 'Nama pelanggan/member.' },
       { kolom: 'ktp', wajib: 'Tidak', contoh: '6472xxxxxxxxxxxx', keterangan: 'Nomor identitas pelanggan jika tersedia.' },
-      { kolom: 'whatsapp', wajib: 'Jika add_to_member yes', contoh: '080000000001', keterangan: 'Kolom diformat teks supaya angka 0 depan tidak hilang di Excel.' },
+      { kolom: 'whatsapp', wajib: 'Jika add_to_member yes', contoh: '080000000001 / 6280000000001', keterangan: 'Boleh isi 08..., 628..., +628..., 8..., atau awali apostrophe seperti \'08... di Excel. Saat import otomatis disimpan menjadi format 08....' },
       { kolom: 'email', wajib: 'Tidak', contoh: 'budi@example.net', keterangan: 'Email pelanggan jika tersedia.' },
       { kolom: 'address', wajib: 'Tidak', contoh: 'Jl. Contoh No. 1', keterangan: 'Alamat pelanggan.' },
       { kolom: 'payment_type', wajib: 'Tidak', contoh: 'postpaid / prepaid', keterangan: 'Bisa juga memakai PASCABAYAR / PRABAYAR dari format Radboox.' },
@@ -3048,7 +3064,7 @@ async function pppImportTemplateBuffer() {
       profile: 22,
       nas: 22,
       member_name: 24,
-      whatsapp: 18,
+      whatsapp: 28,
       email: 25,
       address: 32,
       note: 34
@@ -8087,7 +8103,7 @@ function createLocalManualInvoice(data = {}, customer = {}, subPeriod = 1, actor
 }
 
 function normalizeWaPhone(phone = '') {
-  const digits = String(phone || '').replace(/\D/g, '');
+  const digits = phoneDigitsFromInput(phone);
   if (!digits) return '';
   if (digits.startsWith('62')) return digits;
   if (digits.startsWith('0')) return `62${digits.slice(1)}`;

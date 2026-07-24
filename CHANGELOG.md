@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.6] - 2026-07-24
+
+### Fixed
+
+- Import PPP-DHCP menormalkan nomor Whatsapp dari format `08`, `628`, `+628`, angka tanpa nol depan, angka desimal Excel, dan scientific notation menjadi format lokal `08`.
+- Panduan template XLSX diperjelas agar operator bisa memakai format nomor Whatsapp yang aman saat import.
+
 ## [2.9.5] - 2026-07-23
 
 ### Fixed

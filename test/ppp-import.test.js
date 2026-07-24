@@ -133,6 +133,37 @@ test('PPP-DHCP import can explicitly count a current installation as PSB', () =>
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', '2099-07').psb, 1);
 });
 
+test('PPP-DHCP import normalizes Excel phone variants to local 08 format', () => {
+  const data = createDefaultStore();
+  data.radiusProfiles.push({ id: 'profile-10m', name: '10M', serviceType: 'pppoe', price: 150000, active: true });
+  data.radiusNas.push({ id: 'nas-site-a', name: 'SITE-A', address: '10.10.10.1', active: true });
+  const variants = [
+    ['phone-62@test', '6285246713195'],
+    ['phone-plus@test', '+62 852 4671 3195'],
+    ['phone-eight@test', '85246713195'],
+    ['phone-quote@test', "'085246713195"],
+    ['phone-decimal@test', '85246713195.0'],
+    ['phone-science@test', '8.5246713195E+10']
+  ];
+
+  const summary = serverInternals.importPppUsers(data, variants.map(([username, whatsapp], index) => ({
+    username,
+    password: 'secret',
+    type: 'PPPoE',
+    profile: '10M',
+    nas: 'SITE-A',
+    add_to_member: 'yes',
+    member_name: `Pelanggan ${index + 1}`,
+    whatsapp,
+    active_date: '15/07/2099',
+    invoice_status: 'paid'
+  })), { name: 'Admin', username: 'admin' });
+
+  assert.equal(summary.errors.length, 0);
+  assert.equal(summary.created.length, variants.length);
+  assert.deepEqual(data.customers.map((customer) => customer.whatsapp), Array(variants.length).fill('085246713195'));
+});
+
 test('PPP-DHCP import error reports the Excel row and sequence number', () => {
   const data = createDefaultStore();
   const summary = serverInternals.importPppUsers(data, [{
