@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.9] - 2026-07-25
+
+### Fixed
+
+- Parser XLSX import PPP-DHCP membaca cell kosong self-closing dengan benar, sehingga kolom setelah cell kosong tidak bergeser dan kolom `whatsapp` tetap terbaca.
+
 ## [2.9.8] - 2026-07-24
 
 ### Fixed

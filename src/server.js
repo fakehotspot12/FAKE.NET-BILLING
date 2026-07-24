@@ -3365,9 +3365,10 @@ function xlsxRowsFromSheetXml(sheetXml = '', sharedStrings = []) {
   for (const rowMatch of String(sheetXml || '').matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
     const rowNumber = Number(rowMatch[1]);
     const cells = [];
-    for (const cellMatch of rowMatch[2].matchAll(/<c[^>]*r="([A-Z]+\d+)"([^>]*)>([\s\S]*?)<\/c>/g)) {
-      const ref = cellMatch[1];
-      const attrs = cellMatch[2] || '';
+    for (const cellMatch of rowMatch[2].matchAll(/<c\b([^>]*)\/>|<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const attrs = cellMatch[1] || cellMatch[2] || '';
+      const ref = attrs.match(/\br="([A-Z]+\d+)"/)?.[1] || '';
+      if (!ref) continue;
       const body = cellMatch[3] || '';
       const type = attrs.match(/t="([^"]+)"/)?.[1] || '';
       let value = body.match(/<v>([\s\S]*?)<\/v>/)?.[1] || '';

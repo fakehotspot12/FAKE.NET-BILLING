@@ -206,6 +206,68 @@ test('PPP-DHCP XLSX import keeps whatsapp as the standard contact column', async
   assert.equal(data.customers[0].whatsapp, '085246713195');
 });
 
+test('PPP-DHCP XLSX import keeps columns aligned when blank cells appear before whatsapp', async () => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('ppp_dhcp_users');
+  worksheet.addRow([
+    'no',
+    'username',
+    'password',
+    'type',
+    'profile',
+    'nas',
+    'static_ip',
+    'mac_address',
+    'status',
+    'add_to_member',
+    'member_name',
+    'ktp',
+    'whatsapp',
+    'email',
+    'address',
+    'payment_type',
+    'billing_period',
+    'invoice_status',
+    'active_date'
+  ]);
+  worksheet.addRow([
+    '1',
+    'blank-before-phone@test',
+    'secret',
+    'PPPoE',
+    '10M',
+    'SITE-A',
+    '',
+    '',
+    'active',
+    'yes',
+    'Blank Before Phone',
+    '',
+    '085246713195',
+    '',
+    'Alamat pelanggan',
+    'postpaid',
+    'cycle',
+    'paid',
+    '15/07/2099'
+  ]);
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  const rows = await serverInternals.readWorkbookRowsFromBase64(buffer.toString('base64'));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].static_ip, '');
+  assert.equal(rows[0].mac_address, '');
+  assert.equal(rows[0].status, 'active');
+  assert.equal(rows[0].ktp, '');
+  assert.equal(rows[0].whatsapp, '085246713195');
+
+  const data = createDefaultStore();
+  data.radiusProfiles.push({ id: 'profile-10m', name: '10M', serviceType: 'pppoe', price: 150000, active: true });
+  data.radiusNas.push({ id: 'nas-site-a', name: 'SITE-A', address: '10.10.10.1', active: true });
+  const summary = serverInternals.importPppUsers(data, rows, { name: 'Admin', username: 'admin' });
+  assert.equal(summary.errors.length, 0);
+  assert.equal(data.customers[0].whatsapp, '085246713195');
+});
+
 test('PPP-DHCP import can infer phone from a non-standard contact column without using KTP', () => {
   const data = createDefaultStore();
   data.radiusProfiles.push({ id: 'profile-10m', name: '10M', serviceType: 'pppoe', price: 150000, active: true });
