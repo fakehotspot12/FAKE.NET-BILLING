@@ -2896,9 +2896,17 @@ const PPP_IMPORT_PHONE_KEYS = [
   'phone',
   'mobile',
   'handphone',
+  'nomor_handphone',
+  'no_handphone',
   'hp',
   'no_hp',
   'nomor_hp',
+  'telp',
+  'no_telp',
+  'nomor_telp',
+  'telp_wa',
+  'no_telp_wa',
+  'nomor_telp_wa',
   'telepon',
   'telephone',
   'no_telepon',
@@ -2907,12 +2915,61 @@ const PPP_IMPORT_PHONE_KEYS = [
   'no_telepon_whatsapp',
   'nomor_telepon_whatsapp'
 ];
+const PPP_IMPORT_PHONE_EXCLUDE_KEYS = new Set([
+  'no',
+  'username',
+  'password',
+  'type',
+  'profile',
+  'nas',
+  'static_ip',
+  'ip_address',
+  'mac',
+  'mac_address',
+  'ktp',
+  'no_ktp',
+  'no_ktp_sim',
+  'id_card',
+  'member_id',
+  'member_code',
+  'uid',
+  'code',
+  'price',
+  'harga',
+  'ppn',
+  'ppn_',
+  'vat',
+  'discount',
+  'discount_',
+  'diskon',
+  'active_date',
+  'tanggal_aktif',
+  'billing_period',
+  'payment_type',
+  'invoice_status',
+  'status',
+  'note',
+  'notes'
+]);
+
+function likelyIndonesianPhoneInput(value = '') {
+  const digits = phoneDigitsFromInput(value);
+  if (digits.startsWith('0')) return digits.length >= 10 && digits.length <= 15 && digits[1] === '8';
+  if (digits.startsWith('62')) return digits.length >= 11 && digits.length <= 16 && digits[2] === '8';
+  if (digits.startsWith('8')) return digits.length >= 9 && digits.length <= 14;
+  return false;
+}
 
 function importPhoneValue(row = {}) {
   for (const key of PPP_IMPORT_PHONE_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(row, key)) continue;
     const value = row[key];
     if (String(value ?? '').trim()) return value;
+  }
+  for (const [key, value] of Object.entries(row || {})) {
+    const cleanKey = normalizeImportKey(key);
+    if (PPP_IMPORT_PHONE_EXCLUDE_KEYS.has(cleanKey)) continue;
+    if (likelyIndonesianPhoneInput(value)) return value;
   }
   return '';
 }
@@ -3067,7 +3124,7 @@ async function pppImportTemplateBuffer() {
       { kolom: 'add_to_member', wajib: 'Tidak', contoh: 'yes', keterangan: 'Isi yes jika user juga dibuatkan data member.' },
       { kolom: 'member_name', wajib: 'Jika add_to_member yes', contoh: 'Budi', keterangan: 'Nama pelanggan/member.' },
       { kolom: 'ktp', wajib: 'Tidak', contoh: '6472xxxxxxxxxxxx', keterangan: 'Nomor identitas pelanggan jika tersedia.' },
-      { kolom: 'whatsapp', wajib: 'Jika add_to_member yes', contoh: '080000000001 / 6280000000001', keterangan: 'Boleh isi 08..., 628..., +628..., 8..., atau awali apostrophe seperti \'08... di Excel. Header lama seperti No Whatsapp, No WA, Nomor WA, No HP, Telepon juga tetap dibaca. Saat import otomatis disimpan menjadi format 08....' },
+      { kolom: 'whatsapp', wajib: 'Jika add_to_member yes', contoh: '080000000001 / 6280000000001', keterangan: 'Boleh isi 08..., 628..., +628..., 8..., atau awali apostrophe seperti \'08... di Excel. Header lama seperti No Whatsapp, No WA, Nomor WA, No HP, No Telp/WA, Nomor Handphone, dan Telepon juga tetap dibaca. Jika kolom kontak punya nama lain tetapi isinya jelas nomor Indonesia, importer tetap mencoba membacanya. Saat import otomatis disimpan menjadi format 08....' },
       { kolom: 'email', wajib: 'Tidak', contoh: 'budi@example.net', keterangan: 'Email pelanggan jika tersedia.' },
       { kolom: 'address', wajib: 'Tidak', contoh: 'Jl. Contoh No. 1', keterangan: 'Alamat pelanggan.' },
       { kolom: 'payment_type', wajib: 'Tidak', contoh: 'postpaid / prepaid', keterangan: 'Bisa juga memakai PASCABAYAR / PRABAYAR dari format Radboox.' },

@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.8] - 2026-07-24
+
+### Fixed
+
+- Import PPP-DHCP membaca lebih banyak alias nomor Whatsapp seperti `No Telp/WA`, `Nomor Handphone`, dan variasi telepon lain.
+- Import PPP-DHCP bisa mengambil nomor dari kolom kontak non-standar jika nilainya jelas nomor Indonesia, tanpa salah mengambil KTP/MAC/IP sebagai Whatsapp.
+
 ## [2.9.7] - 2026-07-24
 
 ### Fixed

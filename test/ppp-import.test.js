@@ -167,7 +167,7 @@ test('PPP-DHCP import normalizes Excel phone variants to local 08 format', () =>
 test('PPP-DHCP XLSX import accepts common Whatsapp header aliases with apostrophe numbers', async () => {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('ppp_dhcp_users');
-  worksheet.addRow(['username', 'password', 'type', 'profile', 'nas', 'add_to_member', 'member_name', 'No WA']);
+  worksheet.addRow(['username', 'password', 'type', 'profile', 'nas', 'add_to_member', 'member_name', 'No Telp/WA']);
   worksheet.addRow(['Data Import Terbaca mulai dari 5']);
   worksheet.addRow([]);
   worksheet.addRow([]);
@@ -175,12 +175,56 @@ test('PPP-DHCP XLSX import accepts common Whatsapp header aliases with apostroph
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   const rows = await serverInternals.readWorkbookRowsFromBase64(buffer.toString('base64'));
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].no_wa, "'085246713195");
+  assert.equal(rows[0].no_telp_wa, "'085246713195");
 
   const data = createDefaultStore();
   data.radiusProfiles.push({ id: 'profile-10m', name: '10M', serviceType: 'pppoe', price: 150000, active: true });
   data.radiusNas.push({ id: 'nas-site-a', name: 'SITE-A', address: '10.10.10.1', active: true });
   const summary = serverInternals.importPppUsers(data, rows, { name: 'Admin', username: 'admin' });
+  assert.equal(summary.errors.length, 0);
+  assert.equal(data.customers[0].whatsapp, '085246713195');
+});
+
+test('PPP-DHCP XLSX import keeps whatsapp as the standard contact column', async () => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('ppp_dhcp_users');
+  worksheet.addRow(['no', 'username', 'password', 'type', 'profile', 'nas', 'add_to_member', 'member_name', 'whatsapp']);
+  worksheet.addRow(['1', 'Contoh', 'password', 'PPPoE', '10M', 'SITE-A', 'yes', 'Contoh Saja', '080000000001']);
+  worksheet.addRow(['2', 'Contoh 2', 'password', 'PPPoE', '10M', 'SITE-A', 'yes', 'Contoh Dua', '080000000002']);
+  worksheet.addRow(['Data Import Terbaca mulai dari 5']);
+  worksheet.addRow(['1', 'standard-whatsapp@test', 'secret', 'PPPoE', '10M', 'SITE-A', 'yes', 'Standard Whatsapp', "'085246713195"]);
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  const rows = await serverInternals.readWorkbookRowsFromBase64(buffer.toString('base64'));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].whatsapp, "'085246713195");
+
+  const data = createDefaultStore();
+  data.radiusProfiles.push({ id: 'profile-10m', name: '10M', serviceType: 'pppoe', price: 150000, active: true });
+  data.radiusNas.push({ id: 'nas-site-a', name: 'SITE-A', address: '10.10.10.1', active: true });
+  const summary = serverInternals.importPppUsers(data, rows, { name: 'Admin', username: 'admin' });
+  assert.equal(summary.errors.length, 0);
+  assert.equal(data.customers[0].whatsapp, '085246713195');
+});
+
+test('PPP-DHCP import can infer phone from a non-standard contact column without using KTP', () => {
+  const data = createDefaultStore();
+  data.radiusProfiles.push({ id: 'profile-10m', name: '10M', serviceType: 'pppoe', price: 150000, active: true });
+  data.radiusNas.push({ id: 'nas-site-a', name: 'SITE-A', address: '10.10.10.1', active: true });
+
+  const summary = serverInternals.importPppUsers(data, [{
+    username: 'infer-phone@test',
+    password: 'secret',
+    type: 'PPPoE',
+    profile: '10M',
+    nas: 'SITE-A',
+    add_to_member: 'yes',
+    member_name: 'Infer Phone',
+    ktp: '6472010101010001',
+    kontak_pelanggan: "'085246713195",
+    active_date: '15/07/2099',
+    invoice_status: 'paid'
+  }], { name: 'Admin', username: 'admin' });
+
   assert.equal(summary.errors.length, 0);
   assert.equal(data.customers[0].whatsapp, '085246713195');
 });
