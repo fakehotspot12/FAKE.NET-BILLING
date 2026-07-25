@@ -4873,6 +4873,20 @@ dialog:has(.changelog-preview) {
   font-size: 14px;
 }
 
+.member-addon-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.member-addon-editor .batch-toolbar,
+.member-addon-editor .batch-rows {
+  padding: 0;
+}
+
+.member-addon-editor .batch-toolbar {
+  align-items: center;
+}
+
 .table-wrap {
   max-width: 100%;
   overflow-x: auto;

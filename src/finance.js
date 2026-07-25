@@ -631,10 +631,54 @@ function discountAmountValue(source = {}, subtotal = 0, multiplier = 1) {
   return legacyRate > 0 ? Math.min(maxDiscount, Math.round((maxDiscount * legacyRate) / 100)) : 0;
 }
 
+function normalizeBillingAddons(source = {}) {
+  const raw = source.memberAddons ?? source.addons ?? source.addOns ?? source.billingAddons ?? source.billing_addons ?? [];
+  let rows = raw;
+  if (typeof raw === 'string') {
+    try {
+      rows = raw.trim() ? JSON.parse(raw) : [];
+    } catch {
+      rows = [];
+    }
+  }
+  if (!Array.isArray(rows)) {
+    rows = [];
+  }
+  return rows
+    .map((item, index) => {
+      const quantity = Math.max(1, Math.round(toNumber(item.quantity ?? item.qty ?? item.pcs ?? 1) || 1));
+      const hasUnitPrice = hasOwn(item, 'unitPrice') || hasOwn(item, 'price') || hasOwn(item, 'unitAmount');
+      const rawTotal = Math.max(0, Math.round(toNumber(item.amount ?? item.total ?? item.subtotal)));
+      const unitPrice = Math.max(0, Math.round(hasUnitPrice
+        ? toNumber(item.unitPrice ?? item.price ?? item.unitAmount)
+        : (quantity > 1 && rawTotal > 0 ? rawTotal / quantity : rawTotal)));
+      const name = cleanText(item.name || item.itemName || item.serviceName || item.description || `Add-on ${index + 1}`);
+      const note = cleanText(item.note || item.notes || item.description);
+      return {
+        id: cleanText(item.id),
+        name,
+        itemName: name,
+        quantity,
+        unitPrice,
+        amount: hasUnitPrice ? Math.round(quantity * unitPrice) : rawTotal,
+        note
+      };
+    })
+    .filter((item) => item.amount > 0);
+}
+
+function billingAddonsMonthlyTotal(source = {}) {
+  return normalizeBillingAddons(source).reduce((sum, item) => sum + toNumber(item.amount), 0);
+}
+
 function billingAmountBreakdown(settings = {}, customer = {}, months = 1, options = {}) {
   const quantity = Math.max(1, Math.round(toNumber(months) || 1));
   const unitPrice = Math.max(0, Math.round(resolvePrice(settings, customer)));
-  const subtotal = Math.max(0, Math.round(hasOwn(options, 'subtotal') ? toNumber(options.subtotal) : unitPrice * quantity));
+  const addOns = normalizeBillingAddons(hasOwn(options, 'addOns') ? { addOns: options.addOns } : customer);
+  const addOnMonthlyTotal = addOns.reduce((sum, item) => sum + toNumber(item.amount), 0);
+  const packageSubtotal = Math.max(0, Math.round(hasOwn(options, 'packageSubtotal') ? toNumber(options.packageSubtotal) : unitPrice * quantity));
+  const addOnSubtotal = Math.max(0, Math.round(hasOwn(options, 'addOnSubtotal') ? toNumber(options.addOnSubtotal) : addOnMonthlyTotal * quantity));
+  const subtotal = Math.max(0, Math.round(hasOwn(options, 'subtotal') ? toNumber(options.subtotal) : packageSubtotal + addOnSubtotal));
   const discountAmount = discountAmountValue(customer, subtotal, quantity);
   const discountRate = 0;
   const taxableAmount = subtotal;
@@ -650,6 +694,11 @@ function billingAmountBreakdown(settings = {}, customer = {}, months = 1, option
     unitPrice,
     months: quantity,
     subtotal,
+    packageSubtotal,
+    addOns,
+    addons: addOns,
+    addOnMonthlyTotal,
+    addOnSubtotal,
     baseAmount: subtotal,
     discountRate,
     discountAmount,
@@ -674,6 +723,7 @@ function applyBhpUsoToOpenInvoice(settings = {}, invoice = {}) {
   const status = normalizeStatus(invoice.status);
   if (['paid', 'cancelled'].includes(status)) return invoice;
   const baseAmount = Math.max(0, Math.round(toNumber(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount)));
+  const addOns = normalizeBillingAddons(invoice);
   const discountAmount = discountAmountValue(invoice, baseAmount);
   const taxableAmount = baseAmount;
   const ppnRate = percentValue(invoice.ppnRate ?? invoice.taxRate ?? invoice.vatRate);
@@ -683,6 +733,10 @@ function applyBhpUsoToOpenInvoice(settings = {}, invoice = {}) {
   const bhpUsoAmount = Math.round((taxableAmount * bhpUsoRate) / 100);
   invoice.subtotal = baseAmount;
   invoice.baseAmount = baseAmount;
+  invoice.addOns = addOns;
+  invoice.addons = addOns;
+  invoice.addOnMonthlyTotal = billingAddonsMonthlyTotal(invoice);
+  invoice.addOnSubtotal = Math.max(0, Math.round(toNumber(invoice.addOnSubtotal || invoice.addonSubtotal || 0)));
   invoice.discountAmount = discountAmount;
   invoice.taxableAmount = taxableAmount;
   invoice.ppnAmount = ppnAmount;
@@ -700,16 +754,31 @@ function applyBhpUsoToOpenInvoice(settings = {}, invoice = {}) {
 function billingAmountBreakdownForPeriods(settings = {}, customer = {}, periods = []) {
   const selectedPeriods = Array.isArray(periods) && periods.length ? periods.map(normalizePeriod) : [currentPeriod()];
   const unitPrice = Math.max(0, Math.round(resolvePrice(settings, customer)));
+  const addOns = normalizeBillingAddons(customer);
+  const addOnMonthlyTotal = billingAddonsMonthlyTotal(customer);
   const prorations = [];
-  const subtotal = selectedPeriods.reduce((total, period) => {
+  let packageSubtotal = 0;
+  let addOnSubtotal = 0;
+  selectedPeriods.forEach((period) => {
     const proration = postpaidCycleProrationInfo(settings, customer, period);
-    if (!proration) return total + unitPrice;
-    const proratedAmount = Math.round(unitPrice * proration.ratio);
-    prorations.push({ ...proration, period, amount: proratedAmount, fullAmount: unitPrice });
-    return total + proratedAmount;
-  }, 0);
+    if (!proration) {
+      packageSubtotal += unitPrice;
+      addOnSubtotal += addOnMonthlyTotal;
+      return;
+    }
+    const proratedPackageAmount = Math.round(unitPrice * proration.ratio);
+    const proratedAddOnAmount = Math.round(addOnMonthlyTotal * proration.ratio);
+    const proratedAmount = proratedPackageAmount + proratedAddOnAmount;
+    prorations.push({ ...proration, period, amount: proratedAmount, fullAmount: unitPrice + addOnMonthlyTotal });
+    packageSubtotal += proratedPackageAmount;
+    addOnSubtotal += proratedAddOnAmount;
+  });
+  const subtotal = packageSubtotal + addOnSubtotal;
   return billingAmountBreakdown(settings, customer, selectedPeriods.length, {
     subtotal,
+    packageSubtotal,
+    addOnSubtotal,
+    addOns,
     proration: prorations[0] || null
   });
 }
@@ -912,6 +981,11 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       coveredPeriods: [selectedPeriod],
       subPeriodMonths: 1,
       subtotal: billingAmount.subtotal,
+      packageSubtotal: billingAmount.packageSubtotal,
+      addOns: billingAmount.addOns,
+      addons: billingAmount.addOns,
+      addOnMonthlyTotal: billingAmount.addOnMonthlyTotal,
+      addOnSubtotal: billingAmount.addOnSubtotal,
       baseAmount: billingAmount.baseAmount,
       ppnRate: billingAmount.ppnRate,
       ppnAmount: billingAmount.ppnAmount,
@@ -1274,6 +1348,9 @@ function addManualCustomer(data, payload) {
     locationUrl: cleanText(payload.locationUrl || payload.mapUrl),
     packageName: cleanText(payload.packageName),
     price: toNumber(payload.price),
+    addOns: normalizeBillingAddons(payload),
+    addons: normalizeBillingAddons(payload),
+    addOnMonthlyTotal: billingAddonsMonthlyTotal(payload),
     status: normalizeStatus(payload.status || 'active'),
     dueDay: clampDay(payload.dueDay || billingDueDay(data.settings)),
     createdByName: cleanText(payload.createdByName || payload.actorName),
@@ -1502,6 +1579,8 @@ module.exports = {
   deleteExternalIncome,
   addExpense,
   addManualCustomer,
+  normalizeBillingAddons,
+  billingAddonsMonthlyTotal,
   billingAmountBreakdown,
   billingAmountBreakdownForPeriods,
   applyBhpUsoToOpenInvoice,

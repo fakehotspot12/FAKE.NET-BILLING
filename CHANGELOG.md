@@ -2,6 +2,17 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.19] - 2026-07-25
+
+### Added
+
+- Member PPP-DHCP sekarang mendukung add-on layanan bulanan multi item, seperti sewa CCTV, STB TV, atau biaya layanan tambahan lain.
+- Add-on tampil pada wizard tambah member, edit payment member, detail member, dan ikut tersimpan pada invoice baru.
+
+### Changed
+
+- Total tagihan member dihitung dari harga paket ditambah total add-on sebelum PPN/BHP USO dan diskon.
+
 ## [2.9.18] - 2026-07-25
 
 ### Fixed

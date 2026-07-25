@@ -29,6 +29,8 @@ const {
   addManualCustomer,
   billingDueDayForCustomer,
   billingAmountBreakdownForPeriods,
+  normalizeBillingAddons,
+  billingAddonsMonthlyTotal,
   applyBhpUsoToOpenInvoice,
   cancelInvoice,
   currentPeriod,
@@ -3920,6 +3922,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
   const explicitNextDue = normalizeImportDate(payload.memberNextDue || payload.nextDue || payload.dueDate || '');
   const nextDue = explicitNextDue || anchoredDueDateFromActiveDate(activeDate, invoiceStatus, dueDay);
   const memberPrice = radiusProfileMemberPrice(profile, payload);
+  const memberAddons = normalizeBillingAddons(payload);
   const customer = addManualCustomer(data, {
     username,
     name: memberName,
@@ -3933,6 +3936,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     locationUrl,
     packageName: payload.memberPackageName || profile.name || payload.profile || '',
     price: memberPrice,
+    addons: memberAddons,
     status: payload.memberStatus || (invoiceStatus === 'unpaid' ? 'pending' : 'active'),
     dueDay,
     ...actorPayload(actor)
@@ -3950,6 +3954,9 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     billingPeriod: billingMode.billingPeriod,
     ppn: String(payload.memberPpn || payload.ppn || '').trim(),
     discount: String(payload.memberDiscount || payload.discount || '').trim(),
+    addOns: memberAddons,
+    addons: memberAddons,
+    addOnMonthlyTotal: billingAddonsMonthlyTotal({ addOns: memberAddons }),
     firstInvoiceStatus: invoiceStatus,
     initialInvoiceStatus: invoiceStatus,
     nextDue,
@@ -4005,6 +4012,12 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   customer.address = String(payload.memberAddress || payload.address || customer.address || '').trim();
   customer.packageName = payload.memberPackageName || profile.name || payload.profile || customer.packageName || '';
   customer.price = radiusProfileMemberPrice(profile, payload, customer.price);
+  if (['memberAddons', 'addons', 'addOns', 'billingAddons'].some((key) => Object.prototype.hasOwnProperty.call(payload, key))) {
+    const memberAddons = normalizeBillingAddons(payload);
+    customer.addOns = memberAddons;
+    customer.addons = memberAddons;
+    customer.addOnMonthlyTotal = billingAddonsMonthlyTotal({ addOns: memberAddons });
+  }
   customer.paymentType = billingMode.paymentType;
   customer.billingPeriod = billingMode.billingPeriod;
   customer.ppn = String(payload.memberPpn || payload.ppn || customer.ppn || '').trim();
@@ -8118,6 +8131,11 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
     item: customer.packageName || `Tagihan internet ${period}`,
     amount: formatCurrencyText(billingAmount.subtotal),
     subtotal: billingAmount.subtotal,
+    packageSubtotal: billingAmount.packageSubtotal,
+    addOns: billingAmount.addOns,
+    addons: billingAmount.addOns,
+    addOnMonthlyTotal: billingAmount.addOnMonthlyTotal,
+    addOnSubtotal: billingAmount.addOnSubtotal,
     baseAmount: billingAmount.baseAmount,
     ppn: billingAmount.ppnRate > 0 ? `${billingAmount.ppnRate}% (${formatCurrencyText(billingAmount.ppnAmount)})` : '-',
     ppnRate: billingAmount.ppnRate,
@@ -8164,6 +8182,11 @@ function createLocalManualInvoice(data = {}, customer = {}, subPeriod = 1, actor
     coverageStartPeriod: coveredPeriods[0] || preview.period,
     coverageEndPeriod: coveredPeriods[coveredPeriods.length - 1] || preview.period,
     subtotal: Number(preview.subtotal || preview.baseAmount || 0),
+    packageSubtotal: Number(preview.packageSubtotal || 0),
+    addOns: Array.isArray(preview.addOns) ? preview.addOns : [],
+    addons: Array.isArray(preview.addOns) ? preview.addOns : [],
+    addOnMonthlyTotal: Number(preview.addOnMonthlyTotal || 0),
+    addOnSubtotal: Number(preview.addOnSubtotal || 0),
     baseAmount: Number(preview.baseAmount || preview.subtotal || 0),
     ppnRate: Number(preview.ppnRate || 0),
     ppnAmount: Number(preview.ppnAmount || 0),
@@ -15220,6 +15243,9 @@ async function handleApi(req, res, url) {
           price: Number(customer.price || customer.amount || 0),
           ppn: customer.ppn || '',
           discount: customer.discount || '',
+          addOns: normalizeBillingAddons(customer),
+          addons: normalizeBillingAddons(customer),
+          addOnMonthlyTotal: billingAddonsMonthlyTotal(customer),
           packageName: customer.packageName || '',
           createdByName: customer.createdByName || radiusUser.createdByName || '',
           createdByUsername: customer.createdByUsername || radiusUser.createdByUsername || '',
@@ -15378,7 +15404,10 @@ async function handleApi(req, res, url) {
         dueDate: customer.dueDate || customer.nextDue || '',
         price: Number(customer.price || customer.amount || 0),
         ppn: customer.ppn || '',
-        discount: customer.discount || ''
+        discount: customer.discount || '',
+        addOns: normalizeBillingAddons(customer),
+        addons: normalizeBillingAddons(customer),
+        addOnMonthlyTotal: billingAddonsMonthlyTotal(customer)
       };
       const internet = {
         username: radiusUser.username || customer.username || '',
@@ -15560,6 +15589,10 @@ async function handleApi(req, res, url) {
           customer.dueDate = customer.nextDue;
           customer.ppn = String(payload.ppn || '').trim();
           customer.discount = String(payload.discount || '').trim();
+          const memberAddons = normalizeBillingAddons(payload);
+          customer.addOns = memberAddons;
+          customer.addons = memberAddons;
+          customer.addOnMonthlyTotal = billingAddonsMonthlyTotal({ addOns: memberAddons });
           customer.updatedAt = new Date().toISOString();
           customer.updatedBy = authContext.user.name || authContext.user.username;
           addActivity(data, 'monitoring', `Payment member ${customer.name || customer.username || memberId} diperbarui oleh ${authContext.user.name || authContext.user.username}`, {

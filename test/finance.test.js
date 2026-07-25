@@ -477,6 +477,35 @@ test('nominal discount is applied after PPN so VAT-sized discount returns to bas
   assert.equal(created[0].totalAmount, 150000);
 });
 
+test('generated invoices include recurring member add-ons before PPN and discount', () => {
+  const data = createDefaultStore();
+  data.customers.push({
+    id: 'cus-addon-taxed',
+    username: 'addon-taxed@kampung.net',
+    name: 'Add-on Taxed',
+    packageName: 'Paket 10 Mbps',
+    status: 'active',
+    price: 150000,
+    addOns: [
+      { name: 'Sewa CCTV', quantity: 1, unitPrice: 50000 },
+      { name: 'STB TV', quantity: 2, unitPrice: 25000 }
+    ],
+    ppn: '11',
+    discount: '10000'
+  });
+
+  const created = generateInvoices(data, '2026-07');
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].packageSubtotal, 150000);
+  assert.equal(created[0].addOnSubtotal, 100000);
+  assert.equal(created[0].subtotal, 250000);
+  assert.equal(created[0].ppnAmount, 27500);
+  assert.equal(created[0].discountAmount, 10000);
+  assert.equal(created[0].amount, 267500);
+  assert.equal(created[0].addOns.length, 2);
+});
+
 test('local manual invoice skips active month when first invoice was paid', () => {
   const data = createDefaultStore();
   data.settings.billing = { postpaidDueDay: 10 };
@@ -513,16 +542,21 @@ test('local manual invoice preview applies member PPN and nominal discount for m
     price: 150000,
     ppn: '11',
     discount: '15000',
+    addOns: [
+      { name: 'STB TV', quantity: 1, unitPrice: 25000 }
+    ],
     activeDate: '2026-06-15',
     firstInvoiceStatus: 'paid'
   };
 
   const preview = serverInternals.localManualInvoicePreview(data, customer, 2);
 
-  assert.equal(preview.subtotal, 300000);
+  assert.equal(preview.packageSubtotal, 300000);
+  assert.equal(preview.addOnSubtotal, 50000);
+  assert.equal(preview.subtotal, 350000);
   assert.equal(preview.discountAmount, 30000);
-  assert.equal(preview.ppnAmount, 33000);
-  assert.equal(preview.totalAmount, 303000);
+  assert.equal(preview.ppnAmount, 38500);
+  assert.equal(preview.totalAmount, 358500);
 });
 
 test('local manual invoice stores PPN and nominal discount fields', () => {
@@ -536,6 +570,9 @@ test('local manual invoice stores PPN and nominal discount fields', () => {
     price: 150000,
     ppn: '11',
     discount: '15000',
+    addOns: [
+      { name: 'STB TV', quantity: 1, unitPrice: 25000 }
+    ],
     activeDate: '2026-06-15',
     firstInvoiceStatus: 'paid'
   };
@@ -543,10 +580,13 @@ test('local manual invoice stores PPN and nominal discount fields', () => {
 
   const { invoice } = serverInternals.createLocalManualInvoice(data, customer, 2, { name: 'Admin', username: 'admin' }, { queueWa: false });
 
-  assert.equal(invoice.subtotal, 300000);
+  assert.equal(invoice.packageSubtotal, 300000);
+  assert.equal(invoice.addOnSubtotal, 50000);
+  assert.equal(invoice.subtotal, 350000);
   assert.equal(invoice.discountAmount, 30000);
-  assert.equal(invoice.ppnAmount, 33000);
-  assert.equal(invoice.amount, 303000);
+  assert.equal(invoice.ppnAmount, 38500);
+  assert.equal(invoice.amount, 358500);
+  assert.equal(invoice.addOns.length, 1);
 });
 
 test('cancelled local manual invoice releases period for recreation with updated price', () => {
@@ -849,6 +889,44 @@ test('PPP member price follows selected profile instead of stale form payload', 
   assert.equal(data.customers[0].price, 150000);
   assert.match(member.code, /^22\d{9}$/);
   assert.notEqual(member.code, '123456789');
+});
+
+test('PPP member add-ons are saved and included in initial unpaid invoice', () => {
+  const data = createDefaultStore();
+  data.radiusProfiles.push({
+    id: 'prof-addon',
+    name: '10 Mbps',
+    serviceType: 'pppoe',
+    price: 150000
+  });
+  const next = {
+    id: 'rad-addon',
+    username: 'addon-user',
+    profileId: 'prof-addon',
+    serviceType: 'pppoe'
+  };
+
+  const member = serverInternals.radiusMemberFromPayload(data, {
+    addToMember: true,
+    memberName: 'Add-on User',
+    memberPhone: '085200000011',
+    memberActiveDate: '2026-07-15',
+    memberInvoiceStatus: 'unpaid',
+    memberAddons: JSON.stringify([
+      { name: 'Sewa CCTV', quantity: 1, unitPrice: 50000 },
+      { name: 'STB TV', quantity: 2, unitPrice: 25000 }
+    ])
+  }, next, { name: 'Admin', username: 'admin' });
+
+  assert.equal(member.addOnMonthlyTotal, 100000);
+  assert.equal(member.addOns.length, 2);
+  data.radiusUsers.push({ ...next, customerId: member.id });
+  const created = serverInternals.createLocalManualInvoice(data, member, 1, { name: 'Admin', username: 'admin' }, { queueWa: false });
+
+  assert.equal(created.invoice.packageSubtotal, 150000);
+  assert.equal(created.invoice.addOnSubtotal, 100000);
+  assert.equal(created.invoice.amount, 250000);
+  assert.equal(created.invoice.addOns.length, 2);
 });
 
 test('legacy 9 digit Member ID migrates to Radboox pattern without breaking linked records', () => {

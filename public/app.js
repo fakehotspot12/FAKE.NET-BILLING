@@ -5929,6 +5929,95 @@ function collectExpensePayload(form, payload) {
   };
 }
 
+function memberAddonRow(item = {}) {
+  const quantity = item.quantity || item.qty || item.pcs || 1;
+  const unitPrice = item.unitPrice || item.price || item.unitAmount || (item.amount && Number(quantity) > 1 ? Math.round(Number(item.amount || 0) / Number(quantity || 1)) : item.amount) || '';
+  return `
+    <div class="batch-row member-addon-row" data-batch-row data-member-addon-row>
+      <div class="batch-row-head">
+        <strong data-row-number>Add-on</strong>
+        <button class="ghost-button compact" type="button" data-remove-member-addon data-member-addon-control>Hapus Baris</button>
+      </div>
+      <div class="form-grid">
+        <label class="field">
+          <span>Nama layanan</span>
+          <input data-field="name" data-member-addon-field value="${escapeHtml(item.name || item.itemName || '')}" placeholder="Sewa CCTV, STB TV">
+        </label>
+        <label class="field">
+          <span>Qty</span>
+          <input data-field="quantity" data-member-addon-field type="number" min="1" step="1" value="${escapeHtml(quantity)}">
+        </label>
+        <label class="field">
+          <span>Biaya/bulan</span>
+          <input data-field="unitPrice" data-member-addon-field type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(unitPrice)}">
+        </label>
+        <label class="field">
+          <span>Catatan</span>
+          <input data-field="note" data-member-addon-field value="${escapeHtml(item.note || item.description || '')}" placeholder="Opsional">
+        </label>
+      </div>
+    </div>
+  `;
+}
+
+function reindexMemberAddonRows(container) {
+  const rows = [...container.querySelectorAll('[data-member-addon-row]')];
+  rows.forEach((row, index) => {
+    const number = row.querySelector('[data-row-number]');
+    if (number) number.textContent = `Add-on ${index + 1}`;
+  });
+}
+
+function collectMemberAddons(form) {
+  return [...form.querySelectorAll('[data-member-addon-row]')]
+    .map((row) => {
+      const quantity = Math.max(1, Number(rowValue(row, 'quantity')) || 1);
+      const unitPrice = Number(rowValue(row, 'unitPrice')) || 0;
+      const name = rowValue(row, 'name');
+      return {
+        name,
+        itemName: name,
+        quantity,
+        unitPrice,
+        amount: Math.round(quantity * unitPrice),
+        note: rowValue(row, 'note')
+      };
+    })
+    .filter((item) => item.amount > 0);
+}
+
+function syncMemberAddonsHidden(form) {
+  const hidden = form.querySelector('input[name="memberAddons"]');
+  const addons = collectMemberAddons(form);
+  if (hidden) hidden.value = JSON.stringify(addons);
+  return addons;
+}
+
+function bindMemberAddonRows(form, addons = []) {
+  const container = form?.querySelector('[data-member-addon-rows]');
+  if (!container) return;
+  const rows = memberAddonsArray(addons);
+  container.innerHTML = rows.length ? rows.map(memberAddonRow).join('') : memberAddonRow();
+  reindexMemberAddonRows(container);
+  syncMemberAddonsHidden(form);
+  form.querySelector('[data-add-member-addon]')?.addEventListener('click', () => {
+    container.insertAdjacentHTML('beforeend', memberAddonRow());
+    reindexMemberAddonRows(container);
+    syncMemberAddonsHidden(form);
+  });
+  container.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-remove-member-addon]');
+    if (!button) return;
+    button.closest('[data-member-addon-row]')?.remove();
+    if (!container.querySelector('[data-member-addon-row]')) {
+      container.insertAdjacentHTML('beforeend', memberAddonRow());
+    }
+    reindexMemberAddonRows(container);
+    syncMemberAddonsHidden(form);
+  });
+  container.addEventListener('input', () => syncMemberAddonsHidden(form));
+}
+
 async function renderExternalIncomes() {
   app.innerHTML = '<div class="empty">Memuat pemasukan...</div>';
   const period = normalizedPeriod(state.externalIncomePeriod || state.period);
@@ -8688,6 +8777,14 @@ function radiusMemberFieldsMarkup(options = {}) {
         <span>Diskon (Rp)</span>
         <input name="memberDiscount" type="number" min="0" step="1" value="" inputmode="numeric" data-member-field autocomplete="off" disabled>
       </label>
+      <div class="field full member-addon-editor">
+        <input type="hidden" name="memberAddons" value="[]" data-member-field disabled>
+        <div class="batch-toolbar compact">
+          <span>Add-on layanan bulanan seperti sewa CCTV, STB TV, atau biaya tambahan lain.</span>
+          <button class="ghost-button compact" type="button" data-add-member-addon data-member-addon-control disabled>Tambah Add-on</button>
+        </div>
+        <div class="batch-rows member-addon-rows" data-member-addon-rows></div>
+      </div>
       <div class="field full notice ${bhpUsoEnabled ? 'info' : ''}">
         <strong>BHP USO</strong>
         <span>${bhpUsoEnabled ? `Aktif ${bhpUsoRate}% dan otomatis ditambahkan ke total tagihan.` : 'Tidak aktif pada Billing Settings.'}</span>
@@ -8711,6 +8808,7 @@ function radiusMemberFieldsMarkup(options = {}) {
         <div><span>WhatsApp</span><strong data-radius-review="phone">-</strong></div>
         <div><span>Payment</span><strong data-radius-review="payment">-</strong></div>
         <div><span>Harga Profile</span><strong data-radius-review="price">-</strong></div>
+        <div><span>Add-on</span><strong data-radius-review="addons">-</strong></div>
         <div><span>PPN</span><strong data-radius-review="ppn">-</strong></div>
         <div><span>Diskon</span><strong data-radius-review="discount">-</strong></div>
         <div><span>BHP USO</span><strong data-radius-review="bhpUso">-</strong></div>
@@ -9003,6 +9101,11 @@ async function openRadiusPppUserModal(user = null) {
     if (!user && payload.addToMember && form?.dataset.radiusWizardReady !== '1') {
       throw new Error('Selesaikan wizard sampai Review sebelum menyimpan user dan member');
     }
+    if (!user && payload.addToMember) {
+      payload.memberAddons = JSON.stringify(collectMemberAddons(form));
+    } else {
+      delete payload.memberAddons;
+    }
     if (!user && type === 'dhcp' && !String(payload.macAddress || '').trim()) {
       throw new Error('MAC Address wajib diisi untuk DHCP');
     }
@@ -9041,6 +9144,7 @@ async function openRadiusPppUserModal(user = null) {
   bindRequiredRadiusProfileWarning('#radiusPppProfile', 'PPP-DHCP');
   bindRadiusPppTypeFields();
   if (!user) {
+    bindMemberAddonRows(modal.querySelector('.modal-frame'), []);
     bindRadiusMemberFields(options);
     bindRadiusPppWizard();
   }
@@ -9105,7 +9209,10 @@ function bindRadiusPppWizard() {
     reviewValue('memberName', modalBody.querySelector('input[name="memberName"]')?.value.trim() || '-');
     reviewValue('phone', modalBody.querySelector('input[name="memberPhone"]')?.value.trim() || '-');
     reviewValue('payment', `${selectedText('select[name="memberPaymentType"]')} / ${selectedText('select[name="memberBillingPeriod"]')}`);
-    const subtotal = Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberPrice"]')?.value || '')));
+    const packagePrice = Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberPrice"]')?.value || '')));
+    const addons = collectMemberAddons(modal.querySelector('.modal-frame'));
+    const addOnTotal = memberAddonsTotal(addons);
+    const subtotal = packagePrice + addOnTotal;
     const ppnRate = percentValue(modalBody.querySelector('input[name="memberPpn"]')?.value || '');
     const discountAmount = Math.min(subtotal, Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberDiscount"]')?.value || ''))));
     const taxableAmount = subtotal;
@@ -9114,7 +9221,8 @@ function bindRadiusPppWizard() {
     const bhpUsoRate = bhpUsoEnabled ? Math.max(0, Math.min(100, numberValue(wizard.dataset.bhpUsoRate || 1.25))) : 0;
     const bhpUsoAmount = Math.round((taxableAmount * bhpUsoRate) / 100);
     const totalAmount = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount - discountAmount);
-    reviewValue('price', moneyValue(subtotal));
+    reviewValue('price', moneyValue(packagePrice));
+    reviewValue('addons', addOnTotal > 0 ? memberAddonsDisplay(addons) : '-');
     reviewValue('ppn', ppnRate > 0 ? `${ppnRate}% / ${rupiah(ppnAmount)}` : '-');
     reviewValue('discount', discountAmount > 0 ? rupiah(discountAmount) : '-');
     reviewValue('bhpUso', bhpUsoAmount > 0 ? `${bhpUsoRate}% / ${rupiah(bhpUsoAmount)}` : '-');
@@ -9389,6 +9497,12 @@ function bindRadiusMemberFields(options = {}) {
   const sync = () => {
     memberFields.forEach((field) => {
       field.disabled = !checkbox.checked;
+    });
+    modalBody.querySelectorAll('[data-member-addon-field]').forEach((field) => {
+      field.disabled = !checkbox.checked;
+    });
+    modalBody.querySelectorAll('[data-member-addon-control]').forEach((control) => {
+      control.disabled = !checkbox.checked;
     });
     if (activeDateInput) activeDateInput.disabled = !checkbox.checked;
     activeDatePicker?.querySelectorAll('button').forEach((button) => {
@@ -12836,6 +12950,43 @@ function memberDiscountDisplay(value) {
   return amount > 0 ? rupiah(amount) : '-';
 }
 
+function memberAddonsArray(source = {}) {
+  const raw = Array.isArray(source)
+    ? source
+    : (source.addOns || source.addons || source.memberAddons || []);
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = raw.trim() ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function memberAddonAmount(item = {}) {
+  const quantity = Math.max(1, Number(memberNumberInput(item.quantity || item.qty || item.pcs || 1)) || 1);
+  const hasUnitPrice = item.unitPrice !== undefined || item.price !== undefined || item.unitAmount !== undefined;
+  if (!hasUnitPrice && item.amount !== undefined) {
+    return Number(memberNumberInput(item.amount)) || 0;
+  }
+  const unitPrice = Number(memberNumberInput(item.unitPrice || item.price || item.unitAmount || item.amount)) || 0;
+  return Math.round(quantity * unitPrice);
+}
+
+function memberAddonsTotal(addons = []) {
+  return memberAddonsArray(addons).reduce((sum, item) => sum + memberAddonAmount(item), 0);
+}
+
+function memberAddonsDisplay(addons = []) {
+  const rows = memberAddonsArray(addons).filter((item) => memberAddonAmount(item) > 0);
+  if (!rows.length) return '-';
+  const total = memberAddonsTotal(rows);
+  return `${rows.length} add-on / ${rupiah(total)}`;
+}
+
 function memberId(member = {}) {
   return member.id || member.memberId || member.accountId || '';
 }
@@ -13095,6 +13246,7 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
           ['Billing Period', memberBillingPeriodLabel(payment.billingPeriod || member.billingPeriod)],
           ['Next Invoice', dateText(payment.nextDue || member.nextDue || member.dueDate) || '-'],
           ['Harga', payment.price || member.price ? rupiah(payment.price || member.price) : '-'],
+          ['Add-on', memberAddonsDisplay(payment.addOns || payment.addons || member.addOns || member.addons)],
           ['VAT/PPN', payment.ppn || member.ppn || '-'],
           ['Diskon', memberDiscountDisplay(payment.discount || member.discount)]
         ])}
@@ -13219,6 +13371,14 @@ function paymentModalBody(member = {}, payment = {}, editable = false) {
           <label>Diskon (Rp)
             <input name="discount" type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(memberNumberInput(payment.discount || member.discount))}" ${disabled}>
           </label>
+          <div class="field span-2 member-addon-editor">
+            <input type="hidden" name="memberAddons" value="[]">
+            <div class="batch-toolbar compact">
+              <span>Add-on layanan bulanan.</span>
+              ${editable ? '<button class="ghost-button compact" type="button" data-add-member-addon>Tambah Add-on</button>' : ''}
+            </div>
+            <div class="batch-rows member-addon-rows" data-member-addon-rows></div>
+          </div>
         </div>
       </div>
       <div class="modal-actions">
@@ -13426,6 +13586,7 @@ async function openMemberPaymentModal(member = {}) {
         body: JSON.stringify({
           memberId: memberId(member),
           ...formPayload,
+          memberAddons: JSON.stringify(collectMemberAddons(form)),
           nextDue
         })
       });
@@ -13440,6 +13601,12 @@ async function openMemberPaymentModal(member = {}) {
   });
   const paymentTypeSelect = modalBody.querySelector('select[name="paymentType"]');
   const billingPeriodSelect = modalBody.querySelector('select[name="billingPeriod"]');
+  bindMemberAddonRows(modal.querySelector('.modal-frame'), payment.addOns || payment.addons || member.addOns || member.addons || []);
+  if (!editable) {
+    modalBody.querySelectorAll('[data-member-addon-field], [data-remove-member-addon]').forEach((field) => {
+      field.disabled = true;
+    });
+  }
   const syncScheduleFields = () => {
     const fixedSchedule = billingPeriodValue(billingPeriodSelect?.value) === 'fixed';
     const picker = modalBody.querySelector('[name="nextDue"]')?.closest('[data-date-picker]');
@@ -13492,6 +13659,7 @@ async function renderMonitoringMembers(options = {}) {
     const id = memberId(member);
     const contactText = member.whatsapp || member.phone || '-';
     const paymentText = `${memberPaymentTypeLabel(member.paymentType || member.type)} / ${memberBillingPeriodLabel(member.billingPeriod || member.method)}`;
+    const addOnText = memberAddonsDisplay(member.addOns || member.addons);
     const mapUrl = memberLocationUrl(member);
     const titleText = memberTitle(member);
     const internetText = member.internet || member.username || '';
@@ -13524,6 +13692,7 @@ async function renderMonitoringMembers(options = {}) {
           <div class="cell-stack">
             <strong class="cell-title">${escapeHtml(paymentText)}</strong>
             <span class="cell-subline">${member.price ? escapeHtml(rupiah(member.price)) : '-'}</span>
+            ${addOnText !== '-' ? `<span class="cell-subline">${escapeHtml(addOnText)}</span>` : ''}
           </div>
         </td>
         <td><span class="badge ${memberStatusBadge(member.status || member.serviceStatus)}">${escapeHtml(memberStatusLabel(member.status || member.serviceStatus))}</span></td>
