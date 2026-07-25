@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.23] - 2026-07-25
+
+### Fixed
+
+- Panduan redirect isolir MikroTik sekarang membuat/mengisi interface-list WAN secara opsional dan menaruh rule isolir di urutan atas agar tidak kalah oleh rule accept umum.
+
 ## [2.9.22] - 2026-07-25
 
 ### Fixed
