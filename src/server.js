@@ -7275,7 +7275,7 @@ function paymentCategoryForRecord(record = {}, fallbackMethod = '') {
     || record.payment_method
     || ''
   ).trim().toLowerCase();
-  if (rawMethod.includes('loket')) return 'transfer';
+  if (rawMethod.includes('loket')) return 'cash';
   const explicit = normalizePaymentCategory(
     record.paymentCategory
     || record.payment_category

@@ -637,7 +637,7 @@ function billingAmountBreakdown(settings = {}, customer = {}, months = 1, option
   const subtotal = Math.max(0, Math.round(hasOwn(options, 'subtotal') ? toNumber(options.subtotal) : unitPrice * quantity));
   const discountAmount = discountAmountValue(customer, subtotal, quantity);
   const discountRate = 0;
-  const taxableAmount = Math.max(0, subtotal - discountAmount);
+  const taxableAmount = subtotal;
   const ppnRate = percentValue(customer.ppn ?? customer.vat ?? customer.taxRate);
   const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
   const bhpUsoEnabled = settings?.billing?.bhpUsoEnabled === true || settings?.bhpUsoEnabled === true;
@@ -645,7 +645,7 @@ function billingAmountBreakdown(settings = {}, customer = {}, months = 1, option
     ? percentValue(settings?.billing?.bhpUsoRate ?? settings?.bhpUsoRate ?? 1.25)
     : 0;
   const bhpUsoAmount = Math.round((taxableAmount * bhpUsoRate) / 100);
-  const total = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount);
+  const total = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount - discountAmount);
   return {
     unitPrice,
     months: quantity,
@@ -675,7 +675,7 @@ function applyBhpUsoToOpenInvoice(settings = {}, invoice = {}) {
   if (['paid', 'cancelled'].includes(status)) return invoice;
   const baseAmount = Math.max(0, Math.round(toNumber(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount)));
   const discountAmount = discountAmountValue(invoice, baseAmount);
-  const taxableAmount = Math.max(0, baseAmount - discountAmount);
+  const taxableAmount = baseAmount;
   const ppnRate = percentValue(invoice.ppnRate ?? invoice.taxRate ?? invoice.vatRate);
   const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
   const enabled = settings?.billing?.bhpUsoEnabled === true || settings?.bhpUsoEnabled === true;
@@ -691,7 +691,7 @@ function applyBhpUsoToOpenInvoice(settings = {}, invoice = {}) {
   invoice.bhpUsoEnabled = enabled;
   invoice.bhpUsoRate = bhpUsoRate;
   invoice.bhpUsoAmount = bhpUsoAmount;
-  invoice.total = taxableAmount + ppnAmount + bhpUsoAmount;
+  invoice.total = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount - discountAmount);
   invoice.totalAmount = invoice.total;
   invoice.amount = invoice.total;
   return invoice;

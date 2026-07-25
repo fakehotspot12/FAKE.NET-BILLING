@@ -449,9 +449,32 @@ test('generated invoices include member PPN and nominal discount in total amount
   assert.equal(created[0].discountRate, 0);
   assert.equal(created[0].discountAmount, 15000);
   assert.equal(created[0].ppnRate, 11);
-  assert.equal(created[0].ppnAmount, 14850);
-  assert.equal(created[0].amount, 149850);
-  assert.equal(created[0].totalAmount, 149850);
+  assert.equal(created[0].ppnAmount, 16500);
+  assert.equal(created[0].amount, 151500);
+  assert.equal(created[0].totalAmount, 151500);
+});
+
+test('nominal discount is applied after PPN so VAT-sized discount returns to base price', () => {
+  const data = createDefaultStore();
+  data.customers.push({
+    id: 'cus-vat-offset',
+    username: 'vat-offset@kampung.net',
+    name: 'VAT Offset',
+    packageName: 'Paket 10 Mbps',
+    status: 'active',
+    price: 150000,
+    ppn: '11',
+    discount: '16500'
+  });
+
+  const created = generateInvoices(data, '2026-07');
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].subtotal, 150000);
+  assert.equal(created[0].ppnAmount, 16500);
+  assert.equal(created[0].discountAmount, 16500);
+  assert.equal(created[0].amount, 150000);
+  assert.equal(created[0].totalAmount, 150000);
 });
 
 test('local manual invoice skips active month when first invoice was paid', () => {
@@ -498,8 +521,8 @@ test('local manual invoice preview applies member PPN and nominal discount for m
 
   assert.equal(preview.subtotal, 300000);
   assert.equal(preview.discountAmount, 30000);
-  assert.equal(preview.ppnAmount, 29700);
-  assert.equal(preview.totalAmount, 299700);
+  assert.equal(preview.ppnAmount, 33000);
+  assert.equal(preview.totalAmount, 303000);
 });
 
 test('local manual invoice stores PPN and nominal discount fields', () => {
@@ -522,8 +545,8 @@ test('local manual invoice stores PPN and nominal discount fields', () => {
 
   assert.equal(invoice.subtotal, 300000);
   assert.equal(invoice.discountAmount, 30000);
-  assert.equal(invoice.ppnAmount, 29700);
-  assert.equal(invoice.amount, 299700);
+  assert.equal(invoice.ppnAmount, 33000);
+  assert.equal(invoice.amount, 303000);
 });
 
 test('cancelled local manual invoice releases period for recreation with updated price', () => {

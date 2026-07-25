@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.18] - 2026-07-25
+
+### Fixed
+
+- Diskon nominal tagihan pelanggan sekarang dipotong setelah PPN/BHP USO, sehingga diskon sebesar nilai PPN mengembalikan total ke harga paket.
+- Preview wizard tambah member PPP-DHCP mengikuti formula tagihan yang sama dengan invoice backend.
+- Pembayaran `Tunai - Loket` kembali dikelompokkan sebagai Tunai pada laporan tagihan.
+
 ## [2.9.17] - 2026-07-25
 
 ### Fixed

@@ -3099,7 +3099,7 @@ function dailyReportSummary(report = {}, transactionCount = Number(report.transa
 function reportPaymentCategory(item = {}) {
   const explicit = String(item.paymentCategory || item.methodGroup || '').trim().toLowerCase();
   const method = String(item.method || item.paymentMethod || '').trim().toLowerCase();
-  if (method.includes('loket')) return 'transfer';
+  if (method.includes('loket')) return 'cash';
   if (['cash', 'transfer', 'online'].includes(explicit)) return explicit;
   if (method.includes('tunai') || method.includes('cash')) return 'cash';
   if (/qris|virtual\s*account|e-?wallet|retail\s*outlet|qr\s*code|briva|bniva|bcava|mandiriva|permatava|muamalatva|cimbva|danamonva|maybankva|bsi(?:va)?|ovo|dana|linkaja|shopeepay|gopay|alfamart|alfamidi|indomaret|tripay|xendit|midtrans|duitku|doku|ipaymu/i.test(method)) return 'online';
@@ -9108,12 +9108,12 @@ function bindRadiusPppWizard() {
     const subtotal = Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberPrice"]')?.value || '')));
     const ppnRate = percentValue(modalBody.querySelector('input[name="memberPpn"]')?.value || '');
     const discountAmount = Math.min(subtotal, Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberDiscount"]')?.value || ''))));
-    const taxableAmount = Math.max(0, subtotal - discountAmount);
+    const taxableAmount = subtotal;
     const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
     const bhpUsoEnabled = wizard.dataset.bhpUsoEnabled === '1';
     const bhpUsoRate = bhpUsoEnabled ? Math.max(0, Math.min(100, numberValue(wizard.dataset.bhpUsoRate || 1.25))) : 0;
     const bhpUsoAmount = Math.round((taxableAmount * bhpUsoRate) / 100);
-    const totalAmount = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount);
+    const totalAmount = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount - discountAmount);
     reviewValue('price', moneyValue(subtotal));
     reviewValue('ppn', ppnRate > 0 ? `${ppnRate}% / ${rupiah(ppnAmount)}` : '-');
     reviewValue('discount', discountAmount > 0 ? rupiah(discountAmount) : '-');
