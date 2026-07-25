@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.20] - 2026-07-25
+
+### Fixed
+
+- Diskon pengimbang PPN otomatis mengikuti subtotal paket plus add-on agar preview dan invoice tidak menghasilkan total ganjil.
+- Preview invoice manual menampilkan rincian Add Ons, dan template WA menyediakan nilai `Add Ons : -` saat pelanggan tidak punya add-on.
+
 ## [2.9.19] - 2026-07-25
 
 ### Added

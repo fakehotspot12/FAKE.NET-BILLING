@@ -4052,6 +4052,7 @@ dialog:has(.changelog-preview) {
 .manual-invoice-preview-row strong {
   min-width: 0;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .billing-method-panel {

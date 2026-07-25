@@ -671,6 +671,16 @@ function billingAddonsMonthlyTotal(source = {}) {
   return normalizeBillingAddons(source).reduce((sum, item) => sum + toNumber(item.amount), 0);
 }
 
+function billingDiscountWithPpnOffset(discountAmount = 0, packageSubtotal = 0, addOnSubtotal = 0, taxableAmount = 0, ppnRate = 0) {
+  const discount = Math.max(0, Math.round(toNumber(discountAmount)));
+  const packagePpn = Math.round((Math.max(0, toNumber(packageSubtotal)) * ppnRate) / 100);
+  const subtotalPpn = Math.round((Math.max(0, toNumber(taxableAmount)) * ppnRate) / 100);
+  if (ppnRate > 0 && addOnSubtotal > 0 && packagePpn > 0 && discount === packagePpn && subtotalPpn > discount) {
+    return subtotalPpn;
+  }
+  return discount;
+}
+
 function billingAmountBreakdown(settings = {}, customer = {}, months = 1, options = {}) {
   const quantity = Math.max(1, Math.round(toNumber(months) || 1));
   const unitPrice = Math.max(0, Math.round(resolvePrice(settings, customer)));
@@ -679,10 +689,16 @@ function billingAmountBreakdown(settings = {}, customer = {}, months = 1, option
   const packageSubtotal = Math.max(0, Math.round(hasOwn(options, 'packageSubtotal') ? toNumber(options.packageSubtotal) : unitPrice * quantity));
   const addOnSubtotal = Math.max(0, Math.round(hasOwn(options, 'addOnSubtotal') ? toNumber(options.addOnSubtotal) : addOnMonthlyTotal * quantity));
   const subtotal = Math.max(0, Math.round(hasOwn(options, 'subtotal') ? toNumber(options.subtotal) : packageSubtotal + addOnSubtotal));
-  const discountAmount = discountAmountValue(customer, subtotal, quantity);
   const discountRate = 0;
   const taxableAmount = subtotal;
   const ppnRate = percentValue(customer.ppn ?? customer.vat ?? customer.taxRate);
+  const discountAmount = billingDiscountWithPpnOffset(
+    discountAmountValue(customer, subtotal, quantity),
+    packageSubtotal,
+    addOnSubtotal,
+    taxableAmount,
+    ppnRate
+  );
   const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
   const bhpUsoEnabled = settings?.billing?.bhpUsoEnabled === true || settings?.bhpUsoEnabled === true;
   const bhpUsoRate = bhpUsoEnabled

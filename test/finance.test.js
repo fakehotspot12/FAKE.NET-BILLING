@@ -506,6 +506,31 @@ test('generated invoices include recurring member add-ons before PPN and discoun
   assert.equal(created[0].addOns.length, 2);
 });
 
+test('VAT-offset discount follows recurring add-ons so invoice total stays at monthly subtotal', () => {
+  const data = createDefaultStore();
+  data.customers.push({
+    id: 'cus-addon-vat-offset',
+    username: 'addon-vat-offset@kampung.net',
+    name: 'Add-on VAT Offset',
+    packageName: 'Paket 20 Mbps',
+    status: 'active',
+    price: 200000,
+    addOns: [
+      { name: 'Sewa CCTV', quantity: 1, unitPrice: 30000 }
+    ],
+    ppn: '11',
+    discount: '22000'
+  });
+
+  const created = generateInvoices(data, '2026-07');
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].subtotal, 230000);
+  assert.equal(created[0].ppnAmount, 25300);
+  assert.equal(created[0].discountAmount, 25300);
+  assert.equal(created[0].amount, 230000);
+});
+
 test('local manual invoice skips active month when first invoice was paid', () => {
   const data = createDefaultStore();
   data.settings.billing = { postpaidDueDay: 10 };
@@ -553,6 +578,7 @@ test('local manual invoice preview applies member PPN and nominal discount for m
 
   assert.equal(preview.packageSubtotal, 300000);
   assert.equal(preview.addOnSubtotal, 50000);
+  assert.equal(preview.addOnsText, 'STB TV x1: Rp 25.000');
   assert.equal(preview.subtotal, 350000);
   assert.equal(preview.discountAmount, 30000);
   assert.equal(preview.ppnAmount, 38500);
@@ -587,6 +613,38 @@ test('local manual invoice stores PPN and nominal discount fields', () => {
   assert.equal(invoice.ppnAmount, 38500);
   assert.equal(invoice.amount, 358500);
   assert.equal(invoice.addOns.length, 1);
+});
+
+test('invoice WA template values render add-ons and fallback dash', () => {
+  const data = createDefaultStore();
+  const invoiceWithAddOn = {
+    id: 'inv-addon-wa',
+    invoiceNo: '000001',
+    customerId: 'cus-addon-wa',
+    customerName: 'Add-on WA',
+    username: 'addon-wa@kampung.net',
+    packageName: 'Paket 20 Mbps',
+    period: '2026-07',
+    subtotal: 230000,
+    ppnAmount: 25300,
+    discountAmount: 25300,
+    total: 230000,
+    addOns: [
+      { name: 'Sewa CCTV', quantity: 1, unitPrice: 30000 }
+    ]
+  };
+  const invoiceWithoutAddOn = {
+    id: 'inv-no-addon-wa',
+    invoiceNo: '000002',
+    customerName: 'No Add-on WA',
+    username: 'no-addon-wa@kampung.net',
+    packageName: 'Paket 10 Mbps',
+    period: '2026-07',
+    total: 150000
+  };
+
+  assert.equal(serverInternals.invoiceWaTemplateValues(data, invoiceWithAddOn).add_ons, 'Sewa CCTV x1: Rp 30.000');
+  assert.equal(serverInternals.invoiceWaTemplateValues(data, invoiceWithoutAddOn).add_ons, '-');
 });
 
 test('cancelled local manual invoice releases period for recreation with updated price', () => {

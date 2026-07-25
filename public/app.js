@@ -9214,8 +9214,13 @@ function bindRadiusPppWizard() {
     const addOnTotal = memberAddonsTotal(addons);
     const subtotal = packagePrice + addOnTotal;
     const ppnRate = percentValue(modalBody.querySelector('input[name="memberPpn"]')?.value || '');
-    const discountAmount = Math.min(subtotal, Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberDiscount"]')?.value || ''))));
+    const rawDiscountAmount = Math.min(subtotal, Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberDiscount"]')?.value || ''))));
     const taxableAmount = subtotal;
+    const discountAmount = Math.min(subtotal, memberDiscountWithPpnOffset(rawDiscountAmount, packagePrice, addOnTotal, taxableAmount, ppnRate));
+    const discountInput = modalBody.querySelector('input[name="memberDiscount"]');
+    if (discountInput && discountAmount !== rawDiscountAmount) {
+      discountInput.value = String(discountAmount);
+    }
     const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
     const bhpUsoEnabled = wizard.dataset.bhpUsoEnabled === '1';
     const bhpUsoRate = bhpUsoEnabled ? Math.max(0, Math.min(100, numberValue(wizard.dataset.bhpUsoRate || 1.25))) : 0;
@@ -12420,6 +12425,7 @@ function manualInvoicePreviewRows(preview = {}) {
     ['Jatuh tempo', preview.dueDateDisplay || dateText(preview.dueDate)],
     ['Subscribe', preview.subscribe],
     ['Item', preview.item],
+    ['Add Ons', preview.addOnsText || memberAddonsDetailText(preview.addOns || preview.addons)],
     ['Amount', preview.amount],
     ['PPN', preview.ppn || '-'],
     ['Diskon', preview.discount || '-'],
@@ -12985,6 +12991,26 @@ function memberAddonsDisplay(addons = []) {
   if (!rows.length) return '-';
   const total = memberAddonsTotal(rows);
   return `${rows.length} add-on / ${rupiah(total)}`;
+}
+
+function memberAddonsDetailText(addons = []) {
+  const rows = memberAddonsArray(addons).filter((item) => memberAddonAmount(item) > 0);
+  if (!rows.length) return '-';
+  return rows.map((item) => {
+    const quantity = Math.max(1, Number(memberNumberInput(item.quantity || item.qty || item.pcs || 1)) || 1);
+    const name = item.name || item.itemName || 'Add-on';
+    return `${name} x${quantity}: ${rupiah(memberAddonAmount(item))}`;
+  }).join('\n');
+}
+
+function memberDiscountWithPpnOffset(discountAmount = 0, packageSubtotal = 0, addOnSubtotal = 0, taxableAmount = 0, ppnRate = 0) {
+  const discount = Math.max(0, Math.round(memberNumberInput(discountAmount)));
+  const packagePpn = Math.round((Math.max(0, memberNumberInput(packageSubtotal)) * ppnRate) / 100);
+  const subtotalPpn = Math.round((Math.max(0, memberNumberInput(taxableAmount)) * ppnRate) / 100);
+  if (ppnRate > 0 && addOnSubtotal > 0 && packagePpn > 0 && discount === packagePpn && subtotalPpn > discount) {
+    return subtotalPpn;
+  }
+  return discount;
 }
 
 function memberId(member = {}) {
@@ -15468,6 +15494,8 @@ const WA_INVOICE_VARIABLES = [
   ['[no_invoice]', 'No Invoice'],
   ['[invoice_date]', 'Invoice Date'],
   ['[amount]', 'Amount'],
+  ['[add_ons]', 'Add Ons'],
+  ['[add_ons_total]', 'Total Add Ons'],
   ['[ppn]', 'VAT'],
   ['[discount]', 'Diskon'],
   ['[total]', 'Total (amount after VAT or discount)'],

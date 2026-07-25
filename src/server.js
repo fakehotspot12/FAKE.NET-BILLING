@@ -116,10 +116,10 @@ const LOGIN_VERIFICATION_MAX_ATTEMPTS = Math.max(1, Number(process.env.LOGIN_VER
 const WIFIKU_OTP_MAX_ATTEMPTS = Math.max(1, Number(process.env.WIFIKU_OTP_MAX_ATTEMPTS || 5) || 5);
 const INDONESIAN_MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 const DEFAULT_WA_TEMPLATES = {
-  invoiceIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Invoice anda telah terbit dan dapat dibayarkan, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nAmount: Rp [amount]\nTotal: Rp [total]\nItem: [pppoe_profile]\nJatuh tempo: [due_date]\nPeriod: [period]\n\nMohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+[suspend_grace_days] ([suspend_grace_days] hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
+  invoiceIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Invoice anda telah terbit dan dapat dibayarkan, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nAmount: Rp [amount]\nTotal: Rp [total]\nItem: [pppoe_profile]\nAdd Ons : [add_ons]\nJatuh tempo: [due_date]\nPeriod: [period]\n\nMohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+[suspend_grace_days] ([suspend_grace_days] hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
   paymentReminder: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda senilai Rp. [total] belum di bayar, Mohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+[suspend_grace_days] ([suspend_grace_days] hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\nAbaikan pesan ini bila sudah membayar.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
   invoiceOverdue: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nDi informasikan, Account anda telah ditangguhkan *(ISOLIR)* oleh *System Billing* kami, dikarenakan keterlambatan dalam pembayaran.\n\nSaat ini anda tidak dapat menggunakan internet, sampai anda menyelesaikan pembayaran senilai Rp. [total]\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini*\n\nTerima kasih.',
-  paymentPaid: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda telah dibayar, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nTotal: Rp [total]\nItem: [pppoe_profile]\nPeriod: [period]\nStatus: Paid\nPayment Method: [paid_method]\n\nTerima kasih.',
+  paymentPaid: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda telah dibayar, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nTotal: Rp [total]\nItem: [pppoe_profile]\nAdd Ons : [add_ons]\nPeriod: [period]\nStatus: Paid\nPayment Method: [paid_method]\n\nTerima kasih.',
   accountSuspend: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Internet Account anda dalam penangguhan (Isolir).\nSaat ini anda tidak dapat menggunakan layanan internet. Segera konfirmasi ke admin layanan kami terkait hal ini.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini*\n\nTerima kasih!',
   accountActive: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Internet Account anda telah di aktifkan, berikut rincian data account anda :\n\nID Pelanggan: [uid]\nItem: [pppoe_profile]\n\nMohon untuk mematikan dan menyalakan kembali tombol modem jika internet masih belum aktif setelah pembayaran ini. Terima kasih!\n\n*Ini adalah pesan otomatis*',
   voucherIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nPembayaran voucher Hotspot berhasil.\nReference: [reference]\nPaket: [voucher_profile]\nHarga: Rp [voucher_price]\nUsername: [voucher_user]\nPassword: [voucher_pass]\nMasa aktif: [validity]\nBerlaku sampai: [valid_until]\nLogin langsung: [login_url]\n\nSimpan voucher ini sampai masa aktif habis.\n\nTerima kasih.',
@@ -5836,6 +5836,11 @@ function normalizeWaTemplateVariableText(template = '', key = '') {
     && !next.includes('[alamat]')) {
     next = next.replace('Pelanggan [nama_usaha]\n', 'Pelanggan [nama_usaha]\nAlamat: [alamat]\n');
   }
+  if (['invoiceIssued', 'paymentPaid'].includes(String(key || ''))
+    && !/\[(?:add_ons|addons|addOns)\]/i.test(next)
+    && next.includes('Item: [pppoe_profile]\n')) {
+    next = next.replace('Item: [pppoe_profile]\n', 'Item: [pppoe_profile]\nAdd Ons : [add_ons]\n');
+  }
   return next;
 }
 
@@ -8009,6 +8014,22 @@ function formatMoneyNumberText(value) {
   return Math.round(Number(value || 0)).toLocaleString('id-ID');
 }
 
+function billingAddonsDisplayText(source = {}) {
+  const addOns = normalizeBillingAddons(Array.isArray(source) ? { addOns: source } : source)
+    .filter((item) => Number(item.amount || 0) > 0);
+  if (!addOns.length) return '-';
+  return addOns.map((item) => {
+    const quantity = Math.max(1, Number(item.quantity || 1) || 1);
+    const name = item.name || item.itemName || 'Add-on';
+    return `${name} x${quantity}: Rp ${formatMoneyNumberText(item.amount)}`;
+  }).join('\n');
+}
+
+function billingAddonsTotal(source = {}) {
+  return normalizeBillingAddons(Array.isArray(source) ? { addOns: source } : source)
+    .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+}
+
 function stripCurrencyPrefix(value = '') {
   return String(value || '').replace(/^rp\.?\s*/i, '').trim();
 }
@@ -8134,6 +8155,7 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
     packageSubtotal: billingAmount.packageSubtotal,
     addOns: billingAmount.addOns,
     addons: billingAmount.addOns,
+    addOnsText: billingAddonsDisplayText(billingAmount.addOns),
     addOnMonthlyTotal: billingAmount.addOnMonthlyTotal,
     addOnSubtotal: billingAmount.addOnSubtotal,
     baseAmount: billingAmount.baseAmount,
@@ -8483,6 +8505,8 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
   const ppnNumber = Number(invoice.ppnAmount ?? invoice.taxAmount ?? invoice.vatAmount ?? 0) || 0;
   const discountNumber = Number(invoice.discountAmount ?? invoice.discountValue ?? 0) || 0;
   const totalNumber = Number(invoice.total ?? invoice.totalAmount ?? invoice.amount ?? amountNumber + ppnNumber - discountNumber) || 0;
+  const addOnsText = billingAddonsDisplayText(invoice.addOns || invoice.addons || customer.addOns || customer.addons || []);
+  const addOnsTotal = billingAddonsTotal(invoice.addOns || invoice.addons || customer.addOns || customer.addons || []);
   const ppnText = ppnNumber > 0
     ? formatMoneyNumberText(ppnNumber)
     : stripCurrencyPrefix(invoice.ppn || invoice.vat || customer.ppn || '');
@@ -8517,6 +8541,11 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
     no_invoice: invoiceNo,
     invoice_date: dateDisplayText(invoice.invoiceDate || invoice.createdAt || invoice.date || localTodayIso()),
     amount: formatMoneyNumberText(amountNumber),
+    add_ons: addOnsText,
+    addons: addOnsText,
+    addOns: addOnsText,
+    add_ons_total: formatMoneyNumberText(addOnsTotal),
+    addons_total: formatMoneyNumberText(addOnsTotal),
     ppn: ppnText || '-',
     discount: discountText || '-',
     total: formatMoneyNumberText(totalNumber),
