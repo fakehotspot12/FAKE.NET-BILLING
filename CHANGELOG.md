@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.22] - 2026-07-25
+
+### Fixed
+
+- Fee QRIS voucher Tripay dihitung gross-up agar settlement bersih tetap sama dengan harga paket voucher.
+- Transaksi dan laporan voucher online memakai nominal paket, sementara fee/settlement Tripay tetap disimpan terpisah.
+
 ## [2.9.21] - 2026-07-25
 
 ### Changed

@@ -7109,7 +7109,9 @@ function upsertPaidHotspotVoucherPaymentGatewayTransaction(data = {}, order = {}
     description: `Voucher Hotspot ${order.packageLabel || order.profileName || '-'} x${order.quantity || 1}`,
     invoiceNo: order.reference || '',
     customerName: order.buyerName || '',
-    amount: Number(order.netAmount || order.gatewayAmount || order.totalAmount || order.amount || 0),
+    amount: Number(order.amount || order.baseAmount || 0),
+    customerAmount: Number(order.customerAmount || order.gatewayAmount || order.totalAmount || order.amount || 0),
+    gatewayAmount: Number(order.gatewayAmount || order.totalAmount || order.customerAmount || order.amount || 0),
     baseAmount: Number(order.baseAmount || order.amount || 0),
     fee: Number(order.adminFee ?? existing?.fee ?? 0),
     adminFee: Number(order.adminFee ?? existing?.adminFee ?? 0),
@@ -7224,7 +7226,12 @@ function fulfillHotspotVoucherOrder(data = {}, value = '', payment = {}, actor =
   order.paidAt = payment.paidAt || now;
   order.updatedAt = now;
   order.paymentExternalId = payment.externalId || payment.transactionId || order.paymentExternalId || '';
-  order.netAmount = Number(payment.settlementAmount || order.netAmount || order.gatewayAmount || order.totalAmount || order.amount || 0);
+  order.amount = Number(order.amount || order.baseAmount || 0);
+  order.baseAmount = Number(order.baseAmount || order.amount || 0);
+  order.gatewayAmount = Number(payment.gatewayAmount || payment.amount || order.gatewayAmount || order.totalAmount || order.amount || 0);
+  order.totalAmount = Number(order.gatewayAmount || order.totalAmount || order.amount || 0);
+  order.customerAmount = Number(payment.customerAmount || payment.amount || order.customerAmount || order.gatewayAmount || order.amount || 0);
+  order.netAmount = Number(order.amount || order.baseAmount || 0);
   order.providerFee = Number(payment.providerFee || order.providerFee || 0);
   order.feeMerchant = Number(payment.feeMerchant ?? payment.providerFee ?? order.feeMerchant ?? order.providerFee ?? 0);
   order.amountReceived = Number(payment.amountReceived ?? payment.settlementAmount ?? order.amountReceived ?? order.netAmount ?? 0);
@@ -7489,7 +7496,7 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
       return {
         ...order,
         date: timestampLocalDateKey(reportAt),
-        amount: Number(order.netAmount ?? order.amount ?? 0),
+        amount: Number(order.amount ?? order.baseAmount ?? 0),
         paymentMethod: order.paymentMethod || 'QRIS',
         paidAt,
         createdAt,
@@ -8340,7 +8347,20 @@ function paymentGatewayAdminFee(settings = {}, kind = 'monthly', amount = 0) {
   if (kind === 'voucher') {
     const fixedFee = Math.max(0, Math.round(decimalNumber(paymentSettings.voucherAdminFee ?? 750)));
     const percent = Math.max(0, decimalNumber(paymentSettings.voucherAdminFeePercent ?? 0.70));
-    const percentFee = (Math.max(0, Number(amount || 0)) * percent) / 100;
+    const baseAmount = Math.max(0, Number(amount || 0));
+    if (String(paymentSettings.provider || '').trim().toLowerCase() === 'tripay') {
+      const rate = Math.max(0, percent) / 100;
+      let fee = fixedFee + Math.max(0, Math.ceil((baseAmount * rate) - 1e-9));
+      let guard = 0;
+      while (guard < 100) {
+        const required = fixedFee + Math.max(0, Math.ceil(((baseAmount + fee) * rate) - 1e-9));
+        if (fee >= required) break;
+        fee = required;
+        guard += 1;
+      }
+      return fee;
+    }
+    const percentFee = (baseAmount * percent) / 100;
     return fixedFee + Math.max(0, Math.ceil(percentFee - 1e-9));
   }
   return Math.max(0, Math.round(decimalNumber(paymentSettings.monthlyAdminFee || 0)));
@@ -9415,6 +9435,15 @@ function paymentGatewayDescription(data = {}, row = {}) {
   return String(row.description || row.customerName || '-').trim() || '-';
 }
 
+function paymentGatewayReportAmount(data = {}, row = {}, kind = paymentGatewayTransactionKind(row)) {
+  if (kind === 'hotspot-voucher') {
+    const order = findHotspotVoucherOrder(data, row.reference || row.voucherOrderId || row.invoiceNo || '') || {};
+    const amount = Number(order.amount ?? order.baseAmount ?? row.baseAmount ?? 0);
+    if (Number.isFinite(amount) && amount > 0) return Math.round(amount);
+  }
+  return Math.round(Number(row.amount || 0) || 0);
+}
+
 function tripayAmountReceived(row = {}) {
   const explicit = Number(row.amountReceived ?? row.amount_received ?? row.netAmount);
   if (Number.isFinite(explicit) && explicit >= 0) return Math.round(explicit);
@@ -9464,6 +9493,7 @@ function paymentGatewayReportPayload(data = {}, query = {}) {
     const transactionKind = paymentGatewayTransactionKind(row);
     return {
       ...row,
+      amount: paymentGatewayReportAmount(data, row, transactionKind),
       description: paymentGatewayDescription(data, row),
       transactionKind,
       transactionKindLabel: paymentGatewayTransactionKindLabel(transactionKind)
@@ -10666,6 +10696,9 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
       status,
       paidAt: payment.paidAt,
       externalId: payment.externalId,
+      amount: payment.amount,
+      gatewayAmount: payment.amount,
+      customerAmount: payment.amount,
       settlementAmount,
       providerFee: payment.fee,
       feeMerchant: payment.feeMerchant,

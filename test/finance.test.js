@@ -5783,8 +5783,8 @@ test('online voucher order only creates payment gateway transaction after paid',
   });
 
   assert.equal(order.status, 'pending');
-  assert.equal(order.adminFee, 820);
-  assert.equal(order.gatewayAmount, 10820);
+  assert.equal(order.adminFee, 826);
+  assert.equal(order.gatewayAmount, 10826);
   assert.equal(data.hotspotVoucherOrders.length, 1);
   assert.equal(data.paymentGatewayTransactions.length, 0);
   assert.equal(serverInternals.paymentGatewayReportPayload(data, {}).transactions.length, 0);
@@ -5803,8 +5803,11 @@ test('online voucher order only creates payment gateway transaction after paid',
   assert.equal(data.paymentGatewayTransactions.length, 1);
   assert.equal(data.paymentGatewayTransactions[0].status, 'paid');
   assert.equal(data.paymentGatewayTransactions[0].reference, order.reference);
-  assert.equal(data.paymentGatewayTransactions[0].amount, 10820);
-  assert.equal(data.paymentGatewayTransactions[0].fee, 820);
+  assert.equal(data.paymentGatewayTransactions[0].amount, 10000);
+  assert.equal(data.paymentGatewayTransactions[0].customerAmount, 10826);
+  assert.equal(data.paymentGatewayTransactions[0].gatewayAmount, 10826);
+  assert.equal(data.paymentGatewayTransactions[0].fee, 826);
+  assert.equal(data.paymentGatewayTransactions[0].amountReceived, 10000);
   const paidRevision = serverInternals.hotspotVoucherRevision(data, { role: 'finance' });
   assert.notEqual(paidRevision, pendingRevision);
 
@@ -5821,6 +5824,79 @@ test('online voucher order only creates payment gateway transaction after paid',
   assert.equal(data.radiusUsers.filter((user) => user.onlineOrderId === order.id).length, 2);
   assert.equal(data.paymentGatewayTransactions.filter((row) => row.voucherOrderId === order.id).length, 1);
   assert.equal(serverInternals.hotspotVoucherRevision(data, { role: 'finance' }), paidRevision);
+});
+
+test('Tripay voucher QRIS records package price while keeping provider settlement fee', async () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.paymentGateway.provider = 'tripay';
+  data.settings.hotspotVoucherOnline.enabled = true;
+  data.settings.hotspotVoucherOnline.requireWhatsapp = false;
+  data.monitoringTargets.push({
+    id: 'site-voucher-qris',
+    name: 'SITE QRIS',
+    host: '10.0.0.20',
+    radius: { enabled: true, name: 'SITE QRIS', address: '10.0.0.20' }
+  });
+  data.radiusProfiles.push({
+    id: 'profile-voucher-qris',
+    serviceType: 'hotspot',
+    name: 'Voucher 2K',
+    price: 2000,
+    active: true
+  });
+  data.settings.hotspotVoucherOnline.packages = {
+    'profile-voucher-qris': {
+      enabled: true,
+      label: 'Voucher 2K',
+      nasId: 'site-voucher-qris',
+      maxPerOrder: 1
+    }
+  };
+
+  const order = serverInternals.createHotspotVoucherOrder(data, {
+    profileId: 'profile-voucher-qris',
+    nasId: 'site-voucher-qris',
+    quantity: 1,
+    buyerName: 'Pembeli QRIS'
+  });
+
+  assert.equal(order.amount, 2000);
+  assert.equal(order.adminFee, 770);
+  assert.equal(order.gatewayAmount, 2770);
+
+  const result = serverInternals.fulfillPaymentGatewayCallback(data, {
+    merchant_ref: order.reference,
+    reference: 'T-VOUCHER-QRIS-1',
+    status: 'PAID',
+    amount: 2770,
+    fee: 770,
+    fee_merchant: 770,
+    amount_received: 2000,
+    payment_method: 'QRIS',
+    paid_at: '2026-07-25T04:00:00.000Z'
+  }, {
+    username: 'payment-gateway',
+    name: 'Payment Gateway'
+  });
+
+  assert.equal(result.status, 'paid');
+  assert.equal(data.paymentGatewayTransactions.length, 1);
+  assert.equal(data.paymentGatewayTransactions[0].amount, 2000);
+  assert.equal(data.paymentGatewayTransactions[0].customerAmount, 2770);
+  assert.equal(data.paymentGatewayTransactions[0].gatewayAmount, 2770);
+  assert.equal(data.paymentGatewayTransactions[0].providerFee, 770);
+  assert.equal(data.paymentGatewayTransactions[0].amountReceived, 2000);
+
+  const orders = await serverInternals.paidVoucherOrdersForReport(data, '2026-07');
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].amount, 2000);
+  const rows = serverInternals.monthlyVoucherDailyRows(data, '2026-07', orders);
+  assert.equal(rows.find((row) => row.date === '2026-07-25').onlineAmount, 2000);
+  const paymentReport = serverInternals.paymentGatewayReportPayload(data, { kind: 'hotspot-voucher' });
+  assert.equal(paymentReport.transactions[0].amount, 2000);
+  assert.equal(paymentReport.summary.paidAmount, 2000);
+  assert.equal(paymentReport.summary.netReceivedAmount, 2000);
 });
 
 test('payment gateway report normalizes billing and voucher references without losing merchant fee', () => {
@@ -5950,9 +6026,9 @@ test('Tripay voucher checkout resolves QRIS before creating the transaction', as
     const result = await serverInternals.createTripayCheckout(data, {
       kind: 'hotspot-voucher',
       reference: 'VO-20260718-001',
-      amount: 10820,
+      amount: 10826,
       baseAmount: 10000,
-      adminFee: 820,
+      adminFee: 826,
       customerName: 'Pembeli Voucher',
       customerPhone: '081234567890',
       itemName: 'Voucher Hotspot'
@@ -5961,7 +6037,7 @@ test('Tripay voucher checkout resolves QRIS before creating the transaction', as
 
     assert.equal(calls.length, 2);
     assert.equal(requestBody.method, 'QRIS');
-    assert.equal(requestBody.amount, 10820);
+    assert.equal(requestBody.amount, 10826);
     assert.equal(requestBody.callback_url, 'https://billing.example.test/payment-gateway/webhook');
     assert.equal(result.method, 'QRIS');
     assert.equal(result.checkoutUrl, 'https://example.test/checkout');
@@ -6346,11 +6422,11 @@ test('Tripay monthly checkout keeps flat customer fee while retail cashier takes
     kind: 'hotspot-voucher',
     method: 'ALFAMART',
     baseAmount: 10000,
-    adminFee: 820,
-    amount: 10820
+    adminFee: 826,
+    amount: 10826
   });
   assert.equal(voucher.retail, false);
-  assert.equal(voucher.gatewayAmount, 10820);
+  assert.equal(voucher.gatewayAmount, 10826);
 });
 
 test('Tripay retail callback keeps cashier fee outside billing income', () => {
