@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.17] - 2026-07-25
+
+### Fixed
+
+- Installer memasang dan memvalidasi dependency SNMP client (`snmpwalk`/`snmpget`) untuk Monitoring NAS/Pelanggan Online.
+- Installer memasang dan memvalidasi FreeRADIUS utilities (`radclient`) agar CoA/kick session tersedia setelah install fresh.
+- Paket pendukung `procps` dan `iproute` ikut dipasang agar deteksi proses/port lebih konsisten di VM minimal.
+
 ## [2.9.16] - 2026-07-25
 
 ### Fixed

@@ -88,7 +88,9 @@ configure_rhel_repositories() {
 install_rhel_packages() {
   local pm="$1"
   configure_rhel_repositories "$pm"
-  "$pm" install -y ca-certificates curl git rsync tar gzip openssl postgresql-server postgresql redis freeradius freeradius-postgresql
+  "$pm" install -y ca-certificates curl git rsync tar gzip openssl procps-ng iproute postgresql-server postgresql redis freeradius freeradius-postgresql
+  "$pm" install -y freeradius-utils >/dev/null 2>&1 || true
+  "$pm" install -y net-snmp-utils >/dev/null 2>&1 || true
   if ! command -v docker >/dev/null 2>&1; then
     "$pm" install -y docker || "$pm" install -y moby-engine || "$pm" install -y docker-ce || true
   fi
@@ -100,7 +102,7 @@ install_packages() {
   case "$pm" in
     apt)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git rsync tar gzip gnupg openssl postgresql postgresql-client redis-server freeradius freeradius-postgresql docker.io
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git rsync tar gzip gnupg openssl procps iproute2 postgresql postgresql-client redis-server freeradius freeradius-postgresql freeradius-utils snmp docker.io
       ;;
     dnf)
       install_rhel_packages dnf
@@ -109,17 +111,19 @@ install_packages() {
       install_rhel_packages yum
       ;;
     apk)
-      apk add --no-cache bash ca-certificates curl git rsync tar gzip openssl nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc su-exec
+      apk add --no-cache bash ca-certificates curl git rsync tar gzip openssl procps iproute2 nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc su-exec
+      apk add --no-cache freeradius-utils >/dev/null 2>&1 || true
+      apk add --no-cache net-snmp-tools >/dev/null 2>&1 || apk add --no-cache net-snmp >/dev/null 2>&1 || true
       ;;
     *)
-      echo "Package manager tidak dikenali. Install manual: nodejs npm git rsync postgresql redis freeradius docker." >&2
+      echo "Package manager tidak dikenali. Install manual: nodejs npm git rsync postgresql redis freeradius freeradius-utils net-snmp-tools/snmp docker." >&2
       ;;
   esac
 }
 
 ensure_required_commands() {
   local missing=() cmd
-  for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker; do
+  for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker pgrep snmpwalk snmpget radclient; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   if ! command -v freeradius >/dev/null 2>&1 && ! command -v radiusd >/dev/null 2>&1; then

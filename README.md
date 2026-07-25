@@ -297,10 +297,11 @@ Minimal setara Ubuntu 22.04:
 - npm
 - PostgreSQL
 - Redis sebagai cache dan backend antrean BullMQ
-- FreeRADIUS
+- FreeRADIUS dan FreeRADIUS utilities untuk CoA/kick session
+- SNMP client tools untuk monitoring NAS dan pelanggan online
 - Docker untuk WAHA
 - GenieACS 1.2.16 dan MongoDB 7; dipasang otomatis oleh installer
-- Git, curl, rsync, tar, gzip
+- Git, curl, rsync, tar, gzip, procps, dan iproute
 
 `install.sh` mendukung keluarga:
 
@@ -326,7 +327,7 @@ Default install ke:
 
 Yang dikerjakan otomatis oleh `install.sh`:
 
-- Install paket OS yang dibutuhkan: Node.js 18+, npm, PostgreSQL, Redis, FreeRADIUS, Docker, Git, curl, rsync, tar, dan gzip.
+- Install paket OS yang dibutuhkan: Node.js 18+, npm, PostgreSQL, Redis, FreeRADIUS, FreeRADIUS utilities, SNMP tools, Docker, Git, curl, rsync, tar, gzip, procps, dan iproute.
 - Jika Node.js bawaan distro terlalu lama, installer mencoba memasang Node.js 20 dari repository NodeSource.
 - Copy source aplikasi ke `/opt/fakenet-billing` tanpa membawa data runtime.
 - Install dependency Node dari `package-lock.json`.
@@ -563,7 +564,7 @@ Yang dihapus:
 - Helper `/usr/local/bin/fakenet-billing-stack` dan `/usr/local/bin/fakenet-billing-update`
 - Seluruh key antrean Redis dengan prefix khusus `fakenet-billing:bullmq`; key Redis aplikasi lain tidak disentuh
 
-Paket OS seperti PostgreSQL, Redis, FreeRADIUS, Docker, Node.js, Git, dan curl tidak dihapus karena bisa dipakai aplikasi lain.
+Paket OS seperti PostgreSQL, Redis, FreeRADIUS, SNMP tools, Docker, Node.js, Git, dan curl tidak dihapus karena bisa dipakai aplikasi lain.
 
 ## Backup dan Restore
 
