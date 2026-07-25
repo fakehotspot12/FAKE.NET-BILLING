@@ -23,7 +23,6 @@ APP_UNITS=(
   fakenet-billing-wifiku.service
   fakenet-billing-radius-connector.service
   fakenet-billing-waha.service
-  "${GENIEACS_UNITS[@]}"
 )
 
 SYSTEMD_BASE_GROUPS=(
@@ -130,6 +129,78 @@ ensure_required_commands() {
     echo "Komponen berikut belum tersedia: ${missing[*]}" >&2
     echo "Periksa repository OS/EPEL/CRB atau install paket terkait, lalu ulangi install.sh." >&2
     exit 1
+  fi
+}
+
+genieacs_commands_available() {
+  local command
+  for command in genieacs-cwmp genieacs-nbi genieacs-fs genieacs-ui; do
+    command -v "$command" >/dev/null 2>&1 || return 1
+  done
+  return 0
+}
+
+port_is_listening() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    if ss -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${port}$"; then
+      return 0
+    fi
+    return 1
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    if netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${port}$"; then
+      return 0
+    fi
+    return 1
+  fi
+  return 1
+}
+
+external_genieacs_unit_exists() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  if systemctl list-unit-files 'genieacs*.service' --no-legend 2>/dev/null | grep -qv '^fakenet-billing-genieacs-'; then
+    return 0
+  fi
+  return 1
+}
+
+fakenet_genieacs_unit_exists() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  if systemctl list-unit-files 'fakenet-billing-genieacs-*.service' --no-legend 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+external_genieacs_process_exists() {
+  pgrep -af 'genieacs-(cwmp|nbi|fs|ui)' >/dev/null 2>&1 || return 1
+  if pgrep -af 'fakenet-billing-genieacs' >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+external_genieacs_detected() {
+  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 1
+  if [ -f "$GENIEACS_ENV_FILE" ] && fakenet_genieacs_unit_exists; then
+    return 1
+  fi
+  external_genieacs_unit_exists && return 0
+  external_genieacs_process_exists && return 0
+  for port in 7547 7557 7567 7568; do
+    port_is_listening "$port" && return 0
+  done
+  return 1
+}
+
+auto_skip_existing_genieacs() {
+  if external_genieacs_detected; then
+    INSTALL_GENIEACS=0
+    GENIEACS_EXTERNAL_DETECTED=1
+    export INSTALL_GENIEACS GENIEACS_EXTERNAL_DETECTED
+    echo "GenieACS existing terdeteksi. Instalasi GenieACS bawaan FAKE.NET Billing dilewati agar tidak konflik service/port."
+    echo "Billing akan memakai GenieACS existing jika NBI localhost tersedia; jika berbeda, atur URL dari menu GenieACS > Setting."
   fi
 }
 
@@ -265,6 +336,10 @@ install_genieacs_runtime() {
     echo "Instal GenieACS dinonaktifkan melalui INSTALL_GENIEACS=0."
     return 0
   fi
+  if genieacs_commands_available; then
+    echo "Binary GenieACS sudah tersedia. Instal paket genieacs global dilewati."
+    return 0
+  fi
   local npm_timeout_seconds install_status
   local -a timeout_command
   npm_timeout_seconds="${FAKENET_NPM_INSTALL_TIMEOUT_SECONDS:-600}"
@@ -296,6 +371,7 @@ install_genieacs_runtime() {
 }
 
 ensure_genieacs_mongodb_image() {
+  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   load_genieacs_env
   docker image inspect "${GENIEACS_MONGODB_IMAGE:-mongo:7}" >/dev/null 2>&1 \
@@ -395,6 +471,23 @@ install_env() {
     chmod 600 "$GENIEACS_ENV_FILE"
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_ENABLED 1
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_BASE_URL http://127.0.0.1:7557
+  elif [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ]; then
+    append_env_if_missing /etc/fakenet-billing.env GENIEACS_ENABLED 1
+    if port_is_listening 7557; then
+      append_env_if_missing /etc/fakenet-billing.env GENIEACS_BASE_URL http://127.0.0.1:7557
+    fi
+  fi
+}
+
+managed_app_units() {
+  local unit
+  for unit in "${APP_UNITS[@]}"; do
+    printf '%s\n' "$unit"
+  done
+  if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
+    for unit in "${GENIEACS_UNITS[@]}"; do
+      printf '%s\n' "$unit"
+    done
   fi
 }
 
@@ -462,7 +555,7 @@ install_systemd_unit_file() {
   local unit="$1" name
   [ -f "$unit" ] || return 0
   name="$(basename "$unit")"
-  if [[ "$name" == fakenet-billing-genieacs-* ]] && [ ! -f "$GENIEACS_ENV_FILE" ]; then
+  if [[ "$name" == fakenet-billing-genieacs-* ]] && { [ "${INSTALL_GENIEACS:-1}" = "0" ] || [ ! -f "$GENIEACS_ENV_FILE" ]; }; then
     return 0
   fi
   sed \
@@ -473,6 +566,7 @@ install_systemd_unit_file() {
 }
 
 prepare_genieacs_runtime() {
+  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   if ! id genieacs >/dev/null 2>&1; then
     if command -v useradd >/dev/null 2>&1; then
@@ -488,12 +582,14 @@ prepare_genieacs_runtime() {
 }
 
 bootstrap_genieacs() {
+  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   load_genieacs_env
   node "$APP_DIR/deploy/genieacs/bootstrap.js"
 }
 
 verify_genieacs_health() {
+  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   load_genieacs_env
   local ui_port nbi_port attempt ui_status nbi_status
@@ -754,6 +850,7 @@ install_systemd() {
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack
   install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update
   local unit
+  local -a app_units
   for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
     install_systemd_unit_file "$unit"
   done
@@ -765,8 +862,9 @@ install_systemd() {
   init_postgres_databases
   configure_freeradius_sql
   restart_systemd_unit_group "freeradius.service radiusd.service"
-  systemctl enable fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
-  systemctl restart "${APP_UNITS[@]}"
+  mapfile -t app_units < <(managed_app_units)
+  systemctl enable fakenet-billing-stack.target "${app_units[@]}" >/dev/null 2>&1 || true
+  systemctl restart "${app_units[@]}"
   bootstrap_genieacs
   verify_genieacs_health
 }
@@ -831,6 +929,7 @@ EOF
 }
 
 write_openrc_genieacs_mongodb_service() {
+  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   cat > /etc/init.d/fakenet-billing-genieacs-mongodb <<'EOF'
 #!/sbin/openrc-run
@@ -861,6 +960,7 @@ EOF
 
 write_openrc_genieacs_service() {
   local service_name="$1" command_name="$2" command_path
+  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   command_path="$(command -v "$command_name")"
   cat > "/etc/init.d/$service_name" <<EOF
@@ -889,6 +989,7 @@ EOF
 
 install_openrc_genieacs() {
   local run_bootstrap="${1:-1}"
+  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   prepare_genieacs_runtime
   ensure_genieacs_mongodb_image
@@ -945,7 +1046,7 @@ repair_install() {
       install_systemd_unit_file "$unit"
     done
     systemctl daemon-reload >/dev/null 2>&1 || true
-    if [ -f "$GENIEACS_ENV_FILE" ]; then
+    if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
       local docker_unit
       command -v genieacs-cwmp >/dev/null 2>&1 || INSTALL_GENIEACS=1 install_genieacs_runtime
       prepare_genieacs_runtime
@@ -1103,6 +1204,7 @@ main() {
       if [ ! -f "$GENIEACS_ENV_FILE" ]; then
         INSTALL_GENIEACS=0
       fi
+      auto_skip_existing_genieacs
       repair_install
       return 0
       ;;
@@ -1118,6 +1220,7 @@ main() {
   install_node_runtime
   check_node
   ensure_required_commands
+  auto_skip_existing_genieacs
   copy_source
   install_node_deps
   install_genieacs_runtime
@@ -1136,13 +1239,16 @@ main() {
   echo "Isolir: http://SERVER-IP:8892/isolir"
   echo "Voucher: http://SERVER-IP:8893/voucher"
   echo "WifiKu: http://SERVER-IP:8894/wifiku"
-  if [ -f "$GENIEACS_ENV_FILE" ]; then
+  if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
     load_genieacs_env
     echo "GenieACS CWMP: http://SERVER-IP:${GENIEACS_CWMP_PORT:-7547}"
     echo "GenieACS UI: http://SERVER-IP:${GENIEACS_UI_PORT:-7568}"
     echo "GenieACS NBI: 127.0.0.1:${GENIEACS_NBI_PORT:-7557} (localhost only)"
     echo "Login GenieACS awal: ${GENIEACS_UI_USERNAME:-billing} / ${GENIEACS_UI_PASSWORD:-billing123}"
     echo "Inform CPE: ${GENIEACS_CWMP_AUTH_USERNAME:-admin} / ${GENIEACS_CWMP_AUTH_PASSWORD:-1sampai10}"
+  elif [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ]; then
+    echo "GenieACS existing terdeteksi; GenieACS bawaan billing dilewati."
+    echo "Jika NBI existing tidak memakai 127.0.0.1:7557, atur dari menu GenieACS > Pengaturan."
   fi
   echo "Service stack: fakenet-billing-stack {start|restart|stop|status|update}"
 }

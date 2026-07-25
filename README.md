@@ -340,7 +340,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Membuat schema FreeRADIUS dasar: `nas`, `radcheck`, `radreply`, `radusergroup`, `radgroupcheck`, `radgroupreply`, dan `radacct`.
 - Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS, termasuk `read_clients = yes` agar Site/NAS dari aplikasi dibaca sebagai client Radius.
 - Memasang service Billing, Isolir, Voucher, WifiKu, Radius Connector, dan WAHA.
-- Memasang GenieACS CWMP/NBI/FS/UI, MongoDB persisten, akun awal, autentikasi Inform, serta Virtual Parameters redaman dan suhu.
+- Memasang GenieACS CWMP/NBI/FS/UI, MongoDB persisten, akun awal, autentikasi Inform, serta Virtual Parameters redaman dan suhu jika belum ada GenieACS existing yang terdeteksi.
 - Mengunci GenieACS NBI dan MongoDB ke localhost agar API/database tidak terbuka ke jaringan.
 - Memasang command stack `fakenet-billing-stack`.
 - Menyesuaikan unit systemd atau OpenRC sesuai distro yang dipakai.
@@ -368,6 +368,8 @@ Env utama:
 
 Instalasi baru memasang GenieACS lokal secara default. MongoDB dijalankan dalam container dengan data persisten di `/opt/fakenet-billing-genieacs/mongodb`; proses CWMP, NBI, FS, dan UI berjalan sebagai user sistem `genieacs`.
 
+Jika installer menemukan GenieACS existing dari service, proses, atau port default `7547/7557/7567/7568`, instalasi GenieACS bawaan billing akan dilewati otomatis supaya tidak konflik dengan ACS yang sudah berjalan. Aplikasi billing tetap diinstall normal. Jika NBI existing ada di `127.0.0.1:7557`, billing akan menggunakannya sebagai default; jika berbeda, isi URL NBI dari menu `GenieACS > Pengaturan`.
+
 Konfigurasi awal:
 
 | Komponen | Nilai awal |
@@ -379,7 +381,7 @@ Konfigurasi awal:
 
 Virtual Parameters `RXPower` dan `gettemp` dipasang bersama provision harian agar aplikasi dapat membaca redaman dan suhu dari beberapa keluarga ONU. Nilai tetap berasal dari parameter perangkat yang tersedia di GenieACS; perangkat yang tidak mengekspos parameter terkait akan tampil kosong.
 
-Jika sudah memiliki GenieACS terpisah, instal aplikasi tanpa membuat ACS lokal:
+Jika ingin memaksa instalasi tanpa membuat ACS lokal, gunakan:
 
 ```bash
 sudo INSTALL_GENIEACS=0 bash install.sh

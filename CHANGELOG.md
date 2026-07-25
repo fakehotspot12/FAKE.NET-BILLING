@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.16] - 2026-07-25
+
+### Fixed
+
+- Installer mendeteksi GenieACS existing lewat service, proses, atau port default dan otomatis melewati GenieACS bawaan agar tidak konflik saat install di VM yang sudah memiliki ACS.
+- Installer dan repair/update hanya memasang atau merestart unit GenieACS bawaan jika GenieACS lokal billing memang diaktifkan.
+- Instalasi GenieACS global dilewati jika binary GenieACS sudah tersedia di mesin.
+
 ## [2.9.15] - 2026-07-25
 
 ### Changed
