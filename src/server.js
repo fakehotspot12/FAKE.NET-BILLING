@@ -10003,17 +10003,17 @@ async function notificationSummary(data = {}, user = {}) {
 
   if (notifications.billing.visible) {
     const payload = localBillingMonitorPayload(data, {
-      status: 'unpaid',
+      status: 'overdue',
       customerStatus: 'all',
       site: 'all',
       period: currentPeriod(),
       search: ''
     });
     const summary = payload.summary || {};
-    notifications.billing.count = Number(summary.unpaid || 0);
-    notifications.billing.amount = Number(summary.unpaidAmount || 0);
+    notifications.billing.count = Number(summary.overdue || summary.filteredCount || 0);
+    notifications.billing.amount = Number(summary.overdueAmount || summary.filteredAmount || 0);
     notifications.billing.message = notifications.billing.count
-      ? `${notifications.billing.count} pelanggan belum bayar`
+      ? `${notifications.billing.count} pelanggan lewat tempo`
       : 'Tagihan aman';
   }
 

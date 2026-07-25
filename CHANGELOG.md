@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.13] - 2026-07-25
+
+### Changed
+
+- Notifikasi lonceng tagihan pelanggan sekarang memakai konteks Lewat Tempo dan membuka filter Lewat Tempo.
+
 ## [2.9.12] - 2026-07-25
 
 ### Changed

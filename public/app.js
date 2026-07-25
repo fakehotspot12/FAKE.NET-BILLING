@@ -1179,8 +1179,8 @@ function notificationItems(notifications = {}) {
     items.push({
       type: 'billing',
       count,
-      title: billing.loading ? 'Memuat tagihan pelanggan' : (count > 0 ? `${displayNumber(count)} Pelanggan Belum Bayar` : 'Tagihan pelanggan aman'),
-      description: billing.loading ? 'Mengambil data tagihan terbaru...' : (count > 0 ? `${rupiah(billing.amount || 0)} tagihan perlu ditindaklanjuti.` : 'Tidak ada tagihan belum bayar sesuai data terakhir.'),
+      title: billing.loading ? 'Memuat tagihan pelanggan' : (count > 0 ? `${displayNumber(count)} Pelanggan Lewat Tempo` : 'Tagihan pelanggan aman'),
+      description: billing.loading ? 'Mengambil data tagihan terbaru...' : (count > 0 ? `${rupiah(billing.amount || 0)} tagihan lewat tempo perlu ditindaklanjuti.` : 'Tidak ada tagihan lewat tempo sesuai data terakhir.'),
       tone: count > 0 ? 'warning' : 'safe',
       action: 'monitoringBilling'
     });
@@ -1314,7 +1314,7 @@ function openNotificationTarget(action) {
   }
   if (action === 'monitoringBilling') {
     state.search = '';
-    state.monitoringBillingStatus = 'unpaid';
+    state.monitoringBillingStatus = 'overdue';
     state.monitoringBillingCustomerStatus = 'all';
     state.monitoringBillingSite = 'all';
     state.monitoringBillingPeriod = todayInput().slice(0, 7);
