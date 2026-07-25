@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.12] - 2026-07-25
+
+### Changed
+
+- Monitoring Tagihan Pelanggan default membuka daftar lewat tempo bulan berjalan agar penagihan langsung fokus pada pelanggan yang harus dikejar.
+
 ## [2.9.11] - 2026-07-25
 
 ### Changed

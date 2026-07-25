@@ -164,10 +164,11 @@ const state = {
   monitoringServicesSite: 'all',
   monitoringBillingPage: 1,
   monitoringBillingLimit: 10,
-  monitoringBillingStatus: 'all',
+  monitoringBillingStatus: 'overdue',
   monitoringBillingCustomerStatus: 'all',
   monitoringBillingSite: 'all',
-  monitoringBillingPeriod: storedMonitoringBillingPeriod(),
+  monitoringBillingPeriod: todayInput().slice(0, 7),
+  monitoringBillingKeepPreset: false,
   radiusPppTab: 'users',
   radiusPppPage: 1,
   radiusPppLimit: RADIUS_PAGE_SIZE,
@@ -1316,6 +1317,8 @@ function openNotificationTarget(action) {
     state.monitoringBillingStatus = 'unpaid';
     state.monitoringBillingCustomerStatus = 'all';
     state.monitoringBillingSite = 'all';
+    state.monitoringBillingPeriod = todayInput().slice(0, 7);
+    state.monitoringBillingKeepPreset = true;
     state.monitoringBillingPage = 1;
     setView('monitoringBilling');
     return;
@@ -1692,6 +1695,7 @@ function setView(view) {
 
   const requestedView = normalizeView(view);
   const nextView = canView(requestedView) ? requestedView : firstAvailableView();
+  const enteringMonitoringBilling = nextView === 'monitoringBilling' && state.view !== 'monitoringBilling';
   if (nextView !== state.view) {
     abortPageRequests();
     state.search = '';
@@ -1707,6 +1711,13 @@ function setView(view) {
     state.monitoringServicesTab = 'tv';
     state.monitoringServicesSite = 'all';
     state.monitoringBillingPage = 1;
+    if (enteringMonitoringBilling && !state.monitoringBillingKeepPreset) {
+      state.monitoringBillingStatus = 'overdue';
+      state.monitoringBillingCustomerStatus = 'all';
+      state.monitoringBillingSite = 'all';
+      state.monitoringBillingPeriod = todayInput().slice(0, 7);
+    }
+    state.monitoringBillingKeepPreset = false;
     state.radiusPppPage = 1;
     state.radiusPppInternet = '';
     state.radiusHotspotPage = 1;
