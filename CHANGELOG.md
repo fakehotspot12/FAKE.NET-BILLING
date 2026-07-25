@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.25] - 2026-07-26
+
+### Fixed
+
+- Panduan redirect isolir dikembalikan ke pola script produksi yang sudah stabil, dan tombol salin sekarang selalu membaca ulang field `Interface list WAN` agar nilai seperti `wan` ikut masuk ke script.
+
 ## [2.9.24] - 2026-07-25
 
 ### Fixed
