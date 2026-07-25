@@ -4888,6 +4888,45 @@ dialog:has(.changelog-preview) {
   align-items: center;
 }
 
+.member-addon-editor .batch-toolbar span {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.member-addon-rows {
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  align-items: start;
+}
+
+.member-addon-row {
+  min-width: 0;
+}
+
+.member-addon-row .batch-row-head {
+  margin-bottom: 8px;
+}
+
+.member-addon-row .batch-row-head strong {
+  min-width: 0;
+}
+
+.member-addon-grid {
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 74px minmax(112px, 0.75fr);
+}
+
+.member-addon-note {
+  grid-column: 1 / -1;
+}
+
+.member-addon-row .field span {
+  font-size: 11px;
+}
+
+.member-addon-row input {
+  min-height: 36px;
+}
+
 .table-wrap {
   max-width: 100%;
   overflow-x: auto;
@@ -8333,6 +8372,19 @@ dialog::backdrop {
   .split-grid,
   .member-edit-summary {
     grid-template-columns: 1fr;
+  }
+
+  .member-addon-rows,
+  .member-addon-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .member-addon-editor .batch-toolbar {
+    align-items: stretch;
+  }
+
+  .member-addon-editor .batch-toolbar .ghost-button {
+    width: 100%;
   }
 
   .voucher-online-summary {

@@ -5936,22 +5936,22 @@ function memberAddonRow(item = {}) {
     <div class="batch-row member-addon-row" data-batch-row data-member-addon-row>
       <div class="batch-row-head">
         <strong data-row-number>Add-on</strong>
-        <button class="ghost-button compact" type="button" data-remove-member-addon data-member-addon-control>Hapus Baris</button>
+        <button class="ghost-button compact" type="button" data-remove-member-addon data-member-addon-control>Hapus</button>
       </div>
-      <div class="form-grid">
-        <label class="field">
+      <div class="form-grid member-addon-grid">
+        <label class="field member-addon-name">
           <span>Nama layanan</span>
           <input data-field="name" data-member-addon-field value="${escapeHtml(item.name || item.itemName || '')}" placeholder="Sewa CCTV, STB TV">
         </label>
-        <label class="field">
+        <label class="field member-addon-qty">
           <span>Qty</span>
           <input data-field="quantity" data-member-addon-field type="number" min="1" step="1" value="${escapeHtml(quantity)}">
         </label>
-        <label class="field">
+        <label class="field member-addon-price">
           <span>Biaya/bulan</span>
           <input data-field="unitPrice" data-member-addon-field type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(unitPrice)}">
         </label>
-        <label class="field">
+        <label class="field member-addon-note">
           <span>Catatan</span>
           <input data-field="note" data-member-addon-field value="${escapeHtml(item.note || item.description || '')}" placeholder="Opsional">
         </label>

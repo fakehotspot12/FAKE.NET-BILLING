@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.21] - 2026-07-25
+
+### Changed
+
+- Layout Add Ons member dibuat lebih compact: desktop dapat menampilkan beberapa add-on berjajar, sedangkan mobile tetap satu kolom.
+
 ## [2.9.20] - 2026-07-25
 
 ### Fixed
