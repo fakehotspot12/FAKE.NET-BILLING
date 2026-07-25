@@ -20,12 +20,14 @@ self.addEventListener('push', (event) => {
   const id = String(payload.id || payload.reference || Date.now());
   const tag = `fakenet-payment-${id}`;
   event.waitUntil((async () => {
+    const existing = await self.registration.getNotifications({ tag });
+    if (existing.length) return;
     await self.registration.showNotification(payload.title || 'Pembayaran Online Masuk', {
       body: payload.body || 'Pembayaran online berhasil diterima.',
       icon: '/fakenet-logo.png',
       badge: '/fakenet-logo.png',
       tag,
-      renotify: true,
+      renotify: false,
       requireInteraction: true,
       data: {
         id,

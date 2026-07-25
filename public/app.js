@@ -1147,6 +1147,7 @@ function ingestPaymentNotifications(notifications = {}) {
     if (!id || seen.has(id)) return;
     seen.add(id);
     changed = true;
+    if (webPushSubscriptionActive) return;
     const item = {
       id,
       type: 'payment',

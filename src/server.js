@@ -9585,6 +9585,7 @@ async function mutate(mutator, saveOptions = {}) {
 }
 
 let webPushVapidPromise = null;
+const ONLINE_PAYMENT_NOTIFICATION_LOOKBACK_MS = 10 * 60 * 1000;
 
 async function ensureWebPushVapid() {
   if (webPushVapidPromise) return webPushVapidPromise;
@@ -9659,6 +9660,35 @@ function onlinePaymentPushPayload(data = {}, fulfilled = {}) {
   };
 }
 
+function onlinePaymentPushTransaction(data = {}, payload = {}) {
+  if (!payload) return null;
+  const id = String(payload.id || '').trim();
+  const reference = String(payload.reference || '').trim();
+  return (data.paymentGatewayTransactions || []).find((row) => {
+    if (id && String(row.id || '') === id) return true;
+    if (!reference) return false;
+    return [row.reference, row.invoiceNo, row.externalId, row.providerReference, row.gatewayReference]
+      .some((value) => String(value || '').trim() === reference);
+  }) || null;
+}
+
+async function markOnlinePaymentPushAttempt(payload = {}, result = {}) {
+  if (!payload?.id && !payload?.reference) return;
+  await mutate((store) => {
+    const transaction = onlinePaymentPushTransaction(store, payload);
+    if (!transaction) return null;
+    const now = new Date().toISOString();
+    transaction.webPushAttemptedAt = now;
+    transaction.webPushSentAt = Number(result.sent || 0) > 0 ? now : (transaction.webPushSentAt || '');
+    transaction.webPushEligible = Number(result.eligible || 0);
+    transaction.webPushSent = Number(result.sent || 0);
+    transaction.webPushFailed = Number(result.failed || 0);
+    transaction.webPushRemoved = Number(result.removed || 0);
+    transaction.webPushPayloadId = String(payload.id || '');
+    return transaction;
+  }, { collections: ['paymentGatewayTransactions'], includeCore: false });
+}
+
 function eligibleWebPushSubscriptions(data = {}) {
   const paymentNotificationRoles = new Set(['admin', 'owner', 'finance']);
   const users = new Map((data.users || []).map((user) => [String(user.id || ''), user]));
@@ -9692,6 +9722,10 @@ function webPushRetryable(error = null) {
 async function sendOnlinePaymentPushNotifications(data = {}, fulfilled = {}) {
   const payload = onlinePaymentPushPayload(data, fulfilled);
   if (!payload) return { eligible: 0, sent: 0, failed: 0, removed: 0, errors: [] };
+  const transaction = onlinePaymentPushTransaction(data, payload);
+  if (transaction?.webPushAttemptedAt) {
+    return { eligible: 0, sent: 0, failed: 0, removed: 0, skipped: true, reason: 'already-attempted', errors: [] };
+  }
   await ensureWebPushVapid();
   const subscriptions = eligibleWebPushSubscriptions(data);
   const staleEndpoints = new Set();
@@ -9707,7 +9741,7 @@ async function sendOnlinePaymentPushNotifications(data = {}, fulfilled = {}) {
           expirationTime: item.expirationTime || null,
           keys: item.keys
         }, JSON.stringify(payload), {
-          TTL: 300,
+          TTL: 86400,
           urgency: 'high',
           timeout: 8000
         });
@@ -9736,7 +9770,11 @@ async function sendOnlinePaymentPushNotifications(data = {}, fulfilled = {}) {
       store.webPushSubscriptions = (store.webPushSubscriptions || []).filter((item) => !staleEndpoints.has(item.endpoint));
     });
   }
-  return { eligible: subscriptions.length, sent, failed, removed: staleEndpoints.size, errors };
+  const result = { eligible: subscriptions.length, sent, failed, removed: staleEndpoints.size, errors };
+  await markOnlinePaymentPushAttempt(payload, result).catch((error) => {
+    console.error(`Web Push pembayaran ${payload.reference || payload.id || '-'} gagal menandai attempt: ${error.message || error}`);
+  });
+  return result;
 }
 
 async function syncFreeradiusIfNeeded(data, actor, action) {
@@ -10018,9 +10056,9 @@ async function notificationSummary(data = {}, user = {}) {
   }
 
   if (notifications.onlinePayments.visible) {
-    // Simpan jendela pembayaran online selama 24 jam agar pembayaran tetap
-    // dapat muncul saat browser sempat offline atau aplikasi baru selesai restart.
-    const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+    // Popup/lonceng pembayaran hanya menampilkan event yang benar-benar baru.
+    // Riwayat lengkap tetap tersedia di menu Payment Gateway.
+    const cutoff = Date.now() - ONLINE_PAYMENT_NOTIFICATION_LOOKBACK_MS;
     const rows = (data.paymentGatewayTransactions || [])
       .filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()))
       .filter((row) => {
@@ -11524,16 +11562,18 @@ async function handlePaymentGatewayWebhook(req, res, url) {
       status: result.status,
       voucherCount: Array.isArray(result.vouchers) ? result.vouchers.length : 0
     });
-    sendOnlinePaymentPushNotifications(data, result)
-      .then((push) => {
-        console.log(`Web Push pembayaran ${result.reference || '-'}: ${push.sent}/${push.eligible} terkirim, ${push.failed} gagal, ${push.removed} subscription dibersihkan`);
-        for (const detail of push.errors || []) {
-          console.error(`Web Push ${detail.host}: HTTP ${detail.status || '-'} ${detail.message}`);
-        }
-      })
-      .catch((error) => {
-        console.error(`Web Push pembayaran ${result.reference || '-'} gagal: ${error.message || error}`);
-      });
+    if (result.status === 'paid' && result.reused !== true) {
+      sendOnlinePaymentPushNotifications(data, result)
+        .then((push) => {
+          console.log(`Web Push pembayaran ${result.reference || '-'}: ${push.sent}/${push.eligible} terkirim, ${push.failed} gagal, ${push.removed} subscription dibersihkan`);
+          for (const detail of push.errors || []) {
+            console.error(`Web Push ${detail.host}: HTTP ${detail.status || '-'} ${detail.message}`);
+          }
+        })
+        .catch((error) => {
+          console.error(`Web Push pembayaran ${result.reference || '-'} gagal: ${error.message || error}`);
+        });
+    }
   } catch (error) {
     sendJson(res, 400, {
       ok: false,

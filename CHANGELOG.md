@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.14] - 2026-07-25
+
+### Fixed
+
+- Notifikasi pembayaran online tidak lagi replay transaksi lama saat browser billing baru dibuka setelah lama tidak aktif.
+- Web Push pembayaran online diberi TTL lebih panjang dan transaksi yang sudah pernah dipush ditandai agar tidak terkirim ganda.
+
 ## [2.9.13] - 2026-07-25
 
 ### Changed
