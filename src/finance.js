@@ -614,12 +614,29 @@ function percentValue(value) {
   return Math.max(0, Math.min(100, toNumber(value)));
 }
 
+function discountAmountValue(source = {}, subtotal = 0, multiplier = 1) {
+  const maxDiscount = Math.max(0, Math.round(toNumber(subtotal)));
+  const quantity = Math.max(1, Math.round(toNumber(multiplier) || 1));
+  const hasAmount = hasOwn(source, 'discountAmount') || hasOwn(source, 'discountValue');
+  const rawAmount = hasOwn(source, 'discountAmount')
+    ? source.discountAmount
+    : hasOwn(source, 'discountValue')
+      ? source.discountValue
+      : source.discount;
+  const amount = Math.max(0, Math.round(toNumber(rawAmount))) * (hasAmount ? 1 : quantity);
+  if (amount > 0 || hasAmount || hasOwn(source, 'discount')) {
+    return Math.min(maxDiscount, amount);
+  }
+  const legacyRate = percentValue(source.discountRate);
+  return legacyRate > 0 ? Math.min(maxDiscount, Math.round((maxDiscount * legacyRate) / 100)) : 0;
+}
+
 function billingAmountBreakdown(settings = {}, customer = {}, months = 1, options = {}) {
   const quantity = Math.max(1, Math.round(toNumber(months) || 1));
   const unitPrice = Math.max(0, Math.round(resolvePrice(settings, customer)));
   const subtotal = Math.max(0, Math.round(hasOwn(options, 'subtotal') ? toNumber(options.subtotal) : unitPrice * quantity));
-  const discountRate = percentValue(customer.discount ?? customer.discountRate);
-  const discountAmount = Math.round((subtotal * discountRate) / 100);
+  const discountAmount = discountAmountValue(customer, subtotal, quantity);
+  const discountRate = 0;
   const taxableAmount = Math.max(0, subtotal - discountAmount);
   const ppnRate = percentValue(customer.ppn ?? customer.vat ?? customer.taxRate);
   const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
@@ -657,8 +674,7 @@ function applyBhpUsoToOpenInvoice(settings = {}, invoice = {}) {
   const status = normalizeStatus(invoice.status);
   if (['paid', 'cancelled'].includes(status)) return invoice;
   const baseAmount = Math.max(0, Math.round(toNumber(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount)));
-  const discountRate = percentValue(invoice.discountRate);
-  const discountAmount = Math.round((baseAmount * discountRate) / 100);
+  const discountAmount = discountAmountValue(invoice, baseAmount);
   const taxableAmount = Math.max(0, baseAmount - discountAmount);
   const ppnRate = percentValue(invoice.ppnRate ?? invoice.taxRate ?? invoice.vatRate);
   const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);

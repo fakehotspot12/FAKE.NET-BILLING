@@ -3159,7 +3159,7 @@ async function pppImportTemplateBuffer() {
       { kolom: 'active_date', wajib: 'Tidak', contoh: dateDisplayText(localTodayIso()), keterangan: 'Tanggal aktif/pasang dengan format DD/MM/YYYY. Tanggal ini tetap menjadi acuan billing.' },
       { kolom: 'count_as_psb', wajib: 'Tidak', contoh: 'no', keterangan: 'Default no agar data impor dianggap pelanggan existing. Isi yes hanya untuk pemasangan baru yang harus masuk statistik PSB.' },
       { kolom: 'ppn', wajib: 'Tidak', contoh: '11', keterangan: 'PPN persen jika dipakai.' },
-      { kolom: 'discount', wajib: 'Tidak', contoh: '0', keterangan: 'Diskon persen jika dipakai.' },
+      { kolom: 'discount', wajib: 'Tidak', contoh: '10000', keterangan: 'Diskon nominal rupiah jika dipakai.' },
       { kolom: 'note', wajib: 'Tidak', contoh: 'Catatan opsional', keterangan: 'Catatan internal.' }
     ]
   });
@@ -8126,7 +8126,7 @@ function localManualInvoicePreview(data = {}, customer = {}, subPeriod = 1) {
     vatAmount: billingAmount.vatAmount,
     taxRate: billingAmount.taxRate,
     taxAmount: billingAmount.taxAmount,
-    discount: billingAmount.discountRate > 0 ? `${billingAmount.discountRate}% (${formatCurrencyText(billingAmount.discountAmount)})` : '-',
+    discount: billingAmount.discountAmount > 0 ? formatCurrencyText(billingAmount.discountAmount) : '-',
     discountRate: billingAmount.discountRate,
     discountAmount: billingAmount.discountAmount,
     total: formatCurrencyText(billingAmount.totalAmount),

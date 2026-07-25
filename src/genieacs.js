@@ -101,6 +101,22 @@ function cleanText(value = '') {
   return String(value || '').trim();
 }
 
+function normalizeUsernameSuffixes(value = []) {
+  const rows = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[\n,]/);
+  return rows
+    .map((item) => cleanText(item).toLowerCase())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function rowExcludedByUsernameSuffix(row = {}, suffixes = []) {
+  const username = cleanText(row.username).toLowerCase();
+  if (!username) return false;
+  return suffixes.some((suffix) => suffix && username.endsWith(suffix));
+}
+
 function validIpv4(value = '') {
   const parts = cleanText(value).split('.');
   return parts.length === 4 && parts.every((part) => {
@@ -125,7 +141,8 @@ function normalizeSettings(settings = {}) {
     wifiSsidParameters: DEFAULT_WIFI_SSID_PARAMETERS.slice(),
     wifi5gSsidParameters: DEFAULT_WIFI_5G_SSID_PARAMETERS.slice(),
     wifiClientCountParameters: DEFAULT_WIFI_CLIENT_COUNT_PARAMETERS.slice(),
-    wifi5gClientCountParameters: DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS.slice()
+    wifi5gClientCountParameters: DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS.slice(),
+    excludeUsernameSuffixes: normalizeUsernameSuffixes(process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES || raw.excludeUsernameSuffixes || [])
   };
 }
 
@@ -577,7 +594,8 @@ async function listDevices(settings = {}, options = {}) {
       query: JSON.stringify(query)
     }
   });
-  const rows = Array.isArray(rawRows) ? rawRows.map((device) => normalizeDevice(device, cfg)) : [];
+  const rows = (Array.isArray(rawRows) ? rawRows.map((device) => normalizeDevice(device, cfg)) : [])
+    .filter((row) => !rowExcludedByUsernameSuffix(row, cfg.excludeUsernameSuffixes));
   const filteredRows = rows.filter((row) => {
     const statusMatch = ['online', 'offline'].includes(status) ? row.status === status : true;
     const redamanMatch = ['good', 'normal', 'high'].includes(redaman)

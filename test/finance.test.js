@@ -429,7 +429,7 @@ test('generates invoices only after the active date month', () => {
   assert.deepEqual(august.map((invoice) => invoice.customerId).sort(), ['cus-active-current', 'cus-active-old']);
 });
 
-test('generated invoices include member PPN and discount in total amount', () => {
+test('generated invoices include member PPN and nominal discount in total amount', () => {
   const data = createDefaultStore();
   data.customers.push({
     id: 'cus-taxed',
@@ -439,14 +439,14 @@ test('generated invoices include member PPN and discount in total amount', () =>
     status: 'active',
     price: 150000,
     ppn: '11',
-    discount: '10'
+    discount: '15000'
   });
 
   const created = generateInvoices(data, '2026-07');
 
   assert.equal(created.length, 1);
   assert.equal(created[0].subtotal, 150000);
-  assert.equal(created[0].discountRate, 10);
+  assert.equal(created[0].discountRate, 0);
   assert.equal(created[0].discountAmount, 15000);
   assert.equal(created[0].ppnRate, 11);
   assert.equal(created[0].ppnAmount, 14850);
@@ -479,7 +479,7 @@ test('local manual invoice skips active month when first invoice was paid', () =
   assert.deepEqual(preview.coveredPeriods, [nextPeriod]);
 });
 
-test('local manual invoice preview applies member PPN and discount for multi-month billing', () => {
+test('local manual invoice preview applies member PPN and nominal discount for multi-month billing', () => {
   const data = createDefaultStore();
   const customer = {
     id: 'cus-manual-taxed',
@@ -489,7 +489,7 @@ test('local manual invoice preview applies member PPN and discount for multi-mon
     status: 'active',
     price: 150000,
     ppn: '11',
-    discount: '10',
+    discount: '15000',
     activeDate: '2026-06-15',
     firstInvoiceStatus: 'paid'
   };
@@ -502,7 +502,7 @@ test('local manual invoice preview applies member PPN and discount for multi-mon
   assert.equal(preview.totalAmount, 299700);
 });
 
-test('local manual invoice stores PPN and discount fields', () => {
+test('local manual invoice stores PPN and nominal discount fields', () => {
   const data = createDefaultStore();
   const customer = {
     id: 'cus-manual-taxed-store',
@@ -512,7 +512,7 @@ test('local manual invoice stores PPN and discount fields', () => {
     status: 'active',
     price: 150000,
     ppn: '11',
-    discount: '10',
+    discount: '15000',
     activeDate: '2026-06-15',
     firstInvoiceStatus: 'paid'
   };

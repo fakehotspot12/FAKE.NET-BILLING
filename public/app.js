@@ -8657,7 +8657,7 @@ function radiusMemberFieldsMarkup(options = {}) {
       </label>
     </section>
     <section class="form-grid radius-wizard-panel compact-wizard-panel" data-radius-wizard-panel="payment" hidden>
-      <div class="field full radius-wizard-title"><strong>Payment</strong><span>Harga mengikuti profile, PPN dan discount tersimpan ke data member.</span></div>
+      <div class="field full radius-wizard-title"><strong>Payment</strong><span>Harga mengikuti profile, PPN dan diskon nominal tersimpan ke data member.</span></div>
       <label class="field">
         <span>Tipe Pembayaran</span>
         <select name="memberPaymentType" data-member-field disabled>
@@ -8685,8 +8685,8 @@ function radiusMemberFieldsMarkup(options = {}) {
         <input name="memberPpn" type="number" min="0" max="100" step="0.01" value="" data-member-field autocomplete="off" disabled>
       </label>
       <label class="field">
-        <span>Discount (%)</span>
-        <input name="memberDiscount" type="number" min="0" max="100" step="0.01" value="" data-member-field autocomplete="off" disabled>
+        <span>Diskon (Rp)</span>
+        <input name="memberDiscount" type="number" min="0" step="1" value="" inputmode="numeric" data-member-field autocomplete="off" disabled>
       </label>
       <div class="field full notice ${bhpUsoEnabled ? 'info' : ''}">
         <strong>BHP USO</strong>
@@ -9107,8 +9107,7 @@ function bindRadiusPppWizard() {
     reviewValue('payment', `${selectedText('select[name="memberPaymentType"]')} / ${selectedText('select[name="memberBillingPeriod"]')}`);
     const subtotal = Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberPrice"]')?.value || '')));
     const ppnRate = percentValue(modalBody.querySelector('input[name="memberPpn"]')?.value || '');
-    const discountRate = percentValue(modalBody.querySelector('input[name="memberDiscount"]')?.value || '');
-    const discountAmount = Math.round((subtotal * discountRate) / 100);
+    const discountAmount = Math.min(subtotal, Math.max(0, Math.round(numberValue(modalBody.querySelector('input[name="memberDiscount"]')?.value || ''))));
     const taxableAmount = Math.max(0, subtotal - discountAmount);
     const ppnAmount = Math.round((taxableAmount * ppnRate) / 100);
     const bhpUsoEnabled = wizard.dataset.bhpUsoEnabled === '1';
@@ -9117,7 +9116,7 @@ function bindRadiusPppWizard() {
     const totalAmount = Math.max(0, taxableAmount + ppnAmount + bhpUsoAmount);
     reviewValue('price', moneyValue(subtotal));
     reviewValue('ppn', ppnRate > 0 ? `${ppnRate}% / ${rupiah(ppnAmount)}` : '-');
-    reviewValue('discount', discountRate > 0 ? `${discountRate}% / ${rupiah(discountAmount)}` : '-');
+    reviewValue('discount', discountAmount > 0 ? rupiah(discountAmount) : '-');
     reviewValue('bhpUso', bhpUsoAmount > 0 ? `${bhpUsoRate}% / ${rupiah(bhpUsoAmount)}` : '-');
     reviewValue('total', totalAmount > 0 ? rupiah(totalAmount) : '-');
     reviewValue('activeDate', dateText(modalBody.querySelector('input[name="memberActiveDate"]')?.value || '') || '-');
@@ -12309,7 +12308,7 @@ function manualInvoicePreviewRows(preview = {}) {
     ['Item', preview.item],
     ['Amount', preview.amount],
     ['PPN', preview.ppn || '-'],
-    ['Discount', preview.discount || '-'],
+    ['Diskon', preview.discount || '-'],
     ['Total', preview.total || preview.amount || '-']
   ];
   return rows.map(([label, value]) => `
@@ -12813,6 +12812,30 @@ function memberPercentInput(value) {
   return match ? match[0] : '';
 }
 
+function memberNumberInput(value) {
+  let cleaned = String(value || '').trim().replace(/[^\d,.-]/g, '');
+  const hasComma = cleaned.includes(',');
+  const hasDot = cleaned.includes('.');
+  if (hasComma && hasDot) {
+    const decimalSeparator = cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.') ? ',' : '.';
+    const thousandSeparator = decimalSeparator === ',' ? '.' : ',';
+    cleaned = cleaned.replace(new RegExp(`\\${thousandSeparator}`, 'g'), '').replace(decimalSeparator, '.');
+  } else if (hasComma) {
+    const parts = cleaned.split(',');
+    cleaned = parts.at(-1).length === 3 && parts.length > 1 ? parts.join('') : cleaned.replace(',', '.');
+  } else if (hasDot) {
+    const parts = cleaned.split('.');
+    cleaned = parts.at(-1).length === 3 && parts.length > 1 ? parts.join('') : cleaned;
+  }
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) && parsed > 0 ? String(Math.round(parsed)) : '';
+}
+
+function memberDiscountDisplay(value) {
+  const amount = Number(memberNumberInput(value) || 0);
+  return amount > 0 ? rupiah(amount) : '-';
+}
+
 function memberId(member = {}) {
   return member.id || member.memberId || member.accountId || '';
 }
@@ -13073,7 +13096,7 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
           ['Next Invoice', dateText(payment.nextDue || member.nextDue || member.dueDate) || '-'],
           ['Harga', payment.price || member.price ? rupiah(payment.price || member.price) : '-'],
           ['VAT/PPN', payment.ppn || member.ppn || '-'],
-          ['Discount', payment.discount || member.discount || '-']
+          ['Diskon', memberDiscountDisplay(payment.discount || member.discount)]
         ])}
       </section>
       <section class="member-edit-section" data-member-detail-panel="internet" hidden>
@@ -13193,8 +13216,8 @@ function paymentModalBody(member = {}, payment = {}, editable = false) {
           <label>PPN (%)
             <input name="ppn" type="number" min="0" max="100" step="0.01" value="${escapeHtml(memberPercentInput(payment.ppn || member.ppn))}" ${disabled}>
           </label>
-          <label>Discount (%)
-            <input name="discount" type="number" min="0" max="100" step="0.01" value="${escapeHtml(memberPercentInput(payment.discount || member.discount))}" ${disabled}>
+          <label>Diskon (Rp)
+            <input name="discount" type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(memberNumberInput(payment.discount || member.discount))}" ${disabled}>
           </label>
         </div>
       </div>
@@ -15277,7 +15300,7 @@ const WA_INVOICE_VARIABLES = [
   ['[invoice_date]', 'Invoice Date'],
   ['[amount]', 'Amount'],
   ['[ppn]', 'VAT'],
-  ['[discount]', 'Discount'],
+  ['[discount]', 'Diskon'],
   ['[total]', 'Total (amount after VAT or discount)'],
   ['[admin_fee]', 'Admin Fee Payment Gateway'],
   ['[gateway_total]', 'Total Payment Gateway'],

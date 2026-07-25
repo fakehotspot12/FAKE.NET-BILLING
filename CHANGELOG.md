@@ -2,6 +2,16 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.15] - 2026-07-25
+
+### Changed
+
+- Diskon member/tagihan diubah menjadi nominal rupiah, bukan persentase, termasuk preview wizard PPP-DHCP, edit payment member, invoice manual, dan template import PPP-DHCP.
+
+### Fixed
+
+- GenieACS mendukung pengecualian suffix username seperti `@kampung.net` untuk kebutuhan demo/tester site tertentu.
+
 ## [2.9.14] - 2026-07-25
 
 ### Fixed
