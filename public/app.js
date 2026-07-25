@@ -141,6 +141,8 @@ const state = {
   userSearch: '',
   view: 'dashboard',
   period: todayInput().slice(0, 7),
+  externalIncomePeriod: todayInput().slice(0, 7),
+  expensePeriod: todayInput().slice(0, 7),
   receiptPrintMode: 'a4',
   invoiceStatus: 'all',
   customerStatus: 'all',
@@ -331,6 +333,20 @@ function periodParts(period = state.period) {
 function periodLabel(period = state.period) {
   const { year, month } = periodParts(period);
   return `${MONTH_FULL_LABELS[Math.max(0, Math.min(11, month - 1))]} ${year}`;
+}
+
+function periodFilterControls(prefix, period) {
+  const safePeriod = normalizedPeriod(period);
+  return `
+    <input class="control" id="${prefix}" type="month" value="${escapeHtml(safePeriod)}" aria-label="Filter bulan">
+  `;
+}
+
+function bindPeriodFilter(prefix, onChange) {
+  const input = document.getElementById(prefix);
+  input?.addEventListener('change', (event) => {
+    onChange(event.target.value || todayInput().slice(0, 7));
+  });
 }
 
 function periodShortLabel(period = state.period) {
@@ -5387,8 +5403,10 @@ async function renderReportsInventoryStock() {
 
 async function renderExpenses() {
   app.innerHTML = '<div class="empty">Memuat pengeluaran...</div>';
+  const period = normalizedPeriod(state.expensePeriod || state.period);
+  state.expensePeriod = period;
   const params = queryString({
-    period: state.period,
+    period,
     search: state.search
   });
   const { expenses } = await api(`/api/expenses?${params}`);
@@ -5398,6 +5416,7 @@ async function renderExpenses() {
     <div class="stack">
       <div class="toolbar">
         <div class="filters">
+          ${periodFilterControls('expensePeriod', period)}
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari pengeluaran" autocomplete="off">
         </div>
         ${writeAllowed ? '<button class="button" id="addExpense" type="button">Tambah Pengeluaran</button>' : ''}
@@ -5449,6 +5468,10 @@ async function renderExpenses() {
   `;
 
   document.getElementById('addExpense')?.addEventListener('click', () => openExpenseModal());
+  bindPeriodFilter('expensePeriod', (nextPeriod) => {
+    state.expensePeriod = normalizedPeriod(nextPeriod);
+    renderExpenses();
+  });
   if (writeAllowed) {
     app.querySelectorAll('[data-edit-expense]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -5896,8 +5919,10 @@ function collectExpensePayload(form, payload) {
 
 async function renderExternalIncomes() {
   app.innerHTML = '<div class="empty">Memuat pemasukan...</div>';
+  const period = normalizedPeriod(state.externalIncomePeriod || state.period);
+  state.externalIncomePeriod = period;
   const params = queryString({
-    period: state.period,
+    period,
     search: state.search
   });
   const { externalIncomes } = await api(`/api/external-incomes?${params}`);
@@ -5932,6 +5957,7 @@ async function renderExternalIncomes() {
     <div class="stack">
       <div class="toolbar">
         <div class="filters">
+          ${periodFilterControls('externalIncomePeriod', period)}
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari pemasukan" autocomplete="off">
         </div>
         ${writeAllowed ? '<button class="button" id="addExternalIncome" type="button">Tambah Pemasukan</button>' : ''}
@@ -5960,6 +5986,10 @@ async function renderExternalIncomes() {
   `;
 
   document.getElementById('addExternalIncome')?.addEventListener('click', () => openExternalIncomeModal());
+  bindPeriodFilter('externalIncomePeriod', (nextPeriod) => {
+    state.externalIncomePeriod = normalizedPeriod(nextPeriod);
+    renderExternalIncomes();
+  });
   app.querySelectorAll('[data-receipt-income]').forEach((button) => {
     button.addEventListener('click', () => {
       const income = externalIncomes.find((item) => item.id === button.dataset.receiptIncome);

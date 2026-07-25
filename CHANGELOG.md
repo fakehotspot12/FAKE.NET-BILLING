@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.11] - 2026-07-25
+
+### Changed
+
+- Menu Pemasukan dan Pengeluaran memiliki filter bulan langsung di halaman masing-masing memakai month picker.
+
 ## [2.9.10] - 2026-07-25
 
 ### Fixed
