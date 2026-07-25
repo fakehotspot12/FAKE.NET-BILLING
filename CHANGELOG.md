@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.24] - 2026-07-25
+
+### Fixed
+
+- Script panduan redirect isolir MikroTik dibuat lebih kompatibel dengan RouterOS v6/v7: nilai IP/list ditulis literal, tidak memakai negasi variable, dan output paste tidak lagi bergantung pada `:local` lintas baris.
+
 ## [2.9.23] - 2026-07-25
 
 ### Fixed
