@@ -88,7 +88,7 @@ configure_rhel_repositories() {
 install_rhel_packages() {
   local pm="$1"
   configure_rhel_repositories "$pm"
-  "$pm" install -y ca-certificates curl git rsync tar gzip openssl procps-ng iproute postgresql-server postgresql redis freeradius freeradius-postgresql
+  "$pm" install -y ca-certificates curl git rsync tar gzip openssl procps-ng iproute postgresql-server postgresql redis freeradius freeradius-postgresql tesseract
   "$pm" install -y freeradius-utils >/dev/null 2>&1 || true
   "$pm" install -y net-snmp-utils >/dev/null 2>&1 || true
   if ! command -v docker >/dev/null 2>&1; then
@@ -102,7 +102,7 @@ install_packages() {
   case "$pm" in
     apt)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git rsync tar gzip gnupg openssl procps iproute2 postgresql postgresql-client redis-server freeradius freeradius-postgresql freeradius-utils snmp docker.io
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git rsync tar gzip gnupg openssl procps iproute2 postgresql postgresql-client redis-server freeradius freeradius-postgresql freeradius-utils snmp docker.io tesseract-ocr
       ;;
     dnf)
       install_rhel_packages dnf
@@ -111,19 +111,43 @@ install_packages() {
       install_rhel_packages yum
       ;;
     apk)
-      apk add --no-cache bash ca-certificates curl git rsync tar gzip openssl procps iproute2 nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc su-exec
+      apk add --no-cache bash ca-certificates curl git rsync tar gzip openssl procps iproute2 nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc su-exec tesseract-ocr
       apk add --no-cache freeradius-utils >/dev/null 2>&1 || true
       apk add --no-cache net-snmp-tools >/dev/null 2>&1 || apk add --no-cache net-snmp >/dev/null 2>&1 || true
       ;;
     *)
-      echo "Package manager tidak dikenali. Install manual: nodejs npm git rsync postgresql redis freeradius freeradius-utils net-snmp-tools/snmp docker." >&2
+      echo "Package manager tidak dikenali. Install manual: nodejs npm git rsync postgresql redis freeradius freeradius-utils net-snmp-tools/snmp docker tesseract-ocr." >&2
+      ;;
+  esac
+}
+
+install_ocr_runtime() {
+  command -v tesseract >/dev/null 2>&1 && return 0
+  local pm
+  pm="$(detect_pm)"
+  echo "Instal dependency OCR KTP (Tesseract)..."
+  case "$pm" in
+    apt)
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y tesseract-ocr
+      ;;
+    dnf|yum)
+      configure_rhel_repositories "$pm"
+      "$pm" install -y tesseract
+      ;;
+    apk)
+      apk add --no-cache tesseract-ocr
+      ;;
+    *)
+      echo "Tesseract OCR belum tersedia. Install manual paket tesseract-ocr/tesseract lalu ulangi." >&2
+      return 1
       ;;
   esac
 }
 
 ensure_required_commands() {
   local missing=() cmd
-  for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker pgrep snmpwalk snmpget radclient; do
+  for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker pgrep snmpwalk snmpget radclient tesseract; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   if ! command -v freeradius >/dev/null 2>&1 && ! command -v radiusd >/dev/null 2>&1; then
@@ -1035,6 +1059,7 @@ install_openrc() {
 
 repair_install() {
   mkdir -p /var/log/fakenet-billing
+  install_ocr_runtime
   install_env
 
   if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
@@ -1221,6 +1246,7 @@ main() {
   esac
   verify_repository_payload
   install_packages
+  install_ocr_runtime
   install_node_runtime
   check_node
   ensure_required_commands

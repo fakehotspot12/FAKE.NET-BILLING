@@ -2654,6 +2654,15 @@ async function uploadImageFile(file, purpose, options = {}) {
   return result.url || '';
 }
 
+async function uploadMemberKtpFile(file, options = {}) {
+  const image = await readImageFile(file, { label: 'Foto KTP', ...options });
+  if (!image) return null;
+  return api('/api/uploads/member-ktp', {
+    method: 'POST',
+    body: JSON.stringify({ image })
+  });
+}
+
 function updateBranding(payload = {}) {
   if (payload.settings && typeof payload.settings === 'object') {
     state.settings = {
@@ -8758,6 +8767,15 @@ function radiusMemberFieldsMarkup(options = {}) {
         <span>Nomor KTP</span>
         <input name="memberKtp" data-member-field inputmode="numeric" autocomplete="off" disabled>
       </label>
+      <label class="field full member-ktp-upload-field">
+        <span>Foto KTP</span>
+        <input name="memberKtpPhotoUpload" type="file" accept="image/png,image/jpeg,image/webp" data-member-field disabled>
+        <input name="memberKtpPhoto" type="hidden" value="" data-member-field disabled>
+        <div class="ktp-upload-preview">
+          <img class="member-ktp-photo-preview" id="radiusKtpPhotoPreview" alt="Preview foto KTP" hidden>
+          <p class="muted" id="radiusKtpUploadStatus">Opsional. OCR akan mencoba membaca NIK dan mengisi Nomor KTP otomatis.</p>
+        </div>
+      </label>
       <label class="field">
         <span>WhatsApp</span>
         <input name="memberPhone" data-member-field inputmode="tel" autocomplete="off" placeholder="0812xxxx" disabled>
@@ -9171,6 +9189,15 @@ async function openRadiusPppUserModal(user = null) {
     if (payload.addToMember && !String(payload.memberPhone || '').trim()) {
       throw new Error('Nomor telepon/WhatsApp wajib diisi untuk member');
     }
+    const ktpPhotoFile = form.querySelector('input[name="memberKtpPhotoUpload"]')?.files?.[0];
+    if (ktpPhotoFile && !String(payload.memberKtpPhoto || '').trim()) {
+      const ktpUpload = await uploadMemberKtpFile(ktpPhotoFile, { label: 'Foto KTP' });
+      payload.memberKtpPhoto = JSON.stringify(ktpUpload?.storedPhoto || ktpUpload?.photo || {});
+      if (ktpUpload?.ktp && !String(payload.memberKtp || '').trim()) {
+        payload.memberKtp = ktpUpload.ktp;
+      }
+    }
+    delete payload.memberKtpPhotoUpload;
     const housePhotoFile = form.querySelector('input[name="memberHousePhoto"]')?.files?.[0];
     if (housePhotoFile) {
       payload.memberHousePhotoUrl = await uploadImageFile(housePhotoFile, 'member-house', { label: 'Foto rumah' });
@@ -9459,6 +9486,7 @@ function bindRadiusMemberFields(options = {}) {
   const memberFields = [...modalBody.querySelectorAll('[data-member-field]')];
   const usernameInput = modalBody.querySelector('input[name="username"]');
   const nameInput = modalBody.querySelector('[name="memberName"]');
+  const ktpInput = modalBody.querySelector('[name="memberKtp"]');
   const priceInput = modalBody.querySelector('[name="memberPrice"]');
   const paymentTypeSelect = modalBody.querySelector('[name="memberPaymentType"]');
   const billingPeriodSelect = modalBody.querySelector('#radiusMemberBillingPeriod');
@@ -9474,6 +9502,10 @@ function bindRadiusMemberFields(options = {}) {
   const profileSelect = modalBody.querySelector('select[name="profile"]');
   const housePhotoInput = modalBody.querySelector('input[name="memberHousePhoto"]');
   const housePhotoPreview = modalBody.querySelector('#radiusHousePhotoPreview');
+  const ktpPhotoInput = modalBody.querySelector('input[name="memberKtpPhotoUpload"]');
+  const ktpPhotoHidden = modalBody.querySelector('input[name="memberKtpPhoto"]');
+  const ktpPhotoPreview = modalBody.querySelector('#radiusKtpPhotoPreview');
+  const ktpUploadStatus = modalBody.querySelector('#radiusKtpUploadStatus');
   const profiles = options.profiles || [];
   let map = null;
   let marker = null;
@@ -9620,6 +9652,45 @@ function bindRadiusMemberFields(options = {}) {
         housePhotoPreview.hidden = true;
         housePhotoPreview.removeAttribute('src');
       }
+      setToast(error.message);
+    }
+  });
+  ktpPhotoInput?.addEventListener('change', async () => {
+    const file = ktpPhotoInput.files?.[0];
+    if (!file) {
+      if (ktpPhotoHidden) ktpPhotoHidden.value = '';
+      if (ktpPhotoPreview) {
+        ktpPhotoPreview.hidden = true;
+        ktpPhotoPreview.removeAttribute('src');
+      }
+      if (ktpUploadStatus) ktpUploadStatus.textContent = 'Opsional. OCR akan mencoba membaca NIK dan mengisi Nomor KTP otomatis.';
+      return;
+    }
+    try {
+      const preview = await readImageFile(file, { label: 'Foto KTP' });
+      if (ktpPhotoPreview && preview) {
+        ktpPhotoPreview.src = preview;
+        ktpPhotoPreview.hidden = false;
+      }
+      if (ktpUploadStatus) ktpUploadStatus.textContent = 'Mengupload dan membaca NIK dari KTP...';
+      const result = await uploadMemberKtpFile(file, { label: 'Foto KTP' });
+      if (ktpPhotoHidden) ktpPhotoHidden.value = JSON.stringify(result?.storedPhoto || result?.photo || {});
+      if (result?.ktp && ktpInput && !ktpInput.value) {
+        ktpInput.value = result.ktp;
+      }
+      if (ktpUploadStatus) {
+        ktpUploadStatus.textContent = result?.ktp
+          ? `NIK terbaca: ${result.ktp}`
+          : (result?.ocr?.error || 'Foto tersimpan. NIK belum terbaca otomatis, isi manual dari foto KTP.');
+      }
+    } catch (error) {
+      ktpPhotoInput.value = '';
+      if (ktpPhotoHidden) ktpPhotoHidden.value = '';
+      if (ktpPhotoPreview) {
+        ktpPhotoPreview.hidden = true;
+        ktpPhotoPreview.removeAttribute('src');
+      }
+      if (ktpUploadStatus) ktpUploadStatus.textContent = 'Foto KTP belum tersimpan.';
       setToast(error.message);
     }
   });
@@ -13099,6 +13170,15 @@ function memberHousePhotoUrl(member = {}) {
   return String(member.housePhotoUrl || member.memberHousePhotoUrl || member.photoUrl || '').trim();
 }
 
+function memberKtpPhotoUrl(member = {}, fallbackId = '') {
+  const photo = member.ktpPhoto || member.memberKtpPhoto || null;
+  if (!photo || typeof photo !== 'object' || (!photo.hasPhoto && !photo.id)) return '';
+  const id = fallbackId || memberId(member);
+  if (!id) return '';
+  const version = photo.uploadedAt || photo.id || '';
+  return `/api/monitoring/member-ktp-photo?memberId=${encodeURIComponent(id)}${version ? `&v=${encodeURIComponent(version)}` : ''}`;
+}
+
 function memberEditHeader(member = {}, detail = {}) {
   const contactText = detail.whatsapp || member.whatsapp || member.phone || '-';
   const displayId = memberDisplayId({ ...member, ...detail });
@@ -13287,6 +13367,8 @@ function usageDetailPanel(usage = {}) {
 function contactModalBody(member = {}, contact = {}, editable = false, detail = {}) {
   const disabled = editable ? '' : 'disabled';
   const photoUrl = memberHousePhotoUrl(contact) || memberHousePhotoUrl(member);
+  const detailMemberId = memberId(member) || memberId(contact);
+  const ktpPhotoUrl = editable ? (memberKtpPhotoUrl(contact, detailMemberId) || memberKtpPhotoUrl(member, detailMemberId)) : '';
   const payment = detail.payment || {};
   const internet = detail.internet || {};
   const invoices = Array.isArray(detail.invoices) ? detail.invoices : [];
@@ -13349,6 +13431,14 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
             <strong>Foto Rumah</strong>
             ${photoUrl ? `<img class="member-house-photo-large" id="memberHousePhotoPreview" src="${escapeHtml(photoUrl)}" alt="Foto rumah ${escapeHtml(memberTitle(member))}">` : '<div class="empty compact" id="memberHousePhotoEmpty">Foto rumah belum tersedia.</div><img class="member-house-photo-large" id="memberHousePhotoPreview" alt="Preview foto rumah" hidden>'}
             ${editable ? '<input name="housePhotoUpload" id="memberHousePhotoUpload" type="file" accept="image/png,image/jpeg,image/webp">' : ''}
+          </div>
+          <div class="member-ktp-photo-card">
+            <div class="member-photo-card-head">
+              <strong>Foto KTP</strong>
+              ${editable && ktpPhotoUrl ? '<button class="ghost-button compact danger" id="memberRemoveKtpPhoto" type="button">Hapus</button>' : ''}
+            </div>
+            ${ktpPhotoUrl ? `<img class="member-ktp-photo-large" id="memberKtpPhotoPreview" src="${escapeHtml(ktpPhotoUrl)}" alt="Foto KTP ${escapeHtml(memberTitle(member))}">` : '<div class="empty compact" id="memberKtpPhotoEmpty">Foto KTP belum tersedia.</div><img class="member-ktp-photo-large" id="memberKtpPhotoPreview" alt="Preview foto KTP" hidden>'}
+            ${editable ? '<input id="memberKtpPhotoUpload" type="file" accept="image/png,image/jpeg,image/webp"><input id="memberKtpPhotoValue" type="hidden" value=""><p class="muted" id="memberKtpUploadStatus">Upload KTP akan mencoba membaca Nomor KTP otomatis.</p>' : ''}
           </div>
         </div>
       </section>
@@ -13522,6 +13612,20 @@ async function openMemberContactModal(member = {}) {
         formPayload.housePhotoUrl = await uploadImageFile(housePhotoFile, 'member-house', { label: 'Foto rumah' });
       }
       delete formPayload.housePhotoUpload;
+      const ktpPhotoFile = form.querySelector('#memberKtpPhotoUpload')?.files?.[0];
+      const ktpPhotoValue = form.querySelector('#memberKtpPhotoValue')?.value || '';
+      if (ktpPhotoFile && !ktpPhotoValue) {
+        const ktpUpload = await uploadMemberKtpFile(ktpPhotoFile, { label: 'Foto KTP' });
+        formPayload.ktpPhoto = JSON.stringify(ktpUpload?.storedPhoto || ktpUpload?.photo || {});
+        if (ktpUpload?.ktp && !String(formPayload.ktp || '').trim()) {
+          formPayload.ktp = ktpUpload.ktp;
+        }
+      } else if (ktpPhotoValue) {
+        formPayload.ktpPhoto = ktpPhotoValue;
+      }
+      if (form.dataset.removeKtpPhoto === '1') {
+        formPayload.removeKtpPhoto = true;
+      }
       const result = await api('/api/monitoring/member-contact', {
         method: 'PUT',
         body: JSON.stringify({
@@ -13570,6 +13674,58 @@ function bindMemberDetailModal(detail = {}) {
       upload.value = '';
       setToast(error.message);
     }
+  });
+  const ktpUpload = modalBody.querySelector('#memberKtpPhotoUpload');
+  ktpUpload?.addEventListener('change', async () => {
+    const file = ktpUpload.files?.[0];
+    if (!file) return;
+    try {
+      const preview = modalBody.querySelector('#memberKtpPhotoPreview');
+      const empty = modalBody.querySelector('#memberKtpPhotoEmpty');
+      const status = modalBody.querySelector('#memberKtpUploadStatus');
+      const previewData = await readImageFile(file, { label: 'Foto KTP' });
+      if (preview && previewData) {
+        preview.src = previewData;
+        preview.hidden = false;
+      }
+      if (empty) empty.hidden = true;
+      if (status) status.textContent = 'Mengupload dan membaca NIK dari KTP...';
+      const result = await uploadMemberKtpFile(file, { label: 'Foto KTP' });
+      const hidden = modalBody.querySelector('#memberKtpPhotoValue');
+      if (hidden) hidden.value = JSON.stringify(result?.storedPhoto || result?.photo || {});
+      const form = modal.querySelector('.modal-frame');
+      if (form) form.dataset.removeKtpPhoto = '0';
+      const ktpInput = modalBody.querySelector('[name="ktp"]');
+      if (result?.ktp && ktpInput && !ktpInput.value) {
+        ktpInput.value = result.ktp;
+      }
+      if (status) {
+        status.textContent = result?.ktp
+          ? `NIK terbaca: ${result.ktp}`
+          : (result?.ocr?.error || 'Foto tersimpan. NIK belum terbaca otomatis, isi manual dari foto KTP.');
+      }
+    } catch (error) {
+      ktpUpload.value = '';
+      setToast(error.message);
+    }
+  });
+  modalBody.querySelector('#memberRemoveKtpPhoto')?.addEventListener('click', () => {
+    const form = modal.querySelector('.modal-frame');
+    if (form) form.dataset.removeKtpPhoto = '1';
+    const preview = modalBody.querySelector('#memberKtpPhotoPreview');
+    const empty = modalBody.querySelector('#memberKtpPhotoEmpty');
+    const hidden = modalBody.querySelector('#memberKtpPhotoValue');
+    const status = modalBody.querySelector('#memberKtpUploadStatus');
+    if (preview) {
+      preview.hidden = true;
+      preview.removeAttribute('src');
+    }
+    if (empty) {
+      empty.hidden = false;
+      empty.textContent = 'Foto KTP akan dihapus saat contact disimpan.';
+    }
+    if (hidden) hidden.value = '';
+    if (status) status.textContent = 'Foto KTP akan dihapus saat contact disimpan.';
   });
   const syncLocationButton = modalBody.querySelector('#memberSyncLocation');
   syncLocationButton?.addEventListener('click', async () => {

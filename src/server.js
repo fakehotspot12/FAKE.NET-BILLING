@@ -79,6 +79,8 @@ const MIGRATION_MODE = ['1', 'true', 'yes', 'on'].includes(String(process.env.MI
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const UPLOAD_ROOT = path.join(APP_ROOT, 'data', 'uploads');
+const PRIVATE_ROOT = path.join(APP_ROOT, 'data', 'private');
+const KTP_UPLOAD_ROOT = path.join(PRIVATE_ROOT, 'member-ktp');
 const WEB_PUSH_VAPID_PATH = path.join(APP_ROOT, 'data', 'webpush-vapid.json');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
@@ -97,6 +99,7 @@ const IMAGE_UPLOAD_LIMIT_BYTES = 12 * 1024 * 1024;
 const IMAGE_UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
 const IMAGE_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
 const IMAGE_ORPHAN_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const KTP_PHOTO_PREFIX = 'ktp';
 const XENDIT_WITHDRAW_TTL_MS = 10 * 60 * 1000;
 const WA_GATEWAY_SEND_INTERVAL_MS = Math.max(15_000, Number(process.env.WA_GATEWAY_SEND_INTERVAL_MS || 30_000) || 30_000);
 const WA_GATEWAY_HTTP_TIMEOUT_MS = Math.max(5_000, Number(process.env.WA_GATEWAY_HTTP_TIMEOUT_MS || 15_000) || 15_000);
@@ -971,6 +974,207 @@ async function saveUploadedImage(payload = {}) {
   };
 }
 
+function privateStorageKey(data = {}) {
+  const security = secureSecrets.ensureSecuritySettings(data);
+  const current = Buffer.from(String(security.secretKey || ''), 'base64');
+  if (current.length === 32) {
+    return current;
+  }
+  const replacement = crypto.randomBytes(32);
+  security.secretKey = replacement.toString('base64');
+  return replacement;
+}
+
+function encryptPrivateBuffer(data = {}, buffer = Buffer.alloc(0)) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', privateStorageKey(data), iv);
+  const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
+  const payload = {
+    version: 1,
+    algorithm: 'aes-256-gcm',
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    data: encrypted.toString('base64')
+  };
+  return Buffer.from(JSON.stringify(payload), 'utf8');
+}
+
+function decryptPrivateBuffer(data = {}, encryptedBuffer = Buffer.alloc(0)) {
+  const payload = JSON.parse(Buffer.from(encryptedBuffer).toString('utf8'));
+  if (payload?.version !== 1 || payload?.algorithm !== 'aes-256-gcm') {
+    throw new Error('Format file privat tidak valid');
+  }
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    privateStorageKey(data),
+    Buffer.from(String(payload.iv || ''), 'base64')
+  );
+  decipher.setAuthTag(Buffer.from(String(payload.tag || ''), 'base64'));
+  return Buffer.concat([
+    decipher.update(Buffer.from(String(payload.data || ''), 'base64')),
+    decipher.final()
+  ]);
+}
+
+function sanitizeStoredKtpPhoto(value = null) {
+  let input = value;
+  if (typeof value === 'string' && value.trim().startsWith('{')) {
+    try {
+      input = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!input || typeof input !== 'object') return null;
+  const id = String(input.id || '').trim().replace(/[^a-z0-9_-]+/gi, '').slice(0, 64);
+  const file = String(input.file || '').trim();
+  const safeFile = path.basename(file).replace(/[^a-z0-9_.-]+/gi, '').slice(0, 96);
+  if (!id || !safeFile || !safeFile.endsWith('.fnbktp')) return null;
+  return {
+    id,
+    file: safeFile,
+    mime: ['image/webp', 'image/jpeg', 'image/png'].includes(String(input.mime || '').toLowerCase())
+      ? String(input.mime || '').toLowerCase()
+      : 'image/webp',
+    size: Math.max(0, Number(input.size || 0) || 0),
+    originalSize: Math.max(0, Number(input.originalSize || 0) || 0),
+    width: Math.max(0, Number(input.width || 0) || 0),
+    height: Math.max(0, Number(input.height || 0) || 0),
+    uploadedAt: String(input.uploadedAt || '').slice(0, 40),
+    uploadedByName: String(input.uploadedByName || '').slice(0, 80),
+    uploadedByUsername: String(input.uploadedByUsername || '').slice(0, 80),
+    ocrNik: String(input.ocrNik || '').replace(/\D+/g, '').slice(0, 16),
+    ocrAvailable: input.ocrAvailable !== false,
+    ocrError: String(input.ocrError || '').slice(0, 180)
+  };
+}
+
+function publicMemberKtpPhotoMeta(value = null) {
+  const photo = sanitizeStoredKtpPhoto(value);
+  if (!photo) return null;
+  const { file, ...publicPhoto } = photo;
+  return {
+    ...publicPhoto,
+    hasPhoto: true
+  };
+}
+
+function referencedKtpPhotoFiles(data = {}) {
+  const files = new Set();
+  for (const customer of data.customers || []) {
+    const photo = sanitizeStoredKtpPhoto(customer.ktpPhoto || customer.memberKtpPhoto);
+    if (photo?.file) files.add(photo.file);
+  }
+  return files;
+}
+
+function extractKtpNikFromOcrText(text = '') {
+  const raw = String(text || '');
+  for (const line of raw.split(/\r?\n/)) {
+    const digits = line.replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').replace(/[^\d]+/g, '');
+    if (digits.length >= 16) {
+      return digits.slice(-16);
+    }
+  }
+  const normalized = raw.replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').replace(/[^\d]+/g, ' ');
+  const compact = normalized.replace(/\s+/g, '');
+  const exact = compact.match(/\d{16}/);
+  if (exact) return exact[0];
+  const loose = raw.match(/(?:\d[\s.-]*){16}/);
+  return loose ? loose[0].replace(/\D+/g, '').slice(0, 16) : '';
+}
+
+async function runKtpOcr(buffer = Buffer.alloc(0)) {
+  const tempPath = path.join(os.tmpdir(), `fakenet-ktp-${crypto.randomBytes(8).toString('hex')}.png`);
+  try {
+    const prepared = await sharp(buffer, { failOn: 'error', limitInputPixels: 40_000_000 })
+      .rotate()
+      .resize({ width: 2400, height: 1600, fit: 'inside', withoutEnlargement: true })
+      .grayscale()
+      .normalize()
+      .sharpen()
+      .png({ compressionLevel: 6 })
+      .toBuffer();
+    await fs.writeFile(tempPath, prepared, { mode: 0o600 });
+    const { stdout } = await execFileAsync('tesseract', [
+      tempPath,
+      'stdout',
+      '-l',
+      'eng',
+      '--psm',
+      '6',
+      '-c',
+      'tessedit_char_whitelist=0123456789'
+    ], {
+      timeout: 20_000,
+      maxBuffer: 1024 * 1024
+    });
+    const nik = extractKtpNikFromOcrText(stdout);
+    return {
+      available: true,
+      nik,
+      text: String(stdout || '').slice(0, 2000),
+      error: nik ? '' : 'NIK belum terbaca otomatis. Isi manual dari foto KTP.'
+    };
+  } catch (error) {
+    const missing = error?.code === 'ENOENT';
+    return {
+      available: !missing,
+      nik: '',
+      text: '',
+      error: missing
+        ? 'OCR belum aktif di server. Install paket tesseract-ocr lalu upload ulang.'
+        : (error.message || 'OCR KTP gagal membaca NIK. Isi manual dari foto KTP.')
+    };
+  } finally {
+    await fs.unlink(tempPath).catch(() => {});
+  }
+}
+
+async function saveMemberKtpUpload(data = {}, payload = {}, actor = {}) {
+  const { buffer } = parseImageDataUrl(payload.image || payload.dataUrl || payload.file);
+  const [optimized, ocr] = await Promise.all([
+    sharp(buffer, { failOn: 'error', limitInputPixels: 40_000_000 })
+      .rotate()
+      .resize({ width: 1600, height: 1100, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 82, effort: 4 })
+      .toBuffer({ resolveWithObject: true }),
+    runKtpOcr(buffer)
+  ]);
+  const encrypted = encryptPrivateBuffer(data, optimized.data);
+  const hash = crypto.createHash('sha256').update(encrypted).digest('hex').slice(0, 24);
+  const id = `${KTP_PHOTO_PREFIX}_${hash}`;
+  const filename = `${id}.fnbktp`;
+  await fs.mkdir(KTP_UPLOAD_ROOT, { recursive: true });
+  const targetPath = path.join(KTP_UPLOAD_ROOT, filename);
+  try {
+    await fs.writeFile(targetPath, encrypted, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+  const photo = sanitizeStoredKtpPhoto({
+    id,
+    file: filename,
+    mime: 'image/webp',
+    size: optimized.data.length,
+    originalSize: buffer.length,
+    width: optimized.info.width,
+    height: optimized.info.height,
+    uploadedAt: new Date().toISOString(),
+    uploadedByName: actor.name || actor.username || '',
+    uploadedByUsername: actor.username || '',
+    ocrNik: ocr.nik || '',
+    ocrAvailable: ocr.available !== false,
+    ocrError: ocr.error || ''
+  });
+  return {
+    photo,
+    publicPhoto: publicMemberKtpPhotoMeta(photo),
+    ktp: ocr.nik || '',
+    ocr
+  };
+}
+
 function referencedUploadUrls(data = {}) {
   const urls = new Set();
   const add = (value) => {
@@ -991,6 +1195,7 @@ function referencedUploadUrls(data = {}) {
 
 async function cleanupOrphanUploads(data = {}, options = {}) {
   const references = referencedUploadUrls(data);
+  const ktpReferences = referencedKtpPhotoFiles(data);
   const cutoff = Date.now() - Math.max(60_000, Number(options.graceMs || IMAGE_ORPHAN_GRACE_MS));
   let removed = 0;
   for (const directory of ['profile', 'member-house']) {
@@ -1006,7 +1211,16 @@ async function cleanupOrphanUploads(data = {}, options = {}) {
       await fs.unlink(targetPath).then(() => { removed += 1; }).catch(() => {});
     }
   }
-  return { removed, referenced: references.size };
+  const ktpFiles = await fs.readdir(KTP_UPLOAD_ROOT, { withFileTypes: true }).catch(() => []);
+  for (const file of ktpFiles) {
+    if (!file.isFile() || !file.name.endsWith('.fnbktp')) continue;
+    if (ktpReferences.has(file.name)) continue;
+    const targetPath = path.join(KTP_UPLOAD_ROOT, file.name);
+    const stat = await fs.stat(targetPath).catch(() => null);
+    if (!stat || stat.mtimeMs > cutoff) continue;
+    await fs.unlink(targetPath).then(() => { removed += 1; }).catch(() => {});
+  }
+  return { removed, referenced: references.size + ktpReferences.size };
 }
 
 function isInlineImageDataUrl(value = '') {
@@ -4067,6 +4281,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     recordOrigin: String(payload.memberRecordOrigin || payload.recordOrigin || 'wizard').trim(),
     importedAt: String(payload.memberImportedAt || payload.importedAt || '').trim(),
     housePhotoUrl: sanitizeStoredImageUrl(payload.memberHousePhotoUrl || payload.housePhotoUrl || '', 'member-house'),
+    ktpPhoto: sanitizeStoredKtpPhoto(payload.memberKtpPhoto || payload.ktpPhoto || payload.memberKtpPhotoMeta || null),
     createdByName: customer.createdByName || actor.name || actor.username || 'Sistem',
     createdByUsername: customer.createdByUsername || actor.username || '',
     createdByRole: customer.createdByRole || actor.role || '',
@@ -12806,6 +13021,61 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'POST' && pathname === '/api/uploads/member-ktp') {
+    const data = await requestStore(req);
+    const user = auth.requestUser(req, data);
+    if (!user) {
+      unauthorized(res);
+      return;
+    }
+    if (!auth.hasPermission(user, 'customers:manage') && !auth.hasPermission(user, 'members:contact:write')) {
+      forbidden(res);
+      return;
+    }
+    try {
+      const payload = await readBody(req, IMAGE_UPLOAD_LIMIT_BYTES);
+      const { data: secureData } = await mutate((store) => {
+        privateStorageKey(store);
+        return true;
+      });
+      const result = await saveMemberKtpUpload(secureData, payload, user);
+      sendJson(res, 200, {
+        ok: true,
+        photo: result.publicPhoto,
+        storedPhoto: result.photo,
+        ktp: result.ktp,
+        ocr: result.ocr
+      });
+    } catch (error) {
+      badRequest(res, error.message || 'Foto KTP tidak bisa diupload');
+    }
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/monitoring/member-ktp-photo') {
+    const authContext = await requireAnyPermission(req, res, ['customers:manage', 'members:contact:write']);
+    if (!authContext) return;
+    const memberId = String(url.searchParams.get('memberId') || url.searchParams.get('id') || '').trim();
+    if (!memberId) {
+      badRequest(res, 'ID member tidak tersedia');
+      return;
+    }
+    const customer = (authContext.data.customers || []).find((item) => String(item.id || '') === memberId);
+    const photo = sanitizeStoredKtpPhoto(customer?.ktpPhoto || customer?.memberKtpPhoto || null);
+    if (!customer || !photo?.file) {
+      notFound(res);
+      return;
+    }
+    try {
+      const encrypted = await fs.readFile(path.join(KTP_UPLOAD_ROOT, photo.file));
+      const image = decryptPrivateBuffer(authContext.data, encrypted);
+      sendBinary(res, 200, image, photo.mime || 'image/webp');
+    } catch (error) {
+      sendJson(res, 404, { ok: false, error: error.message || 'Foto KTP tidak bisa dibaca' });
+    }
+    return;
+  }
+
   if (method === 'GET' && pathname === '/api/tools/qr') {
     const text = qrTextParam(url.searchParams.get('text') || '');
     if (!text) {
@@ -15770,7 +16040,8 @@ async function handleApi(req, res, url) {
         longitude: customer.longitude || '',
         locationAccuracy: customer.locationAccuracy || '',
         locationUrl: customer.locationUrl || (customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : ''),
-        housePhotoUrl: customer.housePhotoUrl || customer.memberHousePhotoUrl || ''
+        housePhotoUrl: customer.housePhotoUrl || customer.memberHousePhotoUrl || '',
+        ktpPhoto: publicMemberKtpPhotoMeta(customer.ktpPhoto || customer.memberKtpPhoto || null)
       };
       const detailPaymentType = normalizeImportPaymentType(customer.paymentType || 'postpaid');
       const payment = {
@@ -15874,6 +16145,11 @@ async function handleApi(req, res, url) {
           customer.locationUrl = customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : '';
           if (typeof payload.housePhotoUrl === 'string' || typeof payload.memberHousePhotoUrl === 'string') {
             customer.housePhotoUrl = sanitizeStoredImageUrl(payload.housePhotoUrl || payload.memberHousePhotoUrl || '', 'member-house');
+          }
+          if (payload.removeKtpPhoto === true || payload.removeKtpPhoto === 'true') {
+            delete customer.ktpPhoto;
+          } else if (payload.ktpPhoto !== undefined || payload.memberKtpPhoto !== undefined) {
+            customer.ktpPhoto = sanitizeStoredKtpPhoto(payload.ktpPhoto || payload.memberKtpPhoto || null);
           }
           customer.updatedAt = new Date().toISOString();
           customer.updatedBy = authContext.user.name || authContext.user.username;
@@ -17329,6 +17605,7 @@ module.exports = {
     dashboardCollectorScope,
     deleteRadiusLinkedMember,
     deleteOrphanRadiusMembers,
+    extractKtpNikFromOcrText,
     fulfillHotspotVoucherOrder,
     fulfillPaymentGatewayCallback,
     hotspotVoucherRevision,

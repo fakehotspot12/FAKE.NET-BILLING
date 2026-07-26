@@ -115,6 +115,8 @@ Hal yang perlu diatur setelah install:
 - Scan Whatsapp Gateway.
 - Buat rule MikroTik untuk Radius, isolir, dan redirect web isolir sesuai kebutuhan jaringan.
 
+Installer juga menyiapkan Tesseract OCR untuk pembacaan Nomor KTP dari foto pelanggan. Jika repository OS tidak menyediakan paket OCR, install paket `tesseract-ocr` atau `tesseract` sesuai distro lalu jalankan `sudo bash install.sh repair`.
+
 ## Fitur Utama
 
 - Dashboard keuangan, tagihan, PPP-DHCP users, Hotspot users, dan traffic NAS.
@@ -179,6 +181,8 @@ Alur operasional member PPP-DHCP:
 8. Pelanggan yang sudah membayar setelah isolir dapat diaktifkan kembali, termasuk trigger session/COA Radius bila tersedia.
 
 Data lokasi pelanggan dapat disimpan dari izin lokasi browser atau ditandai manual pada peta. Foto rumah pelanggan disimpan sebagai referensi lapangan agar teknisi, NOC, dan collector lebih mudah menemukan titik pemasangan, memverifikasi pelanggan pindah alamat, atau melengkapi data saat kunjungan. Foto otomatis dioptimalkan ke WEBP, dideduplikasi, dan file yang tidak lagi digunakan dibersihkan setelah masa aman. Di menu Member, data kontak, alamat, peta, foto rumah, detail internet, dan invoice dibuat mudah ditinjau tanpa membuka banyak halaman.
+
+Untuk pendataan pelanggan baru, foto KTP dapat diupload oleh role yang berwenang seperti admin atau teknisi. Aplikasi akan mencoba membaca NIK menggunakan OCR lokal, lalu mengisi field Nomor KTP otomatis jika terbaca. Foto KTP disimpan di storage privat aplikasi dan tidak diekspos sebagai file publik, sehingga tetap bisa dipakai untuk verifikasi administrasi tanpa bercampur dengan asset web.
 
 Monitoring member PPP-DHCP memuat status pelanggan, status pembayaran, NAS, kontak, alamat, invoice, serta data pendukung untuk pekerjaan lapangan. Portal WifiKu dapat digunakan pelanggan untuk melihat pemakaian bulanan, redaman, dan aksi perangkat jika integrasi GenieACS aktif.
 

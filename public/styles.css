@@ -1246,7 +1246,9 @@ input[type="checkbox"] {
   margin-top: 8px;
 }
 
-.member-house-photo-card input[type="file"] {
+.member-house-photo-card input[type="file"],
+.member-ktp-photo-card input[type="file"],
+.member-ktp-upload-field input[type="file"] {
   margin-top: 8px;
 }
 
@@ -4308,6 +4310,20 @@ dialog:has(.changelog-preview) {
   background: var(--surface-soft);
 }
 
+.ktp-upload-preview {
+  display: grid;
+  gap: 6px;
+}
+
+.member-ktp-photo-preview {
+  width: min(420px, 100%);
+  max-height: 240px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  object-fit: contain;
+  background: var(--surface-soft);
+}
+
 .member-summary-metrics {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
@@ -4320,7 +4336,8 @@ dialog:has(.changelog-preview) {
 }
 
 .member-map-preview,
-.member-house-photo-card {
+.member-house-photo-card,
+.member-ktp-photo-card {
   min-width: 0;
   display: grid;
   align-content: start;
@@ -4331,6 +4348,17 @@ dialog:has(.changelog-preview) {
   background: var(--surface);
   color: var(--text);
   text-decoration: none;
+}
+
+.member-ktp-photo-card {
+  grid-column: 1 / -1;
+}
+
+.member-photo-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .member-map-preview {
@@ -4359,7 +4387,8 @@ dialog:has(.changelog-preview) {
   margin: 0;
 }
 
-.member-house-photo-large {
+.member-house-photo-large,
+.member-ktp-photo-large {
   width: 100%;
   max-height: min(420px, 55vh);
   border: 1px solid var(--line);

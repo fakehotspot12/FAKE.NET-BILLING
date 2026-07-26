@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.29] - 2026-07-26
+
+### Added
+
+- Wizard tambah user PPP-DHCP dan modal Contact Member mendukung upload foto KTP dengan OCR lokal untuk membaca Nomor KTP otomatis.
+- Foto KTP disimpan di storage privat terenkripsi aplikasi dan hanya dibuka lewat endpoint terautentikasi untuk role yang berwenang.
+- Installer dan repair/update menyiapkan dependency Tesseract OCR di Ubuntu/Debian, RHEL/CentOS family, dan Alpine.
+
+### Fixed
+
+- OCR KTP tetap aman dipakai walaupun Tesseract belum tersedia: upload tidak memutus alur, field Nomor KTP tetap bisa diisi manual.
+
 ## [2.9.28] - 2026-07-26
 
 ### Added
