@@ -72,7 +72,7 @@ class WhatsAppQueue {
     const delay = Math.max(0, Number.isFinite(scheduledAt) ? scheduledAt - Date.now() : 0);
     const attemptsMade = Math.max(0, Number(message.attempts) || 0);
     const attempts = Math.max(1, 3 - Math.min(attemptsMade, 2));
-    const backoffDelay = Math.max(15, Number(settings.minDelaySeconds) || 45) * 1000;
+    const backoffDelay = Math.max(15, Number(message.throttleDelaySeconds || settings.minDelaySeconds) || 45) * 1000;
     const priorityByType = {
       paymentPaid: 1,
       accountActive: 2,

@@ -101,7 +101,26 @@ test('bulk Whatsapp messages retain safe staggered delivery', () => {
 
   assert.equal(first.deliveryMode, 'bulk');
   assert.equal(second.deliveryMode, 'bulk');
-  assert.ok(new Date(second.scheduledAt).getTime() - new Date(first.scheduledAt).getTime() >= 44000);
+  assert.equal(first.bulkProfile, 'bulk');
+  assert.equal(second.throttleVersion, 2);
+  assert.ok(new Date(second.scheduledAt).getTime() - new Date(first.scheduledAt).getTime() >= 23000);
+});
+
+test('transactional Whatsapp messages stay fast even when batch flag is sent', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  const message = serverInternals.queueWaGatewayMessage(data, {
+    type: 'paymentPaid',
+    phone: '081234567893',
+    invoiceId: 'inv-paid-batch',
+    invoiceNo: '000777',
+    text: 'Pembayaran diterima',
+    bulk: true
+  });
+
+  assert.equal(message.deliveryMode, 'transactional');
+  assert.equal(message.bulkProfile, 'transactional');
+  assert.equal(message.throttleDelaySeconds, 6);
 });
 
 test('WAHA provider response ID is normalized and ACK advances to read', () => {

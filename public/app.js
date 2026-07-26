@@ -16660,20 +16660,18 @@ async function renderWaGateway() {
           <input name="baseUrl" id="waGatewayBaseUrl" type="hidden" value="">
           <input name="token" type="hidden" value="">
           <input name="sender" type="hidden" value="default">
+          <input name="minDelaySeconds" type="hidden" value="${escapeHtml(settings.minDelaySeconds || 45)}">
+          <input name="maxPerBatch" type="hidden" value="${escapeHtml(settings.maxPerBatch || 20)}">
           <div class="field full wa-gateway-top-panel" id="wahaTopPanel" ${selectedProvider === 'waha' ? '' : 'hidden'}>
             <div class="wa-gateway-status-inline" id="wahaHeaderStatus">
               ${wahaStatusCard({ loading: true })}
             </div>
             <div id="wahaPanelResult" class="wa-local-result"></div>
           </div>
-          <label class="field">
-            <span>Jeda minimal per pesan</span>
-            <input name="minDelaySeconds" type="number" min="15" max="3600" value="${escapeHtml(settings.minDelaySeconds || 45)}">
-          </label>
-          <label class="field">
-            <span>Maksimal per batch</span>
-            <input name="maxPerBatch" type="number" min="1" max="200" value="${escapeHtml(settings.maxPerBatch || 20)}">
-          </label>
+          <div class="field full">
+            <span>Kecepatan kirim</span>
+            <div class="compact-text muted">Otomatis: pembayaran dan voucher diprioritaskan cepat, sedangkan broadcast dan postpaid billing cycle dikirim bertahap dengan jeda aman.</div>
+          </div>
           <input name="quietStart" type="hidden" value="00:00">
           <input name="quietEnd" type="hidden" value="23:59">
           <div class="field full">

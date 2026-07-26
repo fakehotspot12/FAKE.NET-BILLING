@@ -106,6 +106,14 @@ const KTP_PHOTO_PREFIX = 'ktp';
 const XENDIT_WITHDRAW_TTL_MS = 10 * 60 * 1000;
 const WA_GATEWAY_SEND_INTERVAL_MS = Math.max(15_000, Number(process.env.WA_GATEWAY_SEND_INTERVAL_MS || 30_000) || 30_000);
 const WA_GATEWAY_HTTP_TIMEOUT_MS = Math.max(5_000, Number(process.env.WA_GATEWAY_HTTP_TIMEOUT_MS || 15_000) || 15_000);
+const WA_GATEWAY_THROTTLE_VERSION = 2;
+const WA_GATEWAY_TRANSACTIONAL_DELAY_SECONDS = 6;
+const WA_GATEWAY_BULK_PROFILES = Object.freeze({
+  broadcast: Object.freeze({ delaySeconds: 30, maxPerBatch: 100, batchPauseSeconds: 12 * 60, jitterSeconds: 12 }),
+  billingCycle: Object.freeze({ delaySeconds: 24, maxPerBatch: 120, batchPauseSeconds: 10 * 60, jitterSeconds: 10 }),
+  bulk: Object.freeze({ delaySeconds: 28, maxPerBatch: 100, batchPauseSeconds: 10 * 60, jitterSeconds: 10 })
+});
+const WA_GATEWAY_TRANSACTIONAL_TYPES = new Set(['paymentPaid', 'accountActive', 'voucherIssued']);
 const WAHA_ENV_FILE = process.env.WAHA_ENV_FILE || '/etc/fakenet-billing-waha.env';
 const APP_UPDATE_COMMAND = process.env.FAKENET_UPDATE_COMMAND || '/usr/local/bin/fakenet-billing-update';
 const APP_UPDATE_LOG = process.env.FAKENET_UPDATE_LOG || '/var/log/fakenet-billing/update.log';
@@ -7617,7 +7625,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       const reminderStart = addDaysIso(invoice.dueDate, -reminderDays);
       if (today < reminderStart || today > invoice.dueDate) continue;
       if (invoice.paymentReminderDueDate === invoice.dueDate && invoice.paymentReminderSentAt) continue;
-      const queued = queueInvoiceWaMessage(data, invoice, 'paymentReminder', actor);
+      const queued = queueInvoiceWaMessage(data, invoice, 'paymentReminder', actor, invoiceAutomationWaOptions(data, invoice));
       if (!queued) continue;
       invoice.paymentReminderDueDate = invoice.dueDate;
       invoice.paymentReminderSentAt = nowIso;
@@ -7671,7 +7679,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
 
   if (invoiceIssuedAutomationEnabled && notificationSendReady) {
     for (const invoice of created) {
-      const queued = queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+      const queued = queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor, invoiceAutomationWaOptions(data, invoice));
       if (queued) {
         invoice.invoiceIssuedSentAt = nowIso;
         invoice.invoiceIssuedPending = false;
@@ -7682,7 +7690,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       if (created.includes(invoice)) continue;
       if (invoice.invoiceIssuedPending !== true || invoice.invoiceIssuedSentAt) continue;
       if (!['pending', 'overdue'].includes(invoiceRuntimeStatus(invoice, today))) continue;
-      const queued = queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+      const queued = queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor, invoiceAutomationWaOptions(data, invoice));
       if (!queued) continue;
       invoice.invoiceIssuedSentAt = nowIso;
       invoice.invoiceIssuedPending = false;
@@ -7710,7 +7718,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
           && invoiceUncoveredPeriods(item, paidCoverage).length;
       })
         || { id: '', customerId: customer.id, customerName: customer.name || user.username, username: user.username, amount: unpaidByCustomer.get(customer.id)?.amount || 0, dueDate: unpaidByCustomer.get(customer.id)?.dueDate || '', period };
-      queueInvoiceWaMessage(data, invoice, 'accountSuspend', actor);
+      queueInvoiceWaMessage(data, invoice, 'accountSuspend', actor, invoiceAutomationWaOptions(data, invoice));
     }
   }
   if (waAutomationEnabled) {
@@ -9867,6 +9875,75 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
   };
 }
 
+function normalizeWaGatewayBulkProfile(value = '') {
+  const text = String(value || '').trim();
+  if (text === 'billing-cycle' || text === 'billing_cycle' || text === 'billingCycle') return 'billingCycle';
+  if (text === 'broadcast') return 'broadcast';
+  if (text === 'bulk') return 'bulk';
+  return 'bulk';
+}
+
+function waGatewayThrottleProfile(_settings = {}, profile = 'transactional') {
+  if (profile === 'transactional') {
+    return {
+      delaySeconds: WA_GATEWAY_TRANSACTIONAL_DELAY_SECONDS,
+      maxPerBatch: 0,
+      batchPauseSeconds: 0,
+      jitterSeconds: 0
+    };
+  }
+  const normalized = normalizeWaGatewayBulkProfile(profile);
+  return WA_GATEWAY_BULK_PROFILES[normalized] || WA_GATEWAY_BULK_PROFILES.bulk;
+}
+
+function waGatewayStableJitterMs(seed = '', maxSeconds = 0) {
+  const maximum = Math.max(0, Math.round(Number(maxSeconds || 0) * 1000));
+  if (!maximum) return 0;
+  const hex = crypto.createHash('sha1').update(String(seed || '')).digest('hex').slice(0, 8);
+  return Number.parseInt(hex, 16) % (maximum + 1);
+}
+
+function waGatewayBulkScheduleOffsetMs(index = 0, type = '', phone = '', text = '', throttle = WA_GATEWAY_BULK_PROFILES.bulk) {
+  const position = Math.max(0, Number(index) || 0);
+  const delaySeconds = Math.max(15, Number(throttle.delaySeconds || WA_GATEWAY_BULK_PROFILES.bulk.delaySeconds) || WA_GATEWAY_BULK_PROFILES.bulk.delaySeconds);
+  const jitterSeconds = Math.max(0, Number(throttle.jitterSeconds || 0) || 0);
+  const batchSize = Math.max(1, Number(throttle.maxPerBatch || WA_GATEWAY_BULK_PROFILES.bulk.maxPerBatch) || WA_GATEWAY_BULK_PROFILES.bulk.maxPerBatch);
+  const batchPauseSeconds = Math.max(0, Number(throttle.batchPauseSeconds || 0) || 0);
+  const intervalMs = (delaySeconds + jitterSeconds) * 1000;
+  const batchPauseMs = Math.floor(position / batchSize) * batchPauseSeconds * 1000;
+  const jitterMs = waGatewayStableJitterMs(`${type}:${phone}:${position}:${text.slice(0, 80)}`, jitterSeconds);
+  return (position * intervalMs) + batchPauseMs + jitterMs;
+}
+
+function waGatewayMessageThrottleProfile(message = {}) {
+  if (String(message.deliveryMode || '') === 'bulk' || String(message.type || '') === 'broadcast') {
+    return normalizeWaGatewayBulkProfile(message.bulkProfile || (message.type === 'broadcast' ? 'broadcast' : 'bulk'));
+  }
+  return 'transactional';
+}
+
+function waGatewayMessageDelaySeconds(settings = {}, message = {}) {
+  const stored = Number(message.throttleDelaySeconds || 0);
+  if (Number.isFinite(stored) && stored > 0) return Math.max(3, stored);
+  return waGatewayThrottleProfile(settings, waGatewayMessageThrottleProfile(message)).delaySeconds;
+}
+
+function invoiceUsesPostpaidBillingCycle(data = {}, invoice = {}) {
+  const customer = customerForInvoice(data, invoice);
+  const paymentType = normalizePaymentType(customer.paymentType || invoice.paymentType || invoice.type || 'postpaid');
+  const billingPeriod = normalizeBillingPeriodForType(
+    customer.billingPeriod || customer.method || invoice.billingPeriod || invoice.method || 'fixed',
+    paymentType
+  );
+  return paymentType === 'postpaid' && billingPeriod === 'cycle';
+}
+
+function invoiceAutomationWaOptions(data = {}, invoice = {}) {
+  return invoiceUsesPostpaidBillingCycle(data, invoice)
+    ? { bulk: true, bulkProfile: 'billingCycle' }
+    : {};
+}
+
 function queueWaGatewayMessage(data = {}, payload = {}) {
   data.waMessages = Array.isArray(data.waMessages) ? data.waMessages : [];
   const settings = data.settings?.waGateway || {};
@@ -9885,14 +9962,14 @@ function queueWaGatewayMessage(data = {}, payload = {}) {
   });
   if (duplicate) return duplicate;
 
-  const bulk = payload.bulk === true || type === 'broadcast';
+  const requestedBulk = payload.bulk === true || type === 'broadcast';
+  const bulk = requestedBulk && !WA_GATEWAY_TRANSACTIONAL_TYPES.has(type);
+  const bulkProfile = bulk ? normalizeWaGatewayBulkProfile(payload.bulkProfile || payload.bulkCategory || (type === 'broadcast' ? 'broadcast' : 'bulk')) : 'transactional';
+  const throttle = waGatewayThrottleProfile(settings, bulkProfile);
   const queuedCount = bulk
     ? data.waMessages.filter((message) => message.status === 'queued' && (message.deliveryMode === 'bulk' || message.type === 'broadcast')).length
     : 0;
-  const delayMs = bulk ? queuedCount * Math.max(15, Number(settings.minDelaySeconds || 45)) * 1000 : 0;
-  const batchDelayMs = bulk
-    ? Math.floor(queuedCount / Math.max(1, Number(settings.maxPerBatch || 20))) * 30 * 60 * 1000
-    : 0;
+  const scheduleMs = bulk ? waGatewayBulkScheduleOffsetMs(queuedCount, type, phone, text, throttle) : 0;
   const message = {
     id: createId('wa'),
     type,
@@ -9905,8 +9982,13 @@ function queueWaGatewayMessage(data = {}, payload = {}) {
     invoiceNo: invoiceNo || payload.invoiceNo || '',
     text,
     deliveryMode: bulk ? 'bulk' : 'transactional',
+    bulkProfile,
+    throttleVersion: WA_GATEWAY_THROTTLE_VERSION,
+    throttleDelaySeconds: throttle.delaySeconds,
+    throttleBatchSize: bulk ? throttle.maxPerBatch : 0,
+    throttleBatchPauseSeconds: bulk ? throttle.batchPauseSeconds : 0,
     status: settings.enabled ? 'queued' : 'draft',
-    scheduledAt: payload.scheduledAt || new Date(now + delayMs + batchDelayMs).toISOString(),
+    scheduledAt: payload.scheduledAt || new Date(now + scheduleMs).toISOString(),
     attempts: 0,
     queueRevision: 0,
     queueJobId: '',
@@ -9956,6 +10038,7 @@ function queueInvoiceWaMessage(data = {}, invoice = {}, type = 'paymentReminder'
     invoiceNo,
     text,
     bulk: options.bulk === true,
+    bulkProfile: options.bulkProfile || options.bulkCategory || '',
     actorName: actor.name || actor.username || ''
   });
 }
@@ -10401,8 +10484,8 @@ let waGatewaySenderRunning = false;
 let waGatewaySenderTimer = null;
 let waGatewayLastDeliveryAt = 0;
 
-async function waitForWaGatewayDeliverySlot(settings = {}) {
-  const minimumDelayMs = Math.max(15, Number(settings.minDelaySeconds || 45)) * 1000;
+async function waitForWaGatewayDeliverySlot(settings = {}, message = {}) {
+  const minimumDelayMs = Math.max(3, Number(waGatewayMessageDelaySeconds(settings, message) || WA_GATEWAY_TRANSACTIONAL_DELAY_SECONDS)) * 1000;
   const waitMs = Math.max(0, waGatewayLastDeliveryAt + minimumDelayMs - Date.now());
   if (waitMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -10440,7 +10523,7 @@ async function processWaGatewayQueueJob(job) {
   }
 
   try {
-    await waitForWaGatewayDeliverySlot(settings);
+    await waitForWaGatewayDeliverySlot(settings, message);
     const delivery = await deliverWaMessage(settings, message);
     const sentAt = new Date().toISOString();
     await mutate((store) => {
@@ -10468,7 +10551,7 @@ async function processWaGatewayQueueJob(job) {
     const attemptNumber = Math.max(1, Number(job.attemptsMade || 0) + 1);
     const maximumAttempts = Math.max(1, Number(job.opts?.attempts || 1));
     const finalAttempt = attemptNumber >= maximumAttempts;
-    const retryDelaySeconds = Math.max(15, Number(settings.minDelaySeconds || 45));
+    const retryDelaySeconds = Math.max(15, Number(waGatewayMessageDelaySeconds(settings, message) || WA_GATEWAY_TRANSACTIONAL_DELAY_SECONDS));
     await mutate((store) => {
       const current = (store.waMessages || []).find((item) => item.id === messageId);
       if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision) return;
@@ -10565,6 +10648,44 @@ function recoverRelevantWaGatewayDrafts(data = {}) {
   return recovered;
 }
 
+function waGatewayQueuedBulkMessages(data = {}) {
+  return (data.waMessages || []).filter((message) => {
+    if (String(message.status || '') !== 'queued') return false;
+    return String(message.deliveryMode || '') === 'bulk' || String(message.type || '') === 'broadcast';
+  });
+}
+
+function normalizePendingWaGatewayBulkSchedule(data = {}, settings = {}, nowDate = new Date()) {
+  const pending = waGatewayQueuedBulkMessages(data)
+    .filter((message) => Number(message.throttleVersion || 0) !== WA_GATEWAY_THROTTLE_VERSION)
+    .sort((left, right) => {
+      const leftTime = new Date(left.scheduledAt || left.createdAt || 0).getTime() || 0;
+      const rightTime = new Date(right.scheduledAt || right.createdAt || 0).getTime() || 0;
+      if (leftTime !== rightTime) return leftTime - rightTime;
+      return String(left.id || '').localeCompare(String(right.id || ''));
+    });
+  if (!pending.length) return [];
+  const baseTime = nowDate.getTime();
+  const updatedAt = nowDate.toISOString();
+  pending.forEach((message, index) => {
+    const profile = waGatewayMessageThrottleProfile(message);
+    const throttle = waGatewayThrottleProfile(settings, profile);
+    const phone = normalizeLocalPhone(message.phone || '');
+    const text = String(message.text || '');
+    message.bulkProfile = profile;
+    message.throttleVersion = WA_GATEWAY_THROTTLE_VERSION;
+    message.throttleDelaySeconds = throttle.delaySeconds;
+    message.throttleBatchSize = throttle.maxPerBatch;
+    message.throttleBatchPauseSeconds = throttle.batchPauseSeconds;
+    message.scheduledAt = new Date(baseTime + waGatewayBulkScheduleOffsetMs(index, message.type, phone, text, throttle)).toISOString();
+    message.queueRevision = Math.max(0, Number(message.queueRevision) || 0) + 1;
+    message.queueJobId = '';
+    message.enqueuedAt = '';
+    message.updatedAt = updatedAt;
+  });
+  return pending;
+}
+
 async function runWaGatewaySender(reason = 'interval', options = {}) {
   if (MIGRATION_MODE) {
     return { sent: 0, failed: 0, retried: 0, skipped: true, reason: 'migration-mode' };
@@ -10589,6 +10710,19 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
       );
       if (recovered.result.length) {
         data = recovered.data;
+        settings = data.settings?.waGateway || {};
+        provider = normalizeWaProvider(settings.provider || 'waha');
+      }
+    }
+    const hasOutdatedBulkSchedule = waGatewayQueuedBulkMessages(data)
+      .some((message) => Number(message.throttleVersion || 0) !== WA_GATEWAY_THROTTLE_VERSION);
+    if (hasOutdatedBulkSchedule) {
+      const normalized = await mutate(
+        (store) => normalizePendingWaGatewayBulkSchedule(store, store.settings?.waGateway || {}, now),
+        { collections: ['waMessages'], includeCore: false }
+      );
+      if (normalized.result.length) {
+        data = normalized.data;
         settings = data.settings?.waGateway || {};
         provider = normalizeWaProvider(settings.provider || 'waha');
       }
@@ -16471,6 +16605,7 @@ async function handleApi(req, res, url) {
           invoiceNo: invoiceNumber,
           text: message,
           bulk: payload.bulk === true,
+          bulkProfile: payload.bulk === true ? 'billingCycle' : '',
           actorName: authContext.user.name || authContext.user.username
         });
         addActivity(data, 'monitoring', `Reminder WA invoice ${invoiceNumber} disiapkan`, {

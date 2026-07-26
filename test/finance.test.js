@@ -2037,6 +2037,53 @@ test('standalone billing automation queues payment reminder once before due date
   assert.equal(data.invoices[0].paymentReminderDueDate, dueDate);
 });
 
+test('standalone billing automation queues postpaid cycle reminders as safe bulk messages', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = true;
+  data.settings.billing.notificationBeforeDueDays = 1;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Makassar',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const today = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const dueDate = `${today.year}-${today.month}-${today.day}`;
+  data.customers.push({
+    id: 'cus-cycle-reminder',
+    source: 'radius',
+    username: 'cycle-reminder@ppp.test',
+    name: 'Cycle Reminder Test',
+    status: 'active',
+    phone: '081234567891',
+    paymentType: 'postpaid',
+    billingPeriod: 'cycle',
+    price: 100000
+  });
+  data.invoices.push({
+    id: 'inv-cycle-reminder',
+    customerId: 'cus-cycle-reminder',
+    customerName: 'Cycle Reminder Test',
+    username: 'cycle-reminder@ppp.test',
+    period: currentPeriod(),
+    amount: 100000,
+    status: 'pending',
+    dueDate,
+    externalId: '000124',
+    invoiceNo: '000124'
+  });
+
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' });
+  const message = data.waMessages.find((item) => item.type === 'paymentReminder');
+
+  assert.equal(result.reminderInvoices.length, 1);
+  assert.equal(message.deliveryMode, 'bulk');
+  assert.equal(message.bulkProfile, 'billingCycle');
+  assert.equal(message.throttleDelaySeconds, 24);
+});
+
 test('standalone billing automation waits for notification send time', () => {
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';

@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.44] - 2026-07-26
+
+### Changed
+
+- Whatsapp Gateway sekarang memakai throttle otomatis: pesan transaksi tetap cepat, sedangkan broadcast dan postpaid billing cycle memakai jalur bulk aman tanpa perlu mengatur angka manual.
+- Antrean bulk WA lama otomatis dirapatkan ke pola throttle baru agar broadcast besar tidak menunggu jeda lama per batch.
+
 ## [2.9.43] - 2026-07-26
 
 ### Fixed
