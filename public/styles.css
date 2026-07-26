@@ -4771,6 +4771,10 @@ dialog:has(.changelog-preview) {
   grid-column: 1 / -1;
 }
 
+.span-2 {
+  grid-column: 1 / -1;
+}
+
 .checkbox-field {
   align-items: center;
   border: 1px solid var(--line);
@@ -4923,7 +4927,7 @@ dialog:has(.changelog-preview) {
 }
 
 .member-addon-rows {
-  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   align-items: start;
 }
 

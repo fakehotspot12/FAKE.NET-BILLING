@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.31] - 2026-07-26
+
+### Fixed
+
+- OCR KTP dibuat lebih akurat untuk foto yang terbaca manusia tetapi salah dibaca Tesseract, termasuk koreksi karakter mirip angka dan validasi berdasarkan pola NIK serta tanggal lahir.
+- Layout Add-on layanan bulanan di wizard PPP-DHCP dan modal Member dibuat dua kolom di desktop jika ruang cukup, tetap satu kolom di mobile.
+
 ## [2.9.30] - 2026-07-26
 
 ### Changed

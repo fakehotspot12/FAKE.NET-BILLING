@@ -1070,50 +1070,288 @@ function referencedKtpPhotoFiles(data = {}) {
 
 function extractKtpNikFromOcrText(text = '') {
   const raw = String(text || '');
+  const normalizeDigitLike = (value = '') => String(value || '')
+    .replace(/[OoQq]/g, '0')
+    .replace(/[Il|!]/g, '1')
+    .replace(/[Zz]/g, '2')
+    .replace(/[AaHh]/g, '4')
+    .replace(/[Ss$]/g, '5')
+    .replace(/[GgBbRr&£]/g, '6')
+    .replace(/[Tt]/g, '7');
+  const validProvinceCodes = new Set([
+    '11', '12', '13', '14', '15', '16', '17', '18', '19', '21',
+    '31', '32', '33', '34', '35', '36',
+    '51', '52', '53',
+    '61', '62', '63', '64', '65',
+    '71', '72', '73', '74', '75', '76',
+    '81', '82',
+    '91', '92', '93', '94', '95', '96'
+  ]);
+  const birthFragments = new Map();
+  const addBirthDateHint = (dayValue, monthValue, yearValue, weight = 1) => {
+    const day = Number(dayValue);
+    const month = Number(monthValue);
+    const rawYear = Number(yearValue);
+    const currentYear = new Date().getFullYear();
+    const fullYear = String(yearValue).length <= 2
+      ? (rawYear > currentYear % 100 ? 1900 + rawYear : 2000 + rawYear)
+      : rawYear;
+    if (!(day >= 1 && day <= 31 && month >= 1 && month <= 12)) return;
+    if (!(fullYear >= 1930 && fullYear <= currentYear - 10)) return;
+    const fragment = `${String(day).padStart(2, '0')}${String(month).padStart(2, '0')}${String(fullYear).slice(-2)}`;
+    const femaleFragment = `${String(day + 40).padStart(2, '0')}${String(month).padStart(2, '0')}${String(fullYear).slice(-2)}`;
+    birthFragments.set(fragment, (birthFragments.get(fragment) || 0) + weight);
+    birthFragments.set(femaleFragment, (birthFragments.get(femaleFragment) || 0) + Math.max(1, weight - 1));
+  };
   for (const line of raw.split(/\r?\n/)) {
-    const digits = line.replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').replace(/[^\d]+/g, '');
-    if (digits.length >= 16) {
-      return digits.slice(-16);
+    if (/[NMW][I1l|][KX]/i.test(line)) continue;
+    const normalizedLine = String(line || '')
+      .replace(/[OoQq]/g, '0');
+    for (const match of normalizedLine.matchAll(/(?:^|\D)(\d{1,2})\D+(\d{1,2})\D+((?:19|20)?\d{2})(?=\D|$)/g)) {
+      addBirthDateHint(match[1], match[2], match[3], /lahir|temp|tgl|tanggal|birth/i.test(line) ? 4 : 2);
+    }
+    for (const match of normalizedLine.matchAll(/(?:^|\D)(\d{2})(\d{2})\D*((?:19|20)\d{2})(?=\D|$)/g)) {
+      addBirthDateHint(match[1], match[2], match[3], /lahir|temp|tgl|tanggal|birth/i.test(line) ? 4 : 2);
+    }
+    for (const match of normalizedLine.matchAll(/(?:^|\D)(\d{2})(\d{2})((?:19|20)\d{2})(?=\D|$)/g)) {
+      addBirthDateHint(match[1], match[2], match[3], /lahir|temp|tgl|tanggal|birth/i.test(line) ? 4 : 1);
     }
   }
-  const normalized = raw.replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').replace(/[^\d]+/g, ' ');
-  const compact = normalized.replace(/\s+/g, '');
-  const exact = compact.match(/\d{16}/);
-  if (exact) return exact[0];
-  const loose = raw.match(/(?:\d[\s.-]*){16}/);
-  return loose ? loose[0].replace(/\D+/g, '').slice(0, 16) : '';
+  const birthDateHintScore = (fragment = '') => birthFragments.get(fragment) || 0;
+  const nikScore = (digits = '') => {
+    if (!/^\d{16}$/.test(digits)) return 0;
+    const province = digits.slice(0, 2);
+    const city = Number(digits.slice(2, 4));
+    const district = Number(digits.slice(4, 6));
+    const day = Number(digits.slice(6, 8));
+    const month = Number(digits.slice(8, 10));
+    const serial = Number(digits.slice(12, 16));
+    const validDay = (day >= 1 && day <= 31) || (day >= 41 && day <= 71);
+    const validDate = validDay && month >= 1 && month <= 12;
+    let score = 1;
+    if (validProvinceCodes.has(province)) score += 3;
+    if (city > 0) score += 1;
+    if (district > 0) score += 1;
+    if (validDate) score += 4;
+    score += birthDateHintScore(digits.slice(6, 12)) * 3;
+    if (serial > 0) score += 1;
+    return score;
+  };
+  const windows = (digits = '') => {
+    const clean = String(digits || '').replace(/\D+/g, '');
+    if (clean.length < 16) return [];
+    if (clean.length === 16) return [clean];
+    const result = [];
+    for (let index = 0; index <= clean.length - 16; index += 1) {
+      result.push(clean.slice(index, index + 16));
+    }
+    return result;
+  };
+  const candidatesFrom = (value = '') => {
+    const normalized = normalizeDigitLike(value);
+    const chunks = normalized.match(/[0-9 \t:;,.>\-_/\\]{12,}/g) || [];
+    return chunks.flatMap(windows);
+  };
+  const withBirthDateRepairs = (candidates = []) => {
+    if (!birthFragments.size) return candidates;
+    const distance = (left = '', right = '') => {
+      if (left.length !== right.length) return Number.POSITIVE_INFINITY;
+      let count = 0;
+      for (let index = 0; index < left.length; index += 1) {
+        if (left[index] !== right[index]) count += 1;
+      }
+      return count;
+    };
+    const fragments = [...birthFragments.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([fragment]) => fragment)
+      .slice(0, 3);
+    const repaired = [...candidates];
+    for (const candidate of candidates) {
+      if (!/^\d{16}$/.test(candidate)) continue;
+      if (!validProvinceCodes.has(candidate.slice(0, 2))) continue;
+      if (Number(candidate.slice(2, 4)) <= 0 || Number(candidate.slice(4, 6)) <= 0) continue;
+      if (Number(candidate.slice(12, 16)) <= 0) continue;
+      const currentBirthFragment = candidate.slice(6, 12);
+      for (const fragment of fragments) {
+        if (distance(currentBirthFragment, fragment) > 2) continue;
+        repaired.push(`${candidate.slice(0, 6)}${fragment}${candidate.slice(12)}`);
+      }
+    }
+    return repaired;
+  };
+  const digitOptions = (char = '', position = 0) => {
+    if (/\d/.test(char)) return [char];
+    if (/[OoQq]/.test(char)) return ['0'];
+    if (/[Il|!]/.test(char)) return ['1'];
+    if (char === 'L') return position === 11 ? ['6', '1'] : ['1', '6'];
+    if (char === 'l') return ['1'];
+    if (/[Zz]/.test(char)) return ['2'];
+    if (/[AaHhYy]/.test(char)) return ['4'];
+    if (/[Ss$]/.test(char)) return ['5'];
+    if (/[GgBbRr&£]/.test(char)) return ['6'];
+    if (/[Tt?]/.test(char)) return ['7'];
+    return [];
+  };
+  const labelledDigitCandidates = (value = '') => {
+    const candidates = [''];
+    let digitPosition = 0;
+    for (const char of String(value || '')) {
+      const options = digitOptions(char, digitPosition % 16);
+      if (!options.length) continue;
+      digitPosition += 1;
+      const next = [];
+      for (const prefix of candidates) {
+        for (const option of options) {
+          next.push(`${prefix}${option}`);
+        }
+      }
+      candidates.splice(0, candidates.length, ...next.slice(0, 128));
+      if (digitPosition >= 22) break;
+    }
+    return candidates.flatMap(windows);
+  };
+  const rank = (candidates = []) => {
+    const grouped = new Map();
+    candidates.forEach((digits, index) => {
+      const score = nikScore(digits);
+      if (score <= 0) return;
+      const current = grouped.get(digits) || { digits, count: 0, firstIndex: index, score };
+      current.count += 1;
+      current.score = Math.max(current.score, score);
+      current.firstIndex = Math.min(current.firstIndex, index);
+      grouped.set(digits, current);
+    });
+    return [...grouped.values()]
+      .sort((a, b) => b.score - a.score || b.count - a.count || a.firstIndex - b.firstIndex)[0]?.digits || '';
+  };
+
+  const labelledCandidates = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const labelMatch = line.match(/[NMW][I1l|][KX]/i);
+    if (!labelMatch) continue;
+    const afterLabel = line.slice(labelMatch.index + labelMatch[0].length);
+    labelledCandidates.push(...labelledDigitCandidates(afterLabel), ...candidatesFrom(afterLabel));
+  }
+  const labelled = rank(withBirthDateRepairs(labelledCandidates));
+  if (labelled) return labelled;
+
+  const all = rank(withBirthDateRepairs(candidatesFrom(raw)));
+  if (all) return all;
+  for (const line of raw.split(/\r?\n/)) {
+    const compact = line.replace(/[^\d]+/g, '');
+    const fallback = windows(compact).find((digits) => nikScore(digits) > 0);
+    if (fallback) return fallback;
+  }
+  return '';
 }
 
 async function runKtpOcr(buffer = Buffer.alloc(0)) {
-  const tempPath = path.join(os.tmpdir(), `fakenet-ktp-${crypto.randomBytes(8).toString('hex')}.png`);
-  try {
-    const prepared = await sharp(buffer, { failOn: 'error', limitInputPixels: 40_000_000 })
-      .rotate()
-      .resize({ width: 2400, height: 1600, fit: 'inside', withoutEnlargement: true })
-      .grayscale()
-      .normalize()
+  const tempPaths = [];
+  const writeOcrImage = async (name = 'full', source = Buffer.alloc(0), options = {}) => {
+    let pipeline = sharp(source, { failOn: 'error', limitInputPixels: 40_000_000 });
+    if (options.extract) {
+      pipeline = pipeline.extract(options.extract);
+    }
+    if (options.median) {
+      pipeline = pipeline.median(Number(options.median) || 1);
+    }
+    pipeline = pipeline.grayscale();
+    if (options.linear) {
+      pipeline = pipeline.linear(options.linear[0], options.linear[1]);
+    } else {
+      pipeline = pipeline.normalize();
+    }
+    const output = await pipeline
+      .resize({ width: options.width || 2200, height: options.height || 900, fit: 'inside', withoutEnlargement: false })
       .sharpen()
       .png({ compressionLevel: 6 })
       .toBuffer();
-    await fs.writeFile(tempPath, prepared, { mode: 0o600 });
-    const { stdout } = await execFileAsync('tesseract', [
-      tempPath,
-      'stdout',
-      '-l',
-      'eng',
-      '--psm',
-      '6',
-      '-c',
-      'tessedit_char_whitelist=0123456789'
-    ], {
-      timeout: 20_000,
+    const tempPath = path.join(os.tmpdir(), `fakenet-ktp-${name}-${crypto.randomBytes(8).toString('hex')}.png`);
+    await fs.writeFile(tempPath, output, { mode: 0o600 });
+    tempPaths.push(tempPath);
+    return tempPath;
+  };
+  const readOcr = async (tempPath = '', options = {}) => {
+    const args = [tempPath, 'stdout', '-l', 'eng', '--psm', String(options.psm || 6)];
+    if (options.whitelist) {
+      args.push('-c', 'tessedit_char_whitelist=0123456789');
+    }
+    const { stdout } = await execFileAsync('tesseract', args, {
+      timeout: 12_000,
       maxBuffer: 1024 * 1024
     });
-    const nik = extractKtpNikFromOcrText(stdout);
+    return String(stdout || '');
+  };
+  try {
+    const oriented = await sharp(buffer, { failOn: 'error', limitInputPixels: 40_000_000 })
+      .rotate()
+      .toBuffer({ resolveWithObject: true });
+    const width = oriented.info.width || 1;
+    const height = oriented.info.height || 1;
+    const crops = [
+      {
+        name: 'nik-normal',
+        extract: {
+          left: 0,
+          top: Math.max(0, Math.round(height * 0.14)),
+          width: Math.max(1, Math.min(width, Math.round(width * 0.90))),
+          height: Math.max(1, Math.min(height, Math.round(height * 0.26)))
+        },
+        width: 2200,
+        psm: [6, 11]
+      },
+      {
+        name: 'nik-linear',
+        extract: {
+          left: 0,
+          top: Math.max(0, Math.round(height * 0.13)),
+          width: Math.max(1, Math.min(width, Math.round(width * 0.72))),
+          height: Math.max(1, Math.min(height, Math.round(height * 0.16)))
+        },
+        width: 3000,
+        linear: [1.8, -80],
+        psm: [6, 11]
+      },
+      {
+        name: 'nik-median',
+        extract: {
+          left: 0,
+          top: Math.max(0, Math.round(height * 0.13)),
+          width: Math.max(1, Math.min(width, Math.round(width * 0.72))),
+          height: Math.max(1, Math.min(height, Math.round(height * 0.16)))
+        },
+        width: 3000,
+        median: 1,
+        psm: [6, 7, 11]
+      },
+      {
+        name: 'top',
+        extract: {
+          left: 0,
+          top: 0,
+          width: Math.max(1, Math.min(width, Math.round(width * 0.90))),
+          height: Math.max(1, Math.min(height, Math.round(height * 0.45)))
+        },
+        width: 2200,
+        psm: [6, 11]
+      },
+      { name: 'full', width: 2400, height: 1600, psm: [4, 6, 11] }
+    ];
+    const texts = [];
+    for (const crop of crops) {
+      const imagePath = await writeOcrImage(crop.name, oriented.data, crop);
+      for (const psm of crop.psm || [6]) {
+        texts.push(await readOcr(imagePath, { psm }));
+      }
+    }
+    const digitText = await readOcr(tempPaths[0], { psm: 6, whitelist: true });
+    texts.push(digitText);
+    const nik = extractKtpNikFromOcrText(texts.join('\n'));
     return {
       available: true,
       nik,
-      text: String(stdout || '').slice(0, 2000),
+      text: texts.join('\n---\n').slice(0, 2000),
       error: nik ? '' : 'NIK belum terbaca otomatis. Isi manual dari foto KTP.'
     };
   } catch (error) {
@@ -1127,7 +1365,7 @@ async function runKtpOcr(buffer = Buffer.alloc(0)) {
         : (error.message || 'OCR KTP gagal membaca NIK. Isi manual dari foto KTP.')
     };
   } finally {
-    await fs.unlink(tempPath).catch(() => {});
+    await Promise.all(tempPaths.map((tempPath) => fs.unlink(tempPath).catch(() => {})));
   }
 }
 
@@ -17654,6 +17892,7 @@ module.exports = {
     readWorkbookRowsFromBase64,
     requireRadiusUserProfile,
     renderWaTemplate,
+    runKtpOcr,
     verifyPaymentGatewayCallback,
     verifyWahaWebhookSignature,
     wahaProviderMessageId,
