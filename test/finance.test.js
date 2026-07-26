@@ -5923,7 +5923,9 @@ test('payment gateway report normalizes billing and voucher references without l
     id: 'voucher-order-q',
     reference: 'VO-20260723-001',
     buyerName: 'q',
-    packageLabel: 'V-12 Jam'
+    packageLabel: 'V-12 Jam',
+    amount: 3000,
+    baseAmount: 3000
   });
   data.paymentGatewayTransactions.push(
     {
@@ -5960,6 +5962,9 @@ test('payment gateway report normalizes billing and voucher references without l
   const voucher = report.transactions.find((row) => row.id === 'pg-voucher');
   assert.equal(monthly.description, 'Internet Bulanan: Agus Budi Utomo — Paket Bronze 10 Mbps');
   assert.equal(voucher.description, 'Voucher Hotspot: q — V-12 Jam');
+  assert.equal(monthly.amount, 150000);
+  assert.equal(voucher.amount, 3000);
+  assert.equal(report.summary.paidAmount, 153000);
   assert.equal(report.summary.merchantFees, 5027);
   assert.equal(report.summary.netReceivedAmount, 153744);
   assert.equal(report.summary.clearingBalance, 153744);
@@ -6158,6 +6163,33 @@ test('voucher status and direct login resolve from the order site', () => {
   assert.equal(statusUrl.pathname, '/status-order.html');
   assert.equal(statusUrl.searchParams.get('id'), order.reference);
   assert.equal(statusUrl.searchParams.get('nas'), order.nasId);
+});
+
+test('expired voucher order resolves to expired status page instead of direct login', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.publicBaseUrl = 'https://billing.example.net';
+  data.hotspotVoucherOrders.push({
+    id: 'order-expired-1',
+    reference: 'VO-EXPIRED-001',
+    status: 'paid',
+    nasId: 'site-expired',
+    vouchers: [{ id: 'voucher-expired-1', username: 'EXP001', password: 'EXP001' }]
+  });
+  data.radiusVoucherRecords.push({
+    id: 'voucher-expired-1',
+    radiusUserId: 'voucher-expired-1',
+    username: 'EXP001',
+    password: 'EXP001',
+    onlineOrderId: 'order-expired-1',
+    onlineOrderReference: 'VO-EXPIRED-001',
+    status: 'terminated',
+    voucherExpiredAt: '2026-07-01T00:00:00.000Z'
+  });
+
+  const order = data.hotspotVoucherOrders[0];
+  assert.equal(serverInternals.hotspotVoucherOrderExpired(data, order), true);
+  const statusUrl = new URL(serverInternals.hotspotVoucherPublicStatusUrl(data, order, { status: 'expired' }));
+  assert.equal(statusUrl.searchParams.get('status'), 'expired');
 });
 
 test('Tripay history import is idempotent and preserves provider status and fee', () => {

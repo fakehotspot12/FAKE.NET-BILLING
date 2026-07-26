@@ -345,7 +345,7 @@ async function initBuyPage() {
         });
         const orderNo = result.order?.reference || result.order?.id || '';
         markVoucherAutoLogin(orderNo);
-        window.location.href = pageUrl(STATUS_PAGE, { id: orderNo });
+        window.location.href = pageUrl(STATUS_PAGE, { id: orderNo, auto: '1' });
       } catch (error) {
         setResponse(error.message, 'error');
       } finally {
@@ -357,8 +357,25 @@ async function initBuyPage() {
   }
 }
 
-function orderStatusLabel(status = '') {
+function voucherOrderExpired(order = {}) {
+  const params = new URLSearchParams(window.location.search);
+  if (['expired', '1', 'true'].includes(String(params.get('status') || params.get('expired') || '').toLowerCase())) return true;
+  if (order.expired === true || order.voucherExpired === true) return true;
+  const value = String(order.status || '').toLowerCase();
+  if (value === 'expired') return true;
+  const vouchers = Array.isArray(order.vouchers) ? order.vouchers : [];
+  return value === 'paid' && vouchers.length > 0 && vouchers.every((voucher) => {
+    const status = String(voucher.status || '').toLowerCase();
+    if (['expired', 'terminate', 'terminated', 'removed'].includes(status)) return true;
+    if (voucher.voucherExpiredAt || voucher.expiredAt) return true;
+    const validUntil = Date.parse(voucher.validUntil || '');
+    return Number.isFinite(validUntil) && validUntil <= Date.now();
+  });
+}
+
+function orderStatusLabel(status = '', order = {}) {
   const value = String(status || '').toLowerCase();
+  if (voucherOrderExpired(order)) return 'EXPIRED';
   if (value === 'paid') return 'PAID';
   if (value === 'cancelled' || value === 'canceled') return 'CANCELLED';
   if (value === 'expired') return 'EXPIRED';
@@ -371,7 +388,7 @@ function setField(id, value = '') {
 }
 
 function voucherOrderIsPayable(order = {}) {
-  return String(order.status || '').toLowerCase() === 'pending';
+  return !voucherOrderExpired(order) && String(order.status || '').toLowerCase() === 'pending';
 }
 
 function renderVoucherCheckout(order = {}, checkout = {}) {
@@ -493,7 +510,10 @@ function voucherLoginDestination(order = {}) {
 function tryVoucherAutoLogin(order = {}) {
   const reference = order.reference || order.id || '';
   const destination = voucherLoginDestination(order);
-  if (!reference || !destination || voucherAutoLoginState(reference) !== 'pending') return;
+  const params = new URLSearchParams(window.location.search);
+  const autoRequested = params.get('auto') === '1' || params.get('login') === '1';
+  if (!reference || !destination || voucherOrderExpired(order)) return;
+  if (voucherAutoLoginState(reference) !== 'pending' && !autoRequested) return;
   setVoucherAutoLoginState(reference, 'started');
   window.clearTimeout(voucherAutoLoginTimer);
   setResponse('Pembayaran berhasil. Voucher siap, menghubungkan ke Hotspot...', 'success');
@@ -504,9 +524,10 @@ function tryVoucherAutoLogin(order = {}) {
 
 function renderVoucherInfo(order = {}) {
   const paid = String(order.status || '').toLowerCase() === 'paid';
+  const expired = voucherOrderExpired(order);
   const vouchers = Array.isArray(order.vouchers) ? order.vouchers : [];
-  show('info_voucher', paid && vouchers.length > 0);
-  if (!paid || !vouchers.length) return;
+  show('info_voucher', (paid || expired) && vouchers.length > 0);
+  if ((!paid && !expired) || !vouchers.length) return;
   const code = byId('os_voucher_kode');
   const password = byId('os_voucher_password');
   if (code) {
@@ -519,8 +540,12 @@ function renderVoucherInfo(order = {}) {
   if (login) {
     const destination = voucherLoginDestination(order);
     login.href = destination || '#';
-    login.hidden = !destination;
+    login.hidden = expired || !destination;
     login.onclick = destination ? null : (event) => event.preventDefault();
+  }
+  if (expired) {
+    setResponse('Voucher sudah expired. Silakan beli voucher baru bila masa aktif sudah habis.', 'warning');
+    return;
   }
   tryVoucherAutoLogin(order);
 }
@@ -532,7 +557,7 @@ function renderOrderStatus(order = {}) {
   setField('os_pelanggan', order.buyerName || '-');
   setField('os_whatsapp', order.whatsapp || '-');
   setField('os_paket', `${order.packageLabel || '-'}${order.quantity ? ` x${order.quantity}` : ''}`);
-  setField('os_status', orderStatusLabel(order.status));
+  setField('os_status', orderStatusLabel(order.status, order));
   renderPaymentInfo(order);
   renderVoucherInfo(order);
   const copy = byId('os_nomor_click');

@@ -2341,6 +2341,19 @@ function bindSearch(handler) {
   filters?.querySelector('[data-search-reset]')?.addEventListener('click', reset);
 }
 
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.isComposing || event.defaultPrevented) return;
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || target.tagName === 'TEXTAREA') return;
+  if (!target.matches('.filters input, .filters select, .toolbar input.control, .toolbar select.control')) return;
+  const filters = target.closest('.filters') || target.closest('.toolbar');
+  const apply = filters?.querySelector('[data-search-apply]');
+  if (!apply) return;
+  event.preventDefault();
+  event.stopPropagation();
+  apply.click();
+}, true);
+
 function pagerJumpControl(kind, pagination = {}) {
   return '';
 }
@@ -3526,6 +3539,18 @@ function statisticsCompactNumber(value = 0) {
 
 function statisticsCompactRupiah(value = 0) {
   return `Rp ${statisticsCompactNumber(value)}`;
+}
+
+function statisticsCompactBytes(value = 0) {
+  let bytes = Math.max(0, Number(value || 0));
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let unit = 0;
+  while (bytes >= 1024 && unit < units.length - 1) {
+    bytes /= 1024;
+    unit += 1;
+  }
+  const precision = unit <= 1 ? 0 : 1;
+  return `${bytes.toFixed(precision).replace('.', ',')} ${units[unit]}`;
 }
 
 function statisticsMax(rows = [], keys = []) {
@@ -6979,12 +7004,16 @@ async function loadRadiusOptions(section = 'ppp') {
 }
 
 function radiusStatusFilterOptions(section = 'ppp') {
-  return [
+  const options = [
     { value: 'active', label: 'Aktif' },
     { value: 'suspend', label: 'Isolir' },
     { value: 'disabled', label: 'Disable' },
     { value: 'terminate', label: 'Terminate' }
   ];
+  if (section === 'ppp') {
+    options.push({ value: 'psb', label: 'Pasang Baru' });
+  }
+  return options;
 }
 
 function hotspotVoucherBusinessName() {
@@ -13164,6 +13193,49 @@ function memberInvoiceDetailRows(invoices = []) {
   `;
 }
 
+function usageMonthlyBarChart(rows = []) {
+  const chartRows = Array.isArray(rows) ? rows.slice(-12) : [];
+  if (!chartRows.length) {
+    return '<div class="empty compact">History pemakaian 12 bulan belum tersedia.</div>';
+  }
+  const box = { width: 420, height: 204, left: 54, right: 12, top: 18, plotHeight: 132 };
+  const range = statisticsChartRange(chartRows.map((row) => row.totalOctets), {
+    zeroBase: true,
+    minPadding: 1024 * 1024,
+    stepBase: 1024 * 1024
+  });
+  const plotWidth = box.width - box.left - box.right;
+  const step = chartRows.length ? plotWidth / chartRows.length : plotWidth;
+  const barWidth = Math.max(8, Math.min(18, step * 0.46));
+  return `
+    <div class="statistics-chart-card usage-monthly-chart">
+      <div class="statistics-chart-head">
+        <div>
+          <h3>History Pemakaian Bulanan</h3>
+          <span>Total upload/download 12 bulan terakhir.</span>
+        </div>
+        <div class="statistics-legend compact">
+          <span class="voucher">Total usage</span>
+        </div>
+      </div>
+      <div class="statistics-svg-wrap">
+        <svg viewBox="0 0 ${box.width} ${box.height}" role="img" aria-label="History pemakaian bulanan">
+          ${statisticsAxisMarkup(range, box, statisticsCompactBytes)}
+          ${chartRows.map((row, index) => {
+            const value = Number(row.totalOctets || 0);
+            const y = statisticsChartPoint(value, range, box);
+            const height = Math.max(0, (box.top + box.plotHeight) - y);
+            const x = box.left + (step * index) + ((step - barWidth) / 2);
+            const tooltip = `${periodLabel(row.period)}\nUpload: ${row.upload || statisticsCompactBytes(row.inputOctets || 0)}\nDownload: ${row.download || statisticsCompactBytes(row.outputOctets || 0)}\nTotal: ${row.totalUsageText || statisticsCompactBytes(value)}`;
+            return `<rect class="statistics-bar voucher" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${height.toFixed(2)}" rx="5"><title>${escapeHtml(tooltip)}</title></rect>`;
+          }).join('')}
+          ${statisticsMonthAxisMarkup(chartRows, box)}
+        </svg>
+      </div>
+    </div>
+  `;
+}
+
 function usageDetailPanel(usage = {}) {
   return `
     <div class="usage-summary-grid">
@@ -13190,9 +13262,11 @@ function usageDetailPanel(usage = {}) {
     </div>
     ${usage.error ? `<div class="notice warning"><strong>Usage belum lengkap</strong><span>${escapeHtml(usage.error)}</span></div>` : ''}
     <div class="notice">
-      <strong>Periode ${escapeHtml(periodLabel(usage.period || state.period || todayInput().slice(0, 7)))}</strong>
+      <button class="ghost-button compact member-usage-period-button" type="button" data-member-usage-period="${escapeHtml(usage.period || state.period || todayInput().slice(0, 7))}">Periode ${escapeHtml(periodLabel(usage.period || state.period || todayInput().slice(0, 7)))}</button>
       <span>Total usage dihitung bulanan dari FreeRADIUS radacct.</span>
     </div>
+    ${usageMonthlyBarChart(usage.monthlyRows || [])}
+    ${usage.monthlyError ? `<div class="notice warning"><strong>History usage belum lengkap</strong><span>${escapeHtml(usage.monthlyError)}</span></div>` : ''}
   `;
 }
 
@@ -13519,6 +13593,39 @@ function bindMemberDetailModal(detail = {}) {
       if (invoice) openBillingPayModal(invoice);
     });
   });
+  const bindUsagePeriodButtons = () => {
+    modalBody.querySelectorAll('[data-member-usage-period]').forEach((button) => {
+      if (button.dataset.bound === '1') return;
+      button.dataset.bound = '1';
+      button.addEventListener('click', async () => {
+        const memberKey = detail.memberId || detail.contact?.id || detail.payment?.id || '';
+        if (!memberKey) return;
+        const label = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Memuat...';
+        try {
+          const payload = await loadMemberDetail({ id: memberKey }, 'usage');
+          const usagePanel = modalBody.querySelector('[data-member-detail-panel="usage"]');
+          if (usagePanel) {
+            usagePanel.innerHTML = `
+              <div class="section-head compact">
+                <h2>Total Usage</h2>
+                <span class="muted">Total bulanan dari FreeRADIUS radacct.</span>
+              </div>
+              ${usageDetailPanel(payload.usage || {})}
+            `;
+            bindUsagePeriodButtons();
+          }
+        } catch (error) {
+          setToast(error.message || 'Usage belum bisa dimuat ulang');
+        } finally {
+          button.disabled = false;
+          button.textContent = label;
+        }
+      });
+    });
+  };
+  bindUsagePeriodButtons();
   initMemberContactMap();
 }
 

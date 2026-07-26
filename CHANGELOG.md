@@ -2,6 +2,20 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.26] - 2026-07-26
+
+### Added
+
+- Filter status `Pasang Baru` ditambahkan pada Radius > PPP-DHCP untuk menampilkan akun PPP-DHCP yang linked ke member dan dihitung sebagai PSB bulan berjalan.
+- Monitoring > Member > Usage sekarang menampilkan chart total usage 12 bulan terakhir dan tombol periode untuk memuat ulang usage bulan aktif.
+
+### Fixed
+
+- Alur voucher online setelah pembayaran dibuat lebih tahan gangguan captive portal: halaman status membawa mode auto-login, lalu langsung redirect ke login hotspot saat voucher sudah paid.
+- Link WA voucher expired sekarang mengarah ke status expired dan tidak lagi menampilkan tombol login untuk voucher yang sudah habis.
+- Laporan Payment Gateway memakai nominal invoice/paket sebagai `amount` utama untuk paket bulanan dan voucher, sementara fee dan settlement bersih tetap tersimpan untuk audit.
+- Tombol Enter pada filter mobile/desktop sekarang memicu pencarian seperti tombol Cari.
+
 ## [2.9.25] - 2026-07-26
 
 ### Fixed

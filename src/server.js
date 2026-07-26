@@ -82,7 +82,7 @@ const UPLOAD_ROOT = path.join(APP_ROOT, 'data', 'uploads');
 const WEB_PUSH_VAPID_PATH = path.join(APP_ROOT, 'data', 'webpush-vapid.json');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-25');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-26');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
@@ -1695,6 +1695,51 @@ async function radiusUsageDetailForUsername(username = '', period = currentPerio
   };
 }
 
+function recentUsagePeriods(period = currentPeriod(), months = 12) {
+  const selectedPeriod = normalizePeriod(period || currentPeriod());
+  const count = Math.max(1, Math.min(24, Math.trunc(Number(months || 12))));
+  return Array.from({ length: count }, (_, index) => addMonthsToPeriod(selectedPeriod, index - (count - 1)));
+}
+
+async function radiusUsageMonthlyHistoryForUsername(username = '', period = currentPeriod(), months = 12) {
+  const selectedPeriod = normalizePeriod(period || currentPeriod());
+  const cleanUsername = String(username || '').trim();
+  const periods = recentUsagePeriods(selectedPeriod, months);
+  if (!cleanUsername) {
+    return {
+      ok: true,
+      source: 'freeradius-radacct',
+      period: selectedPeriod,
+      rows: periods.map((item) => ({ period: item, inputOctets: 0, outputOctets: 0, totalOctets: 0, upload: '0 B', download: '0 B', totalUsageText: '0 B', sessionCount: 0, lastSeenAt: '' }))
+    };
+  }
+  const results = await Promise.all(periods.map(async (item) => {
+    const payload = await freeradiusSessions.monthlyUsageByUsernames([cleanUsername], item);
+    const usage = usageRowForUsername(payload, cleanUsername);
+    return {
+      period: item,
+      ok: payload.ok !== false,
+      source: payload.source || 'freeradius-radacct',
+      error: payload.error || '',
+      inputOctets: usage.inputOctets || 0,
+      outputOctets: usage.outputOctets || 0,
+      totalOctets: usage.totalOctets || 0,
+      upload: usage.upload || '0 B',
+      download: usage.download || '0 B',
+      totalUsageText: usage.totalUsageText || '0 B',
+      sessionCount: usage.sessionCount || 0,
+      lastSeenAt: usage.lastSeenAt || ''
+    };
+  }));
+  return {
+    ok: results.every((row) => row.ok !== false),
+    source: results.find((row) => row.source)?.source || 'freeradius-radacct',
+    period: selectedPeriod,
+    rows: results,
+    error: results.find((row) => row.error)?.error || ''
+  };
+}
+
 async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPeriod()) {
   const radiusUser = radiusUserForCustomer(data, customer) || {};
   const username = radiusUser.username || customer.username || '';
@@ -2500,6 +2545,7 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         password: user.password || '',
         internetStatus: session ? 'online' : 'offline',
         sessionOnline: Boolean(session),
+        psb: serviceType === 'pppoe' ? isNewPsbPppAccount(data, user, currentPeriod()) : false,
         sessionId: session?.sessionId || '',
         startedAt: session?.startedAt || '',
         lastActiveAt: session?.updatedAt || session?.startedAt || user.lastActiveAt || user.updatedAt || user.createdAt || '',
@@ -2650,7 +2696,9 @@ function radiusFilterRows(rows = [], query = {}) {
   const internet = String(query.internet || query.online || '').trim().toLowerCase();
   return rows.filter((row) => {
     if (nas && ![row.nas, row.nasId, row.ipAddress, row.site].some((value) => String(value || '').toLowerCase() === nas)) return false;
-    if (status && radiusUiStatus(row.status) !== radiusUiStatus(status)) return false;
+    if (status === 'psb') {
+      if (row.psb !== true) return false;
+    } else if (status && radiusUiStatus(row.status) !== radiusUiStatus(status)) return false;
     if (profile && ![row.profile, row.profileId].some((value) => String(value || '').toLowerCase() === profile)) return false;
     if (['online', 'offline'].includes(internet)) {
       const rowInternet = row.sessionOnline === true || String(row.internetStatus || '').toLowerCase() === 'online' ? 'online' : 'offline';
@@ -6158,7 +6206,7 @@ function hotspotLoginUrlForNas(data = {}, value = '') {
   return sanitizePublicUrl(target?.hotspot?.loginUrl || target?.hotspotLoginUrl || '');
 }
 
-function hotspotVoucherPublicStatusUrl(data = {}, order = {}) {
+function hotspotVoucherPublicStatusUrl(data = {}, order = {}, options = {}) {
   const origin = paymentGatewayOrigin(data.settings || {});
   const reference = String(order.reference || order.id || '').trim();
   if (!origin || !reference) return '';
@@ -6166,10 +6214,85 @@ function hotspotVoucherPublicStatusUrl(data = {}, order = {}) {
     const url = new URL('/status-order.html', origin);
     url.searchParams.set('id', reference);
     if (order.nasId || order.nasName) url.searchParams.set('nas', order.nasId || order.nasName);
+    if (options.status) url.searchParams.set('status', options.status);
+    if (options.auto) url.searchParams.set('auto', '1');
     return url.toString();
   } catch {
     return '';
   }
+}
+
+function hotspotVoucherIsExpired(row = {}) {
+  const status = String(row.status || row.rawStatus || '').trim().toLowerCase();
+  if (['expired', 'terminate', 'terminated', 'removed'].includes(status)) return true;
+  if (row.voucherExpiredAt || row.expiredAt) return true;
+  const validUntil = Date.parse(row.validUntil || '');
+  return Number.isFinite(validUntil) && validUntil <= Date.now();
+}
+
+function hotspotVoucherRowsForOrder(data = {}, order = {}) {
+  const baseRows = Array.isArray(order.vouchers) ? order.vouchers : [];
+  const ids = new Set([
+    ...(Array.isArray(order.voucherUserIds) ? order.voucherUserIds : []),
+    ...baseRows.map((voucher) => voucher.id || voucher.radiusUserId || '').filter(Boolean)
+  ].map(String));
+  const usernames = new Set(baseRows.map((voucher) => String(voucher.username || '').trim().toLowerCase()).filter(Boolean));
+  const sourceRows = [
+    ...(Array.isArray(data.radiusUsers) ? data.radiusUsers : []),
+    ...(Array.isArray(data.radiusVoucherRecords) ? data.radiusVoucherRecords : [])
+  ];
+  const matched = sourceRows.filter((user) => {
+    return (ids.size && ids.has(String(user.id || user.radiusUserId || '')))
+      || (user.onlineOrderId && user.onlineOrderId === order.id)
+      || (user.onlineOrderReference && user.onlineOrderReference === order.reference)
+      || (usernames.size && usernames.has(String(user.username || '').trim().toLowerCase()));
+  });
+  const byId = new Map(matched.flatMap((user) => [
+    [String(user.id || ''), user],
+    [String(user.radiusUserId || ''), user]
+  ]).filter(([key]) => key));
+  const byUsername = new Map(matched.map((user) => [String(user.username || '').trim().toLowerCase(), user]).filter(([key]) => key));
+  const rows = baseRows.map((voucher) => {
+    const matchedUser = byId.get(String(voucher.id || voucher.radiusUserId || ''))
+      || byUsername.get(String(voucher.username || '').trim().toLowerCase())
+      || {};
+    return {
+      ...voucher,
+      id: voucher.id || matchedUser.id || matchedUser.radiusUserId || '',
+      username: voucher.username || matchedUser.username || '',
+      password: voucher.password || matchedUser.password || matchedUser.voucherPassword || voucher.username || '',
+      profileName: voucher.profileName || matchedUser.profileName || order.profileName || order.packageLabel || '',
+      nasName: voucher.nasName || matchedUser.nasName || order.nasName || '',
+      validUntil: voucher.validUntil || matchedUser.validUntil || '',
+      voucherExpiredAt: voucher.voucherExpiredAt || matchedUser.voucherExpiredAt || '',
+      status: matchedUser.status || voucher.status || order.status || ''
+    };
+  });
+  matched.forEach((user) => {
+    const exists = rows.some((row) => String(row.id || '') === String(user.id || user.radiusUserId || '')
+      || String(row.username || '').trim().toLowerCase() === String(user.username || '').trim().toLowerCase());
+    if (!exists) {
+      rows.push({
+        id: user.id || user.radiusUserId || '',
+        username: user.username || '',
+        password: user.password || user.voucherPassword || user.username || '',
+        profileName: user.profileName || order.profileName || order.packageLabel || '',
+        nasName: user.nasName || order.nasName || '',
+        validUntil: user.validUntil || '',
+        voucherExpiredAt: user.voucherExpiredAt || '',
+        status: user.status || order.status || ''
+      });
+    }
+  });
+  return rows;
+}
+
+function hotspotVoucherOrderExpired(data = {}, order = {}) {
+  const status = String(order.status || '').trim().toLowerCase();
+  if (status === 'expired') return true;
+  if (status !== 'paid') return false;
+  const rows = hotspotVoucherRowsForOrder(data, order);
+  return rows.length > 0 && rows.every(hotspotVoucherIsExpired);
 }
 
 function hotspotVoucherTemplateValues(data = {}, order = {}, vouchers = [], user = {}) {
@@ -6184,13 +6307,14 @@ function hotspotVoucherTemplateValues(data = {}, order = {}, vouchers = [], user
   const validity = profile.validity || (profile.validitySeconds ? `${Math.round(Number(profile.validitySeconds) / 3600)} jam` : '-');
   const validUntil = first.validUntil || user.validUntil || order.validUntil || '';
   const baseLoginUrl = hotspotLoginUrlForNas(data, first.nasId || user.nasId || order.nasId || order.nas);
-  const publicStatusUrl = hotspotVoucherPublicStatusUrl(data, order);
+  const expiredVoucher = hotspotVoucherIsExpired(first) || hotspotVoucherIsExpired(user);
+  const publicStatusUrl = hotspotVoucherPublicStatusUrl(data, order, expiredVoucher ? { status: 'expired' } : {});
   const voucherList = rows.map((voucher, index) => {
     const password = voucher.password || voucher.voucherPassword || voucher.username || '';
     const directLoginUrl = hotspotVoucherDirectLoginUrl(baseLoginUrl, voucher);
     return `${index + 1}. ${voucher.username || ''}${password ? ` / ${password}` : ''}${directLoginUrl && directLoginUrl !== '-' ? `\n   ${directLoginUrl}` : ''}`;
   }).join('\n');
-  const loginUrl = publicStatusUrl || hotspotVoucherDirectLoginUrl(baseLoginUrl, first);
+  const loginUrl = expiredVoucher ? publicStatusUrl : (publicStatusUrl || hotspotVoucherDirectLoginUrl(baseLoginUrl, first));
   const amount = Number(order.amount || first.amount || user.amount || profile.price || 0);
   return {
     full_name: fullName,
@@ -6212,7 +6336,7 @@ function hotspotVoucherTemplateValues(data = {}, order = {}, vouchers = [], user
     quantity: String(order.quantity || rows.length || 1),
     nas: order.nasName || nas.name || '',
     footer: businessName,
-    status: order.status || user.status || ''
+    status: expiredVoucher ? 'expired' : (order.status || user.status || '')
   };
 }
 
@@ -9442,6 +9566,11 @@ function paymentGatewayReportAmount(data = {}, row = {}, kind = paymentGatewayTr
     const amount = Number(order.amount ?? order.baseAmount ?? row.baseAmount ?? 0);
     if (Number.isFinite(amount) && amount > 0) return Math.round(amount);
   }
+  if (kind === 'monthly-package') {
+    const invoice = findBillingInvoiceByReference(data, row.reference || row.invoiceNo || row.invoiceId || '') || {};
+    const amount = Number(invoice.amount ?? invoice.baseAmount ?? row.baseAmount ?? 0);
+    if (Number.isFinite(amount) && amount > 0) return Math.round(amount);
+  }
   return Math.round(Number(row.amount || 0) || 0);
 }
 
@@ -11826,12 +11955,15 @@ async function handleApi(req, res, url) {
       sendJson(res, 404, { ok: false, error: 'Order voucher tidak ditemukan' });
       return;
     }
+    const publicVouchers = order.status === 'paid' ? hotspotVoucherRowsForOrder(data, order) : [];
+    const expired = hotspotVoucherOrderExpired(data, order);
     sendJson(res, 200, {
       ok: true,
       order: {
         id: order.id,
         reference: order.reference,
         status: order.status,
+        expired,
         buyerName: order.buyerName,
         whatsapp: order.whatsapp,
         packageLabel: order.packageLabel,
@@ -11851,8 +11983,8 @@ async function handleApi(req, res, url) {
         paymentReference: order.paymentReference || order.reference,
         createdAt: order.createdAt,
         paidAt: order.paidAt || '',
-        hotspotLoginUrl: order.status === 'paid' ? hotspotLoginUrlForNas(data, order.nasId || order.nasName) : '',
-        vouchers: order.status === 'paid' ? (order.vouchers || []) : []
+        hotspotLoginUrl: order.status === 'paid' && !expired ? hotspotLoginUrlForNas(data, order.nasId || order.nasName) : '',
+        vouchers: publicVouchers
       }
     });
     return;
@@ -15483,9 +15615,15 @@ async function handleApi(req, res, url) {
         status: radiusUser.status || customer.status || '',
         activeDate: customer.activeDate || ''
       };
+      const usageUsername = internet.username || customer.username || '';
       const usage = section === 'contact' || section === 'payment'
         ? null
-        : await radiusUsageDetailForUsername(internet.username || customer.username || '', period, 40);
+        : await radiusUsageDetailForUsername(usageUsername, period, 40);
+      if (usage) {
+        const monthlyUsage = await radiusUsageMonthlyHistoryForUsername(usageUsername, period, 12);
+        usage.monthlyRows = monthlyUsage.rows || [];
+        usage.monthlyError = monthlyUsage.error || '';
+      }
       sendJson(res, 200, {
         ok: true,
         source: 'local',
@@ -16995,6 +17133,7 @@ module.exports = {
     fulfillPaymentGatewayCallback,
     hotspotVoucherRevision,
     hotspotVoucherDirectLoginUrl,
+    hotspotVoucherOrderExpired,
     hotspotLoginUrlForNas,
     hotspotVoucherPublicStatusUrl,
     hotspotFreeUserWritable,
