@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.50] - 2026-07-26
+
+### Changed
+
+- Print thermal tagihan bulanan sekarang satu transaksi per lembar dengan rincian Add Ons, PPN, dan Diskon tetap tampil ringkas.
+- Print thermal voucher Hotspot dibuat sebagai tiket thermal mandiri per voucher, sementara layout A4 voucher tetap memakai format sebelumnya.
+
 ## [2.9.49] - 2026-07-26
 
 ### Changed

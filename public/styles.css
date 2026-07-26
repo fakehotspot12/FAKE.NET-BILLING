@@ -7971,11 +7971,22 @@ td:has(.action-menu),
   overflow-wrap: anywhere;
 }
 
+.receipt-thermal-only {
+  display: none !important;
+}
+
 .receipt-preview.print-mode-thermal-58 .receipt-a4-only,
 .receipt-preview.print-mode-thermal-80 .receipt-a4-only,
 .daily-billing-receipt-stack.print-mode-thermal-58 .receipt-a4-only,
 .daily-billing-receipt-stack.print-mode-thermal-80 .receipt-a4-only {
   display: none !important;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-thermal-only,
+.receipt-preview.print-mode-thermal-80 .receipt-thermal-only,
+.daily-billing-receipt-stack.print-mode-thermal-58 .receipt-thermal-only,
+.daily-billing-receipt-stack.print-mode-thermal-80 .receipt-thermal-only {
+  display: grid !important;
 }
 
 .receipt-items {

@@ -4530,8 +4530,8 @@ function receiptPrintModeLabel(mode = 'a4') {
 }
 
 function receiptPrintPageSize(mode = 'a4') {
-  if (mode === 'thermal-58') return '86mm 58mm';
-  if (mode === 'thermal-80') return '80mm 55mm';
+  if (mode === 'thermal-58') return '58mm 118mm';
+  if (mode === 'thermal-80') return '80mm 116mm';
   return 'A4 portrait';
 }
 
@@ -4669,6 +4669,9 @@ function dailyBillingReceiptBody(transaction = {}) {
           <div class="receipt-a4-only"><span>Add Ons</span><strong>${escapeHtml(transaction.addOnsText || '-')}</strong></div>
           <div class="receipt-a4-only"><span>PPN</span><strong>${escapeHtml(transaction.ppnText || '-')}</strong></div>
           <div class="receipt-a4-only"><span>Diskon</span><strong>${escapeHtml(transaction.discountText || '-')}</strong></div>
+          <div class="receipt-thermal-only"><span>Add Ons</span><strong>${escapeHtml(transaction.addOnsText || '-')}</strong></div>
+          <div class="receipt-thermal-only"><span>PPN</span><strong>${escapeHtml(transaction.ppnText || '-')}</strong></div>
+          <div class="receipt-thermal-only"><span>Diskon</span><strong>${escapeHtml(transaction.discountText || '-')}</strong></div>
           <div><span>Metode</span><strong>${escapeHtml(transaction.method || '-')}</strong></div>
           <div><span>Tanggal bayar</span><strong>${escapeHtml(reportTransactionDateText(transaction))}</strong></div>
         </div>
@@ -8057,23 +8060,58 @@ function hotspotVoucherMikhmonPrintDocument(rows = [], template = {}) {
 }
 
 function hotspotVoucherThermalTicket(row = {}, index = 0, template = {}, mode = 'thermal-80') {
-  return hotspotVoucherMikhmonCompactTable(row, index, {
-    ...template,
-    showQr: true
-  });
+  const values = hotspotVoucherTemplateValues(row, index, template);
+  const accentColor = hotspotVoucherAccentColor(template);
+  const businessName = hotspotVoucherBusinessName();
+  const logoUrl = hotspotVoucherAbsoluteUrl(hotspotVoucherLogoUrl());
+  const voucherCode = String(row.username || row.password || '-').trim() || '-';
+  const password = String(row.password || row.voucherPassword || row.username || '').trim() || voucherCode;
+  const dateSource = hotspotVoucherDateSource(row);
+  const qrSource = Array.isArray(template.qrSources) && template.qrSources[index]
+    ? template.qrSources[index]
+    : hotspotVoucherAbsoluteUrl(hotspotVoucherQrSrc(row, 1024));
+  const qrSvg = Array.isArray(template.qrSvgs) && template.qrSvgs[index] ? template.qrSvgs[index] : '';
+  const activationText = renderHotspotVoucherTemplateText(
+    String(template.instruction || template.subtitle || '').trim() || hotspotVoucherActivationText(row),
+    values
+  ).replace(/\s+/g, ' ').trim();
+  const support = values.support || '';
+  return `
+    <article class="hotspot-voucher-thermal-ticket" style="--voucher-accent:${escapeHtml(accentColor)}">
+      <div class="hotspot-voucher-thermal-brand">
+        <img src="${escapeHtml(logoUrl)}" alt="Logo ${escapeHtml(businessName)}">
+        <strong>${escapeHtml(businessName)}</strong>
+      </div>
+      <div class="hotspot-voucher-thermal-title">Voucher Hotspot</div>
+      <div class="hotspot-voucher-thermal-code">${escapeHtml(voucherCode)}</div>
+      ${password && password !== voucherCode ? `<div class="hotspot-voucher-thermal-pass">Password: ${escapeHtml(password)}</div>` : ''}
+      <div class="hotspot-voucher-thermal-meta">
+        <span>Paket</span><strong>${escapeHtml(row.profile || '-')}</strong>
+        <span>Harga</span><strong>${escapeHtml(hotspotVoucherPriceText(row.price))}</strong>
+        <span>Masa Aktif</span><strong>${escapeHtml(hotspotVoucherValidityText(row))}</strong>
+        <span>Tanggal</span><strong>${escapeHtml(hotspotVoucherDateText(dateSource))} ${escapeHtml(timeText(dateSource))}</strong>
+      </div>
+      ${template.showQr === false ? '' : `
+        <div class="hotspot-voucher-thermal-qr">
+          ${qrSvg
+            ? `<span class="hotspot-voucher-qr hotspot-voucher-qr-inline">${qrSvg}</span>`
+            : `<img class="hotspot-voucher-qr" src="${escapeHtml(qrSource)}" alt="QR voucher ${escapeHtml(voucherCode)}" loading="eager" decoding="sync">`}
+        </div>
+      `}
+      <div class="hotspot-voucher-thermal-instruction">${escapeHtml(activationText || 'Scan QR untuk login Hotspot.')}</div>
+      ${support ? `<div class="hotspot-voucher-thermal-footer">${escapeHtml(support)}</div>` : ''}
+    </article>
+  `;
 }
 
 function hotspotVoucherThermalPrintDocument(rows = [], template = {}, mode = 'thermal-80') {
   const paper58 = mode === 'thermal-58';
-  const paperHeight = paper58 ? '58mm' : '55mm';
-  const paperWidth = paper58 ? '86mm' : '80mm';
-  const pagePadding = paper58 ? '2mm 1.5mm' : '2mm';
-  const thermalScale = paper58 ? '1.62' : '1.48';
+  const paperHeight = paper58 ? '92mm' : '96mm';
+  const paperWidth = paper58 ? '58mm' : '80mm';
+  const pagePadding = paper58 ? '2mm 1.5mm' : '2.5mm 2mm';
   const cards = rows.map((row, index) => `
     <section class="hotspot-voucher-thermal-page">
-      <div class="hotspot-voucher-thermal-scale">
-        ${hotspotVoucherThermalTicket(row, index, template, mode)}
-      </div>
+      ${hotspotVoucherThermalTicket(row, index, template, mode)}
     </section>
   `).join('');
   const baseUrl = `${window.location.origin}/`;
@@ -8095,6 +8133,7 @@ function hotspotVoucherThermalPrintDocument(rows = [], template = {}, mode = 'th
       font-family: Helvetica, Arial, sans-serif;
       font-size: 14px;
       margin: 0;
+      height: ${paperHeight};
       min-height: ${paperHeight};
       padding: 0;
       width: ${paperWidth};
@@ -8105,13 +8144,13 @@ function hotspotVoucherThermalPrintDocument(rows = [], template = {}, mode = 'th
       text-align: left;
     }
     .hotspot-voucher-thermal-page {
-      align-items: center;
+      align-items: stretch;
       background: #ffffff;
       box-sizing: border-box;
       break-after: page;
       display: flex;
-      height: ${paperHeight};
-      justify-content: center;
+      min-height: ${paperHeight};
+      justify-content: stretch;
       overflow: hidden;
       padding: ${pagePadding};
       page-break-after: always;
@@ -8121,38 +8160,127 @@ function hotspotVoucherThermalPrintDocument(rows = [], template = {}, mode = 'th
       break-after: auto;
       page-break-after: auto;
     }
-    .hotspot-voucher-thermal-scale {
-      align-items: center;
-      display: flex;
-      flex: 0 0 auto;
-      justify-content: center;
-      transform: scale(${thermalScale});
-      transform-origin: center center;
-      width: 190px;
-    }
-    .hotspot-voucher-mikhmon-table {
-      flex: 0 0 auto;
+    .hotspot-voucher-thermal-ticket {
+      align-content: start;
+      border: 1px solid #111111;
+      box-sizing: border-box;
+      display: grid;
+      gap: 1.25mm;
+      justify-items: center;
+      min-height: 0;
+      overflow: hidden;
+      padding: ${paper58 ? '1.8mm 1.5mm' : '2.2mm'};
       page-break-inside: avoid;
+      text-align: center;
+      width: 100%;
     }
-    .hotspot-voucher-mikhmon-table img:not(.hotspot-voucher-qr) {
+    .hotspot-voucher-thermal-brand {
+      align-items: center;
+      display: grid;
+      gap: 1mm;
+      justify-items: center;
+      width: 100%;
+    }
+    .hotspot-voucher-thermal-brand img {
+      display: block;
+      height: ${paper58 ? '7mm' : '8mm'};
+      max-width: ${paper58 ? '38mm' : '54mm'};
       object-fit: contain;
+      width: ${paper58 ? '38mm' : '54mm'};
+    }
+    .hotspot-voucher-thermal-brand strong {
+      color: #111827;
+      font-size: ${paper58 ? '8pt' : '9pt'};
+      line-height: 1;
+      overflow-wrap: anywhere;
+      text-transform: uppercase;
+    }
+    .hotspot-voucher-thermal-title {
+      border-bottom: .3mm solid var(--voucher-accent, #0277bd);
+      color: var(--voucher-accent, #0277bd);
+      font-size: ${paper58 ? '7pt' : '8pt'};
+      font-weight: 900;
+      line-height: 1;
+      padding-bottom: .8mm;
+      text-transform: uppercase;
+      width: 100%;
+    }
+    .hotspot-voucher-thermal-code {
+      color: #000000;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: ${paper58 ? '18pt' : '20pt'};
+      font-weight: 900;
+      line-height: 1;
+      overflow-wrap: anywhere;
+    }
+    .hotspot-voucher-thermal-pass {
+      font-size: ${paper58 ? '6.4pt' : '7pt'};
+      font-weight: 800;
+      line-height: 1.1;
+    }
+    .hotspot-voucher-thermal-meta {
+      display: grid;
+      gap: .55mm 1.4mm;
+      grid-template-columns: ${paper58 ? '16mm minmax(0, 1fr)' : '20mm minmax(0, 1fr)'};
+      text-align: left;
+      width: 100%;
+    }
+    .hotspot-voucher-thermal-meta span,
+    .hotspot-voucher-thermal-meta strong {
+      border-bottom: .2mm dashed #cbd5e1;
+      font-size: ${paper58 ? '6.1pt' : '6.8pt'};
+      line-height: 1.08;
+      padding-bottom: .45mm;
+    }
+    .hotspot-voucher-thermal-meta span {
+      color: #4b5563;
+      font-weight: 700;
+    }
+    .hotspot-voucher-thermal-meta strong {
+      color: #111827;
+      font-weight: 900;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .qrcode,
     .hotspot-voucher-qr {
-      height: 64px;
+      background: #ffffff;
+      border: 0;
+      border-radius: 0;
+      height: ${paper58 ? '24mm' : '28mm'};
       image-rendering: pixelated;
       image-rendering: crisp-edges;
-      width: 64px;
+      width: ${paper58 ? '24mm' : '28mm'};
     }
     .hotspot-voucher-qr-inline,
     .hotspot-voucher-qr-inline svg,
     .hotspot-voucher-qr-svg {
       display: block;
-      height: 64px;
+      height: ${paper58 ? '24mm' : '28mm'};
       image-rendering: pixelated;
       image-rendering: crisp-edges;
       shape-rendering: crispEdges;
-      width: 64px;
+      width: ${paper58 ? '24mm' : '28mm'};
+    }
+    .hotspot-voucher-thermal-instruction {
+      color: #374151;
+      font-size: ${paper58 ? '5.8pt' : '6.3pt'};
+      font-weight: 800;
+      line-height: 1.14;
+      max-height: 4.6em;
+      overflow: hidden;
+    }
+    .hotspot-voucher-thermal-footer {
+      background: var(--voucher-accent, #0277bd);
+      color: #ffffff;
+      font-size: ${paper58 ? '5.8pt' : '6.4pt'};
+      font-weight: 900;
+      line-height: 1.05;
+      overflow: hidden;
+      padding: .8mm 1mm;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 100%;
     }
     @media print {
       html,
@@ -8168,9 +8296,7 @@ function hotspotVoucherThermalPrintDocument(rows = [], template = {}, mode = 'th
         page-break-inside: avoid;
         page-break-after: auto;
       }
-      .hotspot-voucher-mikhmon-table {
-        display: inline-block;
-        margin: 0;
+      .hotspot-voucher-thermal-ticket {
         page-break-inside: avoid;
       }
     }
@@ -13139,6 +13265,9 @@ function billingPaymentReceiptBody(invoice = {}) {
         <div class="receipt-a4-only"><span>Add Ons</span><strong>${escapeHtml(addOnsText)}</strong></div>
         <div class="receipt-a4-only"><span>PPN</span><strong>${escapeHtml(ppnText)}</strong></div>
         <div class="receipt-a4-only"><span>Diskon</span><strong>${escapeHtml(discountText)}</strong></div>
+        <div class="receipt-thermal-only"><span>Add Ons</span><strong>${escapeHtml(addOnsText)}</strong></div>
+        <div class="receipt-thermal-only"><span>PPN</span><strong>${escapeHtml(ppnText)}</strong></div>
+        <div class="receipt-thermal-only"><span>Diskon</span><strong>${escapeHtml(discountText)}</strong></div>
         <div><span>Metode</span><strong>${escapeHtml(invoice.paymentMethod || 'Tunai')}</strong></div>
         <div><span>Tanggal bayar</span><strong>${escapeHtml(invoice.paidAt ? dateTimeText(invoice.paidAt) : '-')}</strong></div>
         <div><span>Status</span><strong>${escapeHtml(billingStatusLabel(invoice.status))}</strong></div>
