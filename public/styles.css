@@ -4512,6 +4512,7 @@ dialog:has(.app-update-progress) {
 .cell-stack {
   display: grid;
   gap: 3px;
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -5392,6 +5393,7 @@ th {
 td {
   font-size: 14px;
   max-width: 280px;
+  min-width: 0;
   overflow-wrap: normal;
   word-break: normal;
 }
@@ -12640,22 +12642,74 @@ dialog::backdrop {
   }
 
   .table-wrap:not(.payment-gateway-table-wrap) table {
-    min-width: 100%;
-    width: max-content;
+    min-width: 720px;
+    width: 100%;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) .billing-table {
+    min-width: 980px;
+    width: 980px;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) .monitoring-customer-table {
+    min-width: 680px;
+    width: 680px;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) .radius-user-table {
+    min-width: 880px;
+    width: 880px;
   }
 
   .table-wrap:not(.payment-gateway-table-wrap) th,
-  .table-wrap:not(.payment-gateway-table-wrap) td,
+  .table-wrap:not(.payment-gateway-table-wrap) td {
+    max-width: 220px;
+    min-width: 0;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+    word-break: normal;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) th {
+    white-space: nowrap;
+  }
+
   .table-wrap:not(.payment-gateway-table-wrap) td strong,
   .table-wrap:not(.payment-gateway-table-wrap) td .muted,
   .table-wrap:not(.payment-gateway-table-wrap) .cell-title,
   .table-wrap:not(.payment-gateway-table-wrap) .cell-subline {
-    max-width: none;
-    overflow: visible;
-    overflow-wrap: normal;
+    max-width: 100%;
+    overflow: hidden;
+    overflow-wrap: anywhere;
     text-overflow: clip;
-    white-space: nowrap;
+    white-space: normal;
     word-break: normal;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) .cell-title {
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) .cell-subline {
+    font-size: 11.5px;
+    line-height: 1.25;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) .nowrap,
+  .table-wrap:not(.payment-gateway-table-wrap) .amount,
+  .table-wrap:not(.payment-gateway-table-wrap) .badge,
+  .table-wrap:not(.payment-gateway-table-wrap) .site-pill,
+  .table-wrap:not(.payment-gateway-table-wrap) input[type="checkbox"] {
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) .row-actions,
+  .table-wrap:not(.payment-gateway-table-wrap) .compact-actions {
+    min-width: 0;
   }
 
   .payment-gateway-reference .muted {

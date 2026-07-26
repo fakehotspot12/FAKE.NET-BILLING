@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.43] - 2026-07-26
+
+### Fixed
+
+- Kompatibilitas tabel pada layar kecil ditingkatkan agar teks panjang di Member, Tagihan Pelanggan, dan tabel umum tidak menumpuk.
+
 ## [2.9.42] - 2026-07-26
 
 ### Changed
