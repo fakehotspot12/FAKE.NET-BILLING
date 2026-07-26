@@ -4579,6 +4579,102 @@ function useSlowPrintCleanup() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 }
 
+function isAndroidDevice() {
+  return /Android/i.test(navigator.userAgent || '');
+}
+
+function shouldUseRawBtBridge(mode = 'a4') {
+  return isAndroidDevice() && safeReceiptPrintMode(mode) !== 'a4';
+}
+
+function base64Utf8(value = '') {
+  const bytes = new TextEncoder().encode(String(value || ''));
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return window.btoa(binary);
+}
+
+function openRawBtTextPrint(text = '') {
+  const payload = String(text || '').trimEnd();
+  if (!payload.trim()) return false;
+  const fallback = encodeURIComponent('https://play.google.com/store/apps/details?id=ru.a402d.rawbtprinter');
+  const dataUrl = `data:text/plain;charset=utf-8;base64,${base64Utf8(`${payload}\n\n\n`)}`;
+  window.location.href = `intent:${dataUrl}#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;S.browser_fallback_url=${fallback};end;`;
+  return true;
+}
+
+function thermalTextWidth(mode = 'thermal-58') {
+  return mode === 'thermal-80' ? 42 : 32;
+}
+
+function thermalCleanText(value = '') {
+  return String(value ?? '-').replace(/\s+/g, ' ').trim() || '-';
+}
+
+function thermalSeparator(width = 32, char = '-') {
+  return char.repeat(Math.max(8, width));
+}
+
+function thermalCenter(value = '', width = 32) {
+  const text = thermalCleanText(value);
+  if (text.length >= width) return text;
+  const left = Math.floor((width - text.length) / 2);
+  return `${' '.repeat(left)}${text}`;
+}
+
+function thermalWrap(value = '', width = 32) {
+  const text = thermalCleanText(value);
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  words.forEach((word) => {
+    if (!current) {
+      current = word;
+    } else if ((current.length + 1 + word.length) <= width) {
+      current = `${current} ${word}`;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+    while (current.length > width) {
+      lines.push(current.slice(0, width));
+      current = current.slice(width);
+    }
+  });
+  if (current) lines.push(current);
+  return lines.length ? lines : ['-'];
+}
+
+function thermalKeyValue(label = '', value = '', width = 32) {
+  const labelWidth = width >= 40 ? 13 : 10;
+  const cleanLabel = thermalCleanText(label).slice(0, labelWidth);
+  const valueWidth = Math.max(8, width - labelWidth - 2);
+  const valueLines = thermalWrap(value, valueWidth);
+  const first = `${cleanLabel.padEnd(labelWidth, ' ')}: ${valueLines.shift() || '-'}`;
+  return [first, ...valueLines.map((line) => `${' '.repeat(labelWidth)}  ${line}`)];
+}
+
+function thermalEscposQr(data = '', size = 5) {
+  const value = String(data || '').replace(/[^\x20-\x7E]/g, '').trim();
+  if (!value) return '';
+  const qrSize = Math.max(3, Math.min(8, Number(size) || 5));
+  const dataLength = value.length + 3;
+  const pL = dataLength % 256;
+  const pH = Math.floor(dataLength / 256);
+  const chr = (...bytes) => String.fromCharCode(...bytes);
+  return [
+    chr(0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00),
+    chr(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, qrSize),
+    chr(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x30),
+    chr(0x1d, 0x28, 0x6b, pL, pH, 0x31, 0x50, 0x30),
+    value,
+    chr(0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30)
+  ].join('');
+}
+
 function clearReceiptPrintPageStyle() {
   document.getElementById('receiptPrintPageStyle')?.remove();
 }
@@ -4712,6 +4808,55 @@ function dailyBillingReceiptBody(transaction = {}) {
   `;
 }
 
+function dailyBillingReceiptRawBtText(transaction = {}, mode = 'thermal-58') {
+  const branding = currentBranding();
+  const width = thermalTextWidth(mode);
+  const signer = transaction.admin || state.auth?.name || state.auth?.username || 'Admin';
+  const invoiceNo = transaction.invoiceNo || transaction.externalId || transaction.id || '-';
+  const customerName = transaction.customerName || transaction.description || transaction.info || '-';
+  const itemName = transaction.planName || transaction.packageName || transaction.profileName || transaction.profile || transaction.item || 'Tagihan internet';
+  const periodSource = transaction.coverageText
+    || transaction.coveredPeriodText
+    || transaction.period
+    || String(transaction.dueDate || transaction.paymentAt || transaction.paymentRaw || '').slice(0, 7)
+    || state.period
+    || '-';
+  const lines = [
+    thermalCenter(branding.businessName || DEFAULT_BUSINESS_NAME, width),
+    thermalCenter('BUKTI PEMBAYARAN', width),
+    thermalCenter(`Payment Invoice #${invoiceNo}`, width),
+    thermalSeparator(width),
+    ...thermalKeyValue('Nama', customerName, width),
+    ...thermalKeyValue('Paket', itemName, width),
+    ...thermalKeyValue('Periode', readablePeriodText(periodSource), width),
+    ...thermalKeyValue('Add Ons', transaction.addOnsText || '-', width),
+    ...thermalKeyValue('PPN', transaction.ppnText || '-', width),
+    ...thermalKeyValue('Diskon', transaction.discountText || '-', width),
+    ...thermalKeyValue('Metode', transaction.method || '-', width),
+    ...thermalKeyValue('Tanggal', reportTransactionDateText(transaction), width),
+    thermalSeparator(width),
+    thermalCenter('Total dibayar', width),
+    thermalCenter(transaction.amountText || rupiah(transaction.amount || 0), width),
+    thermalSeparator(width),
+    thermalCenter('Petugas', width),
+    thermalCenter(signer, width),
+    '',
+    thermalCenter('Terima kasih', width)
+  ];
+  return lines.join('\n');
+}
+
+function dailyBillingReceiptsRawBtText(transactions = [], mode = 'thermal-58') {
+  return transactions
+    .map((transaction) => dailyBillingReceiptRawBtText(transaction, mode))
+    .join('\n\n\n');
+}
+
+function updateThermalPrintButtonLabel(button, mode = 'a4') {
+  if (!button) return;
+  button.textContent = shouldUseRawBtBridge(mode) ? 'Print RawBT' : 'Print Browser';
+}
+
 function openDailyBillingReceiptsModal(transactions = [], report = {}) {
   const receiptRows = transactions.map((item) => dailyReceiptTransaction(item, report));
   const printMode = safeReceiptPrintMode(state.receiptPrintMode || 'a4');
@@ -4747,6 +4892,7 @@ function openDailyBillingReceiptsModal(transactions = [], report = {}) {
     </div>
   `, async () => {});
   const modeInput = document.getElementById('dailyBillingReceiptPrintMode');
+  const printButton = document.getElementById('printDailyBillingReceipts');
   modeInput?.addEventListener('change', () => {
     const nextMode = setReceiptPrintMode(modeInput.value);
     const stack = document.querySelector('.daily-billing-receipt-stack');
@@ -4754,10 +4900,14 @@ function openDailyBillingReceiptsModal(transactions = [], report = {}) {
       stack.className = `stack compact-stack daily-billing-receipt-stack print-mode-${nextMode}`;
       stack.innerHTML = receiptPagesMarkup(nextMode);
     }
+    updateThermalPrintButtonLabel(printButton, nextMode);
   });
   setReceiptPrintMode(modeInput?.value || printMode);
-  document.getElementById('printDailyBillingReceipts')?.addEventListener('click', () => {
-    printReceiptWithMode('printing-daily-billing-receipts', modeInput?.value || printMode, '.daily-billing-receipt-stack');
+  updateThermalPrintButtonLabel(printButton, modeInput?.value || printMode);
+  printButton?.addEventListener('click', () => {
+    const mode = modeInput?.value || printMode;
+    if (shouldUseRawBtBridge(mode) && openRawBtTextPrint(dailyBillingReceiptsRawBtText(receiptRows, mode))) return;
+    printReceiptWithMode('printing-daily-billing-receipts', mode, '.daily-billing-receipt-stack');
   });
 }
 
@@ -8325,6 +8475,47 @@ function hotspotVoucherThermalPrintDocument(rows = [], template = {}, mode = 'th
 </html>`;
 }
 
+function hotspotVoucherRawBtTicketText(row = {}, index = 0, template = {}, mode = 'thermal-58') {
+  const width = thermalTextWidth(mode);
+  const values = hotspotVoucherTemplateValues(row, index, template);
+  const voucherCode = String(row.username || row.password || '-').trim() || '-';
+  const password = String(row.password || row.voucherPassword || row.username || '').trim() || voucherCode;
+  const dateSource = hotspotVoucherDateSource(row);
+  const loginUrl = hotspotVoucherDirectLoginUrl(row) || hotspotVoucherLoginUrl(row);
+  const qrText = hotspotVoucherDirectLoginUrl(row) || `${voucherCode}/${password}`;
+  const support = values.support || '';
+  const lines = [
+    thermalCenter(hotspotVoucherBusinessName(), width),
+    thermalCenter('VOUCHER HOTSPOT', width),
+    thermalSeparator(width),
+    thermalCenter(voucherCode, width),
+    ...(password && password !== voucherCode ? thermalKeyValue('Password', password, width) : []),
+    ...thermalKeyValue('Paket', row.profile || '-', width),
+    ...thermalKeyValue('Harga', hotspotVoucherPriceText(row.price), width),
+    ...thermalKeyValue('Masa Aktif', hotspotVoucherValidityText(row), width),
+    ...thermalKeyValue('Tanggal', `${hotspotVoucherDateText(dateSource)} ${timeText(dateSource)}`, width),
+    thermalSeparator(width)
+  ];
+  if (qrText) {
+    lines.push(thermalCenter('Scan QR Login', width));
+    lines.push(thermalEscposQr(qrText, mode === 'thermal-80' ? 6 : 5));
+  }
+  if (loginUrl) {
+    lines.push(...thermalWrap(loginUrl, width));
+  }
+  if (support) {
+    lines.push(thermalSeparator(width));
+    lines.push(thermalCenter(support, width));
+  }
+  return lines.join('\n');
+}
+
+function hotspotVoucherRawBtText(rows = [], template = {}, mode = 'thermal-58') {
+  return rows
+    .map((row, index) => hotspotVoucherRawBtTicketText(row, index, template, mode))
+    .join('\n\n\n');
+}
+
 function hotspotVoucherInternetLabel(row = {}) {
   return row.sessionOnline === true || String(row.internetStatus || '').toLowerCase() === 'online' ? 'Online' : 'Offline';
 }
@@ -8725,14 +8916,18 @@ async function openHotspotVoucherPrintModal(vouchers = []) {
     return true;
   };
   const modeInput = document.getElementById('hotspotVoucherPrintMode');
+  const printButton = document.getElementById('printHotspotVouchers');
   modeInput?.addEventListener('change', () => {
     const mode = setHotspotVoucherPrintMode(modeInput.value);
     setPrintFrameDocument(mode);
+    updateThermalPrintButtonLabel(printButton, mode);
   });
   setPrintFrameDocument(defaultPrintMode);
   setHotspotVoucherPrintMode(modeInput?.value || defaultPrintMode);
-  document.getElementById('printHotspotVouchers')?.addEventListener('click', async () => {
+  updateThermalPrintButtonLabel(printButton, modeInput?.value || defaultPrintMode);
+  printButton?.addEventListener('click', async () => {
     const mode = setHotspotVoucherPrintMode(modeInput?.value || 'a4');
+    if (shouldUseRawBtBridge(mode) && openRawBtTextPrint(hotspotVoucherRawBtText(rows, printTemplate, mode))) return;
     if (mode !== 'a4' && isolatedDocuments[mode]) {
       const printed = await printIsolatedHtmlDocument(isolatedDocuments[mode], `hotspot-voucher-print-${mode}`);
       if (printed) return;
@@ -13413,13 +13608,51 @@ function billingPaymentReceiptBody(invoice = {}) {
   `;
 }
 
+function billingPaymentReceiptRawBtText(invoice = {}, mode = 'thermal-58') {
+  const branding = currentBranding();
+  const width = thermalTextWidth(mode);
+  const signerName = invoice.paidByName || state.auth?.name || state.auth?.username || 'Admin';
+  const invoiceNo = billingInvoiceNo(invoice) || '-';
+  const lines = [
+    thermalCenter(branding.businessName || DEFAULT_BUSINESS_NAME, width),
+    thermalCenter('BUKTI PEMBAYARAN', width),
+    thermalCenter(`Payment Invoice #${invoiceNo}`, width),
+    thermalSeparator(width),
+    ...thermalKeyValue('Nama', billingActionCustomerName(invoice), width),
+    ...thermalKeyValue('User/UID', invoice.username || invoice.accountId || '-', width),
+    ...thermalKeyValue('Paket', invoice.item || invoice.subscribe || invoice.packageName || 'Tagihan internet', width),
+    ...thermalKeyValue('Periode', readablePeriodText(invoice.coverageText || invoice.coveredPeriodText || invoice.period || state.period || '-'), width),
+    ...thermalKeyValue('Add Ons', billingReceiptAddonsText(invoice), width),
+    ...thermalKeyValue('PPN', billingReceiptPpnText(invoice), width),
+    ...thermalKeyValue('Diskon', billingReceiptDiscountText(invoice), width),
+    ...thermalKeyValue('Metode', invoice.paymentMethod || 'Tunai', width),
+    ...thermalKeyValue('Tanggal', invoice.paidAt ? dateTimeText(invoice.paidAt) : '-', width),
+    thermalSeparator(width),
+    thermalCenter('Total dibayar', width),
+    thermalCenter(rupiah(invoice.amount || 0), width),
+    thermalSeparator(width),
+    thermalCenter('Petugas', width),
+    thermalCenter(signerName, width),
+    '',
+    thermalCenter('Terima kasih', width)
+  ];
+  return lines.join('\n');
+}
+
 function openBillingPaymentReceiptModal(invoice = {}) {
   openModal('Bukti Pembayaran', billingPaymentReceiptBody(invoice), async () => {});
   const modeInput = document.getElementById('billingPaymentReceiptPrintMode');
-  modeInput?.addEventListener('change', () => setReceiptPrintMode(modeInput.value));
+  const printButton = document.getElementById('printBillingReceipt');
+  modeInput?.addEventListener('change', () => {
+    const mode = setReceiptPrintMode(modeInput.value);
+    updateThermalPrintButtonLabel(printButton, mode);
+  });
   setReceiptPrintMode(modeInput?.value || state.receiptPrintMode || 'a4');
-  document.getElementById('printBillingReceipt')?.addEventListener('click', () => {
-    printReceiptWithMode('printing-receipt', modeInput?.value || state.receiptPrintMode || 'a4');
+  updateThermalPrintButtonLabel(printButton, modeInput?.value || state.receiptPrintMode || 'a4');
+  printButton?.addEventListener('click', () => {
+    const mode = modeInput?.value || state.receiptPrintMode || 'a4';
+    if (shouldUseRawBtBridge(mode) && openRawBtTextPrint(billingPaymentReceiptRawBtText(invoice, mode))) return;
+    printReceiptWithMode('printing-receipt', mode);
   });
 }
 

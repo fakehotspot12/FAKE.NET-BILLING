@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.52] - 2026-07-26
+
+### Fixed
+
+- Print thermal voucher dan bukti pembayaran di Android sekarang memakai jalur langsung RawBT agar printer tidak mencetak screenshot/pratinjau Chrome.
+- Voucher thermal multi-checklist dikirim sebagai tiket berurutan ke RawBT, sementara mode A4 tetap memakai layout browser yang sudah ada.
+
 ## [2.9.51] - 2026-07-26
 
 ### Fixed
