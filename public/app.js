@@ -14000,10 +14000,10 @@ async function renderMonitoringMembers(options = {}) {
     paymentType: state.monitoringMemberPaymentType,
     billingPeriod: state.monitoringMemberBillingPeriod,
     newCustomer: state.monitoringMemberNewCustomer,
-    periodMode: state.monitoringMemberPeriod,
-    from: state.monitoringMemberFrom,
-    to: state.monitoringMemberTo,
-    creator: state.monitoringMemberCreator,
+    periodMode: 'all',
+    from: '',
+    to: '',
+    creator: 'all',
     search: state.search,
     page: state.monitoringMemberPage,
     limit: state.monitoringMemberLimit,
@@ -14011,7 +14011,6 @@ async function renderMonitoringMembers(options = {}) {
   });
   const payload = await api(`/api/monitoring/members?${params}`);
   const members = Array.isArray(payload.members) ? payload.members : [];
-  const creators = Array.isArray(payload.creators) ? payload.creators : [];
   const pagination = payload.pagination || { page: 1, limit: state.monitoringMemberLimit, total: members.length, totalPages: 1 };
   const summary = payload.summary || {
     total: pagination.total || 0,
@@ -14133,25 +14132,12 @@ async function renderMonitoringMembers(options = {}) {
             <option value="all" ${state.monitoringMemberNewCustomer === 'all' ? 'selected' : ''}>Semua pelanggan</option>
             <option value="new" ${state.monitoringMemberNewCustomer === 'new' ? 'selected' : ''}>Pelanggan Baru</option>
           </select>
-          <select class="control" id="memberPeriodFilter" aria-label="Periode registrasi">
-            <option value="all" ${state.monitoringMemberPeriod === 'all' ? 'selected' : ''}>Semua registrasi</option>
-            <option value="today" ${state.monitoringMemberPeriod === 'today' ? 'selected' : ''}>Hari ini</option>
-            <option value="week" ${state.monitoringMemberPeriod === 'week' ? 'selected' : ''}>7 hari terakhir</option>
-            <option value="month" ${state.monitoringMemberPeriod === 'month' ? 'selected' : ''}>Bulan ini</option>
-            <option value="custom" ${state.monitoringMemberPeriod === 'custom' ? 'selected' : ''}>Tanggal custom</option>
-          </select>
-          <input class="control" id="memberFromFilter" value="${escapeHtml(state.monitoringMemberFrom)}" type="date" aria-label="Registrasi dari tanggal">
-          <input class="control" id="memberToFilter" value="${escapeHtml(state.monitoringMemberTo)}" type="date" aria-label="Registrasi sampai tanggal">
-          <select class="control" id="memberCreatorFilter" aria-label="Filter pembuat member">
-            <option value="all" ${state.monitoringMemberCreator === 'all' ? 'selected' : ''}>Semua pembuat</option>
-            ${creators.map((creator) => `<option value="${escapeHtml(creator.value)}" ${state.monitoringMemberCreator === creator.value ? 'selected' : ''}>${escapeHtml(creator.label)}</option>`).join('')}
-          </select>
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, UID, PPPoE, WA" autocomplete="off">
         </div>
         <div class="row-actions">
-          <button class="ghost-button" id="exportMembersXlsx" type="button">Export XLSX</button>
-          <button class="ghost-button" id="printMembersPdf" type="button">Print PDF</button>
-          <button class="ghost-button" id="refreshMembers" type="button">Refresh Member</button>
+          <button class="ghost-button compact" id="exportMembersXlsx" type="button">Export XLSX</button>
+          <button class="ghost-button compact" id="printMembersPdf" type="button">Print PDF</button>
+          <button class="ghost-button compact" id="refreshMembers" type="button">Refresh</button>
         </div>
       </div>
 
@@ -14179,6 +14165,11 @@ async function renderMonitoringMembers(options = {}) {
     state.monitoringMemberPage = 1;
     renderMonitoringMembers();
   });
+  document.getElementById('memberNewCustomerFilter')?.addEventListener('change', (event) => {
+    state.monitoringMemberNewCustomer = event.target.value || 'all';
+    state.monitoringMemberPage = 1;
+    renderMonitoringMembers();
+  });
   document.getElementById('memberPaymentTypeFilter')?.addEventListener('change', (event) => {
     state.monitoringMemberPaymentType = event.target.value || 'all';
     if (state.monitoringMemberPaymentType !== 'all' && state.monitoringMemberBillingPeriod !== 'all') {
@@ -14195,33 +14186,6 @@ async function renderMonitoringMembers(options = {}) {
     state.monitoringMemberPage = 1;
     renderMonitoringMembers();
   });
-  document.getElementById('memberNewCustomerFilter')?.addEventListener('change', (event) => {
-    state.monitoringMemberNewCustomer = event.target.value || 'all';
-    state.monitoringMemberPage = 1;
-    renderMonitoringMembers();
-  });
-  document.getElementById('memberPeriodFilter')?.addEventListener('change', (event) => {
-    state.monitoringMemberPeriod = event.target.value || 'all';
-    state.monitoringMemberPage = 1;
-    renderMonitoringMembers();
-  });
-  document.getElementById('memberFromFilter')?.addEventListener('change', (event) => {
-    state.monitoringMemberFrom = event.target.value || '';
-    if (state.monitoringMemberFrom || state.monitoringMemberTo) state.monitoringMemberPeriod = 'custom';
-    state.monitoringMemberPage = 1;
-    renderMonitoringMembers();
-  });
-  document.getElementById('memberToFilter')?.addEventListener('change', (event) => {
-    state.monitoringMemberTo = event.target.value || '';
-    if (state.monitoringMemberFrom || state.monitoringMemberTo) state.monitoringMemberPeriod = 'custom';
-    state.monitoringMemberPage = 1;
-    renderMonitoringMembers();
-  });
-  document.getElementById('memberCreatorFilter')?.addEventListener('change', (event) => {
-    state.monitoringMemberCreator = event.target.value || 'all';
-    state.monitoringMemberPage = 1;
-    renderMonitoringMembers();
-  });
   document.getElementById('refreshMembers')?.addEventListener('click', () => renderMonitoringMembers({ refresh: true }));
   document.getElementById('exportMembersXlsx')?.addEventListener('click', async () => {
     try {
@@ -14230,10 +14194,10 @@ async function renderMonitoringMembers(options = {}) {
         paymentType: state.monitoringMemberPaymentType,
         billingPeriod: state.monitoringMemberBillingPeriod,
         newCustomer: state.monitoringMemberNewCustomer,
-        periodMode: state.monitoringMemberPeriod,
-        from: state.monitoringMemberFrom,
-        to: state.monitoringMemberTo,
-        creator: state.monitoringMemberCreator,
+        periodMode: 'all',
+        from: '',
+        to: '',
+        creator: 'all',
         search: state.search
       });
       await downloadFile(`/api/monitoring/members/export.xlsx?${exportParams}`, `pelanggan-baru-${todayInput()}.xlsx`);

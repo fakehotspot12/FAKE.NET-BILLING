@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.30] - 2026-07-26
+
+### Changed
+
+- Monitoring > Member diringkas agar filter yang tampil hanya Status, Tipe, Semua Periode, Semua Pelanggan/Pelanggan Baru, dan pencarian.
+
 ## [2.9.29] - 2026-07-26
 
 ### Added
