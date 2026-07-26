@@ -1850,13 +1850,12 @@ function sanitizeIsolirGuideSettings(payload = {}, current = {}) {
 function publicBranding(settings = {}) {
   const businessName = String(settings.businessName || 'ISP Billing').trim() || 'ISP Billing';
   const appSubtitle = String(settings.appSubtitle || 'Billing ISP dan RT/RW Net').trim() || 'Billing ISP dan RT/RW Net';
-  const copyrightName = String(settings.copyrightName || businessName || settings.receiptBusinessCode).trim() || businessName;
   return {
     businessName,
     appSubtitle,
     logoUrl: publicLogoUrl(settings),
     copyrightYear: new Date().getFullYear(),
-    copyrightName,
+    copyrightName: 'FAKE.NET',
     appVersion: APP_VERSION,
     buildVersion: APP_BUILD_VERSION,
     releaseDate: APP_RELEASE_DATE,

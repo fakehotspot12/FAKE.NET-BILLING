@@ -47,6 +47,7 @@ const DEFAULT_LOGO_URL = '/fakenet-logo.png';
 const DEFAULT_BUSINESS_NAME = 'ISP Billing';
 const DEFAULT_APP_SUBTITLE = 'Billing ISP dan RT/RW Net';
 const DEFAULT_BUSINESS_CODE = 'ISP';
+const APP_COPYRIGHT_NAME = 'FAKE.NET';
 const DEFAULT_PROFILE_PHOTO_URL = '/default-user-avatar.svg';
 const LEGACY_SOURCE_OFFSET_MINUTES = 7 * 60;
 const XENDIT_WITHDRAW_RESERVE_AMOUNT = 10000;
@@ -263,7 +264,7 @@ const state = {
     appSubtitle: DEFAULT_APP_SUBTITLE,
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
-    copyrightName: DEFAULT_BUSINESS_NAME,
+    copyrightName: APP_COPYRIGHT_NAME,
     appVersion: '__FAKENET_APP_VERSION__',
     buildVersion: '__FAKENET_BUILD_VERSION__',
     releaseDate: '__FAKENET_RELEASE_DATE__',
@@ -2740,7 +2741,7 @@ function currentBranding() {
     appSubtitle: state.branding.appSubtitle || state.settings.appSubtitle || DEFAULT_APP_SUBTITLE,
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
-    copyrightName: state.branding.copyrightName || state.settings.businessName || state.settings.receiptBusinessCode || DEFAULT_BUSINESS_NAME,
+    copyrightName: APP_COPYRIGHT_NAME,
     appVersion: state.branding.appVersion || state.settings.appInfo?.version || '__FAKENET_APP_VERSION__',
     buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '__FAKENET_BUILD_VERSION__',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '__FAKENET_RELEASE_DATE__',

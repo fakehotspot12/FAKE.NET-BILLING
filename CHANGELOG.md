@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.36] - 2026-07-26
+
+### Fixed
+
+- Copyright aplikasi dikunci tetap `FAKE.NET` dan tidak ikut berubah mengikuti nama usaha/brand client.
+- Fallback HTML sebelum JavaScript load juga memakai copyright `FAKE.NET`.
+
 ## [2.9.35] - 2026-07-26
 
 ### Added
