@@ -1159,16 +1159,52 @@ function sanitizeIsolirGuideSettings(payload = {}, current = {}) {
 }
 
 function publicBranding(settings = {}) {
+  const businessName = String(settings.businessName || 'ISP Billing').trim() || 'ISP Billing';
+  const appSubtitle = String(settings.appSubtitle || 'Billing ISP dan RT/RW Net').trim() || 'Billing ISP dan RT/RW Net';
+  const copyrightName = String(settings.copyrightName || businessName || settings.receiptBusinessCode).trim() || businessName;
   return {
-    businessName: String(settings.businessName || 'FAKE.NET Ops').trim() || 'FAKE.NET Ops',
-    appSubtitle: String(settings.appSubtitle || 'ISP Ops').trim() || 'ISP Ops',
+    businessName,
+    appSubtitle,
     logoUrl: sanitizeLogoUrl(settings.logoUrl),
     copyrightYear: new Date().getFullYear(),
-    copyrightName: 'FAKE.NET',
+    copyrightName,
     appVersion: APP_VERSION,
     buildVersion: APP_BUILD_VERSION,
     releaseDate: APP_RELEASE_DATE,
     loginVerificationEnabled: settings?.security?.loginVerificationEnabled !== false
+  };
+}
+
+function manifestIconType(logoUrl = '') {
+  const ext = path.extname(String(logoUrl || '').split('?')[0]).toLowerCase();
+  if (ext === '.svg') return 'image/svg+xml';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  return 'image/png';
+}
+
+function publicManifest(settings = {}) {
+  const branding = publicBranding(settings);
+  const shortName = String(settings.shortName || branding.businessName || settings.receiptBusinessCode || 'Billing')
+    .trim()
+    .slice(0, 24) || 'Billing';
+  return {
+    name: branding.businessName,
+    short_name: shortName,
+    description: branding.appSubtitle || 'Billing dan operasional ISP/RT/RW Net',
+    start_url: '/#dashboard',
+    scope: '/',
+    display: 'standalone',
+    background_color: '#f4f7fb',
+    theme_color: '#08204f',
+    icons: [
+      {
+        src: branding.logoUrl,
+        sizes: '640x640',
+        type: manifestIconType(branding.logoUrl),
+        purpose: 'any maskable'
+      }
+    ]
   };
 }
 
@@ -1201,8 +1237,15 @@ function licenseBlocksAccess(data = {}) {
 }
 
 function publicAppSettings(settings = {}) {
+  const safe = publicSettings(settings);
+  if (safe.billing && typeof safe.billing === 'object' && safe.billing.invoiceBusinessCode === 'FAKE.NET') {
+    safe.billing = {
+      ...safe.billing,
+      invoiceBusinessCode: sanitizeReceiptBusinessCode(safe.receiptBusinessCode || '', 'ISP')
+    };
+  }
   return {
-    ...publicSettings(settings),
+    ...safe,
     appInfo: appReleaseInfo()
   };
 }
@@ -3072,7 +3115,7 @@ function excelCellText(value) {
 
 async function workbookBuffer(sheets = {}) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'FAKE.NET Billing';
+  workbook.creator = 'ISP Billing';
   workbook.created = new Date();
   for (const [name, rows] of Object.entries(sheets)) {
     const worksheet = workbook.addWorksheet(name.slice(0, 31) || 'Sheet1');
@@ -3194,7 +3237,7 @@ async function pppImportTemplateBuffer() {
       { kolom: 'password', wajib: 'PPPoE wajib. DHCP boleh kosong.', contoh: 'password123', keterangan: 'Password PPPoE. Tidak dipakai untuk DHCP.' },
       { kolom: 'type', wajib: 'Ya', contoh: 'PPPoE / DHCP', keterangan: 'Isi PPPoE atau DHCP.' },
       { kolom: 'profile', wajib: 'Ya', contoh: '10M', keterangan: 'Harus sama dengan nama profile PPP-DHCP yang sudah dibuat.' },
-      { kolom: 'nas', wajib: 'Ya', contoh: 'FAKE.NET atau 10.1.13.14', keterangan: 'Harus sama dengan nama/IP NAS di Monitoring > Site.' },
+      { kolom: 'nas', wajib: 'Ya', contoh: 'SITE-UTAMA atau 10.1.13.14', keterangan: 'Harus sama dengan nama/IP NAS di Monitoring > Site.' },
       { kolom: 'static_ip', wajib: 'Tidak', contoh: '172.16.7.10', keterangan: 'Kosongkan jika IP dinamis.' },
       { kolom: 'mac_address', wajib: 'Wajib jika DHCP', contoh: 'AA:BB:CC:DD:EE:FF', keterangan: 'Dipakai sebagai Caller-ID DHCP.' },
       { kolom: 'status', wajib: 'Tidak', contoh: 'active', keterangan: 'active, isolated, terminated, disabled, pending.' },
@@ -5203,6 +5246,159 @@ function localMemberSummaryRows(data = {}) {
   };
 }
 
+function safeDateKey(value = '') {
+  const text = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
+}
+
+function monitoringMemberCreatorKey(member = {}) {
+  return String(member.createdByUsername || member.createdByName || 'tanpa-user')
+    .trim()
+    .toLowerCase() || 'tanpa-user';
+}
+
+function monitoringMemberCreatorLabel(member = {}) {
+  return String(member.createdByName || member.createdByUsername || 'Tanpa user').trim() || 'Tanpa user';
+}
+
+function localMonitoringMemberRows(data = {}, query = {}) {
+  const status = String(query.status || 'all').trim().toLowerCase();
+  const paymentType = String(query.paymentType || 'all').trim().toLowerCase();
+  const billingPeriod = String(query.billingPeriod || 'all').trim().toLowerCase();
+  const newCustomer = String(query.newCustomer || 'all').trim().toLowerCase();
+  const periodMode = String(query.periodMode || query.newPeriod || 'all').trim().toLowerCase();
+  const dateFrom = safeDateKey(query.from || query.dateFrom || '');
+  const dateTo = safeDateKey(query.to || query.dateTo || '');
+  const creator = String(query.creator || 'all').trim().toLowerCase();
+  const search = String(query.search || '').trim().toLowerCase();
+  const resolver = radiusStatusResolver(data);
+  const radiusUsers = data.radiusUsers || [];
+  let members = (data.customers || []).map((customer) => {
+    const radiusUser = radiusUsers.find((user) => {
+      return user.customerId === customer.id
+        || user.id === customer.radiusUserId
+        || String(user.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase();
+    }) || {};
+    const memberPaymentType = normalizeImportPaymentType(customer.paymentType || 'postpaid');
+    const memberBillingPeriod = normalizeImportBillingPeriod(customer.billingPeriod || 'fixed', memberPaymentType);
+    const registeredAt = customer.activeDate || customer.installedAt || customer.createdAt || radiusUser.activeDate || radiusUser.createdAt || '';
+    const registeredDate = safeDateKey(registeredAt);
+    const serviceType = String(radiusUser.serviceType || customer.serviceType || 'pppoe').trim().toLowerCase();
+    const normalizedStatus = resolver.statusForCustomer(customer);
+    const createdByName = customer.createdByName || radiusUser.createdByName || '';
+    const createdByUsername = customer.createdByUsername || radiusUser.createdByUsername || '';
+    const member = {
+      id: customer.id,
+      memberId: customer.id,
+      userId: customer.code || customer.username || customer.id,
+      accountId: customer.code || customer.username || '',
+      internet: customer.username || '',
+      username: customer.username || '',
+      fullName: customer.name || customer.customerName || customer.username || '',
+      customerName: customer.name || customer.customerName || '',
+      whatsapp: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
+      phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
+      email: customer.email || '',
+      ktp: customer.ktp || customer.idCard || '',
+      address: customer.address || '',
+      latitude: customer.latitude || '',
+      longitude: customer.longitude || '',
+      locationAccuracy: customer.locationAccuracy || '',
+      locationUrl: customer.locationUrl || (customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : ''),
+      housePhotoUrl: customer.housePhotoUrl || customer.memberHousePhotoUrl || '',
+      status: normalizedStatus,
+      paymentType: memberPaymentType,
+      billingPeriod: memberBillingPeriod,
+      activeDate: customer.activeDate || customer.createdAt || '',
+      registeredAt,
+      registeredDate,
+      nextDue: customer.nextDue || customer.dueDate || '',
+      dueDate: customer.dueDate || customer.nextDue || '',
+      price: Number(customer.price || customer.amount || 0),
+      ppn: customer.ppn || '',
+      discount: customer.discount || '',
+      addOns: normalizeBillingAddons(customer),
+      addons: normalizeBillingAddons(customer),
+      addOnMonthlyTotal: billingAddonsMonthlyTotal(customer),
+      packageName: customer.packageName || '',
+      createdByName,
+      createdByUsername,
+      createdByRole: customer.createdByRole || radiusUser.createdByRole || '',
+      createdAt: customer.createdAt || radiusUser.createdAt || '',
+      updatedBy: customer.updatedBy || radiusUser.updatedBy || ''
+    };
+    member.creatorKey = monitoringMemberCreatorKey(member);
+    member.creatorLabel = monitoringMemberCreatorLabel(member);
+    member.isNewCustomer = serviceType === 'pppoe'
+      && customer.countsAsPsb !== false
+      && Boolean(customer.id)
+      && !['terminate', 'removed'].includes(normalizeCustomerStatusLocal(radiusUser.status || customer.status));
+    return member;
+  });
+
+  const creatorMap = new Map();
+  for (const member of members) {
+    if (!creatorMap.has(member.creatorKey)) {
+      creatorMap.set(member.creatorKey, { value: member.creatorKey, label: member.creatorLabel });
+    }
+  }
+  const creators = [...creatorMap.values()].sort((a, b) => String(a.label).localeCompare(String(b.label)));
+
+  if (status !== 'all') {
+    members = members.filter((member) => member.status === normalizeCustomerStatusLocal(status));
+  }
+  if (paymentType !== 'all') {
+    members = members.filter((member) => String(member.paymentType || '').toLowerCase() === paymentType);
+  }
+  if (billingPeriod !== 'all') {
+    members = members.filter((member) => String(member.billingPeriod || '').toLowerCase() === billingPeriod);
+  }
+  if (newCustomer === 'new' || newCustomer === 'psb') {
+    members = members.filter((member) => member.isNewCustomer);
+  }
+  if (periodMode === 'today') {
+    const today = localTodayIso();
+    members = members.filter((member) => member.registeredDate === today);
+  } else if (periodMode === 'week') {
+    const today = localTodayIso();
+    const weekStart = addDaysIso(today, -6);
+    members = members.filter((member) => member.registeredDate && member.registeredDate >= weekStart && member.registeredDate <= today);
+  } else if (periodMode === 'month') {
+    const month = currentPeriod();
+    members = members.filter((member) => String(member.registeredDate || '').slice(0, 7) === month);
+  }
+  if (dateFrom) {
+    members = members.filter((member) => member.registeredDate && member.registeredDate >= dateFrom);
+  }
+  if (dateTo) {
+    members = members.filter((member) => member.registeredDate && member.registeredDate <= dateTo);
+  }
+  if (creator !== 'all') {
+    members = members.filter((member) => member.creatorKey === creator);
+  }
+  if (search) {
+    members = members.filter((member) => [
+      member.fullName,
+      member.customerName,
+      member.userId,
+      member.accountId,
+      member.internet,
+      member.whatsapp,
+      member.phone,
+      member.email,
+      member.ktp,
+      member.address,
+      member.latitude,
+      member.longitude,
+      member.createdByName,
+      member.createdByUsername,
+      member.packageName
+    ].some((value) => String(value || '').toLowerCase().includes(search)));
+  }
+
+  return { members, creators, summary: localMemberSummaryRows(data) };
+}
+
 async function fetchDashboardMemberGroup(settings = {}, status = '') {
   const limit = 25;
   const members = [];
@@ -5850,7 +6046,7 @@ function sanitizeBillingSettings(payload = {}, current = {}) {
     notificationBeforeDueDays: clampInteger(payload.notificationBeforeDueDays, 0, 31, current.notificationBeforeDueDays || 0),
     autoSuspendTime: sanitizeTime(payload.autoSuspendTime, current.autoSuspendTime || '00:00'),
     invoiceNumberFormat: 'XXXXXX',
-    invoiceBusinessCode: current.invoiceBusinessCode || 'FAKE.NET',
+    invoiceBusinessCode: current.invoiceBusinessCode || 'ISP',
     notifyInvoiceIssued: payload.notifyInvoiceIssued !== false,
     notifyPaymentStatus: payload.notifyPaymentStatus !== false,
     notifyMemberStatus: payload.notifyMemberStatus !== false,
@@ -5860,9 +6056,9 @@ function sanitizeBillingSettings(payload = {}, current = {}) {
   };
 }
 
-function sanitizeReceiptBusinessCode(value, fallback = 'FAKE.NET') {
+function sanitizeReceiptBusinessCode(value, fallback = 'ISP') {
   const clean = String(value || '').trim().replace(/[^a-z0-9.-]+/gi, '').toUpperCase().slice(0, 30);
-  return clean || fallback || 'FAKE.NET';
+  return clean || fallback || 'ISP';
 }
 
 function keepSecret(currentValue, nextValue) {
@@ -7009,7 +7205,7 @@ function publicHotspotVoucherStorefrontPayload(data = {}, options = {}) {
   return {
     ok: true,
     enabled: settings.enabled === true,
-    businessName: data.settings?.businessName || 'FAKE.NET',
+    businessName: data.settings?.businessName || 'ISP Billing',
     logoUrl: data.settings?.logoUrl || '/fakenet-logo.png',
     title: settings.title || 'Beli Voucher Hotspot',
     loginUrl: selectedNas ? hotspotLoginUrlForNas(data, selectedNas.id || selectedNas.name) : '',
@@ -9858,6 +10054,7 @@ function onlinePaymentPushPayload(data = {}, fulfilled = {}) {
   const method = transaction.paymentMethod || transaction.method || order.paymentMethod || invoice.paymentMethod || 'Online';
   const reference = fulfilled.reference || transaction.reference || invoice.invoiceNo || order.reference || '';
   const eventId = String(transaction.id || order.id || invoice.id || `${kind}:${reference}:${Date.now()}`);
+  const icon = sanitizeLogoUrl(data.settings?.logoUrl || '/fakenet-logo.png');
   return {
     id: eventId,
     type: kind,
@@ -9868,6 +10065,8 @@ function onlinePaymentPushPayload(data = {}, fulfilled = {}) {
     amount,
     method,
     url: '/#paymentGateway',
+    icon,
+    badge: icon,
     ttlMs: 3000
   };
 }
@@ -13700,6 +13899,9 @@ async function handleApi(req, res, url) {
       const { data, result } = await mutate(async (store) => {
         store.settings = store.settings || {};
         store.settings.billing = sanitizeBillingSettings(payload.billing || payload, store.settings.billing || {});
+        if (!store.settings.billing.invoiceBusinessCode || store.settings.billing.invoiceBusinessCode === 'FAKE.NET') {
+          store.settings.billing.invoiceBusinessCode = sanitizeReceiptBusinessCode(store.settings.receiptBusinessCode || '', 'ISP');
+        }
         store.settings.defaultDueDay = store.settings.billing.postpaidDueDay;
         const bhpUsoUpdatedInvoices = (store.invoices || []).filter((invoice) => {
           const status = invoiceRuntimeStatus(invoice);
@@ -15392,88 +15594,66 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/monitoring/members/export.xlsx') {
+    const authContext = await requireAnyPermission(req, res, ['billing-monitor:read', 'members:read']);
+    if (!authContext) return;
+    if (!standaloneMode(authContext.data)) {
+      sendJson(res, 501, { ok: false, error: 'Export member hanya tersedia pada mode standalone' });
+      return;
+    }
+    const { members } = localMonitoringMemberRows(authContext.data, {
+      status: url.searchParams.get('status') || 'all',
+      paymentType: url.searchParams.get('paymentType') || 'all',
+      billingPeriod: url.searchParams.get('billingPeriod') || 'all',
+      newCustomer: url.searchParams.get('newCustomer') || 'all',
+      periodMode: url.searchParams.get('periodMode') || url.searchParams.get('newPeriod') || 'all',
+      from: url.searchParams.get('from') || '',
+      to: url.searchParams.get('to') || '',
+      creator: url.searchParams.get('creator') || 'all',
+      search: url.searchParams.get('search') || ''
+    });
+    const rows = members.map((member, index) => ({
+      no: index + 1,
+      tanggal_registrasi: member.registeredDate || '',
+      nama: member.fullName || member.customerName || '',
+      member_id: member.memberId || member.userId || member.accountId || member.id || '',
+      username: member.internet || member.username || '',
+      whatsapp: member.whatsapp || member.phone || '',
+      alamat: member.address || '',
+      paket: member.packageName || '',
+      tipe_pembayaran: member.paymentType || '',
+      periode_billing: member.billingPeriod || '',
+      harga: Number(member.price || 0),
+      status: member.status || '',
+      pembuat: member.creatorLabel || ''
+    }));
+    const buffer = await workbookBuffer({ pelanggan_baru: rows });
+    sendBinary(
+      res,
+      200,
+      buffer,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      `pelanggan-baru-${localTodayIso()}.xlsx`
+    );
+    return;
+  }
+
   if (method === 'GET' && pathname === '/api/monitoring/members') {
     const authContext = await requireAnyPermission(req, res, ['billing-monitor:read', 'members:read']);
     if (!authContext) return;
     if (standaloneMode(authContext.data)) {
       const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-      const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
-      const paymentType = String(url.searchParams.get('paymentType') || 'all').trim().toLowerCase();
-      const billingPeriod = String(url.searchParams.get('billingPeriod') || 'all').trim().toLowerCase();
-      const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
-      const resolver = radiusStatusResolver(authContext.data);
-      let members = (authContext.data.customers || []).map((customer) => {
-        const radiusUser = (authContext.data.radiusUsers || []).find((user) => {
-          return user.customerId === customer.id
-            || user.id === customer.radiusUserId
-            || String(user.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase();
-        }) || {};
-        const memberPaymentType = normalizeImportPaymentType(customer.paymentType || 'postpaid');
-        const memberBillingPeriod = normalizeImportBillingPeriod(customer.billingPeriod || 'fixed', memberPaymentType);
-        return {
-          id: customer.id,
-          memberId: customer.id,
-          userId: customer.code || customer.username || customer.id,
-          accountId: customer.code || customer.username || '',
-          internet: customer.username || '',
-          username: customer.username || '',
-          fullName: customer.name || customer.customerName || customer.username || '',
-          customerName: customer.name || customer.customerName || '',
-          whatsapp: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
-          phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
-          email: customer.email || '',
-          ktp: customer.ktp || customer.idCard || '',
-          address: customer.address || '',
-          latitude: customer.latitude || '',
-          longitude: customer.longitude || '',
-          locationAccuracy: customer.locationAccuracy || '',
-          locationUrl: customer.locationUrl || (customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : ''),
-          housePhotoUrl: customer.housePhotoUrl || customer.memberHousePhotoUrl || '',
-          status: resolver.statusForCustomer(customer),
-          paymentType: memberPaymentType,
-          billingPeriod: memberBillingPeriod,
-          activeDate: customer.activeDate || customer.createdAt || '',
-          nextDue: customer.nextDue || customer.dueDate || '',
-          dueDate: customer.dueDate || customer.nextDue || '',
-          price: Number(customer.price || customer.amount || 0),
-          ppn: customer.ppn || '',
-          discount: customer.discount || '',
-          addOns: normalizeBillingAddons(customer),
-          addons: normalizeBillingAddons(customer),
-          addOnMonthlyTotal: billingAddonsMonthlyTotal(customer),
-          packageName: customer.packageName || '',
-          createdByName: customer.createdByName || radiusUser.createdByName || '',
-          createdByUsername: customer.createdByUsername || radiusUser.createdByUsername || '',
-          createdByRole: customer.createdByRole || radiusUser.createdByRole || '',
-          createdAt: customer.createdAt || radiusUser.createdAt || '',
-          updatedBy: customer.updatedBy || radiusUser.updatedBy || ''
-        };
+      const { members, creators, summary } = localMonitoringMemberRows(authContext.data, {
+        status: url.searchParams.get('status') || 'all',
+        paymentType: url.searchParams.get('paymentType') || 'all',
+        billingPeriod: url.searchParams.get('billingPeriod') || 'all',
+        newCustomer: url.searchParams.get('newCustomer') || 'all',
+        periodMode: url.searchParams.get('periodMode') || url.searchParams.get('newPeriod') || 'all',
+        from: url.searchParams.get('from') || '',
+        to: url.searchParams.get('to') || '',
+        creator: url.searchParams.get('creator') || 'all',
+        search: url.searchParams.get('search') || ''
       });
-      if (status !== 'all') {
-        members = members.filter((member) => member.status === normalizeCustomerStatusLocal(status));
-      }
-      if (paymentType !== 'all') {
-        members = members.filter((member) => String(member.paymentType || '').toLowerCase() === paymentType);
-      }
-      if (billingPeriod !== 'all') {
-        members = members.filter((member) => String(member.billingPeriod || '').toLowerCase() === billingPeriod);
-      }
-      if (search) {
-        members = members.filter((member) => [
-          member.fullName,
-          member.customerName,
-          member.userId,
-          member.accountId,
-          member.internet,
-          member.whatsapp,
-          member.phone,
-          member.email,
-          member.ktp,
-          member.address,
-          member.latitude,
-          member.longitude
-        ].some((value) => String(value || '').toLowerCase().includes(search)));
-      }
       const totalRows = members.length;
       const totalPages = Math.max(1, Math.ceil(totalRows / limit));
       const currentPage = Math.min(page, totalPages);
@@ -15482,7 +15662,8 @@ async function handleApi(req, res, url) {
         ok: true,
         source: 'local',
         members: members.slice(offset, offset + limit),
-        summary: localMemberSummaryRows(authContext.data),
+        creators,
+        summary,
         pagination: {
           page: currentPage,
           limit,
@@ -16779,7 +16960,10 @@ async function handleApi(req, res, url) {
         store.settings.appSubtitle = payload.appSubtitle.trim().slice(0, 60) || store.settings.appSubtitle || 'ISP Ops';
       }
       if (typeof payload.receiptBusinessCode === 'string') {
-        store.settings.receiptBusinessCode = sanitizeReceiptBusinessCode(payload.receiptBusinessCode, store.settings.receiptBusinessCode || store.settings.billing?.invoiceBusinessCode || 'FAKE.NET');
+        const nextBusinessCode = sanitizeReceiptBusinessCode(payload.receiptBusinessCode, store.settings.receiptBusinessCode || store.settings.billing?.invoiceBusinessCode || 'ISP');
+        store.settings.receiptBusinessCode = nextBusinessCode;
+        store.settings.billing = store.settings.billing && typeof store.settings.billing === 'object' ? store.settings.billing : {};
+        store.settings.billing.invoiceBusinessCode = nextBusinessCode;
       }
       if (payload.publicInfo && typeof payload.publicInfo === 'object') {
         store.settings.publicInfo = sanitizePublicInfoSettings(payload.publicInfo, store.settings.publicInfo || {});
@@ -16985,6 +17169,22 @@ async function serveStatic(req, res, url) {
     }
   } catch (error) {
     // Static assets must keep serving even if the store is temporarily unavailable.
+  }
+
+  if (pathname === '/manifest.webmanifest') {
+    try {
+      const data = peekStore();
+      sendBinary(
+        res,
+        200,
+        JSON.stringify(publicManifest(data?.settings || {}), null, 2),
+        'application/manifest+json; charset=utf-8'
+      );
+    } catch {
+      const fallback = await fs.readFile(path.join(PUBLIC_DIR, 'manifest.webmanifest'));
+      sendBinary(res, 200, fallback, 'application/manifest+json; charset=utf-8');
+    }
+    return;
   }
 
   const filePath = path.normalize(path.join(PUBLIC_DIR, pathname));

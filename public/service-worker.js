@@ -22,10 +22,11 @@ self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
     const existing = await self.registration.getNotifications({ tag });
     if (existing.length) return;
+    const icon = payload.icon || payload.badge || '/fakenet-logo.png';
     await self.registration.showNotification(payload.title || 'Pembayaran Online Masuk', {
       body: payload.body || 'Pembayaran online berhasil diterima.',
-      icon: '/fakenet-logo.png',
-      badge: '/fakenet-logo.png',
+      icon,
+      badge: payload.badge || icon,
       tag,
       renotify: false,
       requireInteraction: true,

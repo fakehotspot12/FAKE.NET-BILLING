@@ -44,6 +44,9 @@ const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100, 'all'];
 const APP_TIME_ZONE = 'Asia/Makassar';
 const DEFAULT_LOGO_URL = '/fakenet-logo.png';
+const DEFAULT_BUSINESS_NAME = 'ISP Billing';
+const DEFAULT_APP_SUBTITLE = 'Billing ISP dan RT/RW Net';
+const DEFAULT_BUSINESS_CODE = 'ISP';
 const DEFAULT_PROFILE_PHOTO_URL = '/default-user-avatar.svg';
 const LEGACY_SOURCE_OFFSET_MINUTES = 7 * 60;
 const XENDIT_WITHDRAW_RESERVE_AMOUNT = 10000;
@@ -158,6 +161,11 @@ const state = {
   monitoringMemberStatus: 'all',
   monitoringMemberPaymentType: 'all',
   monitoringMemberBillingPeriod: 'all',
+  monitoringMemberNewCustomer: 'all',
+  monitoringMemberPeriod: 'all',
+  monitoringMemberFrom: '',
+  monitoringMemberTo: '',
+  monitoringMemberCreator: 'all',
   monitoringServicesPage: 1,
   monitoringServicesLimit: CUSTOMER_PAGE_SIZE,
   monitoringServicesTab: 'tv',
@@ -236,8 +244,8 @@ const state = {
   inventoryReportLimit: 10,
   inventoryReportType: 'all',
   settings: {
-    businessName: 'FAKE.NET Billing',
-    appSubtitle: 'ISP Billing',
+    businessName: DEFAULT_BUSINESS_NAME,
+    appSubtitle: DEFAULT_APP_SUBTITLE,
     logoUrl: DEFAULT_LOGO_URL,
     security: {
       loginVerificationEnabled: true
@@ -251,11 +259,11 @@ const state = {
   hotspotVoucherTemplates: [],
   hotspotVoucherAdminPhone: '',
   branding: {
-    businessName: 'FAKE.NET Billing',
-    appSubtitle: 'ISP Billing',
+    businessName: DEFAULT_BUSINESS_NAME,
+    appSubtitle: DEFAULT_APP_SUBTITLE,
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
-    copyrightName: 'FAKE.NET',
+    copyrightName: DEFAULT_BUSINESS_NAME,
     appVersion: '__FAKENET_APP_VERSION__',
     buildVersion: '__FAKENET_BUILD_VERSION__',
     releaseDate: '__FAKENET_RELEASE_DATE__',
@@ -1099,13 +1107,14 @@ async function disableWebPushSubscription() {
 async function showBrowserPaymentNotification(item = {}) {
   if (!('Notification' in window) || window.Notification.permission !== 'granted' || webPushSubscriptionActive) return;
   const tag = `fakenet-payment-${item.id || Date.now()}`;
+  const branding = currentBranding();
   try {
     const registration = await ensureWebPushRegistration();
     if (registration) {
       await registration.showNotification(item.title || 'Pembayaran online masuk', {
         body: item.description || 'Pembayaran online berhasil.',
-        icon: '/fakenet-logo.png',
-        badge: '/fakenet-logo.png',
+        icon: branding.logoUrl,
+        badge: branding.logoUrl,
         tag,
         requireInteraction: true,
         data: { url: '/#paymentGateway' }
@@ -1114,7 +1123,7 @@ async function showBrowserPaymentNotification(item = {}) {
     }
     const browserNotification = new window.Notification(item.title || 'Pembayaran online masuk', {
       body: item.description || 'Pembayaran online berhasil.',
-      icon: '/fakenet-logo.png',
+      icon: branding.logoUrl,
       tag,
       requireInteraction: true
     });
@@ -1708,6 +1717,11 @@ function setView(view) {
     state.monitoringMemberStatus = 'all';
     state.monitoringMemberPaymentType = 'all';
     state.monitoringMemberBillingPeriod = 'all';
+    state.monitoringMemberNewCustomer = 'all';
+    state.monitoringMemberPeriod = 'all';
+    state.monitoringMemberFrom = '';
+    state.monitoringMemberTo = '';
+    state.monitoringMemberCreator = 'all';
     state.monitoringServicesPage = 1;
     state.monitoringServicesTab = 'tv';
     state.monitoringServicesSite = 'all';
@@ -2690,11 +2704,11 @@ function updateBranding(payload = {}) {
 function currentBranding() {
   const settingVerification = state.settings.security?.loginVerificationEnabled;
   return {
-    businessName: state.branding.businessName || state.settings.businessName || 'FAKE.NET Billing',
-    appSubtitle: state.branding.appSubtitle || state.settings.appSubtitle || 'ISP Billing',
+    businessName: state.branding.businessName || state.settings.businessName || DEFAULT_BUSINESS_NAME,
+    appSubtitle: state.branding.appSubtitle || state.settings.appSubtitle || DEFAULT_APP_SUBTITLE,
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
-    copyrightName: state.branding.copyrightName || 'FAKE.NET',
+    copyrightName: state.branding.copyrightName || state.settings.businessName || state.settings.receiptBusinessCode || DEFAULT_BUSINESS_NAME,
     appVersion: state.branding.appVersion || state.settings.appInfo?.version || '__FAKENET_APP_VERSION__',
     buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '__FAKENET_BUILD_VERSION__',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '__FAKENET_RELEASE_DATE__',
@@ -2732,6 +2746,10 @@ function applyBranding() {
     document.head.appendChild(favicon);
   }
   favicon.href = branding.logoUrl;
+  const appleTouchIcon = document.getElementById('appleTouchIcon');
+  if (appleTouchIcon) {
+    appleTouchIcon.href = branding.logoUrl;
+  }
   if (businessName) {
     businessName.textContent = branding.businessName;
   }
@@ -5339,7 +5357,7 @@ function receiptSignerName(income = {}) {
     || income.updatedByUsername
     || state.auth?.name
     || state.auth?.username
-    || 'FAKE.NET';
+    || currentBranding().businessName;
 }
 
 async function renderReportsInventoryStock() {
@@ -7017,11 +7035,11 @@ function radiusStatusFilterOptions(section = 'ppp') {
 }
 
 function hotspotVoucherBusinessName() {
-  return state.branding.businessName || state.settings.businessName || 'FAKE.NET';
+  return state.branding.businessName || state.settings.businessName || DEFAULT_BUSINESS_NAME;
 }
 
 function hotspotVoucherAppSubtitle() {
-  return state.branding.appSubtitle || state.settings.appSubtitle || 'ISP Billing';
+  return state.branding.appSubtitle || state.settings.appSubtitle || DEFAULT_APP_SUBTITLE;
 }
 
 function hotspotVoucherLogoUrl() {
@@ -13727,6 +13745,97 @@ async function openMemberPaymentModal(member = {}) {
   billingPeriodSelect?.addEventListener('change', syncScheduleFields);
 }
 
+async function printMonitoringMembersReport() {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) throw new Error('Popup print diblokir browser');
+  printWindow.document.write('<!doctype html><title>Memuat laporan member</title><body>Memuat data...</body>');
+  const params = queryString({
+    status: state.monitoringMemberStatus,
+    paymentType: state.monitoringMemberPaymentType,
+    billingPeriod: state.monitoringMemberBillingPeriod,
+    newCustomer: state.monitoringMemberNewCustomer,
+    periodMode: state.monitoringMemberPeriod,
+    from: state.monitoringMemberFrom,
+    to: state.monitoringMemberTo,
+    creator: state.monitoringMemberCreator,
+    search: state.search,
+    page: 1,
+    limit: 'all'
+  });
+  const payload = await api(`/api/monitoring/members?${params}`);
+  const members = Array.isArray(payload.members) ? payload.members : [];
+  const branding = currentBranding();
+  const title = state.monitoringMemberNewCustomer === 'new' ? 'Laporan Pelanggan Baru' : 'Laporan Member';
+  const rows = members.length ? members.map((member, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${escapeHtml(dateText(member.registeredDate || member.activeDate || member.createdAt || ''))}</td>
+      <td>${escapeHtml(member.fullName || member.customerName || '-')}</td>
+      <td>${escapeHtml(member.memberId || member.userId || member.accountId || '-')}</td>
+      <td>${escapeHtml(member.internet || member.username || '-')}</td>
+      <td>${escapeHtml(member.whatsapp || member.phone || '-')}</td>
+      <td>${escapeHtml(member.packageName || '-')}</td>
+      <td>${escapeHtml(rupiah(member.price || 0))}</td>
+      <td>${escapeHtml(memberStatusLabel(member.status || member.serviceStatus))}</td>
+      <td>${escapeHtml(member.creatorLabel || member.createdByName || member.createdByUsername || '-')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="10">Tidak ada data.</td></tr>';
+  printWindow.document.open();
+  printWindow.document.write(`
+    <!doctype html>
+    <html lang="id">
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(branding.businessName)} - ${escapeHtml(title)}</title>
+        <style>
+          @page { size: A4 landscape; margin: 12mm; }
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; color: #111827; margin: 0; }
+          .head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+          .head img { width: 44px; height: 44px; object-fit: contain; }
+          .head strong { display: block; font-size: 18px; }
+          .head span { color: #475569; font-size: 12px; }
+          h1 { margin: 0 0 10px; font-size: 16px; }
+          table { width: 100%; border-collapse: collapse; font-size: 10px; }
+          th, td { border: 1px solid #d1d5db; padding: 5px 6px; text-align: left; vertical-align: top; }
+          th { background: #0f4f82; color: #fff; white-space: nowrap; }
+          td { word-break: normal; overflow-wrap: anywhere; }
+        </style>
+      </head>
+      <body>
+        <div class="head">
+          <img src="${escapeHtml(branding.logoUrl)}" alt="">
+          <div>
+            <strong>${escapeHtml(branding.businessName)}</strong>
+            <span>${escapeHtml(branding.appSubtitle || '')}</span>
+          </div>
+        </div>
+        <h1>${escapeHtml(title)}</h1>
+        <table>
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Registrasi</th>
+              <th>Nama</th>
+              <th>Member ID</th>
+              <th>Username</th>
+              <th>Whatsapp</th>
+              <th>Paket</th>
+              <th>Harga</th>
+              <th>Status</th>
+              <th>Pembuat</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  window.setTimeout(() => printWindow.print(), 300);
+}
+
 async function renderMonitoringMembers(options = {}) {
   clearRealtimeTimers();
   app.innerHTML = '<div class="empty">Memuat member...</div>';
@@ -13734,6 +13843,11 @@ async function renderMonitoringMembers(options = {}) {
     status: state.monitoringMemberStatus,
     paymentType: state.monitoringMemberPaymentType,
     billingPeriod: state.monitoringMemberBillingPeriod,
+    newCustomer: state.monitoringMemberNewCustomer,
+    periodMode: state.monitoringMemberPeriod,
+    from: state.monitoringMemberFrom,
+    to: state.monitoringMemberTo,
+    creator: state.monitoringMemberCreator,
     search: state.search,
     page: state.monitoringMemberPage,
     limit: state.monitoringMemberLimit,
@@ -13741,6 +13855,7 @@ async function renderMonitoringMembers(options = {}) {
   });
   const payload = await api(`/api/monitoring/members?${params}`);
   const members = Array.isArray(payload.members) ? payload.members : [];
+  const creators = Array.isArray(payload.creators) ? payload.creators : [];
   const pagination = payload.pagination || { page: 1, limit: state.monitoringMemberLimit, total: members.length, totalPages: 1 };
   const summary = payload.summary || {
     total: pagination.total || 0,
@@ -13764,6 +13879,7 @@ async function renderMonitoringMembers(options = {}) {
     const showInternetLine = internetText && !sameMemberText(titleText, internetText);
     const creatorText = memberCreatorText(member);
     const dateLines = [
+      member.registeredDate ? `Registrasi ${dateText(member.registeredDate)}` : '',
       member.activeDate ? `Aktif ${dateText(member.activeDate)}` : '',
       (member.nextDue || member.dueDate) ? `Next ${dateText(member.nextDue || member.dueDate)}` : ''
     ].filter(Boolean);
@@ -13857,9 +13973,28 @@ async function renderMonitoringMembers(options = {}) {
               ].map(([value, label]) => `<option value="${value}" ${state.monitoringMemberBillingPeriod === value ? 'selected' : ''}>${label}</option>`).join('')
               : billingPeriodOptionTags(state.monitoringMemberPaymentType, state.monitoringMemberBillingPeriod, true)}
           </select>
+          <select class="control" id="memberNewCustomerFilter" aria-label="Filter pelanggan baru">
+            <option value="all" ${state.monitoringMemberNewCustomer === 'all' ? 'selected' : ''}>Semua pelanggan</option>
+            <option value="new" ${state.monitoringMemberNewCustomer === 'new' ? 'selected' : ''}>Pelanggan Baru</option>
+          </select>
+          <select class="control" id="memberPeriodFilter" aria-label="Periode registrasi">
+            <option value="all" ${state.monitoringMemberPeriod === 'all' ? 'selected' : ''}>Semua registrasi</option>
+            <option value="today" ${state.monitoringMemberPeriod === 'today' ? 'selected' : ''}>Hari ini</option>
+            <option value="week" ${state.monitoringMemberPeriod === 'week' ? 'selected' : ''}>7 hari terakhir</option>
+            <option value="month" ${state.monitoringMemberPeriod === 'month' ? 'selected' : ''}>Bulan ini</option>
+            <option value="custom" ${state.monitoringMemberPeriod === 'custom' ? 'selected' : ''}>Tanggal custom</option>
+          </select>
+          <input class="control" id="memberFromFilter" value="${escapeHtml(state.monitoringMemberFrom)}" type="date" aria-label="Registrasi dari tanggal">
+          <input class="control" id="memberToFilter" value="${escapeHtml(state.monitoringMemberTo)}" type="date" aria-label="Registrasi sampai tanggal">
+          <select class="control" id="memberCreatorFilter" aria-label="Filter pembuat member">
+            <option value="all" ${state.monitoringMemberCreator === 'all' ? 'selected' : ''}>Semua pembuat</option>
+            ${creators.map((creator) => `<option value="${escapeHtml(creator.value)}" ${state.monitoringMemberCreator === creator.value ? 'selected' : ''}>${escapeHtml(creator.label)}</option>`).join('')}
+          </select>
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, UID, PPPoE, WA" autocomplete="off">
         </div>
         <div class="row-actions">
+          <button class="ghost-button" id="exportMembersXlsx" type="button">Export XLSX</button>
+          <button class="ghost-button" id="printMembersPdf" type="button">Print PDF</button>
           <button class="ghost-button" id="refreshMembers" type="button">Refresh Member</button>
         </div>
       </div>
@@ -13904,7 +14039,59 @@ async function renderMonitoringMembers(options = {}) {
     state.monitoringMemberPage = 1;
     renderMonitoringMembers();
   });
+  document.getElementById('memberNewCustomerFilter')?.addEventListener('change', (event) => {
+    state.monitoringMemberNewCustomer = event.target.value || 'all';
+    state.monitoringMemberPage = 1;
+    renderMonitoringMembers();
+  });
+  document.getElementById('memberPeriodFilter')?.addEventListener('change', (event) => {
+    state.monitoringMemberPeriod = event.target.value || 'all';
+    state.monitoringMemberPage = 1;
+    renderMonitoringMembers();
+  });
+  document.getElementById('memberFromFilter')?.addEventListener('change', (event) => {
+    state.monitoringMemberFrom = event.target.value || '';
+    if (state.monitoringMemberFrom || state.monitoringMemberTo) state.monitoringMemberPeriod = 'custom';
+    state.monitoringMemberPage = 1;
+    renderMonitoringMembers();
+  });
+  document.getElementById('memberToFilter')?.addEventListener('change', (event) => {
+    state.monitoringMemberTo = event.target.value || '';
+    if (state.monitoringMemberFrom || state.monitoringMemberTo) state.monitoringMemberPeriod = 'custom';
+    state.monitoringMemberPage = 1;
+    renderMonitoringMembers();
+  });
+  document.getElementById('memberCreatorFilter')?.addEventListener('change', (event) => {
+    state.monitoringMemberCreator = event.target.value || 'all';
+    state.monitoringMemberPage = 1;
+    renderMonitoringMembers();
+  });
   document.getElementById('refreshMembers')?.addEventListener('click', () => renderMonitoringMembers({ refresh: true }));
+  document.getElementById('exportMembersXlsx')?.addEventListener('click', async () => {
+    try {
+      const exportParams = queryString({
+        status: state.monitoringMemberStatus,
+        paymentType: state.monitoringMemberPaymentType,
+        billingPeriod: state.monitoringMemberBillingPeriod,
+        newCustomer: state.monitoringMemberNewCustomer,
+        periodMode: state.monitoringMemberPeriod,
+        from: state.monitoringMemberFrom,
+        to: state.monitoringMemberTo,
+        creator: state.monitoringMemberCreator,
+        search: state.search
+      });
+      await downloadFile(`/api/monitoring/members/export.xlsx?${exportParams}`, `pelanggan-baru-${todayInput()}.xlsx`);
+    } catch (error) {
+      setToast(error.message || 'Export member gagal');
+    }
+  });
+  document.getElementById('printMembersPdf')?.addEventListener('click', async () => {
+    try {
+      await printMonitoringMembersReport();
+    } catch (error) {
+      setToast(error.message || 'Pratinjau PDF member gagal dibuat');
+    }
+  });
   bindSearch(() => {
     state.monitoringMemberPage = 1;
     renderMonitoringMembers();
@@ -16900,7 +17087,7 @@ async function renderSettings(options = {}) {
           </label>
           <label class="field">
             <span>Kode kuitansi pemasukan</span>
-            <input name="receiptBusinessCode" value="${escapeHtml(settings.receiptBusinessCode || settings.billing?.invoiceBusinessCode || 'FAKE.NET')}" placeholder="FAKE.NET" maxlength="30">
+            <input name="receiptBusinessCode" value="${escapeHtml(settings.receiptBusinessCode || settings.billing?.invoiceBusinessCode || DEFAULT_BUSINESS_CODE)}" placeholder="KODE USAHA" maxlength="30">
           </label>
           <div class="field">
             <span>Halaman public-info</span>

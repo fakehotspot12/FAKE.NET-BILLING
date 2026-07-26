@@ -58,10 +58,10 @@ function createDefaultStore() {
     createdAt: now,
     updatedAt: now,
     settings: {
-      businessName: 'FAKE.NET Billing Standalone',
-      appSubtitle: 'ISP Billing',
+      businessName: 'ISP Billing',
+      appSubtitle: 'Billing ISP dan RT/RW Net',
       logoUrl: '/fakenet-logo.png',
-      receiptBusinessCode: 'FAKE.NET',
+      receiptBusinessCode: 'ISP',
       publicInfo: {
         heroTitle: 'Informasi Layanan & Pembelian',
         heroText: 'Halaman ini berisi ringkasan produk, alur transaksi, syarat ketentuan, dan kontak layanan pelanggan untuk kebutuhan review payment gateway.',
@@ -141,7 +141,7 @@ function createDefaultStore() {
         notificationBeforeDueDays: 0,
         autoSuspendTime: '00:00',
         invoiceNumberFormat: 'XXXXXX',
-        invoiceBusinessCode: 'FAKE.NET',
+        invoiceBusinessCode: 'ISP',
         notifyInvoiceIssued: true,
         notifyPaymentStatus: true,
         notifyMemberStatus: true,

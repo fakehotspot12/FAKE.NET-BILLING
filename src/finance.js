@@ -200,10 +200,10 @@ function escapeRegExp(value = '') {
 function receiptBusinessCodeFromSettings(settings = {}) {
   const configured = cleanText(settings.receiptBusinessCode || settings.billing?.invoiceBusinessCode || settings.invoiceBusinessCode);
   if (configured) return configured.toUpperCase();
-  const source = cleanText(settings.businessName || 'FAKE.NET');
+  const source = cleanText(settings.businessName || 'ISP Billing');
   const domainLike = (source.match(/[a-z0-9.-]+\.[a-z]{2,}/i) || [])[0];
-  const fallback = domainLike || source.split(/\s+/)[0] || 'FAKE.NET';
-  return fallback.replace(/[^a-z0-9.-]+/gi, '').toUpperCase() || 'FAKE.NET';
+  const fallback = domainLike || source.split(/\s+/)[0] || 'ISP';
+  return fallback.replace(/[^a-z0-9.-]+/gi, '').toUpperCase() || 'ISP';
 }
 
 function formatBillingInvoiceNumber(data = {}, sequence = 1) {

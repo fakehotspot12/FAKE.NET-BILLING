@@ -2438,7 +2438,7 @@ test('external incomes are included in net cash and can be managed', () => {
 
   assert.equal(summarize(data, '2026-06').externalIncomeTotal, 750000);
   assert.equal(summarize(data, '2026-06').netCash, 750000);
-  assert.equal(income.receiptNo, '001/INV-FAKE.NET/VI/2026');
+  assert.equal(income.receiptNo, '001/INV-ISP/VI/2026');
 
   const updated = updateExternalIncome(data, income.id, {
     date: '2026-06-13',
@@ -2450,7 +2450,7 @@ test('external incomes are included in net cash and can be managed', () => {
   });
 
   assert.equal(updated.amount, 900000);
-  assert.equal(updated.receiptNo, '001/INV-FAKE.NET/VI/2026');
+  assert.equal(updated.receiptNo, '001/INV-ISP/VI/2026');
   assert.equal(summarize(data, '2026-06').externalIncomeTotal, 900000);
 
   const deleted = deleteExternalIncome(data, income.id);
@@ -2468,7 +2468,7 @@ test('external incomes are included in net cash and can be managed', () => {
     paymentMethod: 'Tunai'
   });
 
-  assert.equal(nextIncome.receiptNo, '002/INV-FAKE.NET/VI/2026');
+  assert.equal(nextIncome.receiptNo, '002/INV-ISP/VI/2026');
   assert.equal(summarize(data, '2026-06').externalIncomeTotal, 500000);
 
   const julyIncome = addExternalIncome(data, {
@@ -2480,7 +2480,7 @@ test('external incomes are included in net cash and can be managed', () => {
     paymentMethod: 'Transfer'
   });
 
-  assert.equal(julyIncome.receiptNo, '001/INV-FAKE.NET/VII/2026');
+  assert.equal(julyIncome.receiptNo, '001/INV-ISP/VII/2026');
   assert.equal(summarize(data, '2026-07').externalIncomeTotal, 600000);
 });
 
@@ -2557,7 +2557,7 @@ test('external income can contain multiple sales items under one receipt', () =>
   });
 
   assert.equal(data.externalIncomes.length, 1);
-  assert.equal(income.receiptNo, '001/INV-FAKE.NET/VI/2026');
+  assert.equal(income.receiptNo, '001/INV-ISP/VI/2026');
   assert.equal(income.category, '2 kategori: Perangkat, Barang/Jasa');
   assert.equal(income.items.length, 2);
   assert.equal(income.items[0].category, 'Perangkat');

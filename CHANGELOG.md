@@ -2,6 +2,17 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.28] - 2026-07-26
+
+### Added
+
+- Monitoring > Member ditambah filter Pelanggan Baru berdasarkan periode registrasi, rentang tanggal, dan pembuat/installer, serta export XLSX dan pratinjau print PDF.
+- Manifest PWA dibuat dinamis dari Identity Perusahaan agar nama dan logo saat install aplikasi/browser bookmark mengikuti setting usaha.
+
+### Fixed
+
+- Fallback tampilan awal, public info, scan voucher, notifikasi browser, dan kode invoice dibersihkan agar tidak kembali menampilkan identitas template saat branding tenant belum selesai dimuat.
+
 ## [2.9.27] - 2026-07-26
 
 ### Changed

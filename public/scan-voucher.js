@@ -9,12 +9,47 @@ const closeButton = document.getElementById('closeScanner');
 const openBrowserLink = document.getElementById('openBrowser');
 const helpBox = document.getElementById('cameraHelp');
 const helpText = document.getElementById('cameraHelpText');
+const brandLogo = document.getElementById('brandLogo');
+const brandName = document.getElementById('brandName');
+const appFavicon = document.getElementById('appFavicon');
 let mediaStream = null;
 let animationFrame = 0;
 let lastDecodeAt = 0;
 let lastInvalidValue = '';
 let lastInvalidAt = 0;
 let completed = false;
+
+function safeLogoUrl(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '/fakenet-logo.png';
+  if (text.startsWith('/')) return text;
+  try {
+    const url = new URL(text, window.location.origin);
+    return url.origin === window.location.origin ? `${url.pathname}${url.search}` : '/fakenet-logo.png';
+  } catch {
+    return '/fakenet-logo.png';
+  }
+}
+
+async function applyScannerBranding() {
+  try {
+    const response = await fetch('/api/branding', { cache: 'no-store' });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const branding = payload.branding || payload;
+    const title = String(branding.businessName || '').trim();
+    const logoUrl = safeLogoUrl(branding.logoUrl);
+    if (brandLogo) {
+      brandLogo.src = logoUrl;
+      brandLogo.alt = title ? `Logo ${title}` : 'Logo usaha';
+    }
+    if (appFavicon) appFavicon.href = logoUrl;
+    if (brandName && title) brandName.textContent = title;
+    if (title) document.title = `${title} - Scan QR Voucher`;
+  } catch {
+    // Branding tidak boleh menghambat kamera.
+  }
+}
 
 function setScannerStatus(message, tone = '') {
   statusText.textContent = message;
@@ -212,4 +247,7 @@ closeButton.addEventListener('click', () => {
   else window.location.href = '/voucher';
 });
 window.addEventListener('pagehide', stopScanner);
-document.addEventListener('DOMContentLoaded', startScanner);
+document.addEventListener('DOMContentLoaded', () => {
+  applyScannerBranding();
+  startScanner();
+});
