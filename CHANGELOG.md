@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.27] - 2026-07-26
+
+### Changed
+
+- Tampilan Monitoring > Member > Usage diringkas: tombol dan notice periode dihapus karena periode dan konteks sudah terbaca dari chart serta ringkasan usage.
+
 ## [2.9.26] - 2026-07-26
 
 ### Added

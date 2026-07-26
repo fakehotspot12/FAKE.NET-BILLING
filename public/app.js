@@ -13261,10 +13261,6 @@ function usageDetailPanel(usage = {}) {
       </div>
     </div>
     ${usage.error ? `<div class="notice warning"><strong>Usage belum lengkap</strong><span>${escapeHtml(usage.error)}</span></div>` : ''}
-    <div class="notice">
-      <button class="ghost-button compact member-usage-period-button" type="button" data-member-usage-period="${escapeHtml(usage.period || state.period || todayInput().slice(0, 7))}">Periode ${escapeHtml(periodLabel(usage.period || state.period || todayInput().slice(0, 7)))}</button>
-      <span>Total usage dihitung bulanan dari FreeRADIUS radacct.</span>
-    </div>
     ${usageMonthlyBarChart(usage.monthlyRows || [])}
     ${usage.monthlyError ? `<div class="notice warning"><strong>History usage belum lengkap</strong><span>${escapeHtml(usage.monthlyError)}</span></div>` : ''}
   `;
@@ -13593,39 +13589,6 @@ function bindMemberDetailModal(detail = {}) {
       if (invoice) openBillingPayModal(invoice);
     });
   });
-  const bindUsagePeriodButtons = () => {
-    modalBody.querySelectorAll('[data-member-usage-period]').forEach((button) => {
-      if (button.dataset.bound === '1') return;
-      button.dataset.bound = '1';
-      button.addEventListener('click', async () => {
-        const memberKey = detail.memberId || detail.contact?.id || detail.payment?.id || '';
-        if (!memberKey) return;
-        const label = button.textContent;
-        button.disabled = true;
-        button.textContent = 'Memuat...';
-        try {
-          const payload = await loadMemberDetail({ id: memberKey }, 'usage');
-          const usagePanel = modalBody.querySelector('[data-member-detail-panel="usage"]');
-          if (usagePanel) {
-            usagePanel.innerHTML = `
-              <div class="section-head compact">
-                <h2>Total Usage</h2>
-                <span class="muted">Total bulanan dari FreeRADIUS radacct.</span>
-              </div>
-              ${usageDetailPanel(payload.usage || {})}
-            `;
-            bindUsagePeriodButtons();
-          }
-        } catch (error) {
-          setToast(error.message || 'Usage belum bisa dimuat ulang');
-        } finally {
-          button.disabled = false;
-          button.textContent = label;
-        }
-      });
-    });
-  };
-  bindUsagePeriodButtons();
   initMemberContactMap();
 }
 
