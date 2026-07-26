@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.57] - 2026-07-27
+
+### Changed
+
+- Monitoring Member sekarang diurutkan dari member terbaru dibuat/pasang ke yang paling lama, selaras dengan urutan PPP-DHCP.
+- Export XLSX dan pratinjau PDF Member tetap memakai urutan nama A-Z agar laporan/arsip mudah dibaca.
+
 ## [2.9.56] - 2026-07-26
 
 ### Changed

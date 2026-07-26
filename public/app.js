@@ -14804,7 +14804,8 @@ async function printMonitoringMembersReport() {
     creator: state.monitoringMemberCreator,
     search: state.search,
     page: 1,
-    limit: 'all'
+    limit: 'all',
+    sort: 'az'
   });
   const payload = await api(`/api/monitoring/members?${params}`);
   const members = Array.isArray(payload.members) ? payload.members : [];

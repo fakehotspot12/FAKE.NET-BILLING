@@ -6051,6 +6051,39 @@ function monitoringMemberCreatorLabel(member = {}) {
   return String(member.createdByName || member.createdByUsername || 'Tanpa user').trim() || 'Tanpa user';
 }
 
+function monitoringMemberCreatedSortValue(member = {}) {
+  return Date.parse(member.createdAt || member.registeredAt || member.activeDate || member.registeredDate || member.updatedAt || '') || 0;
+}
+
+function sortMonitoringMembersByCreatedDesc(members = []) {
+  return [...members].sort((left, right) => {
+    const rightTime = monitoringMemberCreatedSortValue(right);
+    const leftTime = monitoringMemberCreatedSortValue(left);
+    return rightTime - leftTime
+      || String(right.createdAt || right.registeredAt || right.userId || right.fullName || '').localeCompare(
+        String(left.createdAt || left.registeredAt || left.userId || left.fullName || '')
+      );
+  });
+}
+
+function monitoringMemberNameSortValue(member = {}) {
+  return String(member.fullName || member.customerName || member.internet || member.username || member.userId || member.id || '')
+    .trim()
+    .toLowerCase();
+}
+
+function sortMonitoringMembersByNameAsc(members = []) {
+  return [...members].sort((left, right) => {
+    const leftName = monitoringMemberNameSortValue(left);
+    const rightName = monitoringMemberNameSortValue(right);
+    return leftName.localeCompare(rightName, 'id', { numeric: true, sensitivity: 'base' })
+      || String(left.userId || left.accountId || left.id || '').localeCompare(String(right.userId || right.accountId || right.id || ''), 'id', {
+        numeric: true,
+        sensitivity: 'base'
+      });
+  });
+}
+
 function localMonitoringMemberRows(data = {}, query = {}) {
   const status = String(query.status || 'all').trim().toLowerCase();
   const paymentType = String(query.paymentType || 'all').trim().toLowerCase();
@@ -6061,6 +6094,7 @@ function localMonitoringMemberRows(data = {}, query = {}) {
   const dateTo = safeDateKey(query.to || query.dateTo || '');
   const creator = String(query.creator || 'all').trim().toLowerCase();
   const search = String(query.search || '').trim().toLowerCase();
+  const sort = String(query.sort || 'created_desc').trim().toLowerCase();
   const resolver = radiusStatusResolver(data);
   const radiusUsers = data.radiusUsers || [];
   let members = (data.customers || []).map((customer) => {
@@ -6185,6 +6219,10 @@ function localMonitoringMemberRows(data = {}, query = {}) {
       member.packageName
     ].some((value) => String(value || '').toLowerCase().includes(search)));
   }
+
+  members = ['az', 'name', 'name_asc', 'alphabetic'].includes(sort)
+    ? sortMonitoringMembersByNameAsc(members)
+    : sortMonitoringMembersByCreatedDesc(members);
 
   return { members, creators, summary: localMemberSummaryRows(data) };
 }
@@ -17044,7 +17082,8 @@ async function handleApi(req, res, url) {
       from: url.searchParams.get('from') || '',
       to: url.searchParams.get('to') || '',
       creator: url.searchParams.get('creator') || 'all',
-      search: url.searchParams.get('search') || ''
+      search: url.searchParams.get('search') || '',
+      sort: 'az'
     });
     const rows = members.map((member, index) => ({
       no: index + 1,
@@ -17086,7 +17125,8 @@ async function handleApi(req, res, url) {
         from: url.searchParams.get('from') || '',
         to: url.searchParams.get('to') || '',
         creator: url.searchParams.get('creator') || 'all',
-        search: url.searchParams.get('search') || ''
+        search: url.searchParams.get('search') || '',
+        sort: url.searchParams.get('sort') || 'created_desc'
       });
       const totalRows = members.length;
       const totalPages = Math.max(1, Math.ceil(totalRows / limit));
@@ -18831,6 +18871,7 @@ module.exports = {
     localDailyReport,
     localBillingRevision,
     localBillingSite,
+    localMonitoringMemberRows,
     localManualInvoicePreview,
     monthlyBillingDailyRows,
     monthlyVoucherDailyRows,

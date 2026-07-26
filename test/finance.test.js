@@ -2031,8 +2031,8 @@ test('standalone billing automation queues payment reminder once before due date
     invoiceNo: '000123'
   });
 
-  const first = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' });
-  const second = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' });
+  const first = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date(`${dueDate}T01:00:00.000Z`) });
+  const second = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date(`${dueDate}T01:05:00.000Z`) });
 
   assert.equal(first.reminderInvoices.length, 1);
   assert.equal(second.reminderInvoices.length, 0);
@@ -2079,7 +2079,7 @@ test('standalone billing automation queues postpaid cycle reminders as safe bulk
     invoiceNo: '000124'
   });
 
-  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' });
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date(`${dueDate}T01:00:00.000Z`) });
   const message = data.waMessages.find((item) => item.type === 'paymentReminder');
 
   assert.equal(result.reminderInvoices.length, 1);
@@ -5794,6 +5794,55 @@ test('radius PPP-DHCP and Hotspot users are sorted by newest created date first'
 
   assert.deepEqual(ppp.rows.map((row) => row.username), ['ppp-new', 'ppp-old']);
   assert.deepEqual(hotspot.rows.map((row) => row.username), ['hot-new', 'hot-old']);
+});
+
+test('monitoring members are sorted by newest created date first', () => {
+  const data = createDefaultStore();
+  data.customers = [
+    {
+      id: 'member-old',
+      code: '22000000001',
+      username: 'pppoe-old',
+      name: 'Alpha Old',
+      status: 'active',
+      paymentType: 'postpaid',
+      billingPeriod: 'cycle',
+      activeDate: '2026-07-01',
+      createdAt: '2026-07-01T08:00:00.000Z'
+    },
+    {
+      id: 'member-new',
+      code: '22000000002',
+      username: 'pppoe-new',
+      name: 'Zeta New',
+      status: 'active',
+      paymentType: 'postpaid',
+      billingPeriod: 'cycle',
+      activeDate: '2026-07-02',
+      createdAt: '2026-07-20T08:00:00.000Z'
+    },
+    {
+      id: 'member-fallback',
+      code: '22000000003',
+      username: 'pppoe-fallback',
+      name: 'Beta Fallback',
+      status: 'active',
+      paymentType: 'postpaid',
+      billingPeriod: 'cycle',
+      activeDate: '2026-07-18'
+    }
+  ];
+  data.radiusUsers = [
+    { id: 'user-old', customerId: 'member-old', serviceType: 'pppoe', username: 'pppoe-old', status: 'active', createdAt: '2026-07-01T08:00:00.000Z' },
+    { id: 'user-new', customerId: 'member-new', serviceType: 'pppoe', username: 'pppoe-new', status: 'active', createdAt: '2026-07-20T08:00:00.000Z' },
+    { id: 'user-fallback', customerId: 'member-fallback', serviceType: 'pppoe', username: 'pppoe-fallback', status: 'active', createdAt: '2026-07-18T08:00:00.000Z' }
+  ];
+
+  const result = serverInternals.localMonitoringMemberRows(data, {});
+  const az = serverInternals.localMonitoringMemberRows(data, { sort: 'az' });
+
+  assert.deepEqual(result.members.map((member) => member.username), ['pppoe-new', 'pppoe-fallback', 'pppoe-old']);
+  assert.deepEqual(az.members.map((member) => member.fullName), ['Alpha Old', 'Beta Fallback', 'Zeta New']);
 });
 
 test('voucher report scopes reseller revenue and calculates commission', () => {
