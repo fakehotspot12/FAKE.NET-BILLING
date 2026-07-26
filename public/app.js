@@ -4575,6 +4575,10 @@ function applyReceiptPrintPageStyle(mode = 'a4') {
   style.textContent = `@media print { @page { size: ${receiptPrintPageSize(mode)}; margin: 0; } html, body { width: ${width} !important; min-height: ${minHeight} !important; } }`;
 }
 
+function useSlowPrintCleanup() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+}
+
 function clearReceiptPrintPageStyle() {
   document.getElementById('receiptPrintPageStyle')?.remove();
 }
@@ -4584,11 +4588,26 @@ async function printReceiptWithMode(printClass, mode = 'a4', rootSelector = '.re
   await waitForImages(document.querySelector(rootSelector));
   applyReceiptPrintPageStyle(safeMode);
   document.body.classList.add(printClass, `receipt-print-${safeMode}`);
-  window.print();
-  window.setTimeout(() => {
+  let fallbackTimer = null;
+  let printMedia = null;
+  const cleanupPrintMode = () => {
     document.body.classList.remove(printClass, 'receipt-print-a4', 'receipt-print-thermal-58', 'receipt-print-thermal-80');
     clearReceiptPrintPageStyle();
-  }, 500);
+    window.removeEventListener('afterprint', cleanupPrintMode);
+    if (printMedia?.removeEventListener) printMedia.removeEventListener('change', handlePrintMediaChange);
+    if (fallbackTimer) window.clearTimeout(fallbackTimer);
+  };
+  const handlePrintMediaChange = (event) => {
+    if (!event.matches) cleanupPrintMode();
+  };
+  const slowCleanup = useSlowPrintCleanup();
+  if (!slowCleanup) window.addEventListener('afterprint', cleanupPrintMode, { once: true });
+  if (!slowCleanup && window.matchMedia) {
+    printMedia = window.matchMedia('print');
+    printMedia.addEventListener?.('change', handlePrintMediaChange);
+  }
+  fallbackTimer = window.setTimeout(cleanupPrintMode, 120000);
+  window.print();
 }
 
 function billingReceiptPpnText(source = {}) {
@@ -8537,6 +8556,103 @@ function waitForFrameReady(frame, timeoutMs = 3000) {
   ]);
 }
 
+async function printIsolatedHtmlDocument(documentText = '', modeClass = '') {
+  const html = String(documentText || '').trim();
+  if (!html) return false;
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const bodyHtml = parsed.body?.innerHTML || '';
+  if (!String(bodyHtml || '').trim()) return false;
+  const embeddedStyles = [...parsed.querySelectorAll('style')]
+    .map((style) => style.textContent || '')
+    .filter(Boolean)
+    .join('\n');
+  let root = document.getElementById('isolatedPrintRoot');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'isolatedPrintRoot';
+    document.body.appendChild(root);
+  }
+  root.innerHTML = bodyHtml;
+  let style = document.getElementById('isolatedPrintStyle');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'isolatedPrintStyle';
+    document.head.appendChild(style);
+  }
+  style.textContent = `
+${embeddedStyles}
+@media screen {
+  html,
+  body {
+    min-height: 100% !important;
+    width: auto !important;
+  }
+  #isolatedPrintRoot {
+    background: #ffffff;
+    height: 1px;
+    left: -10000px;
+    overflow: hidden;
+    position: fixed;
+    top: 0;
+    width: 1px;
+  }
+}
+@media print {
+  body.printing-isolated-document {
+    background: #ffffff !important;
+    color-scheme: light;
+    margin: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+  body.printing-isolated-document > *:not(#isolatedPrintRoot) {
+    display: none !important;
+  }
+  body.printing-isolated-document #isolatedPrintRoot,
+  body.printing-isolated-document #isolatedPrintRoot * {
+    visibility: visible !important;
+  }
+  body.printing-isolated-document #isolatedPrintRoot {
+    background: #ffffff !important;
+    display: block !important;
+    height: auto !important;
+    left: auto !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    position: static !important;
+    top: auto !important;
+    width: auto !important;
+  }
+}`;
+  await waitForImages(root, 5000);
+  const printClasses = ['printing-isolated-document'];
+  if (modeClass) printClasses.push(modeClass);
+  document.body.classList.add(...printClasses);
+  let fallbackTimer = null;
+  let printMedia = null;
+  const cleanup = () => {
+    document.body.classList.remove(...printClasses);
+    root.remove();
+    style.remove();
+    window.removeEventListener('afterprint', cleanup);
+    if (printMedia?.removeEventListener) printMedia.removeEventListener('change', handlePrintMediaChange);
+    if (fallbackTimer) window.clearTimeout(fallbackTimer);
+  };
+  const handlePrintMediaChange = (event) => {
+    if (!event.matches) cleanup();
+  };
+  const slowCleanup = useSlowPrintCleanup();
+  if (!slowCleanup) window.addEventListener('afterprint', cleanup, { once: true });
+  if (!slowCleanup && window.matchMedia) {
+    printMedia = window.matchMedia('print');
+    printMedia.addEventListener?.('change', handlePrintMediaChange);
+  }
+  fallbackTimer = window.setTimeout(cleanup, 120000);
+  window.print();
+  return true;
+}
+
 async function openHotspotVoucherPrintModal(vouchers = []) {
   const rows = vouchers.filter(Boolean);
   if (!rows.length) {
@@ -8617,6 +8733,10 @@ async function openHotspotVoucherPrintModal(vouchers = []) {
   setHotspotVoucherPrintMode(modeInput?.value || defaultPrintMode);
   document.getElementById('printHotspotVouchers')?.addEventListener('click', async () => {
     const mode = setHotspotVoucherPrintMode(modeInput?.value || 'a4');
+    if (mode !== 'a4' && isolatedDocuments[mode]) {
+      const printed = await printIsolatedHtmlDocument(isolatedDocuments[mode], `hotspot-voucher-print-${mode}`);
+      if (printed) return;
+    }
     if (setPrintFrameDocument(mode) && printFrame && !printFrame.closest('[data-hotspot-voucher-isolated]')?.hidden) {
       await waitForFrameReady(printFrame);
       await waitForImages(printFrame.contentDocument, 5000);
@@ -8640,8 +8760,9 @@ async function openHotspotVoucherPrintModal(vouchers = []) {
     const handlePrintMediaChange = (event) => {
       if (!event.matches) cleanupPrintMode();
     };
-    window.addEventListener('afterprint', cleanupPrintMode, { once: true });
-    if (window.matchMedia) {
+    const slowCleanup = useSlowPrintCleanup();
+    if (!slowCleanup) window.addEventListener('afterprint', cleanupPrintMode, { once: true });
+    if (!slowCleanup && window.matchMedia) {
       printMedia = window.matchMedia('print');
       printMedia.addEventListener?.('change', handlePrintMediaChange);
     }

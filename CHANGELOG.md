@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.51] - 2026-07-26
+
+### Fixed
+
+- Print thermal dari Chrome mobile sekarang menahan mode print lebih lama agar tidak mencetak halaman aplikasi dan modal.
+- Print thermal voucher multi-checklist memakai dokumen print terisolasi, satu voucher per halaman/lembar thermal.
+
 ## [2.9.50] - 2026-07-26
 
 ### Changed
