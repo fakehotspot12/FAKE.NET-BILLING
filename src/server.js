@@ -50,6 +50,7 @@ const {
   paymentIsActive,
   postpaidCycleProrationInfo,
   resolvePrice,
+  setTimeZone: setFinanceTimeZone,
   summarize,
   toNumber,
   deleteExpense,
@@ -73,6 +74,8 @@ const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, 
 
 const PORT = Number(process.env.PORT || 8891);
 const HOST = process.env.HOST || '0.0.0.0';
+const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
+let activeAppTimeZone = DEFAULT_APP_TIME_ZONE;
 const APP_MODE = String(process.env.APP_MODE || 'standalone').toLowerCase();
 const BILLING_SOURCE = String(process.env.BILLING_SOURCE || (APP_MODE === 'standalone' ? 'local' : 'radboox')).toLowerCase();
 const MIGRATION_MODE = ['1', 'true', 'yes', 'on'].includes(String(process.env.MIGRATION_MODE || '').toLowerCase());
@@ -1850,12 +1853,14 @@ function sanitizeIsolirGuideSettings(payload = {}, current = {}) {
 function publicBranding(settings = {}) {
   const businessName = String(settings.businessName || 'ISP Billing').trim() || 'ISP Billing';
   const appSubtitle = String(settings.appSubtitle || 'Billing ISP dan RT/RW Net').trim() || 'Billing ISP dan RT/RW Net';
+  const timeZone = appTimeZone(settings);
   return {
     businessName,
     appSubtitle,
     logoUrl: publicLogoUrl(settings),
     copyrightYear: new Date().getFullYear(),
     copyrightName: 'FAKE.NET',
+    timeZone,
     appVersion: APP_VERSION,
     buildVersion: APP_BUILD_VERSION,
     releaseDate: APP_RELEASE_DATE,
@@ -1919,6 +1924,7 @@ function licenseBlocksAccess(data = {}) {
 
 function publicAppSettings(settings = {}) {
   const safe = publicSettings(settings);
+  safe.timeZone = appTimeZone(safe);
   if (safe.billing && typeof safe.billing === 'object' && safe.billing.invoiceBusinessCode === 'FAKE.NET') {
     safe.billing = {
       ...safe.billing,
@@ -1997,7 +2003,7 @@ function intervalLabel(ms) {
 
 function todayIso() {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Makassar',
+    timeZone: activeAppTimeZone || DEFAULT_APP_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
@@ -6478,7 +6484,7 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
         dueDate: invoice.dueDate || '',
         paymentAt: paidAt,
         paymentRaw: paidAt,
-        paymentTime: paidAt ? new Date(paidAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Makassar' }) : '',
+        paymentTime: paidAt ? new Date(paidAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: appTimeZone(data.settings || {}) }) : '',
         subtotal: Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0),
         baseAmount: Number(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount ?? 0),
         ppnAmount: Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0),
@@ -6778,6 +6784,32 @@ function sanitizeTime(value, fallback = '00:00') {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
+function validAppTimeZone(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: text }).format(new Date());
+    return text;
+  } catch {
+    return '';
+  }
+}
+
+function normalizeAppTimeZone(value = '') {
+  return validAppTimeZone(value) || DEFAULT_APP_TIME_ZONE;
+}
+
+function appTimeZone(settings = {}) {
+  return normalizeAppTimeZone(settings.timeZone || settings.timezone || DEFAULT_APP_TIME_ZONE);
+}
+
+function configureAppTimeZone(settings = {}) {
+  const timeZone = appTimeZone(settings || {});
+  activeAppTimeZone = timeZone;
+  setFinanceTimeZone(timeZone);
+  return timeZone;
+}
+
 function sanitizeBillingSettings(payload = {}, current = {}) {
   return {
     ...current,
@@ -6874,9 +6906,9 @@ function sanitizeWaGatewaySettings(payload = {}, current = {}) {
   };
 }
 
-function localDateParts(date = new Date()) {
+function localDateParts(date = new Date(), timeZone = '') {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Makassar',
+    timeZone: normalizeAppTimeZone(timeZone || activeAppTimeZone || DEFAULT_APP_TIME_ZONE),
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -9298,7 +9330,7 @@ function dateTimeDisplayText(value = '') {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return dateDisplayText(value);
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Makassar',
+    timeZone: normalizeAppTimeZone(activeAppTimeZone || DEFAULT_APP_TIME_ZONE),
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -10884,6 +10916,7 @@ function persistRadbooxCredentials(radbooxSettings, payload = {}, data = null) {
 async function mutate(mutator, saveOptions = {}) {
   const run = async () => {
     const current = await loadStore();
+    configureAppTimeZone(current.settings || {});
     const targetedCollections = Array.isArray(saveOptions.collections) && saveOptions.includeCore === false
       ? saveOptions.collections
       : [];
@@ -10903,7 +10936,9 @@ async function mutate(mutator, saveOptions = {}) {
       persistOptions.collections = persistOptions.persistCollections(result, data, current);
     }
     delete persistOptions.persistCollections;
+    configureAppTimeZone(data.settings || {});
     const saved = await saveStore(data, persistOptions);
+    configureAppTimeZone(saved.settings || {});
     return { data: saved, result };
   };
 
@@ -11651,6 +11686,7 @@ async function requireAnyPermission(req, res, permissions = []) {
 async function requestStore(req) {
   if (req.appStore) return req.appStore;
   req.appStore = await loadStore();
+  configureAppTimeZone(req.appStore.settings || {});
   return req.appStore;
 }
 
@@ -18108,6 +18144,9 @@ async function handleApi(req, res, url) {
       if (typeof payload.appSubtitle === 'string') {
         store.settings.appSubtitle = payload.appSubtitle.trim().slice(0, 60) || store.settings.appSubtitle || 'ISP Ops';
       }
+      if (typeof payload.timeZone === 'string') {
+        store.settings.timeZone = normalizeAppTimeZone(payload.timeZone);
+      }
       if (typeof payload.receiptBusinessCode === 'string') {
         const nextBusinessCode = sanitizeReceiptBusinessCode(payload.receiptBusinessCode, store.settings.receiptBusinessCode || store.settings.billing?.invoiceBusinessCode || 'ISP');
         store.settings.receiptBusinessCode = nextBusinessCode;
@@ -18434,7 +18473,7 @@ if (require.main === module) {
     if (result.removed) console.log(`Pembersihan upload: ${result.removed} file yatim dihapus`);
   };
   const startMainServer = async () => {
-    await loadStore();
+    configureAppTimeZone((await loadStore()).settings || {});
     await ensureStartupData();
     await runImageCleanup().catch((error) => console.error(`Pembersihan upload gagal: ${error.message || error}`));
     server.listen(PORT, HOST, () => {

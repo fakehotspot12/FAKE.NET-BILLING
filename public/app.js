@@ -42,7 +42,20 @@ const mobileMenuQuery = window.matchMedia('(max-width: 760px)');
 const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100, 'all'];
-const APP_TIME_ZONE = 'Asia/Makassar';
+const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
+const APP_TIME_ZONE_LABELS = {
+  'Asia/Jakarta': 'WIB',
+  'Asia/Makassar': 'WITA',
+  'Asia/Jayapura': 'WIT'
+};
+const APP_TIME_ZONE_OPTIONS = [
+  ['Asia/Jakarta', 'WIB - Asia/Jakarta'],
+  ['Asia/Makassar', 'WITA - Asia/Makassar'],
+  ['Asia/Jayapura', 'WIT - Asia/Jayapura'],
+  ['UTC', 'UTC'],
+  ['Asia/Singapore', 'Asia/Singapore'],
+  ['Asia/Kuala_Lumpur', 'Asia/Kuala_Lumpur']
+];
 const DEFAULT_LOGO_URL = '/fakenet-logo.png';
 const DEFAULT_BUSINESS_NAME = 'ISP Billing';
 const DEFAULT_APP_SUBTITLE = 'Billing ISP dan RT/RW Net';
@@ -248,6 +261,7 @@ const state = {
     businessName: DEFAULT_BUSINESS_NAME,
     appSubtitle: DEFAULT_APP_SUBTITLE,
     logoUrl: DEFAULT_LOGO_URL,
+    timeZone: DEFAULT_APP_TIME_ZONE,
     security: {
       loginVerificationEnabled: true
     },
@@ -265,6 +279,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     copyrightYear: new Date().getFullYear(),
     copyrightName: APP_COPYRIGHT_NAME,
+    timeZone: DEFAULT_APP_TIME_ZONE,
     appVersion: '__FAKENET_APP_VERSION__',
     buildVersion: '__FAKENET_BUILD_VERSION__',
     releaseDate: '__FAKENET_RELEASE_DATE__',
@@ -581,6 +596,36 @@ function dateText(value) {
   return readable || readablePeriodText(text);
 }
 
+function isValidTimeZone(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: text }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function appTimeZone() {
+  const value = String(state.settings.timeZone || state.branding.timeZone || DEFAULT_APP_TIME_ZONE).trim();
+  return isValidTimeZone(value) ? value : DEFAULT_APP_TIME_ZONE;
+}
+
+function appTimeZoneLabel(value = appTimeZone()) {
+  const timeZone = String(value || DEFAULT_APP_TIME_ZONE).trim();
+  return APP_TIME_ZONE_LABELS[timeZone] || timeZone || APP_TIME_ZONE_LABELS[DEFAULT_APP_TIME_ZONE];
+}
+
+function appTimeZoneOptionMarkup(selected = DEFAULT_APP_TIME_ZONE) {
+  const value = isValidTimeZone(selected) ? selected : DEFAULT_APP_TIME_ZONE;
+  const known = APP_TIME_ZONE_OPTIONS.some(([zone]) => zone === value);
+  return [
+    ...APP_TIME_ZONE_OPTIONS.map(([zone, label]) => `<option value="${escapeHtml(zone)}" ${known && zone === value ? 'selected' : ''}>${escapeHtml(label)}</option>`),
+    `<option value="custom" ${known ? '' : 'selected'}>Custom / Zona lain</option>`
+  ].join('');
+}
+
 function dateTimeValueDate(value) {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
@@ -608,7 +653,7 @@ function dateTimeText(value) {
   const date = dateTimeValueDate(value);
   if (!date) return dateText(value);
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: APP_TIME_ZONE,
+    timeZone: appTimeZone(),
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -629,7 +674,7 @@ function timeText(value) {
     const date = new Date(text);
     if (!Number.isNaN(date.getTime())) {
       return date.toLocaleTimeString('id-ID', {
-        timeZone: APP_TIME_ZONE,
+        timeZone: appTimeZone(),
         hour: '2-digit',
         minute: '2-digit',
         hour12: false
@@ -669,7 +714,7 @@ function legacySourceTimeText(value) {
   const date = legacySourceDate(value);
   if (!date) return '';
   return date.toLocaleTimeString('id-ID', {
-    timeZone: APP_TIME_ZONE,
+    timeZone: appTimeZone(),
     hour: '2-digit',
     minute: '2-digit',
     hour12: false
@@ -2706,6 +2751,7 @@ function updateBranding(payload = {}) {
       appVersion: state.settings.appInfo?.version || state.branding.appVersion,
       buildVersion: state.settings.appInfo?.buildVersion || state.branding.buildVersion,
       releaseDate: state.settings.appInfo?.releaseDate || state.branding.releaseDate,
+      timeZone: state.settings.timeZone || state.branding.timeZone || DEFAULT_APP_TIME_ZONE,
       loginVerificationEnabled: state.settings.security?.loginVerificationEnabled !== false
     };
   } else if (
@@ -2742,6 +2788,7 @@ function currentBranding() {
     logoUrl: safeLogoUrl(state.branding.logoUrl || state.settings.logoUrl),
     copyrightYear: state.branding.copyrightYear || new Date().getFullYear(),
     copyrightName: APP_COPYRIGHT_NAME,
+    timeZone: state.branding.timeZone || state.settings.timeZone || DEFAULT_APP_TIME_ZONE,
     appVersion: state.branding.appVersion || state.settings.appInfo?.version || '__FAKENET_APP_VERSION__',
     buildVersion: state.branding.buildVersion || state.branding.appVersion || state.settings.appInfo?.version || '__FAKENET_BUILD_VERSION__',
     releaseDate: state.branding.releaseDate || state.settings.appInfo?.releaseDate || '__FAKENET_RELEASE_DATE__',
@@ -5680,7 +5727,7 @@ const PAYMENT_METHODS = ['Tunai', 'Transfer', 'QRIS'];
 
 function todayInput() {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: APP_TIME_ZONE,
+    timeZone: appTimeZone(),
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
@@ -11225,7 +11272,7 @@ async function renderRadiusSettings(options = {}) {
             <label class="field">
               <span>Jam kirim invoice/reminder</span>
               <input name="notificationSendTime" type="time" value="${escapeHtml(billing.notificationSendTime || '06:00')}">
-              <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (WITA).</small>
+              <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (${escapeHtml(appTimeZoneLabel())}).</small>
             </label>
             <label class="field">
               <span>Jam isolir otomatis</span>
@@ -15940,7 +15987,7 @@ async function renderBillingSettings() {
           <label class="field">
             <span>Jam kirim invoice/reminder</span>
             <input name="notificationSendTime" type="time" value="${escapeHtml(settings.notificationSendTime || '06:00')}">
-            <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (WITA).</small>
+            <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (${escapeHtml(appTimeZoneLabel())}).</small>
           </label>
           <label class="field">
             <span>Jam isolir otomatis</span>
@@ -17504,7 +17551,7 @@ function renderAppUpdateProgress(payload = {}, options = {}) {
           <span>Log terbaru</span>
           <strong>${escapeHtml(latestLogLine)}</strong>
         </div>
-        <time datetime="${escapeHtml(polledAt)}">${escapeHtml(dateTimeText(polledAt))} WITA</time>
+        <time datetime="${escapeHtml(polledAt)}">${escapeHtml(dateTimeText(polledAt))} ${escapeHtml(appTimeZoneLabel())}</time>
       </div>
       <section class="notice ${failed ? 'error' : done ? 'positive' : 'warning'}">
         <strong>${escapeHtml(title)}</strong>
@@ -17727,6 +17774,18 @@ async function renderSettings(options = {}) {
             <input name="appSubtitle" value="${escapeHtml(settings.appSubtitle || 'ISP Billing')}" maxlength="60">
           </label>
           <label class="field">
+            <span>Zona waktu aplikasi</span>
+            <select name="timeZonePreset" id="appTimeZonePreset">
+              ${appTimeZoneOptionMarkup(settings.timeZone || DEFAULT_APP_TIME_ZONE)}
+            </select>
+            <small class="muted">Default WITA. Dipakai untuk laporan, scheduler invoice/reminder, isolir, dan tampilan jam.</small>
+          </label>
+          <label class="field" id="appTimeZoneCustomField" ${APP_TIME_ZONE_OPTIONS.some(([zone]) => zone === (settings.timeZone || DEFAULT_APP_TIME_ZONE)) ? 'hidden' : ''}>
+            <span>Zona waktu custom</span>
+            <input name="timeZoneCustom" value="${escapeHtml(settings.timeZone || '')}" placeholder="Contoh: Asia/Singapore">
+            <small class="muted">Gunakan nama IANA timezone yang valid.</small>
+          </label>
+          <label class="field">
             <span>Kode kuitansi pemasukan</span>
             <input name="receiptBusinessCode" value="${escapeHtml(settings.receiptBusinessCode || settings.billing?.invoiceBusinessCode || DEFAULT_BUSINESS_CODE)}" placeholder="KODE USAHA" maxlength="30">
           </label>
@@ -17851,12 +17910,23 @@ async function renderSettings(options = {}) {
     openPublicInfoSettingsModal(settings.publicInfo || {});
   });
 
+  document.getElementById('appTimeZonePreset')?.addEventListener('change', (event) => {
+    const customField = document.getElementById('appTimeZoneCustomField');
+    if (customField) {
+      customField.hidden = event.target.value !== 'custom';
+    }
+  });
+
   document.getElementById('settingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
+    const selectedTimeZone = form.timeZonePreset.value === 'custom'
+      ? form.timeZoneCustom.value
+      : form.timeZonePreset.value;
     const body = {
       businessName: form.businessName.value,
       appSubtitle: form.appSubtitle.value,
+      timeZone: selectedTimeZone,
       receiptBusinessCode: form.receiptBusinessCode.value,
       voucherRevenueSharePercent: form.voucherRevenueSharePercent.value,
       collectorDailyBonusEnabled: form.collectorDailyBonusEnabled.checked,

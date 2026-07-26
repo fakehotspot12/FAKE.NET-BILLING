@@ -2,15 +2,36 @@
 
 const { createId } = require('./store');
 
-const MAKASSAR_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Makassar',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit'
-});
+const DEFAULT_TIME_ZONE = 'Asia/Makassar';
+let activeTimeZone = DEFAULT_TIME_ZONE;
+
+function validTimeZone(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: text }).format(new Date());
+    return text;
+  } catch {
+    return '';
+  }
+}
+
+function setTimeZone(value = '') {
+  activeTimeZone = validTimeZone(value) || DEFAULT_TIME_ZONE;
+  return activeTimeZone;
+}
+
+function getTimeZone() {
+  return activeTimeZone || DEFAULT_TIME_ZONE;
+}
 
 function localDateParts(date = new Date()) {
-  const parts = MAKASSAR_DATE_FORMATTER.formatToParts(date);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: getTimeZone(),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
   return Object.fromEntries(parts.map((part) => [part.type, part.value]));
 }
 
@@ -1621,6 +1642,8 @@ module.exports = {
   normalizeStatus,
   resolvePrice,
   summarize,
+  setTimeZone,
+  getTimeZone,
   toNumber,
   updateExternalIncome,
   updateExpense,

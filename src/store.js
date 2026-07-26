@@ -61,6 +61,7 @@ function createDefaultStore() {
       businessName: 'ISP Billing',
       appSubtitle: 'Billing ISP dan RT/RW Net',
       logoUrl: '/fakenet-logo.png',
+      timeZone: 'Asia/Makassar',
       receiptBusinessCode: 'ISP',
       publicInfo: {
         heroTitle: 'Informasi Layanan & Pembelian',

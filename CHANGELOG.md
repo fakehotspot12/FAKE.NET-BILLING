@@ -2,6 +2,16 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.38] - 2026-07-26
+
+### Added
+
+- Pengaturan usaha ditambah `Zona waktu aplikasi` dengan pilihan umum WIB/WITA/WIT dan custom IANA timezone.
+
+### Changed
+
+- Tampilan jam, laporan harian, scheduler invoice/reminder, isolir, dan automation billing membaca zona waktu dari Pengaturan dengan default `Asia/Makassar`.
+
 ## [2.9.37] - 2026-07-26
 
 ### Changed
