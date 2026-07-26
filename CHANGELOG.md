@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.42] - 2026-07-26
+
+### Changed
+
+- Dropdown zona waktu aplikasi diringkas hanya ke zona Indonesia: WIB, WITA, dan WIT.
+
 ## [2.9.41] - 2026-07-26
 
 ### Fixed

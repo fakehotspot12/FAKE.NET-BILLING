@@ -51,10 +51,7 @@ const APP_TIME_ZONE_LABELS = {
 const APP_TIME_ZONE_OPTIONS = [
   ['Asia/Jakarta', 'WIB - Asia/Jakarta'],
   ['Asia/Makassar', 'WITA - Asia/Makassar'],
-  ['Asia/Jayapura', 'WIT - Asia/Jayapura'],
-  ['UTC', 'UTC'],
-  ['Asia/Singapore', 'Asia/Singapore'],
-  ['Asia/Kuala_Lumpur', 'Asia/Kuala_Lumpur']
+  ['Asia/Jayapura', 'WIT - Asia/Jayapura']
 ];
 const DEFAULT_LOGO_URL = '/fakenet-logo.png';
 const DEFAULT_BUSINESS_NAME = 'ISP Billing';
@@ -630,10 +627,10 @@ function appTimeZoneLabel(value = appTimeZone()) {
 function appTimeZoneOptionMarkup(selected = DEFAULT_APP_TIME_ZONE) {
   const value = isValidTimeZone(selected) ? selected : DEFAULT_APP_TIME_ZONE;
   const known = APP_TIME_ZONE_OPTIONS.some(([zone]) => zone === value);
-  return [
-    ...APP_TIME_ZONE_OPTIONS.map(([zone, label]) => `<option value="${escapeHtml(zone)}" ${known && zone === value ? 'selected' : ''}>${escapeHtml(label)}</option>`),
-    `<option value="custom" ${known ? '' : 'selected'}>Custom / Zona lain</option>`
-  ].join('');
+  const selectedValue = known ? value : DEFAULT_APP_TIME_ZONE;
+  return APP_TIME_ZONE_OPTIONS
+    .map(([zone, label]) => `<option value="${escapeHtml(zone)}" ${zone === selectedValue ? 'selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
 }
 
 function ensureLeafletLoaded() {
@@ -17848,11 +17845,6 @@ async function renderSettings(options = {}) {
             </select>
             <small class="muted">Default WITA. Dipakai untuk laporan, scheduler invoice/reminder, isolir, dan tampilan jam.</small>
           </label>
-          <label class="field" id="appTimeZoneCustomField" ${APP_TIME_ZONE_OPTIONS.some(([zone]) => zone === (settings.timeZone || DEFAULT_APP_TIME_ZONE)) ? 'hidden' : ''}>
-            <span>Zona waktu custom</span>
-            <input name="timeZoneCustom" value="${escapeHtml(settings.timeZone || '')}" placeholder="Contoh: Asia/Singapore">
-            <small class="muted">Gunakan nama IANA timezone yang valid.</small>
-          </label>
           <label class="field">
             <span>Kode kuitansi pemasukan</span>
             <input name="receiptBusinessCode" value="${escapeHtml(settings.receiptBusinessCode || settings.billing?.invoiceBusinessCode || DEFAULT_BUSINESS_CODE)}" placeholder="KODE USAHA" maxlength="30">
@@ -17978,19 +17970,10 @@ async function renderSettings(options = {}) {
     openPublicInfoSettingsModal(settings.publicInfo || {});
   });
 
-  document.getElementById('appTimeZonePreset')?.addEventListener('change', (event) => {
-    const customField = document.getElementById('appTimeZoneCustomField');
-    if (customField) {
-      customField.hidden = event.target.value !== 'custom';
-    }
-  });
-
   document.getElementById('settingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
-    const selectedTimeZone = form.timeZonePreset.value === 'custom'
-      ? form.timeZoneCustom.value
-      : form.timeZonePreset.value;
+    const selectedTimeZone = form.timeZonePreset.value || DEFAULT_APP_TIME_ZONE;
     const body = {
       businessName: form.businessName.value,
       appSubtitle: form.appSubtitle.value,
