@@ -3451,6 +3451,45 @@ dialog:has(.app-update-progress) {
     var(--surface-soft);
 }
 
+.app-update-latest {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(43, 139, 217, 0.22);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(43, 139, 217, 0.09), rgba(43, 139, 217, 0.04));
+}
+
+.app-update-latest div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-update-latest span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.app-update-latest strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-update-latest time {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .app-update-progress-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3539,6 +3578,11 @@ dialog:has(.app-update-progress) {
 
 [data-theme="dark"] .app-update-progress-grid > div {
   background: rgba(15, 23, 42, 0.36);
+}
+
+[data-theme="dark"] .app-update-latest {
+  border-color: rgba(96, 165, 250, 0.26);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.14), rgba(15, 23, 42, 0.34));
 }
 
 @keyframes updatePulse {
@@ -9415,6 +9459,15 @@ dialog::backdrop {
 
   .app-update-progress-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-update-latest {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .app-update-latest strong {
+    white-space: normal;
   }
 
   .app-update-meter {

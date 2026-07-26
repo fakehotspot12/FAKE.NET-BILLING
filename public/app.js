@@ -17413,6 +17413,14 @@ function appUpdateLogTail(log = '') {
   return lines.slice(-80).join('\n');
 }
 
+function appUpdateLatestLogLine(log = '') {
+  const lines = String(log || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length ? lines[lines.length - 1] : 'Menunggu log update terbaru...';
+}
+
 function appUpdateProgressPercent({ running = false, done = false, failed = false, waiting = false, log = '', elapsedSeconds = 0 } = {}) {
   if (done) {
     appUpdateProgressLastPercent = 100;
@@ -17476,6 +17484,8 @@ function renderAppUpdateProgress(payload = {}, options = {}) {
   const elapsedSeconds = appUpdateProgressStartedAt
     ? Math.max(0, Math.round((Date.now() - appUpdateProgressStartedAt) / 1000))
     : 0;
+  const polledAt = options.polledAt || payload.polledAt || new Date().toISOString();
+  const latestLogLine = appUpdateLatestLogLine(log);
   const percent = appUpdateProgressPercent({ running, done, failed, waiting, log, elapsedSeconds });
   const progressClass = failed ? 'is-failed' : done ? 'is-done' : running || waiting ? 'is-running' : '';
 
@@ -17488,6 +17498,13 @@ function renderAppUpdateProgress(payload = {}, options = {}) {
             <span>${escapeHtml(done ? 'Selesai' : failed ? 'Gagal' : waiting ? 'Reconnect' : running ? 'Berjalan' : 'Mulai')}</span>
           </div>
         </div>
+      </div>
+      <div class="app-update-latest">
+        <div>
+          <span>Log terbaru</span>
+          <strong>${escapeHtml(latestLogLine)}</strong>
+        </div>
+        <time datetime="${escapeHtml(polledAt)}">${escapeHtml(dateTimeText(polledAt))} WITA</time>
       </div>
       <section class="notice ${failed ? 'error' : done ? 'positive' : 'warning'}">
         <strong>${escapeHtml(title)}</strong>
@@ -17513,7 +17530,7 @@ function renderAppUpdateProgress(payload = {}, options = {}) {
       </div>
       <div class="app-update-log">
         <div class="app-update-log-head">
-          <strong>Log update terakhir</strong>
+          <strong>Detail log proses</strong>
           <span>${escapeHtml(payload.system?.hostname || '')}</span>
         </div>
         <pre>${escapeHtml(log || 'Belum ada log update.')}</pre>
