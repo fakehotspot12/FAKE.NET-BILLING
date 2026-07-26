@@ -5780,6 +5780,22 @@ test('reseller NAS lock does not hide hotspot profiles when generating vouchers'
   assert.equal(payload.rows[0].name, 'V-3000');
 });
 
+test('radius PPP-DHCP and Hotspot users are sorted by newest created date first', async () => {
+  const data = createDefaultStore();
+  data.radiusUsers = [
+    { id: 'ppp-old', serviceType: 'pppoe', username: 'ppp-old', status: 'active', createdAt: '2026-07-01T08:00:00.000Z' },
+    { id: 'ppp-new', serviceType: 'pppoe', username: 'ppp-new', status: 'active', createdAt: '2026-07-20T08:00:00.000Z' },
+    { id: 'hot-old', serviceType: 'hotspot', username: 'hot-old', status: 'active', createdAt: '2026-07-02T08:00:00.000Z' },
+    { id: 'hot-new', serviceType: 'hotspot', username: 'hot-new', status: 'active', createdAt: '2026-07-21T08:00:00.000Z' }
+  ];
+
+  const ppp = await serverInternals.radiusPayloadLocal(data, 'ppp-dhcp', { tab: 'users', page: 1, limit: 10 });
+  const hotspot = await serverInternals.radiusPayloadLocal(data, 'hotspot', { tab: 'users', page: 1, limit: 10 });
+
+  assert.deepEqual(ppp.rows.map((row) => row.username), ['ppp-new', 'ppp-old']);
+  assert.deepEqual(hotspot.rows.map((row) => row.username), ['hot-new', 'hot-old']);
+});
+
 test('voucher report scopes reseller revenue and calculates commission', () => {
   const data = createDefaultStore();
   data.settings.voucherRevenueSharePercent = 20;
@@ -6242,12 +6258,13 @@ test('Tunai - Loket remains grouped as cash', () => {
   assert.equal(serverInternals.paymentCategoryForRecord({}, 'Tunai - Loket'), 'cash');
 });
 
-test('hotspot summary separates available, running, expired, inactive, online and offline users', () => {
+test('hotspot summary keeps offline count scoped to usable hotspot vouchers', () => {
   const future = new Date(Date.now() + 86400000).toISOString();
   const past = new Date(Date.now() - 86400000).toISOString();
   const rows = [
     { username: 'available', status: 'active', sessionOnline: false },
     { username: 'running', status: 'active', voucherFirstOnlineAt: past, validUntil: future, sessionOnline: true },
+    { username: 'unpaid-manual', status: 'active', paymentStatus: 'unpaid', sessionOnline: false },
     { username: 'expired', status: 'terminated', validUntil: past, voucherExpiredAt: past, sessionOnline: false },
     { username: 'disabled', status: 'terminated', sessionOnline: false }
   ];
@@ -6257,7 +6274,43 @@ test('hotspot summary separates available, running, expired, inactive, online an
   assert.equal(summary.expired, 3);
   assert.equal(summary.inactive, 1);
   assert.equal(summary.online, 1);
-  assert.equal(summary.offline, 3);
+  assert.equal(summary.offline, 1);
+});
+
+test('manual unpaid hotspot users are not synced to FreeRADIUS but generated vouchers remain synced', () => {
+  const freeradius = require('../src/freeradius-core');
+  const data = createDefaultStore();
+  data.radiusProfiles.push({
+    id: 'profile-hotspot-sync',
+    serviceType: 'hotspot',
+    name: 'Voucher Sync',
+    active: true
+  });
+  data.radiusUsers.push(
+    {
+      id: 'hotspot-unpaid-manual',
+      serviceType: 'hotspot',
+      username: 'unpaid-manual',
+      password: 'unpaid-manual',
+      profileId: 'profile-hotspot-sync',
+      status: 'active',
+      paymentStatus: 'unpaid'
+    },
+    {
+      id: 'hotspot-generated',
+      serviceType: 'hotspot',
+      username: 'generated-stock',
+      password: 'generated-stock',
+      profileId: 'profile-hotspot-sync',
+      status: 'active',
+      voucherBatchId: 'batch-1'
+    }
+  );
+
+  const rows = freeradius.freeradiusRows(data);
+  const usernames = rows.radcheck.map((row) => row.username);
+  assert.equal(usernames.includes('unpaid-manual'), false);
+  assert.equal(usernames.includes('generated-stock'), true);
 });
 
 test('Tripay voucher checkout resolves QRIS before creating the transaction', async () => {

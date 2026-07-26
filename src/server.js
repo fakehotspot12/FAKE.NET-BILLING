@@ -3490,6 +3490,13 @@ function radiusFilterRows(rows = [], query = {}) {
   });
 }
 
+function hotspotManualUnpaidRow(row = {}) {
+  return String(row.paymentStatus || '').trim().toLowerCase() === 'unpaid'
+    && !row.voucherBatchId
+    && !row.onlineOrderId
+    && !row.onlineOrderReference;
+}
+
 function radiusSummaryInfo(rows = [], options = {}) {
   const base = {
     total: rows.length,
@@ -3506,11 +3513,13 @@ function radiusSummaryInfo(rows = [], options = {}) {
     return row.validUntil && String(row.validUntil) <= nowIso;
   }).length + archivedExpired;
   const available = rows.filter((row) => {
+    if (hotspotManualUnpaidRow(row)) return false;
     return radiusUiStatus(row.status) === 'active'
       && !row.voucherFirstOnlineAt
       && !row.validUntil;
   }).length;
   const running = rows.filter((row) => {
+    if (hotspotManualUnpaidRow(row)) return false;
     if (radiusUiStatus(row.status) !== 'active') return false;
     if (row.validUntil) return String(row.validUntil) > nowIso;
     return Boolean(row.voucherFirstOnlineAt);
@@ -3520,6 +3529,13 @@ function radiusSummaryInfo(rows = [], options = {}) {
     if (!['suspend', 'terminate'].includes(status)) return false;
     return !row.voucherExpiredAt && !(row.validUntil && String(row.validUntil) <= nowIso);
   }).length;
+  const relevantRows = rows.filter((row) => {
+    if (hotspotManualUnpaidRow(row)) return false;
+    if (radiusUiStatus(row.status) !== 'active') return false;
+    if (row.voucherExpiredAt) return false;
+    return !(row.validUntil && String(row.validUntil) <= nowIso);
+  });
+  const online = relevantRows.filter((row) => row.sessionOnline === true || String(row.internetStatus || '').toLowerCase() === 'online').length;
   return {
     ...base,
     total: rows.length + archivedExpired,
@@ -3527,8 +3543,22 @@ function radiusSummaryInfo(rows = [], options = {}) {
     running,
     expired,
     inactive,
-    offline: Math.max(0, rows.length - base.online)
+    online,
+    offline: Math.max(0, relevantRows.length - online)
   };
+}
+
+function radiusCreatedSortValue(row = {}) {
+  return Date.parse(row.createdAt || row.created_at || row.activeDate || row.paidAt || row.updatedAt || '') || 0;
+}
+
+function sortRadiusUsersByCreatedDesc(rows = []) {
+  return [...rows].sort((left, right) => {
+    const rightTime = radiusCreatedSortValue(right);
+    const leftTime = radiusCreatedSortValue(left);
+    return rightTime - leftTime
+      || String(right.createdAt || right.username || '').localeCompare(String(left.createdAt || left.username || ''));
+  });
 }
 
 function radiusVoucherRecordSummaryRows(data = {}) {
@@ -3572,6 +3602,9 @@ async function radiusPayloadLocal(data = {}, section = 'ppp-dhcp', query = {}) {
     ? query
     : { ...query, nas: '', profile: '', internet: '' };
   rows = radiusFilterRows(rows, filterQuery);
+  if (tab === 'users') {
+    rows = sortRadiusUsersByCreatedDesc(rows);
+  }
   const paged = radiusPagination(rows, page, limit);
   if (tab === 'users') {
     paged.rows = await enrichRadiusUserLastActiveRows(paged.rows);
@@ -3609,6 +3642,20 @@ function radiusUserPayload(payload = {}, serviceType = 'pppoe', data = {}) {
   const firstInvoiceUnpaid = serviceType === 'pppoe'
     && payloadEnabled(payload.addToMember)
     && memberInvoiceStatus === 'unpaid';
+  const manualUnpaidHotspot = serviceType === 'hotspot'
+    && paymentStatus === 'unpaid'
+    && !payload.voucherBatchId
+    && !payload.onlineOrderId
+    && !payload.onlineOrderReference;
+  const rawStatus = String(payload.status || '').trim().toLowerCase();
+  const paidHotspotFromPending = serviceType === 'hotspot'
+    && ['paid', 'free'].includes(paymentStatus)
+    && ['pending', 'unpaid', 'belum-bayar', 'belum bayar'].includes(rawStatus);
+  const nextStatus = firstInvoiceUnpaid || manualUnpaidHotspot
+    ? 'pending'
+    : paidHotspotFromPending
+      ? 'active'
+      : (payload.status || (payload.disabled ? 'disabled' : 'active'));
   const username = String(payload.username || '').trim()
     || (String(accessType).toLowerCase() === 'dhcp'
       ? String(payload.macAddress || payload.callerId || payload.memberCode || payload.memberPhone || '').trim()
@@ -3623,7 +3670,7 @@ function radiusUserPayload(payload = {}, serviceType = 'pppoe', data = {}) {
     nasId: nas?.id || '',
     staticIp: payload.staticIp || payload.ipAddress || '',
     callerId: payload.callerId || payload.macAddress || '',
-    status: firstInvoiceUnpaid ? 'pending' : (payload.status || (payload.disabled ? 'disabled' : 'active')),
+    status: nextStatus,
     isolatedAt: payload.isolatedAt || payload.isolationDate || '',
     isolationSource: payload.isolationSource || payload.isolatedSource || '',
     isolationReason: payload.isolationReason || payload.suspendReason || '',

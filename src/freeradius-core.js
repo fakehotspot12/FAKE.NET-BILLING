@@ -88,6 +88,14 @@ function normalizeStatus(value) {
   return 'active';
 }
 
+function manualUnpaidHotspotUser(user = {}, serviceType = '') {
+  return serviceType === 'hotspot'
+    && normalizePaymentStatus(user.paymentStatus) === 'unpaid'
+    && !text(user.voucherBatchId)
+    && !text(user.onlineOrderId)
+    && !text(user.onlineOrderReference);
+}
+
 function profileServiceType(data = {}, profileId = '') {
   const profile = (data.radiusProfiles || []).find((item) => item.id === text(profileId)) || {};
   return profile.serviceType ? normalizeServiceType(profile.serviceType) : '';
@@ -714,6 +722,7 @@ function freeradiusRows(data) {
   for (const user of data.radiusUsers) {
     const profile = data.radiusProfiles.find((item) => item.id === user.profileId) || {};
     const serviceType = radiusUserServiceType(data, user, user);
+    if (manualUnpaidHotspotUser(user, serviceType)) continue;
     const terminatedPortalAccess = user.status === 'terminated' && serviceType !== 'hotspot';
     if (['disabled', 'pending'].includes(user.status) || (user.status === 'terminated' && !terminatedPortalAccess)) continue;
     const userReplyStart = radreply.length;

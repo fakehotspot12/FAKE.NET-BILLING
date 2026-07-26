@@ -7328,8 +7328,6 @@ function hotspotRadiusSummary(payload = {}) {
     <section class="metrics radius-hotspot-summary">
       ${metric('Tersedia', displayNumber(topInfo.available || 0), 'Belum pernah digunakan')}
       ${metric('Aktif', displayNumber(topInfo.running || 0), 'Masa berlaku berjalan', Number(topInfo.running || 0) ? 'positive' : '')}
-      ${metric('Expired', displayNumber(topInfo.expired || 0), 'Masa berlaku habis', Number(topInfo.expired || 0) ? 'warning-card' : '')}
-      ${metric('Nonaktif', displayNumber(topInfo.inactive || 0), 'Dinonaktifkan manual', Number(topInfo.inactive || 0) ? 'negative' : '')}
       ${metric('Online', displayNumber(topInfo.online || 0), 'Session tersambung', Number(topInfo.online || 0) ? 'positive' : '')}
       ${metric('Offline', displayNumber(topInfo.offline || 0), 'Session tidak tersambung')}
     </section>
@@ -8987,7 +8985,9 @@ function radiusUserRows(rows = [], type = 'ppp', writeAllowed = false, startNo =
       <td>${hotspotUsers ? hotspotVoucherQrButton(row, index) : escapeHtml(row.type || row.service || 'PPPoE')}</td>
       <td>
         <strong>${escapeHtml(row.username || '-')}</strong>
-        ${hotspotUsers ? '' : (row.customerName || row.owner ? `<div class="muted">${escapeHtml(row.customerName || row.owner)}</div>` : '')}
+        ${hotspotUsers
+          ? (row.note ? `<div class="muted">Catatan: ${escapeHtml(row.note)}</div>` : '')
+          : (row.customerName || row.owner ? `<div class="muted">${escapeHtml(row.customerName || row.owner)}</div>` : '')}
       </td>
       <td>
         ${password ? `<span class="password-text">${escapeHtml(password)}</span>` : '<span class="muted">-</span>'}
@@ -9673,6 +9673,10 @@ function radiusHotspotUserFormBody(user = null, options = {}) {
       <label class="field">
         <span>Username</span>
         <input name="username" value="${escapeHtml(user?.username || '')}" autocomplete="off" required>
+      </label>
+      <label class="field full">
+        <span>Catatan pembeli</span>
+        <textarea name="note" rows="2" autocomplete="off" placeholder="Nama pembeli/reseller offline">${escapeHtml(user?.note || '')}</textarea>
       </label>
       <label class="field">
         <span>Password</span>

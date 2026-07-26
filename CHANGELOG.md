@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.55] - 2026-07-26
+
+### Changed
+
+- Radius PPP-DHCP dan Hotspot tab user sekarang diurutkan dari user terbaru dibuat ke yang paling lama.
+- Form Tambah/Edit User Hotspot menambahkan catatan pembeli dan menampilkannya di bawah username pada tabel.
+- Summary Radius Hotspot dipangkas menjadi Tersedia, Aktif, Online, dan Offline; Offline hanya menghitung voucher aktif/relevan yang tidak sedang tersambung.
+- User Hotspot manual dengan status pembayaran Unpaid tidak dihitung sebagai voucher tersedia dan tidak disinkronkan ke FreeRADIUS sampai statusnya Paid/Free.
+
 ## [2.9.54] - 2026-07-26
 
 ### Changed
