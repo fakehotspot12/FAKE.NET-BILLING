@@ -2674,6 +2674,24 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
         siteName: site.name,
         nas: customer.nas || '',
         amount: Number(invoice.amount || 0),
+        subtotal: Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0),
+        baseAmount: Number(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount ?? 0),
+        packageSubtotal: Number(invoice.packageSubtotal || 0),
+        addOnSubtotal: Number(invoice.addOnSubtotal || 0),
+        ppnRate: Number(invoice.ppnRate ?? invoice.vatRate ?? invoice.taxRate ?? 0),
+        ppnAmount: Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0),
+        bhpUsoRate: Number(invoice.bhpUsoRate || 0),
+        bhpUsoAmount: Number(invoice.bhpUsoAmount || 0),
+        discountAmount: Number(invoice.discountAmount || 0),
+        baseDiscountAmount: invoiceBaseDiscountAmount(invoice),
+        manualDiscountAmount: invoiceManualDiscountAmount(invoice),
+        invoiceDiscountAmount: invoiceManualDiscountAmount(invoice),
+        discountNote: invoice.discountNote || '',
+        discountUpdatedAt: invoice.discountUpdatedAt || '',
+        discountUpdatedBy: invoice.discountUpdatedBy || '',
+        discountUpdatedByUsername: invoice.discountUpdatedByUsername || '',
+        discountUpdatedByRole: invoice.discountUpdatedByRole || '',
+        totalBeforeDiscount: invoiceGrossBeforeDiscount(invoice),
         status: runtimeStatus === 'pending' ? 'unpaid' : runtimeStatus,
         rawStatus: invoice.status || '',
         customerStatus,
@@ -4870,6 +4888,15 @@ function recordRadiusRemovedUser(data = {}, radiusUser = {}, customer = {}, acto
   data.radiusRemovedRecords = Array.isArray(data.radiusRemovedRecords) ? data.radiusRemovedRecords : [];
   const now = new Date().toISOString();
   const key = radiusRemovedRecordKey(radiusUser, customer);
+  const addOns = normalizeBillingAddons(customer);
+  const monthlyAmount = statisticsCustomerRecurringAmount(data, {
+    ...customer,
+    profileName: customer.profileName || customer.packageName || radiusUser.profileName || '',
+    packageName: customer.packageName || radiusUser.profileName || '',
+    price: customer.price || customer.amount || radiusUser.price || 0,
+    addOns,
+    addons: addOns
+  }, radiusUser);
   const record = {
     id: radiusUser.id || createId('cab'),
     key: key || createId('cab'),
@@ -4885,6 +4912,18 @@ function recordRadiusRemovedUser(data = {}, radiusUser = {}, customer = {}, acto
     countsAsPsb: customer.countsAsPsb !== false,
     profileId: radiusUser.profileId || customer.profileId || '',
     profileName: customer.packageName || radiusUser.profileName || '',
+    packageName: customer.packageName || radiusUser.profileName || '',
+    price: Math.max(0, Math.round(toNumber(customer.price || customer.amount || radiusUser.price || 0))),
+    ppn: customer.ppn || customer.vat || customer.taxRate || '',
+    vat: customer.vat || customer.ppn || customer.taxRate || '',
+    taxRate: customer.taxRate || customer.ppn || customer.vat || '',
+    discount: customer.discount || '',
+    discountAmount: customer.discountAmount || '',
+    addOns,
+    addons: addOns,
+    addOnMonthlyTotal: billingAddonsMonthlyTotal({ addOns }),
+    monthlyAmount,
+    billingAmount: monthlyAmount,
     nasId: radiusUser.nasId || customer.nasId || '',
     lastStatus: radiusUser.status || customer.status || '',
     removedAt: now,
@@ -6421,6 +6460,20 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
         paymentAt: paidAt,
         paymentRaw: paidAt,
         paymentTime: paidAt ? new Date(paidAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Makassar' }) : '',
+        subtotal: Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0),
+        baseAmount: Number(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount ?? 0),
+        ppnAmount: Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0),
+        bhpUsoAmount: Number(invoice.bhpUsoAmount || 0),
+        discountAmount: Number(invoice.discountAmount || 0),
+        baseDiscountAmount: invoiceBaseDiscountAmount(invoice),
+        manualDiscountAmount: invoiceManualDiscountAmount(invoice),
+        invoiceDiscountAmount: invoiceManualDiscountAmount(invoice),
+        discountNote: invoice.discountNote || '',
+        discountUpdatedAt: invoice.discountUpdatedAt || '',
+        discountUpdatedBy: invoice.discountUpdatedBy || '',
+        discountUpdatedByUsername: invoice.discountUpdatedByUsername || '',
+        discountUpdatedByRole: invoice.discountUpdatedByRole || '',
+        totalBeforeDiscount: invoiceGrossBeforeDiscount(invoice),
         amount: Number(payment?.amount || invoice.amount || 0),
         income: payment ? Number(payment.amount || invoice.amount || 0) : 0
       };
@@ -6696,7 +6749,14 @@ function clampInteger(value, min, max, fallback) {
 
 function sanitizeTime(value, fallback = '00:00') {
   const text = String(value || '').trim();
-  return /^\d{2}:\d{2}$/.test(text) ? text : fallback;
+  const match = text.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return fallback;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return fallback;
+  }
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
 function sanitizeBillingSettings(payload = {}, current = {}) {
@@ -6707,6 +6767,10 @@ function sanitizeBillingSettings(payload = {}, current = {}) {
     suspendGraceDays: clampInteger(payload.suspendGraceDays, 0, 365, current.suspendGraceDays || 0),
     autoTerminateAfterDays: clampInteger(payload.autoTerminateAfterDays, 0, 3650, current.autoTerminateAfterDays || 0),
     notificationBeforeDueDays: clampInteger(payload.notificationBeforeDueDays, 0, 31, current.notificationBeforeDueDays || 0),
+    notificationSendTime: sanitizeTime(
+      payload.notificationSendTime ?? payload.invoiceSendTime ?? payload.reminderSendTime,
+      current.notificationSendTime || current.invoiceSendTime || current.reminderSendTime || '06:00'
+    ),
     autoSuspendTime: sanitizeTime(payload.autoSuspendTime, current.autoSuspendTime || '00:00'),
     invoiceNumberFormat: 'XXXXXX',
     invoiceBusinessCode: current.invoiceBusinessCode || 'ISP',
@@ -6804,8 +6868,8 @@ function localDateParts(date = new Date()) {
   return Object.fromEntries(parts.map((part) => [part.type, part.value]));
 }
 
-function localTodayIso() {
-  const parts = localDateParts();
+function localTodayIso(date = new Date()) {
+  const parts = localDateParts(date);
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
@@ -6835,6 +6899,11 @@ function customerInvoiceGenerationDue(settings = {}, customer = {}, period = cur
   const advanceDays = clampInteger(settings.fixedInvoiceAdvanceDays ?? 7, 0, 31, 7);
   const advanceStart = addDaysIso(dueDate, -advanceDays);
   return today >= advanceStart;
+}
+
+function billingAutomationTimeReady(settings = {}, field = '', now = new Date(), fallback = '06:00') {
+  const sendTime = sanitizeTime(settings[field], fallback);
+  return localTimeText(now) >= sendTime;
 }
 
 function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, today = localTodayIso(), dateInitializations = []) {
@@ -7449,10 +7518,12 @@ async function finalizePaidInvoiceRadiusActivation(data = {}, activation = {}, a
   return { synced: true, syncResult, disconnects };
 }
 
-function standaloneBillingAutomation(data = {}, actor = { username: 'billing-auto', name: 'Billing Auto' }) {
+function standaloneBillingAutomation(data = {}, actor = { username: 'billing-auto', name: 'Billing Auto' }, runtime = {}) {
   if (!standaloneMode(data)) return { created: [], isolatedUsers: [], terminatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] } };
   const settings = data.settings?.billing || {};
-  const today = localTodayIso();
+  const now = runtime.now instanceof Date ? runtime.now : new Date();
+  const nowIso = now.toISOString();
+  const today = localTodayIso(now);
   const period = currentPeriod();
   const terminationDateInitializations = [];
   const terminatedUsers = autoTerminateOverdueCustomers(data, settings, actor, today, terminationDateInitializations);
@@ -7467,6 +7538,8 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   const unpaidByCustomer = new Map();
   const paidCoverage = paidInvoiceCoverageByCustomer(data);
   const waAutomationEnabled = data.settings?.waGateway?.enabled === true;
+  const invoiceIssuedAutomationEnabled = waAutomationEnabled && settings.notifyInvoiceIssued !== false;
+  const notificationSendReady = billingAutomationTimeReady(settings, 'notificationSendTime', now, '06:00');
 
   for (const invoice of data.invoices || []) {
     const status = invoiceRuntimeStatus(invoice, today);
@@ -7485,7 +7558,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   }
 
   const reminderDays = Number(settings.notificationBeforeDueDays || 0);
-  if (waAutomationEnabled && reminderDays > 0) {
+  if (waAutomationEnabled && reminderDays > 0 && notificationSendReady) {
     for (const invoice of data.invoices || []) {
       const status = invoiceRuntimeStatus(invoice, today);
       if (!['pending', 'overdue'].includes(status) || !invoice.dueDate) continue;
@@ -7496,7 +7569,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       const queued = queueInvoiceWaMessage(data, invoice, 'paymentReminder', actor);
       if (!queued) continue;
       invoice.paymentReminderDueDate = invoice.dueDate;
-      invoice.paymentReminderSentAt = new Date().toISOString();
+      invoice.paymentReminderSentAt = nowIso;
       invoice.updatedAt = invoice.paymentReminderSentAt;
       reminderInvoices.push(invoice);
     }
@@ -7545,9 +7618,32 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     }
   }
 
-  if (waAutomationEnabled) {
+  if (invoiceIssuedAutomationEnabled && notificationSendReady) {
     for (const invoice of created) {
-      queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+      const queued = queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+      if (queued) {
+        invoice.invoiceIssuedSentAt = nowIso;
+        invoice.invoiceIssuedPending = false;
+        invoice.updatedAt = invoice.invoiceIssuedSentAt;
+      }
+    }
+    for (const invoice of data.invoices || []) {
+      if (created.includes(invoice)) continue;
+      if (invoice.invoiceIssuedPending !== true || invoice.invoiceIssuedSentAt) continue;
+      if (!['pending', 'overdue'].includes(invoiceRuntimeStatus(invoice, today))) continue;
+      const queued = queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor);
+      if (!queued) continue;
+      invoice.invoiceIssuedSentAt = nowIso;
+      invoice.invoiceIssuedPending = false;
+      invoice.updatedAt = invoice.invoiceIssuedSentAt;
+    }
+  } else if (invoiceIssuedAutomationEnabled) {
+    const invoiceSendTime = sanitizeTime(settings.notificationSendTime, '06:00');
+    for (const invoice of created) {
+      invoice.invoiceIssuedPending = true;
+      invoice.invoiceIssuedDeferredDate = today;
+      invoice.invoiceIssuedSendAfter = invoiceSendTime;
+      invoice.updatedAt = nowIso;
     }
   }
   if (waAutomationEnabled) {
@@ -8610,8 +8706,11 @@ function statisticsDailyRow(date = '') {
   return {
     date,
     newInstallCount: 0,
+    newInstallAmount: 0,
     removedCount: 0,
+    removedAmount: 0,
     netGrowth: 0,
+    netGrowthAmount: 0,
     voucherBuyerCount: 0,
     voucherCount: 0,
     voucherAmount: 0,
@@ -8632,8 +8731,11 @@ function statisticsMonthlyRow(period = '') {
   return {
     period,
     newInstallCount: 0,
+    newInstallAmount: 0,
     removedCount: 0,
+    removedAmount: 0,
     netGrowth: 0,
+    netGrowthAmount: 0,
     voucherBuyerCount: 0,
     voucherCount: 0,
     voucherAmount: 0,
@@ -8659,6 +8761,7 @@ function statisticsPeriodRows(period = currentPeriod(), groups = new Map()) {
     const date = `${normalized}-${String(day).padStart(2, '0')}`;
     const row = groups.get(date) || statisticsDailyRow(date);
     row.netGrowth = Number(row.newInstallCount || 0) - Number(row.removedCount || 0);
+    row.netGrowthAmount = Number(row.newInstallAmount || 0) - Number(row.removedAmount || 0);
     rows.push(row);
   }
   return rows;
@@ -8682,6 +8785,7 @@ function statisticsMonthlyRows(periods = [], groups = new Map()) {
     const normalized = normalizePeriod(period);
     const row = groups.get(normalized) || statisticsMonthlyRow(normalized);
     row.netGrowth = Number(row.newInstallCount || 0) - Number(row.removedCount || 0);
+    row.netGrowthAmount = Number(row.newInstallAmount || 0) - Number(row.removedAmount || 0);
     row.profitAmount = Number(row.revenueAmount || 0) - Number(row.expenseAmount || 0);
     return row;
   });
@@ -8704,6 +8808,129 @@ function statisticsLinkedPppCustomer(data = {}, user = {}) {
   const radiusUserId = String(user.id || '').trim();
   if (!radiusUserId) return null;
   return customers.find((customer) => String(customer.radiusUserId || '').trim() === radiusUserId) || null;
+}
+
+function statisticsSafeBillingSettings(settings = {}) {
+  const safeSettings = settings && typeof settings === 'object' ? { ...settings } : {};
+  safeSettings.packagePrices = safeSettings.packagePrices && typeof safeSettings.packagePrices === 'object'
+    ? safeSettings.packagePrices
+    : {};
+  safeSettings.billing = safeSettings.billing && typeof safeSettings.billing === 'object'
+    ? safeSettings.billing
+    : {};
+  return safeSettings;
+}
+
+function statisticsProfileForBilling(data = {}, source = {}) {
+  const profileId = source.profileId || source.radiusProfileId || '';
+  const profileName = source.profileName || source.packageName || source.profile || '';
+  return radiusFindProfile(data, profileId, source.serviceType || 'pppoe')
+    || radiusFindProfile(data, profileName, source.serviceType || 'pppoe')
+    || radiusFindProfile(data, profileId || profileName, '')
+    || statisticsProfileBySpeed(data, profileName, source.serviceType || 'pppoe')
+    || {};
+}
+
+function statisticsProfileSpeedKey(value = '') {
+  const match = String(value || '').match(/(\d+(?:[,.]\d+)?)\s*(?:mbps|mb|m)\b/i);
+  if (!match) return '';
+  const speed = Number(String(match[1] || '').replace(',', '.'));
+  return Number.isFinite(speed) && speed > 0 ? String(speed) : '';
+}
+
+function statisticsProfileBySpeed(data = {}, profileName = '', serviceType = 'pppoe') {
+  const speedKey = statisticsProfileSpeedKey(profileName);
+  if (!speedKey) return null;
+  const candidates = (data.radiusProfiles || []).filter((profile) => {
+    const typeOk = !serviceType || profile.serviceType === serviceType;
+    return typeOk && statisticsProfileSpeedKey(profile.name || '') === speedKey;
+  }).sort((a, b) => {
+    const priceA = radiusProfileMemberPrice(a, {}, 0);
+    const priceB = radiusProfileMemberPrice(b, {}, 0);
+    if (priceA !== priceB) return priceA - priceB;
+    return String(a.name || '').length - String(b.name || '').length;
+  });
+  return candidates[0] || null;
+}
+
+function statisticsPriceFromProfileText(value = '') {
+  const text = String(value || '').trim();
+  const match = text.match(/(?:rp\.?\s*)?(\d{2,3}(?:[.\s]\d{3})+|\d{5,})/i);
+  if (!match) return 0;
+  return Math.max(0, Math.round(toNumber(match[1])));
+}
+
+function statisticsCustomerRecurringAmount(data = {}, customer = {}, related = {}) {
+  const merged = { ...related, ...customer };
+  const profile = statisticsProfileForBilling(data, merged);
+  const profilePrice = radiusProfileMemberPrice(profile, {}, 0)
+    || statisticsPriceFromProfileText(merged.profileName || merged.packageName || merged.profile || '');
+  const fallback = Math.max(0, Math.round(toNumber(
+    merged.monthlyAmount
+    || merged.billingAmount
+    || merged.recurringAmount
+    || merged.totalAmount
+    || merged.amount
+    || merged.price
+    || profilePrice
+    || 0
+  )));
+  const addOns = normalizeBillingAddons(merged);
+  const source = {
+    ...merged,
+    packageName: merged.packageName || profile.name || merged.profileName || merged.profile || '',
+    profileName: merged.profileName || profile.name || merged.packageName || merged.profile || '',
+    price: Math.max(0, Math.round(toNumber(merged.price || merged.amount || profilePrice || fallback))),
+    addOns,
+    addons: addOns,
+    activeDate: '',
+    installedAt: ''
+  };
+  try {
+    const breakdown = billingAmountBreakdownForPeriods(statisticsSafeBillingSettings(data.settings || {}), source, [currentPeriod()]);
+    const amount = toNumber(breakdown.totalAmount || breakdown.total || breakdown.amount);
+    return Math.max(0, Math.round(amount || fallback));
+  } catch {
+    return fallback;
+  }
+}
+
+function statisticsInvoiceAmountForRemovedRecord(data = {}, record = {}) {
+  const customerId = String(record.customerId || '').trim();
+  const memberCode = String(record.memberCode || record.accountId || '').trim().toLowerCase();
+  const username = String(record.username || '').trim().toLowerCase();
+  const candidates = (data.invoices || []).filter((invoice) => {
+    if (invoiceRuntimeStatus(invoice) === 'cancelled') return false;
+    const invoiceCustomerId = String(invoice.customerId || '').trim();
+    const invoiceAccountId = String(invoice.accountId || invoice.memberCode || '').trim().toLowerCase();
+    const invoiceUsername = String(invoice.username || '').trim().toLowerCase();
+    return (customerId && invoiceCustomerId === customerId)
+      || (memberCode && invoiceAccountId === memberCode)
+      || (username && invoiceUsername === username);
+  }).sort((a, b) => {
+    const right = String(b.period || b.dueDate || b.invoiceDate || b.createdAt || '');
+    const left = String(a.period || a.dueDate || a.invoiceDate || a.createdAt || '');
+    return right.localeCompare(left);
+  });
+  const invoice = candidates[0] || {};
+  return Math.max(0, Math.round(toNumber(invoice.totalAmount || invoice.total || invoice.amount || 0)));
+}
+
+function statisticsRemovedRecurringAmount(data = {}, record = {}) {
+  const customerId = String(record.customerId || '').trim();
+  const username = String(record.username || '').trim().toLowerCase();
+  const memberCode = String(record.memberCode || record.accountId || '').trim().toLowerCase();
+  const customer = (data.customers || []).find((item) => {
+    return (customerId && String(item.id || '').trim() === customerId)
+      || (username && String(item.username || '').trim().toLowerCase() === username)
+      || (memberCode && String(item.code || item.accountId || '').trim().toLowerCase() === memberCode);
+  });
+  if (customer) return statisticsCustomerRecurringAmount(data, customer, record);
+  const stored = Math.max(0, Math.round(toNumber(record.monthlyAmount || record.billingAmount || record.recurringAmount || 0)));
+  if (stored > 0) return stored;
+  const invoiceAmount = statisticsInvoiceAmountForRemovedRecord(data, record);
+  if (invoiceAmount > 0) return invoiceAmount;
+  return statisticsCustomerRecurringAmount(data, record);
 }
 
 function pppInstallDateForUser(data = {}, user = {}) {
@@ -8789,12 +9016,14 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       const monthlyRow = monthlyGroups.get(rowPeriod) || statisticsMonthlyRow(rowPeriod);
       monthlyRow[field] += Number(amount || 0);
       monthlyRow.netGrowth = monthlyRow.newInstallCount - monthlyRow.removedCount;
+      monthlyRow.netGrowthAmount = monthlyRow.newInstallAmount - monthlyRow.removedAmount;
       monthlyGroups.set(rowPeriod, monthlyRow);
     }
     if (rowPeriod === selectedPeriod) {
       const dailyRow = dailyGroups.get(date) || statisticsDailyRow(date);
       dailyRow[field] += Number(amount || 0);
       dailyRow.netGrowth = dailyRow.newInstallCount - dailyRow.removedCount;
+      dailyRow.netGrowthAmount = dailyRow.newInstallAmount - dailyRow.removedAmount;
       dailyGroups.set(date, dailyRow);
     }
   };
@@ -8827,6 +9056,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     if (!key || newInstallKeys.has(key)) continue;
     newInstallKeys.add(key);
     addRow(date, 'newInstallCount', 1);
+    addRow(date, 'newInstallAmount', statisticsCustomerRecurringAmount(data, customer, user));
   }
 
   for (const record of data.radiusRemovedRecords || []) {
@@ -8839,6 +9069,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       if (key && !removedKeys.has(key)) {
         removedKeys.add(key);
         addRow(removedDate, 'removedCount', 1);
+        addRow(removedDate, 'removedAmount', statisticsRemovedRecurringAmount(data, record));
       }
     }
     const installedDate = pppInstallDateForRemovedRecord(record);
@@ -8847,6 +9078,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       if (key && !newInstallKeys.has(key)) {
         newInstallKeys.add(key);
         addRow(installedDate, 'newInstallCount', 1);
+        addRow(installedDate, 'newInstallAmount', statisticsRemovedRecurringAmount(data, record));
       }
     }
   }
@@ -8895,7 +9127,9 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   }
   const summary = dailyRows.reduce((acc, row) => {
     acc.newInstallCount += Number(row.newInstallCount || 0);
+    acc.newInstallAmount += Number(row.newInstallAmount || 0);
     acc.removedCount += Number(row.removedCount || 0);
+    acc.removedAmount += Number(row.removedAmount || 0);
     acc.voucherBuyerCount += Number(row.voucherBuyerCount || 0);
     acc.voucherCount += Number(row.voucherCount || 0);
     acc.voucherAmount += Number(row.voucherAmount || 0);
@@ -8910,7 +9144,9 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     return acc;
   }, {
     newInstallCount: 0,
+    newInstallAmount: 0,
     removedCount: 0,
+    removedAmount: 0,
     voucherBuyerCount: 0,
     voucherCount: 0,
     voucherAmount: 0,
@@ -8924,6 +9160,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     expenseAmount: 0
   });
   summary.netGrowth = summary.newInstallCount - summary.removedCount;
+  summary.netGrowthAmount = summary.newInstallAmount - summary.removedAmount;
   summary.profitAmount = summary.revenueAmount - summary.expenseAmount;
   summary.activeCustomerCount = monthlyRows.find((row) => row.period === selectedPeriod)?.activeCustomerCount || 0;
 
@@ -11516,6 +11753,133 @@ function findBillingInvoiceByReference(data = {}, value = '') {
   }) || null;
 }
 
+function invoiceManualDiscountAmount(invoice = {}) {
+  return Math.max(0, Math.round(toNumber(invoice.manualDiscountAmount ?? invoice.invoiceDiscountAmount ?? 0)));
+}
+
+function invoiceBaseDiscountAmount(invoice = {}) {
+  const manualDiscount = invoiceManualDiscountAmount(invoice);
+  if (invoice.baseDiscountAmount !== undefined && invoice.baseDiscountAmount !== null && invoice.baseDiscountAmount !== '') {
+    return Math.max(0, Math.round(toNumber(invoice.baseDiscountAmount)));
+  }
+  const totalDiscount = Math.max(0, Math.round(toNumber(invoice.discountAmount ?? invoice.discountValue ?? 0)));
+  return Math.max(0, totalDiscount - manualDiscount);
+}
+
+function invoiceGrossBeforeDiscount(invoice = {}) {
+  const subtotal = Math.max(0, Math.round(toNumber(
+    invoice.baseAmount
+      ?? invoice.subtotal
+      ?? ((toNumber(invoice.packageSubtotal) || 0) + (toNumber(invoice.addOnSubtotal) || 0))
+      ?? 0
+  )));
+  const ppnAmount = Math.max(0, Math.round(toNumber(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0)));
+  const bhpUsoAmount = Math.max(0, Math.round(toNumber(invoice.bhpUsoAmount ?? 0)));
+  const gross = subtotal + ppnAmount + bhpUsoAmount;
+  if (gross > 0) return gross;
+  return Math.max(0, Math.round(toNumber(invoice.amount || 0) + toNumber(invoice.discountAmount || 0)));
+}
+
+function invalidateInvoicePaymentCheckout(invoice = {}, actor = {}, reason = 'Nominal invoice diperbarui') {
+  const now = new Date().toISOString();
+  let invalidated = false;
+  if (invoice.paymentCheckout && typeof invoice.paymentCheckout === 'object') {
+    invoice.paymentCheckout.status = 'expired';
+    invoice.paymentCheckout.invalidatedAt = now;
+    invoice.paymentCheckout.invalidatedReason = reason;
+    invoice.paymentCheckout.invalidatedByName = actor.name || actor.username || '';
+    invoice.paymentCheckout.invalidatedByUsername = actor.username || '';
+    invalidated = true;
+  }
+  for (const key of ['paymentGatewayUrl', 'paymentGatewayLink', 'paymentLink', 'checkoutUrl', 'paymentUrl']) {
+    if (invoice[key]) invalidated = true;
+    invoice[key] = '';
+  }
+  return invalidated;
+}
+
+function updateInvoiceManualDiscount(data = {}, invoice = {}, payload = {}, actor = {}) {
+  if (!invoice || !invoice.id) throw new Error('Invoice tidak ditemukan');
+  const status = invoiceRuntimeStatus(invoice);
+  if (!['pending', 'overdue'].includes(status)) {
+    throw new Error(status === 'paid'
+      ? 'Invoice yang sudah lunas tidak bisa diedit diskonnya'
+      : 'Invoice ini tidak bisa diedit diskonnya');
+  }
+  const manualDiscount = Math.max(0, Math.round(toNumber(payload.manualDiscountAmount ?? payload.discountAmount ?? 0)));
+  const baseDiscount = invoiceBaseDiscountAmount(invoice);
+  const grossAmount = invoiceGrossBeforeDiscount(invoice);
+  const maxManualDiscount = Math.max(0, grossAmount - baseDiscount - 1);
+  if (manualDiscount > maxManualDiscount) {
+    throw new Error(`Diskon maksimal ${formatCurrencyText(maxManualDiscount)}`);
+  }
+  const previousAmount = Math.max(0, Math.round(toNumber(invoice.amount || 0)));
+  const previousManualDiscount = invoiceManualDiscountAmount(invoice);
+  const totalDiscount = baseDiscount + manualDiscount;
+  const nextAmount = Math.max(0, grossAmount - totalDiscount);
+  const now = new Date().toISOString();
+  const actorName = actor.name || actor.username || 'Admin';
+  const note = String(payload.discountNote || payload.note || '').trim().slice(0, 240);
+  const checkoutInvalidated = (previousAmount !== nextAmount || previousManualDiscount !== manualDiscount)
+    ? invalidateInvoicePaymentCheckout(invoice, actor, 'Nominal invoice berubah karena diskon manual')
+    : false;
+
+  invoice.baseDiscountAmount = baseDiscount;
+  invoice.manualDiscountAmount = manualDiscount;
+  invoice.invoiceDiscountAmount = manualDiscount;
+  invoice.discountAmount = totalDiscount;
+  invoice.discountValue = totalDiscount;
+  invoice.total = nextAmount;
+  invoice.totalAmount = nextAmount;
+  invoice.amount = nextAmount;
+  invoice.discountNote = note;
+  invoice.discountUpdatedAt = now;
+  invoice.discountUpdatedBy = actorName;
+  invoice.discountUpdatedByUsername = actor.username || '';
+  invoice.discountUpdatedByRole = actor.role || '';
+  invoice.updatedAt = now;
+  invoice.updatedBy = actorName;
+
+  addActivity(data, 'invoice', `Diskon invoice ${displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id)} diubah menjadi ${formatCurrencyText(manualDiscount)} oleh ${actorName}`, {
+    action: 'invoice-discount-updated',
+    invoiceId: invoice.id,
+    invoiceNo: invoice.invoiceNo || invoice.externalId || '',
+    customerId: invoice.customerId || '',
+    customerName: invoice.customerName || invoice.username || '',
+    previousAmount,
+    amount: nextAmount,
+    baseDiscount,
+    manualDiscount,
+    totalDiscount,
+    checkoutInvalidated,
+    discountNote: note,
+    actorName,
+    actorUsername: actor.username || '',
+    actorRole: actor.role || ''
+  });
+
+  return {
+    invoice,
+    previousAmount,
+    previousManualDiscount,
+    baseDiscount,
+    manualDiscount,
+    totalDiscount,
+    amount: nextAmount,
+    checkoutInvalidated
+  };
+}
+
+function billingInvoicePaymentCheckoutValidForCallback(invoice = {}, payment = {}) {
+  const checkout = invoice.paymentCheckout;
+  if (!checkout || typeof checkout !== 'object') return true;
+  if (checkout.invalidatedAt) return false;
+  const externalReference = String(payment.externalId || payment.externalReference || '').trim();
+  const storedReference = String(checkout.externalReference || '').trim();
+  if (externalReference && storedReference && externalReference !== storedReference) return false;
+  return true;
+}
+
 function upsertPaidBillingPaymentGatewayTransaction(data = {}, invoice = {}, payment = {}, actor = {}) {
   data.paymentGatewayTransactions = Array.isArray(data.paymentGatewayTransactions) ? data.paymentGatewayTransactions : [];
   const now = new Date().toISOString();
@@ -11582,6 +11946,9 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
   const status = normalizePaymentStatus(payment.status || 'paid');
   if (status !== 'paid') {
     return { invoice, status, transaction: null, reused: false };
+  }
+  if (!billingInvoicePaymentCheckoutValidForCallback(invoice, payment)) {
+    throw new Error('Checkout invoice sudah tidak berlaku. Buat ulang link pembayaran.');
   }
   const amount = Math.round(Number(payment.amount || 0) || 0);
   const gatewayBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, invoice.amount || 0, 'monthly');
@@ -12399,10 +12766,11 @@ function storePaymentCheckout(target = {}, checkout = {}, params = {}) {
 function updatePaymentCheckoutStatus(target = {}, payment = {}, status = '') {
   const checkout = target?.paymentCheckout;
   if (!checkout || typeof checkout !== 'object') return;
+  if (checkout.invalidatedAt) return;
   const externalReference = String(payment.externalId || payment.externalReference || '').trim();
   const storedReference = String(checkout.externalReference || '').trim();
   const normalizedStatus = normalizePaymentStatus(status || payment.status || 'pending');
-  if (normalizedStatus !== 'paid' && externalReference && storedReference && externalReference !== storedReference) return;
+  if (externalReference && storedReference && externalReference !== storedReference) return;
   checkout.status = normalizedStatus;
   checkout.updatedAt = new Date().toISOString();
 }
@@ -13715,7 +14083,13 @@ async function handleApi(req, res, url) {
     if (type !== 'all') {
       activity = activity.filter((item) => String(item.type || '').toLowerCase() === type);
     }
-    activity = filterSearch(activity, search, ['type', 'message']);
+    if (search) {
+      activity = activity.filter((item) => {
+        const metaText = item.meta && typeof item.meta === 'object' ? JSON.stringify(item.meta).toLowerCase() : '';
+        return ['type', 'message'].some((field) => String(item[field] || '').toLowerCase().includes(search))
+          || metaText.includes(search);
+      });
+    }
     activity = sortByDateDesc(activity, 'at');
     const total = activity.length;
     const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -16177,11 +16551,11 @@ async function handleApi(req, res, url) {
       badRequest(res, 'Nomor invoice tidak tersedia');
       return;
     }
-    if (!['pay', 'rollback', 'cancel'].includes(action)) {
+    if (!['pay', 'rollback', 'cancel', 'discount'].includes(action)) {
       badRequest(res, 'Aksi invoice tidak valid');
       return;
     }
-    if (action === 'cancel' && !invoiceCancelAllowedUser(authContext.user)) {
+    if (['cancel', 'discount'].includes(action) && !invoiceCancelAllowedUser(authContext.user)) {
       forbidden(res);
       return;
     }
@@ -16230,6 +16604,9 @@ async function handleApi(req, res, url) {
             ...actorPayload(authContext.user)
           });
         }
+        if (action === 'discount') {
+          return updateInvoiceManualDiscount(data, invoice, payload, authContext.user);
+        }
         return markInvoiceUnpaid(data, invoice.id);
       }).catch((error) => ({ error }));
 
@@ -16239,25 +16616,30 @@ async function handleApi(req, res, url) {
       }
 
       const actionResult = result.result;
-      const invoiceResult = action === 'pay' ? actionResult?.invoice : actionResult;
+      const invoiceResult = ['pay', 'discount'].includes(action) ? actionResult?.invoice : actionResult;
       const changed = action === 'pay' ? actionResult?.changed !== false : true;
       sendJson(res, 200, {
         ok: true,
         source: 'standalone',
         invoice: invoiceResult,
         changed,
+        checkoutInvalidated: actionResult?.checkoutInvalidated === true,
         invoiceNo,
         message: action === 'pay'
           ? (changed ? 'Invoice ditandai lunas' : 'Invoice sudah lunas')
-          : (action === 'cancel' ? 'Invoice dibatalkan' : 'Invoice dikembalikan ke belum bayar')
+          : (action === 'cancel'
+            ? 'Invoice dibatalkan'
+            : (action === 'discount' ? 'Diskon invoice disimpan' : 'Invoice dikembalikan ke belum bayar'))
       });
       return;
     }
 
-    if (action === 'cancel') {
+    if (['cancel', 'discount'].includes(action)) {
       sendJson(res, 501, {
         ok: false,
-        error: 'Pembatalan invoice dari aplikasi hanya tersedia pada billing standalone'
+        error: action === 'discount'
+          ? 'Edit diskon invoice hanya tersedia pada billing standalone'
+          : 'Pembatalan invoice dari aplikasi hanya tersedia pada billing standalone'
       });
       return;
     }
@@ -18142,6 +18524,7 @@ module.exports = {
     standaloneBillingAutomation,
     tripayCheckoutAmountBreakdown,
     tripayCheckoutTtlMinutes,
+    updateInvoiceManualDiscount,
     reusablePaymentCheckout,
     storePaymentCheckout,
     tripayHistoryStatus,

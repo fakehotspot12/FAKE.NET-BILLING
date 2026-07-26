@@ -718,10 +718,39 @@ function activityLabel(type) {
     inventory: 'Inventaris',
     asset: 'Aset',
     monitoring: 'Monitoring',
+    invoice: 'Invoice',
+    payment: 'Pembayaran',
     user: 'User',
     settings: 'Pengaturan'
   };
   return labels[type] || type || 'Log';
+}
+
+function activityAuditDetails(item = {}) {
+  const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+  if (meta.action !== 'invoice-discount-updated') return '';
+  const rows = [
+    ['No Invoice', meta.invoiceNo],
+    ['Pelanggan', meta.customerName],
+    ['Nominal lama', rupiah(meta.previousAmount || 0)],
+    ['Nominal baru', rupiah(meta.amount || 0)],
+    ['Diskon member/awal', rupiah(meta.baseDiscount || 0)],
+    ['Diskon invoice', rupiah(meta.manualDiscount || 0)],
+    ['Total diskon', rupiah(meta.totalDiscount || 0)],
+    ['Catatan', meta.discountNote || '-'],
+    ['Checkout', meta.checkoutInvalidated ? 'Link lama dibatalkan' : 'Tidak berubah'],
+    ['Oleh', meta.actorName || meta.actorUsername || '-']
+  ];
+  return `
+    <div class="activity-audit-grid">
+      ${rows.map(([label, value]) => `
+        <div>
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value || '-')}</strong>
+        </div>
+      `).join('')}
+    </div>
+  `;
 }
 
 function setToast(message) {
@@ -3090,6 +3119,7 @@ async function renderActivity() {
                 <strong>${escapeHtml(item.message)}</strong>
               </div>
               <span class="muted">${escapeHtml(dateTimeText(item.at))}</span>
+              ${activityAuditDetails(item)}
             </div>
           `).join('') : '<div class="muted">Belum ada log.</div>'}
         </div>
@@ -3247,6 +3277,66 @@ function dailyReceiptAllowed(item = {}) {
   return Boolean((Number(item.income || 0) > 0 || status === 'paid') && (item.invoiceNo || item.externalId || item.id));
 }
 
+function dailyDiscountAuditAllowed(item = {}) {
+  if (!dailyReceiptAllowed(item)) return false;
+  return Boolean(
+    Number(item.discountAmount || 0) > 0
+    || Number(item.manualDiscountAmount || item.invoiceDiscountAmount || 0) > 0
+    || String(item.discountNote || '').trim()
+    || String(item.discountUpdatedAt || '').trim()
+  );
+}
+
+function openDailyDiscountAuditModal(item = {}) {
+  if (!dailyDiscountAuditAllowed(item)) {
+    setToast('Audit diskon tidak tersedia');
+    return;
+  }
+  const invoiceNo = item.invoiceNo || item.externalId || '-';
+  const customerName = item.customerName || item.info || item.username || '-';
+  const baseDiscount = Math.max(0, Number(item.baseDiscountAmount || 0));
+  const manualDiscount = Math.max(0, Number(item.manualDiscountAmount || item.invoiceDiscountAmount || 0));
+  const totalDiscount = Math.max(0, Number(item.discountAmount || 0));
+  const grossAmount = Math.max(0, Number(item.totalBeforeDiscount || 0))
+    || Math.max(0, Number(item.amount || item.income || 0) + totalDiscount);
+  const rows = [
+    ['No Invoice', invoiceNo],
+    ['Pelanggan', customerName],
+    ['Paket', item.item || '-'],
+    ['Subtotal sebelum diskon', rupiah(grossAmount)],
+    ['Diskon member/awal', rupiah(baseDiscount)],
+    ['Diskon invoice bulan ini', rupiah(manualDiscount)],
+    ['Total diskon', rupiah(totalDiscount)],
+    ['Nominal dibayar', rupiah(item.amount || item.income || 0)],
+    ['Metode', item.method || '-'],
+    ['Diubah oleh', item.discountUpdatedBy || item.discountUpdatedByUsername || '-'],
+    ['Waktu perubahan', item.discountUpdatedAt ? dateTimeText(item.discountUpdatedAt) : '-'],
+    ['Catatan', item.discountNote || '-']
+  ];
+  openModal('Audit Diskon Tagihan', `
+    <div class="manual-invoice-wizard">
+      <div class="manual-invoice-selected">
+        <span>
+          <strong>${escapeHtml(customerName)}</strong>
+          <small>${escapeHtml([item.username, item.phone, item.siteName].filter(Boolean).join(' / ') || '-')}</small>
+        </span>
+        <span class="badge ${billingStatusBadge(item.status || 'paid')}">${escapeHtml(billingStatusLabel(item.status || 'paid'))}</span>
+      </div>
+      <div class="manual-invoice-preview">
+        ${rows.map(([label, value]) => `
+          <div class="manual-invoice-preview-row">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value || '-')}</strong>
+          </div>
+        `).join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" value="cancel" type="submit">Tutup</button>
+      </div>
+    </div>
+  `, async () => {});
+}
+
 async function renderReportsDaily(options = {}) {
   app.innerHTML = '<div class="empty">Memuat tagihan harian...</div>';
   const collectorReport = state.auth?.role === 'collector';
@@ -3351,10 +3441,19 @@ async function renderReportsDaily(options = {}) {
                   <td>${escapeHtml(dailyAdminLabel(item, report || {}))}</td>
                   <td class="amount positive">${rupiah(item.amount || item.income || 0)}</td>
                   <td class="billing-action-cell">
-                    ${dailyReceiptAllowed(item) ? `
-                      <button class="billing-action-button pdf" type="button" data-daily-receipt-print="${index}" title="Print PDF kuitansi" aria-label="Print PDF kuitansi ${escapeHtml(item.invoiceNo || item.externalId || '')}">
-                        <span class="billing-action-icon pdf" aria-hidden="true"></span>
-                      </button>
+                    ${(dailyReceiptAllowed(item) || dailyDiscountAuditAllowed(item)) ? `
+                      <div class="billing-action-stack">
+                        ${dailyReceiptAllowed(item) ? `
+                          <button class="billing-action-button pdf" type="button" data-daily-receipt-print="${index}" title="Print PDF kuitansi" aria-label="Print PDF kuitansi ${escapeHtml(item.invoiceNo || item.externalId || '')}">
+                            <span class="billing-action-icon pdf" aria-hidden="true"></span>
+                          </button>
+                        ` : ''}
+                        ${dailyDiscountAuditAllowed(item) ? `
+                          <button class="billing-action-button audit" type="button" data-daily-discount-audit="${index}" title="Audit diskon tagihan" aria-label="Audit diskon tagihan ${escapeHtml(item.invoiceNo || item.externalId || '')}">
+                            <span class="billing-action-icon audit" aria-hidden="true"></span>
+                          </button>
+                        ` : ''}
+                      </div>
                     ` : '<span class="muted">-</span>'}
                   </td>
                 </tr>
@@ -3411,6 +3510,12 @@ async function renderReportsDaily(options = {}) {
         return;
       }
       openDailyBillingReceiptsModal([item], report || {});
+    });
+  });
+  app.querySelectorAll('[data-daily-discount-audit]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const item = filteredTransactions[Number(button.dataset.dailyDiscountAudit || -1)];
+      openDailyDiscountAuditModal(item || {});
     });
   });
   updateDailyReceiptActions();
@@ -3658,7 +3763,7 @@ function statisticsGrowthLineChart(rows = []) {
           <path class="statistics-line active-total" d="${statisticsLinePath(points)}"></path>
           ${points.map((point) => {
             const row = point.row || {};
-            const tooltip = `${periodLabel(row.period)}\nTotal pelanggan aktif: ${displayNumber(row.activeCustomerCount || 0)}\nPelanggan baru: ${displayNumber(row.newInstallCount || 0)}\nPelanggan berhenti: ${displayNumber(row.removedCount || 0)}\nPertumbuhan bersih: ${statisticsNetText(row.netGrowth || 0)}`;
+            const tooltip = `${periodLabel(row.period)}\nTotal pelanggan aktif: ${displayNumber(row.activeCustomerCount || 0)}\nPelanggan baru: ${displayNumber(row.newInstallCount || 0)}\nSenilai: ${rupiah(row.newInstallAmount || 0)}\nPelanggan berhenti: ${displayNumber(row.removedCount || 0)}\nSenilai cabut: ${rupiah(row.removedAmount || 0)}\nPertumbuhan bersih: ${statisticsNetText(row.netGrowth || 0)}`;
             return `<circle class="statistics-dot active-total" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.5"><title>${escapeHtml(tooltip)}</title></circle>`;
           }).join('')}
           ${statisticsMonthAxisMarkup(chartRows, box)}
@@ -3750,7 +3855,9 @@ function statisticsRevenueGroupedChart(rows = []) {
 function statisticsAnnualSummary(rows = []) {
   const totals = (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
     acc.newInstallCount += Number(row.newInstallCount || 0);
+    acc.newInstallAmount += Number(row.newInstallAmount || 0);
     acc.removedCount += Number(row.removedCount || 0);
+    acc.removedAmount += Number(row.removedAmount || 0);
     acc.voucherCount += Number(row.voucherCount || 0);
     acc.voucherAmount += Number(row.voucherAmount || 0);
     acc.revenueAmount += Number(row.revenueAmount || 0);
@@ -3758,13 +3865,16 @@ function statisticsAnnualSummary(rows = []) {
     return acc;
   }, {
     newInstallCount: 0,
+    newInstallAmount: 0,
     removedCount: 0,
+    removedAmount: 0,
     voucherCount: 0,
     voucherAmount: 0,
     revenueAmount: 0,
     expenseAmount: 0
   });
   totals.netGrowth = totals.newInstallCount - totals.removedCount;
+  totals.netGrowthAmount = totals.newInstallAmount - totals.removedAmount;
   totals.profitAmount = totals.revenueAmount - totals.expenseAmount;
   totals.activeCustomerCount = Number(rows.at(-1)?.activeCustomerCount || 0);
   return totals;
@@ -3782,7 +3892,7 @@ function statisticsAnnualSummaryMarkup(rows = []) {
       <div class="statistics-annual-item ${statisticsNetTone(totals.netGrowth)}">
         <span>Pertumbuhan Bersih</span>
         <strong>${escapeHtml(statisticsNetText(totals.netGrowth))}</strong>
-        <small>PSB ${displayNumber(totals.newInstallCount)} / Cabut ${displayNumber(totals.removedCount)}</small>
+        <small>PSB ${displayNumber(totals.newInstallCount)} ${rupiah(totals.newInstallAmount)} / Cabut ${displayNumber(totals.removedCount)} ${rupiah(totals.removedAmount)}</small>
       </div>
       <div class="statistics-annual-item voucher">
         <span>Voucher Terjual</span>
@@ -3835,8 +3945,8 @@ async function renderReportsStatistics() {
           <small>${escapeHtml(periodLabel(state.reportStatisticsPeriod))}</small>
         </div>
         <div class="statistics-card-grid">
-          ${metric('Pasang Baru', displayNumber(summary.newInstallCount || 0), 'Member PPP-DHCP baru', 'positive')}
-          ${metric('Cabut', displayNumber(summary.removedCount || 0), 'Member PPP-DHCP dihapus', Number(summary.removedCount || 0) ? 'negative' : '')}
+          ${metric('Pasang Baru', displayNumber(summary.newInstallCount || 0), `Senilai ${rupiah(summary.newInstallAmount || 0)}`, 'positive')}
+          ${metric('Cabut', displayNumber(summary.removedCount || 0), `Senilai ${rupiah(summary.removedAmount || 0)}`, Number(summary.removedCount || 0) ? 'negative' : '')}
           ${metric('Voucher Terjual', displayNumber(summary.voucherCount || 0), `${displayNumber(summary.voucherBuyerCount || 0)} transaksi`, 'positive')}
           ${metric('Pendapatan', statisticsCompactRupiah(summary.revenueAmount || 0), `${displayNumber(summary.revenueCount || 0)} transaksi`, 'positive')}
         </div>
@@ -11108,6 +11218,11 @@ async function renderRadiusSettings(options = {}) {
               <input name="notificationBeforeDueDays" type="number" min="0" max="31" value="${escapeHtml(billing.notificationBeforeDueDays || 0)}">
             </label>
             <label class="field">
+              <span>Jam kirim invoice/reminder</span>
+              <input name="notificationSendTime" type="time" value="${escapeHtml(billing.notificationSendTime || '06:00')}">
+              <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (WITA).</small>
+            </label>
+            <label class="field">
               <span>Jam isolir otomatis</span>
               <input name="autoSuspendTime" type="time" value="${escapeHtml(billing.autoSuspendTime || '00:00')}">
             </label>
@@ -12448,6 +12563,10 @@ function billingCancelAllowed(invoice = {}) {
     && ['unpaid', 'pending', 'overdue'].includes(status));
 }
 
+function billingDiscountAllowed(invoice = {}) {
+  return billingCancelAllowed(invoice) && Number(invoice.amount || 0) > 0;
+}
+
 function billingOnlinePayment(invoice = {}) {
   if (invoice.rollbackLocked === true) return true;
   const category = String(invoice.paymentCategory || invoice.methodGroup || '').trim().toLowerCase();
@@ -12485,6 +12604,14 @@ function billingActionButtons(invoice = {}, index = 0) {
       <button class="billing-action-button pay" type="button" data-billing-pay="${index}" title="Bayar invoice" aria-label="Bayar invoice ${escapeHtml(invoiceLabel)}">
         <span class="billing-action-icon pay" aria-hidden="true"></span>
         <span>Bayar</span>
+      </button>
+    `);
+  }
+  if (billingDiscountAllowed(invoice)) {
+    buttons.push(`
+      <button class="billing-action-button discount" type="button" data-billing-discount="${index}" title="Edit diskon invoice" aria-label="Edit diskon invoice ${escapeHtml(invoiceLabel)}">
+        <span class="billing-action-icon discount" aria-hidden="true"></span>
+        <span>Diskon</span>
       </button>
     `);
   }
@@ -12600,6 +12727,39 @@ function billingPaymentMethodChoices(selected = 'Tunai') {
   `;
 }
 
+function currencyInputValue(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const normalized = text
+    .replace(/[^\d,.-]/g, '')
+    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
+    .replace(',', '.');
+  const number = Number(normalized);
+  return Math.max(0, Math.round(Number.isFinite(number) ? number : 0));
+}
+
+function billingDiscountAuditMarkup(invoice = {}) {
+  if (!invoice.discountUpdatedAt && !invoice.discountUpdatedBy && !invoice.discountNote) return '';
+  const rows = [
+    ['Terakhir diubah', invoice.discountUpdatedAt ? dateTimeText(invoice.discountUpdatedAt) : '-'],
+    ['Diubah oleh', invoice.discountUpdatedBy || invoice.discountUpdatedByUsername || '-'],
+    ['Catatan', invoice.discountNote || '-']
+  ];
+  return `
+    <section class="invoice-audit-box">
+      <strong>Audit diskon terakhir</strong>
+      <div class="activity-audit-grid compact">
+        ${rows.map(([label, value]) => `
+          <div>
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value || '-')}</strong>
+          </div>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
 function openBillingPayModal(invoice = {}) {
   const invoiceNo = billingInvoiceNo(invoice);
   if (!invoiceNo) {
@@ -12655,6 +12815,103 @@ function openBillingPayModal(invoice = {}) {
         submit.textContent = 'Bayar Invoice';
       }
     }
+  });
+}
+
+function openBillingDiscountModal(invoice = {}) {
+  const invoiceNo = billingInvoiceNo(invoice);
+  if (!invoiceNo) {
+    setToast('Nomor invoice tidak tersedia');
+    return;
+  }
+  const currentManualDiscount = Math.max(0, Number(invoice.manualDiscountAmount || invoice.invoiceDiscountAmount || 0));
+  const baseDiscount = Math.max(0, Number(invoice.baseDiscountAmount || 0));
+  const grossAmount = Math.max(0, Number(invoice.totalBeforeDiscount || 0))
+    || Math.max(0, Number(invoice.amount || 0) + Number(invoice.discountAmount || 0));
+  const maxManualDiscount = Math.max(0, grossAmount - baseDiscount - 1);
+  const checkoutPending = String(invoice.paymentCheckout?.status || '').toLowerCase() === 'pending';
+  openModal('Edit Diskon Invoice', `
+    <div class="manual-invoice-wizard">
+      <div class="manual-invoice-steps">
+        <span class="active">1. Review Invoice</span>
+        <span class="active">2. Atur Diskon</span>
+      </div>
+      <div class="manual-invoice-selected">
+        <span>
+          <strong>${escapeHtml(billingActionCustomerName(invoice))}</strong>
+          <small>${escapeHtml(billingActionCustomerMeta(invoice))}</small>
+        </span>
+        <span class="badge ${billingStatusBadge(invoice.status)}">${escapeHtml(billingStatusLabel(invoice.status))}</span>
+      </div>
+      <div class="manual-invoice-preview">
+        ${billingActionPreviewRows(invoice, [
+          ['Subtotal sebelum diskon', rupiah(grossAmount)],
+          ['Diskon member/awal', rupiah(baseDiscount)],
+          ['Diskon invoice saat ini', rupiah(currentManualDiscount)]
+        ])}
+      </div>
+      ${billingDiscountAuditMarkup(invoice)}
+      ${checkoutPending ? `
+        <section class="notice warning">
+          <strong>Link payment gateway lama akan dibuat tidak berlaku.</strong>
+          <span>Setelah diskon disimpan, pelanggan harus membuka ulang link invoice atau dikirim reminder baru.</span>
+        </section>
+      ` : ''}
+      <div class="form-grid">
+        <label class="field">
+          <span>Diskon invoice bulan ini</span>
+          <input name="manualDiscountAmount" type="number" min="0" max="${escapeHtml(maxManualDiscount)}" step="1" inputmode="numeric" value="${escapeHtml(currentManualDiscount)}">
+          <small class="muted">Maksimal ${escapeHtml(rupiah(maxManualDiscount))}. Tidak mengubah diskon member bulan berikutnya.</small>
+        </label>
+        <label class="field">
+          <span>Catatan diskon</span>
+          <textarea name="discountNote" rows="3" placeholder="Opsional">${escapeHtml(invoice.discountNote || '')}</textarea>
+        </label>
+      </div>
+      <div class="manual-invoice-preview">
+        <div class="manual-invoice-preview-row">
+          <span>Total setelah diskon</span>
+          <strong id="billingDiscountPreview">${escapeHtml(rupiah(Math.max(0, grossAmount - baseDiscount - currentManualDiscount)))}</strong>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" value="cancel" type="submit">Batal</button>
+        <button class="button" type="submit" data-billing-action-submit>Simpan Diskon</button>
+      </div>
+    </div>
+  `, async (payload, form) => {
+    const submit = form.querySelector('[data-billing-action-submit]');
+    if (submit) {
+      submit.disabled = true;
+      submit.textContent = 'Menyimpan...';
+    }
+    try {
+      const result = await api('/api/monitoring/billing-action', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'discount',
+          invoiceNo,
+          manualDiscountAmount: currencyInputValue(payload.manualDiscountAmount),
+          discountNote: payload.discountNote || '',
+          customerName: billingActionCustomerName(invoice)
+        })
+      });
+      setToast(result.checkoutInvalidated
+        ? 'Diskon disimpan, link payment lama dibatalkan'
+        : (result.message || 'Diskon invoice disimpan'));
+      await renderMonitoringBilling({ refresh: true });
+    } finally {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Simpan Diskon';
+      }
+    }
+  });
+  const input = modalBody.querySelector('input[name="manualDiscountAmount"]');
+  const preview = modalBody.querySelector('#billingDiscountPreview');
+  input?.addEventListener('input', () => {
+    const manualDiscount = Math.min(maxManualDiscount, currencyInputValue(input.value));
+    if (preview) preview.textContent = rupiah(Math.max(0, grossAmount - baseDiscount - manualDiscount));
   });
 }
 
@@ -14613,6 +14870,16 @@ async function renderMonitoringBilling(options = {}) {
       openBillingPayModal(invoice);
     });
   });
+  app.querySelectorAll('[data-billing-discount]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const invoice = invoices[Number(button.dataset.billingDiscount || -1)];
+      if (!invoice) {
+        setToast('Nomor invoice tidak tersedia');
+        return;
+      }
+      openBillingDiscountModal(invoice);
+    });
+  });
   app.querySelectorAll('[data-billing-rollback]').forEach((button) => {
     button.addEventListener('click', () => {
       const invoice = invoices[Number(button.dataset.billingRollback || -1)];
@@ -15664,6 +15931,11 @@ async function renderBillingSettings() {
           <label class="field">
             <span>Reminder sebelum tempo</span>
             <input name="notificationBeforeDueDays" type="number" min="0" max="31" value="${escapeHtml(settings.notificationBeforeDueDays || 0)}">
+          </label>
+          <label class="field">
+            <span>Jam kirim invoice/reminder</span>
+            <input name="notificationSendTime" type="time" value="${escapeHtml(settings.notificationSendTime || '06:00')}">
+            <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (WITA).</small>
           </label>
           <label class="field">
             <span>Jam isolir otomatis</span>

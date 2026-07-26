@@ -1672,6 +1672,7 @@ test('monthly statistics combines new ppp installs, removed users, and paid vouc
       radiusUserId: 'rad-stat-active',
       username: 'stat-active',
       activeDate: `${period}-03`,
+      price: 150000,
       status: 'active'
     },
     {
@@ -1718,6 +1719,7 @@ test('monthly statistics combines new ppp installs, removed users, and paid vouc
       username: 'stat-removed',
       installedAt: `${period}-02T08:00:00.000Z`,
       removedAt: `${period}-10T08:00:00.000Z`,
+      monthlyAmount: 120000,
       status: 'removed'
     },
     {
@@ -1728,6 +1730,7 @@ test('monthly statistics combines new ppp installs, removed users, and paid vouc
       username: 'stat-removed-next',
       installedAt: `${period}-04T08:00:00.000Z`,
       removedAt: `${nextPeriod}-01T08:00:00.000Z`,
+      monthlyAmount: 180000,
       status: 'removed'
     }
   );
@@ -1754,16 +1757,22 @@ test('monthly statistics combines new ppp installs, removed users, and paid vouc
   const payload = await serverInternals.reportStatisticsPayload(data, period);
 
   assert.equal(payload.summary.newInstallCount, 3);
+  assert.equal(payload.summary.newInstallAmount, 450000);
   assert.equal(payload.summary.removedCount, 1);
+  assert.equal(payload.summary.removedAmount, 120000);
   assert.equal(payload.summary.netGrowth, 2);
+  assert.equal(payload.summary.netGrowthAmount, 330000);
   assert.equal(payload.summary.voucherBuyerCount, 1);
   assert.equal(payload.summary.voucherCount, 2);
   assert.equal(payload.summary.voucherAmount, 6000);
   assert.equal(payload.dailyRows.find((row) => row.date === `${period}-10`).removedCount, 1);
+  assert.equal(payload.dailyRows.find((row) => row.date === `${period}-10`).removedAmount, 120000);
   assert.equal(payload.dailyRows.find((row) => row.date === `${nextPeriod}-01`), undefined);
   assert.equal(payload.monthlyRows.length, 12);
   assert.equal(payload.monthlyRows.find((row) => row.period === period).newInstallCount, 3);
+  assert.equal(payload.monthlyRows.find((row) => row.period === period).newInstallAmount, 450000);
   assert.equal(payload.monthlyRows.find((row) => row.period === period).removedCount, 1);
+  assert.equal(payload.monthlyRows.find((row) => row.period === period).removedAmount, 120000);
   assert.equal(payload.monthlyRows.find((row) => row.period === period).voucherBuyerCount, 1);
   assert.equal(payload.monthlyRows.find((row) => row.period === period).activeCustomerCount, 3);
   assert.equal(payload.monthlyRows.find((row) => row.period === nextPeriod), undefined);
@@ -2028,6 +2037,209 @@ test('standalone billing automation queues payment reminder once before due date
   assert.equal(data.invoices[0].paymentReminderDueDate, dueDate);
 });
 
+test('standalone billing automation waits for notification send time', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = true;
+  data.settings.billing.notificationBeforeDueDays = 1;
+  data.settings.billing.notificationSendTime = '09:00';
+  const dueDate = '2026-07-26';
+  data.customers.push({
+    id: 'cus-reminder-time',
+    source: 'radius',
+    username: 'reminder-time@ppp.test',
+    name: 'Reminder Time',
+    status: 'active',
+    phone: '081234567890',
+    price: 100000
+  });
+  data.invoices.push({
+    id: 'inv-reminder-time',
+    customerId: 'cus-reminder-time',
+    customerName: 'Reminder Time',
+    username: 'reminder-time@ppp.test',
+    period: '2026-07',
+    amount: 100000,
+    status: 'pending',
+    dueDate,
+    externalId: '000125',
+    invoiceNo: '000125'
+  });
+
+  const before = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-07-26T00:30:00.000Z') });
+  const after = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-07-26T01:00:00.000Z') });
+
+  assert.equal(before.reminderInvoices.length, 0);
+  assert.equal(after.reminderInvoices.length, 1);
+  assert.equal(data.waMessages.filter((message) => message.type === 'paymentReminder').length, 1);
+  assert.equal(data.invoices[0].paymentReminderDueDate, dueDate);
+});
+
+test('standalone billing automation sends deferred invoice issued notification at configured time', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = true;
+  data.settings.billing.notificationBeforeDueDays = 0;
+  data.settings.billing.notificationSendTime = '09:00';
+  data.customers.push({
+    id: 'cus-invoice-time',
+    source: 'radius',
+    username: 'invoice-time@ppp.test',
+    name: 'Invoice Time',
+    status: 'active',
+    phone: '081234567890',
+    price: 100000
+  });
+  data.invoices.push({
+    id: 'inv-invoice-time',
+    customerId: 'cus-invoice-time',
+    customerName: 'Invoice Time',
+    username: 'invoice-time@ppp.test',
+    period: '2026-07',
+    amount: 100000,
+    status: 'pending',
+    dueDate: '2026-07-26',
+    externalId: '000126',
+    invoiceNo: '000126',
+    invoiceIssuedPending: true,
+    invoiceIssuedDeferredDate: '2026-07-26',
+    invoiceIssuedSendAfter: '09:00'
+  });
+
+  serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-07-26T00:30:00.000Z') });
+  assert.equal(data.waMessages.filter((message) => message.type === 'invoiceIssued').length, 0);
+  assert.equal(data.invoices[0].invoiceIssuedPending, true);
+
+  serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-07-26T01:00:00.000Z') });
+  assert.equal(data.waMessages.filter((message) => message.type === 'invoiceIssued').length, 1);
+  assert.equal(data.invoices[0].invoiceIssuedPending, false);
+  assert.ok(data.invoices[0].invoiceIssuedSentAt);
+});
+
+test('manual invoice discount updates unpaid invoice without changing recurring member discount', () => {
+  const data = createDefaultStore();
+  const invoice = {
+    id: 'inv-discount',
+    customerId: 'cus-discount',
+    customerName: 'Diskon Test',
+    username: 'diskon@ppp.test',
+    period: '2026-07',
+    subtotal: 150000,
+    baseAmount: 150000,
+    ppnAmount: 15000,
+    discountAmount: 0,
+    amount: 165000,
+    total: 165000,
+    totalAmount: 165000,
+    status: 'pending',
+    dueDate: '2026-07-10',
+    externalId: '000777',
+    invoiceNo: '000777',
+    paymentCheckout: {
+      status: 'pending',
+      externalReference: 'TRX-OLD',
+      requestedAmount: 170000,
+      checkoutUrl: 'https://checkout.example.test/old'
+    }
+  };
+  data.invoices.push(invoice);
+
+  const result = serverInternals.updateInvoiceManualDiscount(data, invoice, {
+    manualDiscountAmount: 10000,
+    discountNote: 'Diskon bulan ini'
+  }, { name: 'Finance', username: 'finance', role: 'finance' });
+
+  assert.equal(result.amount, 155000);
+  assert.equal(invoice.amount, 155000);
+  assert.equal(invoice.manualDiscountAmount, 10000);
+  assert.equal(invoice.baseDiscountAmount, 0);
+  assert.equal(invoice.discountAmount, 10000);
+  assert.equal(invoice.discountNote, 'Diskon bulan ini');
+  assert.equal(invoice.paymentCheckout.status, 'expired');
+  assert.equal(invoice.paymentCheckout.invalidatedReason, 'Nominal invoice berubah karena diskon manual');
+});
+
+test('manual invoice discount preserves existing member discount as base discount', () => {
+  const data = createDefaultStore();
+  const invoice = {
+    id: 'inv-discount-base',
+    customerId: 'cus-discount-base',
+    customerName: 'Diskon Base',
+    username: 'diskon-base@ppp.test',
+    period: '2026-07',
+    subtotal: 150000,
+    baseAmount: 150000,
+    ppnAmount: 15000,
+    discountAmount: 15000,
+    amount: 150000,
+    total: 150000,
+    totalAmount: 150000,
+    status: 'pending',
+    dueDate: '2026-07-10',
+    externalId: '000778',
+    invoiceNo: '000778'
+  };
+  data.invoices.push(invoice);
+
+  const result = serverInternals.updateInvoiceManualDiscount(data, invoice, {
+    manualDiscountAmount: 10000
+  }, { name: 'Finance', username: 'finance', role: 'finance' });
+
+  assert.equal(result.baseDiscount, 15000);
+  assert.equal(result.manualDiscount, 10000);
+  assert.equal(invoice.discountAmount, 25000);
+  assert.equal(invoice.amount, 140000);
+});
+
+test('daily billing report exposes discount audit fields for paid discounted invoices', () => {
+  const data = createDefaultStore();
+  data.customers.push({
+    id: 'cus-daily-discount',
+    name: 'Pelanggan Diskon',
+    username: 'pelanggan-diskon@ppp.test'
+  });
+  const invoice = {
+    id: 'inv-daily-discount',
+    customerId: 'cus-daily-discount',
+    customerName: 'Pelanggan Diskon',
+    username: 'pelanggan-diskon@ppp.test',
+    period: '2026-07',
+    subtotal: 150000,
+    baseAmount: 150000,
+    ppnAmount: 15000,
+    discountAmount: 0,
+    amount: 165000,
+    status: 'pending',
+    dueDate: '2026-07-10',
+    externalId: '000779',
+    invoiceNo: '000779'
+  };
+  data.invoices.push(invoice);
+  serverInternals.updateInvoiceManualDiscount(data, invoice, {
+    manualDiscountAmount: 15000,
+    discountNote: 'Kompensasi gangguan'
+  }, { name: 'Finance', username: 'finance', role: 'finance' });
+  markInvoicePaid(data, 'inv-daily-discount', {
+    amount: invoice.amount,
+    paidAt: '2026-07-18T10:00:00+08:00',
+    paymentMethod: 'Tunai',
+    actorName: 'Finance',
+    actorUsername: 'finance',
+    actorRole: 'finance'
+  });
+
+  const report = serverInternals.localDailyReport(data, '2026-07-18');
+  assert.equal(report.transactionCount, 1);
+  assert.equal(report.transactions[0].invoiceId, 'inv-daily-discount');
+  assert.equal(report.transactions[0].amount, 150000);
+  assert.equal(report.transactions[0].discountAmount, 15000);
+  assert.equal(report.transactions[0].manualDiscountAmount, 15000);
+  assert.equal(report.transactions[0].discountNote, 'Kompensasi gangguan');
+  assert.equal(report.transactions[0].discountUpdatedBy, 'Finance');
+});
+
 test('standalone billing automation does not consume reminders while whatsapp is disabled', () => {
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';
@@ -2066,11 +2278,14 @@ test('billing settings allow H-1 invoice generation and disabled reminders', () 
   const sanitized = serverInternals.sanitizeBillingSettings({
     postpaidDueDay: 10,
     fixedInvoiceAdvanceDays: 1,
-    notificationBeforeDueDays: 0
+    notificationBeforeDueDays: 0,
+    notificationSendTime: '08:30'
   }, {});
 
   assert.equal(sanitized.fixedInvoiceAdvanceDays, 1);
   assert.equal(sanitized.notificationBeforeDueDays, 0);
+  assert.equal(sanitized.notificationSendTime, '08:30');
+  assert.equal(serverInternals.sanitizeBillingSettings({ notificationSendTime: '29:99' }, sanitized).notificationSendTime, '08:30');
   assert.equal(sanitized.autoTerminateAfterDays, 0);
   assert.equal(serverInternals.invoiceGenerationDue(sanitized, '2026-08', '2026-08-08'), false);
   assert.equal(serverInternals.invoiceGenerationDue(sanitized, '2026-08', '2026-08-09'), true);

@@ -139,6 +139,7 @@ function createDefaultStore() {
         suspendGraceDays: 0,
         autoTerminateAfterDays: 0,
         notificationBeforeDueDays: 0,
+        notificationSendTime: '06:00',
         autoSuspendTime: '00:00',
         invoiceNumberFormat: 'XXXXXX',
         invoiceBusinessCode: 'ISP',

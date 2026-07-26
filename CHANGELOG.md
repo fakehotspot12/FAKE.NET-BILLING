@@ -2,6 +2,24 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.34] - 2026-07-26
+
+### Added
+
+- Laporan > Statistik sekarang menghitung nilai rupiah PSB dan Cabut, lalu menampilkan `Senilai Rp ...` pada kartu ringkasan serta tooltip chart pertumbuhan pelanggan.
+- Arsip cabut PPP-DHCP baru menyimpan estimasi nilai bulanan pelanggan agar statistik cabut tetap terbaca meskipun member sudah dihapus.
+- Billing Settings ditambah satu pengaturan `Jam kirim invoice/reminder` untuk menahan WA invoice terbit dan reminder otomatis sampai jam yang ditentukan.
+- Monitoring > Tagihan Pelanggan ditambah aksi `Diskon` untuk mengubah diskon invoice belum bayar pada bulan itu saja.
+- Laporan > Tagihan Harian menampilkan tombol audit diskon di sebelah icon PDF hanya untuk pembayaran invoice yang punya diskon.
+
+### Changed
+
+- Default jam kirim invoice/reminder otomatis diubah menjadi `06:00` WITA untuk install baru atau setting kosong.
+
+### Fixed
+
+- Link checkout payment gateway lama otomatis dibuat tidak berlaku ketika nominal invoice berubah karena diskon manual.
+
 ## [2.9.33] - 2026-07-26
 
 ### Changed
