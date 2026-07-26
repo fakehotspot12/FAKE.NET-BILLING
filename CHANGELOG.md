@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.48] - 2026-07-26
+
+### Changed
+
+- Pesan Whatsapp `Payment Paid` sekarang menyertakan link invoice/status pembayaran lunas untuk semua metode pembayaran.
+- Template WA lama yang belum memuat link bukti pembayaran otomatis ditambahi link saat pesan lunas dibuat.
+
 ## [2.9.47] - 2026-07-26
 
 ### Fixed

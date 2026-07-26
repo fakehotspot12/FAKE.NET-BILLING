@@ -16264,6 +16264,8 @@ const WA_INVOICE_VARIABLES = [
   ['[suspend_grace]', 'Batas isolir dari Billing Setting'],
   ['[suspend_grace_days]', 'Jumlah hari grace isolir'],
   ['[payment_gateway]', 'Payment Gateway Link'],
+  ['[invoice_link]', 'Link invoice/status pembayaran'],
+  ['[paid_invoice_link]', 'Link bukti pembayaran lunas'],
   ['[payment_mutasi]', 'Bank Transfer Payment Method'],
   ['[paid_method]', 'Payment Method'],
   ['[footer]', 'Signature']

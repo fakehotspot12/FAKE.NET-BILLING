@@ -133,7 +133,7 @@ const DEFAULT_WA_TEMPLATES = {
   invoiceIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Invoice anda telah terbit dan dapat dibayarkan, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nAmount: Rp [amount]\nTotal: Rp [total]\nItem: [pppoe_profile]\nAdd Ons : [add_ons]\nJatuh tempo: [due_date]\nPeriod: [period]\n\nMohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+[suspend_grace_days] ([suspend_grace_days] hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
   paymentReminder: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda senilai Rp. [total] belum di bayar, Mohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+[suspend_grace_days] ([suspend_grace_days] hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\nAbaikan pesan ini bila sudah membayar.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
   invoiceOverdue: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nDi informasikan, Account anda telah ditangguhkan *(ISOLIR)* oleh *System Billing* kami, dikarenakan keterlambatan dalam pembayaran.\n\nSaat ini anda tidak dapat menggunakan internet, sampai anda menyelesaikan pembayaran senilai Rp. [total]\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini*\n\nTerima kasih.',
-  paymentPaid: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda telah dibayar, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nTotal: Rp [total]\nItem: [pppoe_profile]\nAdd Ons : [add_ons]\nPeriod: [period]\nStatus: Paid\nPayment Method: [paid_method]\n\nTerima kasih.',
+  paymentPaid: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan tagihan anda telah dibayar, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nTotal: Rp [total]\nItem: [pppoe_profile]\nAdd Ons : [add_ons]\nPeriod: [period]\nStatus: Paid\nPayment Method: [paid_method]\nBukti pembayaran: [invoice_link]\n\nTerima kasih.',
   accountSuspend: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Internet Account anda dalam penangguhan (Isolir).\nSaat ini anda tidak dapat menggunakan layanan internet. Segera konfirmasi ke admin layanan kami terkait hal ini.\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini*\n\nTerima kasih!',
   accountActive: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Internet Account anda telah di aktifkan, berikut rincian data account anda :\n\nID Pelanggan: [uid]\nItem: [pppoe_profile]\n\nMohon untuk mematikan dan menyalakan kembali tombol modem jika internet masih belum aktif setelah pembayaran ini. Terima kasih!\n\n*Ini adalah pesan otomatis*',
   voucherIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nPembayaran voucher Hotspot berhasil.\nReference: [reference]\nPaket: [voucher_profile]\nHarga: Rp [voucher_price]\nUsername: [voucher_user]\nPassword: [voucher_pass]\nMasa aktif: [validity]\nBerlaku sampai: [valid_until]\nLogin langsung: [login_url]\n\nSimpan voucher ini sampai masa aktif habis.\n\nTerima kasih.',
@@ -6872,6 +6872,11 @@ function normalizeWaTemplateVariableText(template = '', key = '') {
     && next.includes('Item: [pppoe_profile]\n')) {
     next = next.replace('Item: [pppoe_profile]\n', 'Item: [pppoe_profile]\nAdd Ons : [add_ons]\n');
   }
+  if (String(key || '') === 'paymentPaid'
+    && !/\[(?:invoice_link|paid_invoice_link|payment_status_link|receipt_link|payment_gateway|paymentGateway)\]/i.test(next)
+    && next.includes('Payment Method: [paid_method]\n')) {
+    next = next.replace('Payment Method: [paid_method]\n', 'Payment Method: [paid_method]\nBukti pembayaran: [invoice_link]\n');
+  }
   return next;
 }
 
@@ -9570,6 +9575,14 @@ const WA_TEMPLATE_ALIASES = {
   dueDate: 'due_date',
   paymentGateway: 'payment_gateway',
   paymentLink: 'payment_gateway',
+  invoiceLink: 'invoice_link',
+  invoice_link: 'invoice_link',
+  paidInvoiceLink: 'paid_invoice_link',
+  paid_invoice_link: 'paid_invoice_link',
+  paymentStatusLink: 'payment_status_link',
+  payment_status_link: 'payment_status_link',
+  receiptLink: 'receipt_link',
+  receipt_link: 'receipt_link',
   paymentMutasi: 'payment_mutasi',
   bankTransfer: 'payment_mutasi',
   paymentMethod: 'paid_method',
@@ -9730,6 +9743,10 @@ function invoicePaymentGatewayLink(dataOrInvoice = {}, invoiceMaybe = null) {
   ).trim();
 }
 
+function invoicePublicStatusLink(data = {}, invoice = {}) {
+  return String(defaultInvoicePaymentGatewayLink(data, invoice) || invoicePaymentGatewayLink(data, invoice) || '').trim();
+}
+
 function invoiceTransferPaymentMethod(invoice = {}, customer = {}) {
   return String(
     invoice.paymentMutasi
@@ -9825,6 +9842,7 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
   );
   const businessName = data.settings?.businessName || data.settings?.receiptBusinessCode || 'ISP Billing';
   const gatewayLink = invoicePaymentGatewayLink(data, invoice);
+  const invoiceLink = invoicePublicStatusLink(data, invoice);
   const gatewayBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, totalNumber, 'monthly');
   const suspendGraceDays = Math.max(0, Math.trunc(Number(data.settings?.billing?.suspendGraceDays ?? 0) || 0));
   const suspendGrace = `H+${suspendGraceDays} (${suspendGraceDays} hari)`;
@@ -9851,7 +9869,11 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
     total: formatMoneyNumberText(totalNumber),
     period,
     due_date: dateDisplayText(invoice.dueDate || ''),
-    payment_gateway: gatewayLink,
+    payment_gateway: gatewayLink || invoiceLink,
+    invoice_link: invoiceLink || gatewayLink,
+    paid_invoice_link: invoiceLink || gatewayLink,
+    payment_status_link: invoiceLink || gatewayLink,
+    receipt_link: invoiceLink || gatewayLink,
     admin_fee: formatMoneyNumberText(gatewayBreakdown.adminFee),
     gateway_total: formatMoneyNumberText(gatewayBreakdown.totalAmount),
     payment_total: formatMoneyNumberText(gatewayBreakdown.totalAmount),
@@ -9868,7 +9890,11 @@ function invoiceWaTemplateValues(data = {}, invoice = {}) {
     invoiceNo,
     dueDate: invoice.dueDate || '',
     invoiceDate: invoice.invoiceDate || invoice.createdAt || invoice.date || '',
-    paymentGateway: gatewayLink,
+    paymentGateway: gatewayLink || invoiceLink,
+    invoiceLink: invoiceLink || gatewayLink,
+    paidInvoiceLink: invoiceLink || gatewayLink,
+    paymentStatusLink: invoiceLink || gatewayLink,
+    receiptLink: invoiceLink || gatewayLink,
     adminFee: gatewayBreakdown.adminFee,
     gatewayTotal: gatewayBreakdown.totalAmount,
     paymentMutasi: invoiceTransferPaymentMethod(invoice, customer)
@@ -10012,6 +10038,20 @@ function customerForInvoice(data = {}, invoice = {}) {
     || {};
 }
 
+function ensurePaymentPaidInvoiceLinkText(text = '', values = {}) {
+  const link = String(
+    values.invoice_link
+    || values.paid_invoice_link
+    || values.payment_status_link
+    || values.receipt_link
+    || values.payment_gateway
+    || ''
+  ).trim();
+  const body = String(text || '').trim();
+  if (!link || !body || body.includes(link)) return text;
+  return `${body}\n\nBukti pembayaran: ${link}`;
+}
+
 function queueInvoiceWaMessage(data = {}, invoice = {}, type = 'paymentReminder', actor = {}, options = {}) {
   const settings = data.settings?.waGateway || {};
   const billingSettings = data.settings?.billing || {};
@@ -10025,7 +10065,10 @@ function queueInvoiceWaMessage(data = {}, invoice = {}, type = 'paymentReminder'
   const values = invoiceWaTemplateValues(data, invoice);
   const invoiceNo = values.no_invoice || displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id || '');
   const template = settings.templates?.[type] || settings.templates?.paymentReminder || '';
-  const text = renderWaTemplate(template, values) || `Halo ${values.fullname}, tagihan internet ${values.period} sebesar Rp ${values.total || values.amount}. No invoice ${values.no_invoice}.`;
+  let text = renderWaTemplate(template, values) || `Halo ${values.fullname}, tagihan internet ${values.period} sebesar Rp ${values.total || values.amount}. No invoice ${values.no_invoice}.`;
+  if (type === 'paymentPaid') {
+    text = ensurePaymentPaidInvoiceLinkText(text, values);
+  }
   const phone = customer.phone || customer.whatsapp || invoice.phone || '';
   const localPhone = normalizeLocalPhone(phone);
   const waPhone = normalizeWaPhone(localPhone);

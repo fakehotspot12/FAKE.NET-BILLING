@@ -6660,7 +6660,9 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   assert.equal(data.paymentGatewayTransactions[0].externalId, 'T-GATEWAY-1');
   assert.equal(data.paymentGatewayTransactions[0].amount, 102500);
   assert.equal(data.paymentGatewayTransactions[0].fee, 2500);
-  assert.equal(data.waMessages.find((message) => message.type === 'paymentPaid').text.includes('Payment Method: BRI Virtual Account'), true);
+  const paidWaText = data.waMessages.find((message) => message.type === 'paymentPaid').text;
+  assert.equal(paidWaText.includes('Payment Method: BRI Virtual Account'), true);
+  assert.equal(paidWaText.includes('Bukti pembayaran: https://billing.example.net/payment-invoice.html?id=000321'), true);
   const publicInvoice = serverInternals.publicPaymentGatewayInvoicePayload(data, data.invoices[0]);
   assert.equal(publicInvoice.gatewayAmount, 102500);
   assert.equal(publicInvoice.adminFee, 2500);
