@@ -18289,7 +18289,18 @@ document.addEventListener('click', (event) => {
   }
 });
 
-mobileMenuQuery.addEventListener('change', () => {
+function onMediaQueryChange(query, handler) {
+  if (!query) return;
+  if (typeof query.addEventListener === 'function') {
+    query.addEventListener('change', handler);
+    return;
+  }
+  if (typeof query.addListener === 'function') {
+    query.addListener(handler);
+  }
+}
+
+onMediaQueryChange(mobileMenuQuery, () => {
   setMenuOpen(false);
   updateMenuButton();
 });

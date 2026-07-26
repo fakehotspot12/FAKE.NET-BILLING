@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.39] - 2026-07-26
+
+### Fixed
+
+- Frontend diberi fallback `matchMedia.addListener` untuk mencegah layar putih pada browser/WebView yang belum mendukung `addEventListener` di media query.
+
 ## [2.9.38] - 2026-07-26
 
 ### Added
