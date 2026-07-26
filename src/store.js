@@ -140,8 +140,8 @@ function createDefaultStore() {
         suspendGraceDays: 0,
         autoTerminateAfterDays: 0,
         notificationBeforeDueDays: 0,
-        notificationSendTime: '06:00',
-        autoSuspendTime: '00:00',
+        notificationSendTime: '08:00',
+        autoSuspendTime: '13:30',
         invoiceNumberFormat: 'XXXXXX',
         invoiceBusinessCode: 'ISP',
         notifyInvoiceIssued: true,
@@ -548,6 +548,22 @@ function migrateLegacyMemberCodes(data = {}) {
   return data;
 }
 
+function migrateBillingDefaultTimers(data = {}) {
+  const settings = data.settings && typeof data.settings === 'object' ? data.settings : {};
+  const billing = settings.billing && typeof settings.billing === 'object' ? settings.billing : {};
+  const migrations = data.radiusSyncState && typeof data.radiusSyncState === 'object' ? data.radiusSyncState : {};
+  if (migrations.billingDefaultTimersV2At) return data;
+  if (!billing.notificationSendTime || billing.notificationSendTime === '06:00') {
+    billing.notificationSendTime = '08:00';
+  }
+  if (!billing.autoSuspendTime || billing.autoSuspendTime === '00:00') {
+    billing.autoSuspendTime = '13:30';
+  }
+  data.radiusSyncState = migrations;
+  data.radiusSyncState.billingDefaultTimersV2At = new Date().toISOString();
+  return data;
+}
+
 function ensureShape(data) {
   const base = createDefaultStore();
   const safe = data && typeof data === 'object' ? data : {};
@@ -700,7 +716,7 @@ function ensureShape(data) {
     users: Array.isArray(safe.users) ? safe.users : [],
     activity: Array.isArray(safe.activity) ? safe.activity : []
   };
-  return syncLinkedRadiusMemberProfiles(cancelInvalidPaidInitialProrataInvoices(restoreTerminatedPendingInvoices(migrateLegacyMemberCodes(shaped))));
+  return syncLinkedRadiusMemberProfiles(cancelInvalidPaidInitialProrataInvoices(restoreTerminatedPendingInvoices(migrateBillingDefaultTimers(migrateLegacyMemberCodes(shaped)))));
 }
 
 function postgresEnabled() {

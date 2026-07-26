@@ -6828,9 +6828,9 @@ function sanitizeBillingSettings(payload = {}, current = {}) {
     notificationBeforeDueDays: clampInteger(payload.notificationBeforeDueDays, 0, 31, current.notificationBeforeDueDays || 0),
     notificationSendTime: sanitizeTime(
       payload.notificationSendTime ?? payload.invoiceSendTime ?? payload.reminderSendTime,
-      current.notificationSendTime || current.invoiceSendTime || current.reminderSendTime || '06:00'
+      current.notificationSendTime || current.invoiceSendTime || current.reminderSendTime || '08:00'
     ),
-    autoSuspendTime: sanitizeTime(payload.autoSuspendTime, current.autoSuspendTime || '00:00'),
+    autoSuspendTime: sanitizeTime(payload.autoSuspendTime, current.autoSuspendTime || '13:30'),
     invoiceNumberFormat: 'XXXXXX',
     invoiceBusinessCode: current.invoiceBusinessCode || 'ISP',
     notifyInvoiceIssued: payload.notifyInvoiceIssued !== false,
@@ -7598,7 +7598,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   const paidCoverage = paidInvoiceCoverageByCustomer(data);
   const waAutomationEnabled = data.settings?.waGateway?.enabled === true;
   const invoiceIssuedAutomationEnabled = waAutomationEnabled && settings.notifyInvoiceIssued !== false;
-  const notificationSendReady = billingAutomationTimeReady(settings, 'notificationSendTime', now, '06:00');
+  const notificationSendReady = billingAutomationTimeReady(settings, 'notificationSendTime', now, '08:00');
 
   for (const invoice of data.invoices || []) {
     const status = invoiceRuntimeStatus(invoice, today);
@@ -7646,7 +7646,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   }
 
   const graceDays = Number(settings.suspendGraceDays || 0);
-  if (graceDays > 0 && localTimeText() >= (settings.autoSuspendTime || '00:00')) {
+  if (graceDays > 0 && localTimeText() >= (settings.autoSuspendTime || '13:30')) {
     for (const [customerId, info] of unpaidByCustomer.entries()) {
       if (!info.dueDate || today < addDaysIso(info.dueDate, graceDays)) continue;
       const customer = customers.get(customerId);
@@ -7697,7 +7697,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       invoice.updatedAt = invoice.invoiceIssuedSentAt;
     }
   } else if (invoiceIssuedAutomationEnabled) {
-    const invoiceSendTime = sanitizeTime(settings.notificationSendTime, '06:00');
+    const invoiceSendTime = sanitizeTime(settings.notificationSendTime, '08:00');
     for (const invoice of created) {
       invoice.invoiceIssuedPending = true;
       invoice.invoiceIssuedDeferredDate = today;

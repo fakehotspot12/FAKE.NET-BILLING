@@ -55,3 +55,40 @@ test('coreFingerprint tidak berubah hanya karena updatedAt', () => {
   });
   assert.equal(first, second);
 });
+
+test('billing default timers use daytime WA and isolation schedules', () => {
+  const data = store.createDefaultStore();
+  assert.equal(data.settings.billing.notificationSendTime, '08:00');
+  assert.equal(data.settings.billing.autoSuspendTime, '13:30');
+});
+
+test('legacy billing default timers migrate to safer daytime defaults', () => {
+  const shaped = store.ensureShape({
+    settings: {
+      billing: {
+        notificationSendTime: '06:00',
+        autoSuspendTime: '00:00'
+      }
+    },
+    radiusSyncState: {}
+  });
+
+  assert.equal(shaped.settings.billing.notificationSendTime, '08:00');
+  assert.equal(shaped.settings.billing.autoSuspendTime, '13:30');
+  assert.ok(shaped.radiusSyncState.billingDefaultTimersV2At);
+});
+
+test('custom billing timers are preserved during shape migration', () => {
+  const shaped = store.ensureShape({
+    settings: {
+      billing: {
+        notificationSendTime: '09:30',
+        autoSuspendTime: '14:15'
+      }
+    },
+    radiusSyncState: {}
+  });
+
+  assert.equal(shaped.settings.billing.notificationSendTime, '09:30');
+  assert.equal(shaped.settings.billing.autoSuspendTime, '14:15');
+});

@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.45] - 2026-07-26
+
+### Changed
+
+- Default jam kirim invoice/reminder diubah menjadi `08:00` dan default jam isolir otomatis menjadi `13:30`.
+- Install/update yang masih memakai default lama `06:00` dan `00:00` otomatis dimigrasikan ke default baru tanpa menimpa jam custom pengguna.
+
 ## [2.9.44] - 2026-07-26
 
 ### Changed

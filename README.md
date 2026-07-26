@@ -225,7 +225,8 @@ Field tanggal di Billing Setting berfungsi sebagai berikut:
 - `Reminder sebelum tempo`: jumlah hari sebelum jatuh tempo untuk mengirim pengingat Whatsapp. Nilai `0` berarti reminder otomatis dimatikan.
 - `Grace suspend setelah tempo`: masa tenggang setelah jatuh tempo sebelum pelanggan diisolir otomatis. Nilai `0` berarti auto isolir karena telat bayar dimatikan.
 - `Terminate otomatis setelah isolir`: jumlah hari sejak isolir otomatis sebelum akun PPP-DHCP diubah menjadi terminated. Nilai `0` adalah default: pelanggan tetap isolir dan invoice periode berikutnya terus diterbitkan.
-- `Jam isolir otomatis`: jam eksekusi isolir otomatis setelah masa tenggang terpenuhi.
+- `Jam kirim invoice/reminder`: jam pengiriman WA invoice terbit dan reminder otomatis. Default `08:00` agar pelanggan menerima pesan pada jam aktif kerja.
+- `Jam isolir otomatis`: jam eksekusi isolir otomatis setelah masa tenggang terpenuhi. Default `13:30` agar isolir tidak berjalan tengah malam dan admin masih siap menangani konfirmasi.
 
 Invoice otomatis dibuat per pelanggan sesuai tanggal jatuh temponya masing-masing. Untuk pelanggan prorata Billing Cycle, invoice pertama tidak dibuat sebelum `Active Date`, meskipun window generate invoice sudah masuk H-minus jatuh tempo.
 
@@ -420,7 +421,7 @@ Service utama:
 - `fakenet-billing-genieacs-fs.service`
 - `fakenet-billing-genieacs-ui.service`
 
-Worker BullMQ Whatsapp berjalan di dalam `fakenet-billing.service`. Billing Setting tetap menentukan kapan invoice, reminder, isolir, aktivasi, dan notifikasi dibuat. Menu Whatsapp Gateway tetap menjadi pengendali enable, jeda minimum, maksimum per batch, jam kirim, serta template. WAHA berfungsi sebagai pengirim, sedangkan BullMQ menyimpan jadwal dan retry di Redis dengan concurrency satu.
+Worker BullMQ Whatsapp berjalan di dalam `fakenet-billing.service`. Billing Setting tetap menentukan kapan invoice, reminder, isolir, aktivasi, dan notifikasi dibuat. Menu Whatsapp Gateway mengendalikan enable gateway dan template. Kecepatan kirim otomatis: pesan transaksi seperti pembayaran/voucher diprioritaskan cepat, sedangkan broadcast dan postpaid billing cycle dikirim bertahap dengan jeda aman. WAHA berfungsi sebagai pengirim, sedangkan BullMQ menyimpan jadwal dan retry di Redis dengan concurrency satu.
 
 BullMQ membantu menjaga urutan, retry, dan laju pengiriman. BullMQ maupun WAHA tidak menjamin akun WhatsApp bebas pembatasan; gunakan nomor yang memiliki persetujuan penerima, hindari pesan berulang, dan pertahankan jeda serta jam kirim yang wajar.
 

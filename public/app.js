@@ -11330,12 +11330,12 @@ async function renderRadiusSettings(options = {}) {
             </label>
             <label class="field">
               <span>Jam kirim invoice/reminder</span>
-              <input name="notificationSendTime" type="time" value="${escapeHtml(billing.notificationSendTime || '06:00')}">
+              <input name="notificationSendTime" type="time" value="${escapeHtml(billing.notificationSendTime || '08:00')}">
               <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (${escapeHtml(appTimeZoneLabel())}).</small>
             </label>
             <label class="field">
               <span>Jam isolir otomatis</span>
-              <input name="autoSuspendTime" type="time" value="${escapeHtml(billing.autoSuspendTime || '00:00')}">
+              <input name="autoSuspendTime" type="time" value="${escapeHtml(billing.autoSuspendTime || '13:30')}">
             </label>
             <label class="field checkbox-field">
               <input name="notifyInvoiceIssued" type="checkbox" value="true" ${billing.notifyInvoiceIssued !== false ? 'checked' : ''}>
@@ -16051,12 +16051,12 @@ async function renderBillingSettings() {
           </label>
           <label class="field">
             <span>Jam kirim invoice/reminder</span>
-            <input name="notificationSendTime" type="time" value="${escapeHtml(settings.notificationSendTime || '06:00')}">
+            <input name="notificationSendTime" type="time" value="${escapeHtml(settings.notificationSendTime || '08:00')}">
             <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (${escapeHtml(appTimeZoneLabel())}).</small>
           </label>
           <label class="field">
             <span>Jam isolir otomatis</span>
-            <input name="autoSuspendTime" type="time" value="${escapeHtml(settings.autoSuspendTime || '00:00')}">
+            <input name="autoSuspendTime" type="time" value="${escapeHtml(settings.autoSuspendTime || '13:30')}">
           </label>
           <label class="field checkbox-field">
             <input name="notifyInvoiceIssued" type="checkbox" value="true" ${settings.notifyInvoiceIssued !== false ? 'checked' : ''}>
