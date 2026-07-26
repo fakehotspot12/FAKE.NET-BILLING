@@ -7820,6 +7820,10 @@ td:has(.action-menu),
   overflow-wrap: anywhere;
 }
 
+.daily-receipt-lines .receipt-a4-only strong {
+  font-size: 10px;
+}
+
 .daily-receipt-side {
   align-content: stretch;
   display: grid;
@@ -7965,6 +7969,13 @@ td:has(.action-menu),
 
 .receipt-lines strong {
   overflow-wrap: anywhere;
+}
+
+.receipt-preview.print-mode-thermal-58 .receipt-a4-only,
+.receipt-preview.print-mode-thermal-80 .receipt-a4-only,
+.daily-billing-receipt-stack.print-mode-thermal-58 .receipt-a4-only,
+.daily-billing-receipt-stack.print-mode-thermal-80 .receipt-a4-only {
+  display: none !important;
 }
 
 .receipt-items {

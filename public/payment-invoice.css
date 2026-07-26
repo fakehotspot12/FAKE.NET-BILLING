@@ -111,6 +111,11 @@ select {
   font-size: 14px;
 }
 
+.invoice-lines strong {
+  text-align: right;
+  white-space: pre-line;
+}
+
 .invoice-lines,
 .amount-box {
   display: grid;

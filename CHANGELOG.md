@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.49] - 2026-07-26
+
+### Changed
+
+- Link invoice bulanan sekarang menampilkan rincian Add Ons, PPN, dan Diskon; nilai kosong ditampilkan sebagai `-`.
+- Nota pembayaran bulanan mode A4 sekarang memuat ringkasan Add Ons, PPN, dan Diskon tanpa mengubah layout thermal.
+
 ## [2.9.48] - 2026-07-26
 
 ### Changed

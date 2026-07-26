@@ -2684,6 +2684,8 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
       const customerStatus = resolver.statusForInvoice(invoice, customer);
       const site = localBillingSite(data, customer, invoice);
       const paymentCategory = paymentCategoryForRecord({ ...invoice, ...payment }, invoice.paymentMethod || payment.method || '');
+      const addOns = invoiceBillingAddons(invoice, customer);
+      const addOnsTotal = billingAddonsTotal(addOns);
       return {
         ...invoice,
         period: selectedPeriod,
@@ -2710,12 +2712,18 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
         subtotal: Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0),
         baseAmount: Number(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount ?? 0),
         packageSubtotal: Number(invoice.packageSubtotal || 0),
-        addOnSubtotal: Number(invoice.addOnSubtotal || 0),
+        addOnSubtotal: Number(invoice.addOnSubtotal || addOnsTotal || 0),
+        addOns,
+        addons: addOns,
+        addOnsText: billingAddonsDisplayText(addOns),
+        addOnsTotal,
         ppnRate: Number(invoice.ppnRate ?? invoice.vatRate ?? invoice.taxRate ?? 0),
         ppnAmount: Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0),
+        ppnText: invoicePpnDisplayText(invoice),
         bhpUsoRate: Number(invoice.bhpUsoRate || 0),
         bhpUsoAmount: Number(invoice.bhpUsoAmount || 0),
         discountAmount: Number(invoice.discountAmount || 0),
+        discountText: invoiceDiscountDisplayText(invoice),
         baseDiscountAmount: invoiceBaseDiscountAmount(invoice),
         manualDiscountAmount: invoiceManualDiscountAmount(invoice),
         invoiceDiscountAmount: invoiceManualDiscountAmount(invoice),
@@ -6470,6 +6478,8 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
       const storedInvoiceNo = invoice.externalId || invoice.invoiceNo || invoice.id
         || payment?.sourceInvoiceNo || payment?.invoiceNo || payment?.invoiceId || payment?.reference || payment?.id;
       const paidAt = paymentReportTimestamp(payment || {}, invoice);
+      const addOns = invoiceBillingAddons(invoice, customer);
+      const addOnsTotal = billingAddonsTotal(addOns);
       return {
         id: payment?.id || invoice.id,
         invoiceId: invoice.id || payment?.invoiceId || '',
@@ -6495,9 +6505,18 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
         paymentTime: paidAt ? new Date(paidAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: appTimeZone(data.settings || {}) }) : '',
         subtotal: Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0),
         baseAmount: Number(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount ?? 0),
+        packageSubtotal: Number(invoice.packageSubtotal || 0),
+        addOnSubtotal: Number(invoice.addOnSubtotal || addOnsTotal || 0),
+        addOns,
+        addons: addOns,
+        addOnsText: billingAddonsDisplayText(addOns),
+        addOnsTotal,
+        ppnRate: Number(invoice.ppnRate ?? invoice.vatRate ?? invoice.taxRate ?? 0),
         ppnAmount: Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0),
+        ppnText: invoicePpnDisplayText(invoice),
         bhpUsoAmount: Number(invoice.bhpUsoAmount || 0),
         discountAmount: Number(invoice.discountAmount || 0),
+        discountText: invoiceDiscountDisplayText(invoice),
         baseDiscountAmount: invoiceBaseDiscountAmount(invoice),
         manualDiscountAmount: invoiceManualDiscountAmount(invoice),
         invoiceDiscountAmount: invoiceManualDiscountAmount(invoice),
@@ -9320,6 +9339,23 @@ function billingAddonsDisplayText(source = {}) {
 function billingAddonsTotal(source = {}) {
   return normalizeBillingAddons(Array.isArray(source) ? { addOns: source } : source)
     .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+}
+
+function invoiceBillingAddons(invoice = {}, customer = {}) {
+  const invoiceAddOns = normalizeBillingAddons(invoice);
+  return invoiceAddOns.length ? invoiceAddOns : normalizeBillingAddons(customer);
+}
+
+function invoicePpnDisplayText(invoice = {}) {
+  const amount = Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0) || 0;
+  const rate = Number(invoice.ppnRate ?? invoice.vatRate ?? invoice.taxRate ?? 0) || 0;
+  if (amount <= 0) return '-';
+  return rate > 0 ? `${formatMoneyNumberText(rate)}% / ${formatCurrencyText(amount)}` : formatCurrencyText(amount);
+}
+
+function invoiceDiscountDisplayText(invoice = {}) {
+  const amount = Number(invoice.discountAmount ?? invoice.discountValue ?? 0) || 0;
+  return amount > 0 ? formatCurrencyText(amount) : '-';
 }
 
 function stripCurrencyPrefix(value = '') {
@@ -12326,6 +12362,10 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
   const customerStatus = strongestCustomerStatus(customer.status, invoice.customerStatus, radiusUser.status);
   const invoiceStatus = invoiceRuntimeStatus(invoice);
   const terminated = customerStatus === 'terminate';
+  const addOns = invoiceBillingAddons(invoice, customer);
+  const addOnsTotal = billingAddonsTotal(addOns);
+  const ppnAmount = Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0) || 0;
+  const discountAmount = Number(invoice.discountAmount ?? invoice.discountValue ?? 0) || 0;
   const isolationSource = String(radiusUser.isolationSource || customer.isolationSource || invoice.isolationSource || '').trim().toLowerCase();
   const manualIsolation = customerStatus === 'isolated' && ['manual', 'admin', 'operator'].includes(isolationSource);
   const terminationSource = String(radiusUser.terminationSource || customer.terminationSource || invoice.terminationSource || '').trim().toLowerCase();
@@ -12359,6 +12399,20 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
     dueDateRaw: invoice.dueDate || '',
     amount: breakdown.baseAmount,
     amountText: formatCurrencyText(breakdown.baseAmount),
+    subtotal: Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0),
+    subtotalText: formatCurrencyText(Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0)),
+    packageSubtotal: Number(invoice.packageSubtotal || 0),
+    packageSubtotalText: Number(invoice.packageSubtotal || 0) > 0 ? formatCurrencyText(invoice.packageSubtotal) : '-',
+    addOns,
+    addons: addOns,
+    addOnsText: billingAddonsDisplayText(addOns),
+    addOnsTotal,
+    addOnsTotalText: addOnsTotal > 0 ? formatCurrencyText(addOnsTotal) : '-',
+    ppnRate: Number(invoice.ppnRate ?? invoice.vatRate ?? invoice.taxRate ?? 0) || 0,
+    ppnAmount,
+    ppnText: invoicePpnDisplayText(invoice),
+    discountAmount,
+    discountText: invoiceDiscountDisplayText(invoice),
     adminFee: breakdown.adminFee,
     adminFeeText: formatCurrencyText(breakdown.adminFee),
     gatewayAmount: breakdown.totalAmount,

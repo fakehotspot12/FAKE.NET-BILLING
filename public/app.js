@@ -4591,6 +4591,29 @@ async function printReceiptWithMode(printClass, mode = 'a4', rootSelector = '.re
   }, 500);
 }
 
+function billingReceiptPpnText(source = {}) {
+  if (source.ppnText && source.ppnText !== '-') return source.ppnText;
+  const amount = Math.max(0, Number(source.ppnAmount || source.vatAmount || source.taxAmount || 0));
+  const rate = Math.max(0, Number(source.ppnRate || source.vatRate || source.taxRate || 0));
+  if (amount <= 0) return '-';
+  return rate > 0 ? `${rate}% / ${rupiah(amount)}` : rupiah(amount);
+}
+
+function billingReceiptDiscountText(source = {}) {
+  if (source.discountText && source.discountText !== '-') return source.discountText;
+  const amount = Math.max(0, Number(source.discountAmount || source.discountValue || 0));
+  return amount > 0 ? rupiah(amount) : '-';
+}
+
+function billingReceiptAddonsText(source = {}) {
+  const summary = memberAddonsDisplay(source.addOns || source.addons || source.memberAddons || []);
+  if (summary !== '-') return summary;
+  const amount = Math.max(0, Number(source.addOnsTotal || source.addOnSubtotal || source.addOnMonthlyTotal || 0));
+  if (amount > 0) return rupiah(amount);
+  if (source.addOnsText && source.addOnsText !== '-') return String(source.addOnsText).split('\n')[0] || '-';
+  return '-';
+}
+
 function dailyReceiptTransaction(item = {}, report = {}) {
   const rawPlan = item.packageName || item.profileName || item.profile || item.item || '';
   const planText = String(rawPlan || '').trim().replace(/^internet\s*:\s*/i, '');
@@ -4603,6 +4626,9 @@ function dailyReceiptTransaction(item = {}, report = {}) {
     admin: dailyAdminLabel(item, report),
     planName: planAfterPrefix || 'Paket tidak tersedia',
     amountText: rupiah(item.amount || item.income || 0),
+    ppnText: billingReceiptPpnText(item),
+    discountText: billingReceiptDiscountText(item),
+    addOnsText: billingReceiptAddonsText(item),
     receiptTitle: 'KUITANSI PEMBAYARAN',
     receiptLabel: `Payment Invoice #${billingInvoiceNo(item) || item.invoiceNo || item.externalId || '-'}`
   };
@@ -4640,6 +4666,9 @@ function dailyBillingReceiptBody(transaction = {}) {
           <div><span>Nama Pelanggan</span><strong>${escapeHtml(customerName)}</strong></div>
           <div><span>Paket</span><strong>${escapeHtml(itemName)}</strong></div>
           <div><span>Periode</span><strong>${escapeHtml(periodText)}</strong></div>
+          <div class="receipt-a4-only"><span>Add Ons</span><strong>${escapeHtml(transaction.addOnsText || '-')}</strong></div>
+          <div class="receipt-a4-only"><span>PPN</span><strong>${escapeHtml(transaction.ppnText || '-')}</strong></div>
+          <div class="receipt-a4-only"><span>Diskon</span><strong>${escapeHtml(transaction.discountText || '-')}</strong></div>
           <div><span>Metode</span><strong>${escapeHtml(transaction.method || '-')}</strong></div>
           <div><span>Tanggal bayar</span><strong>${escapeHtml(reportTransactionDateText(transaction))}</strong></div>
         </div>
@@ -13088,6 +13117,9 @@ function billingPaymentReceiptBody(invoice = {}) {
   const signerName = invoice.paidByName || state.auth?.name || state.auth?.username || 'Admin';
   const invoiceNo = billingInvoiceNo(invoice) || '-';
   const printMode = safeReceiptPrintMode(state.receiptPrintMode || 'a4');
+  const addOnsText = billingReceiptAddonsText(invoice);
+  const ppnText = billingReceiptPpnText(invoice);
+  const discountText = billingReceiptDiscountText(invoice);
   return `
     <div class="receipt-preview receipt-printable print-mode-${printMode}">
       <div class="receipt-head">
@@ -13104,6 +13136,9 @@ function billingPaymentReceiptBody(invoice = {}) {
         <div><span>Username/UID</span><strong>${escapeHtml(invoice.username || invoice.accountId || '-')}</strong></div>
         <div><span>Untuk pembayaran</span><strong>${escapeHtml(invoice.item || invoice.subscribe || invoice.packageName || 'Tagihan internet')}</strong></div>
         <div><span>Periode</span><strong>${escapeHtml(readablePeriodText(invoice.coverageText || invoice.coveredPeriodText || invoice.period || state.period || '-'))}</strong></div>
+        <div class="receipt-a4-only"><span>Add Ons</span><strong>${escapeHtml(addOnsText)}</strong></div>
+        <div class="receipt-a4-only"><span>PPN</span><strong>${escapeHtml(ppnText)}</strong></div>
+        <div class="receipt-a4-only"><span>Diskon</span><strong>${escapeHtml(discountText)}</strong></div>
         <div><span>Metode</span><strong>${escapeHtml(invoice.paymentMethod || 'Tunai')}</strong></div>
         <div><span>Tanggal bayar</span><strong>${escapeHtml(invoice.paidAt ? dateTimeText(invoice.paidAt) : '-')}</strong></div>
         <div><span>Status</span><strong>${escapeHtml(billingStatusLabel(invoice.status))}</strong></div>

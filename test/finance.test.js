@@ -645,6 +645,10 @@ test('invoice WA template values render add-ons and fallback dash', () => {
 
   assert.equal(serverInternals.invoiceWaTemplateValues(data, invoiceWithAddOn).add_ons, 'Sewa CCTV x1: Rp 30.000');
   assert.equal(serverInternals.invoiceWaTemplateValues(data, invoiceWithoutAddOn).add_ons, '-');
+  const publicInvoice = serverInternals.publicPaymentGatewayInvoicePayload(data, invoiceWithAddOn);
+  assert.equal(publicInvoice.addOnsText, 'Sewa CCTV x1: Rp 30.000');
+  assert.equal(publicInvoice.ppnText, 'Rp 25.300');
+  assert.equal(publicInvoice.discountText, 'Rp 25.300');
 });
 
 test('cancelled local manual invoice releases period for recreation with updated price', () => {

@@ -159,6 +159,9 @@
     setText('packageName', invoice.packageName);
     setText('period', periodText(invoice.period));
     setText('dueDate', dateText(invoice.dueDate));
+    setText('addOns', invoice.addOnsText || invoice.addOnsTotalText || '-');
+    setText('ppn', invoice.ppnText || '-');
+    setText('discount', invoice.discountText || '-');
     setText('amount', invoice.amountText);
     setText('adminFee', invoice.adminFeeText);
     setText('gatewayAmount', invoice.gatewayAmountText);
