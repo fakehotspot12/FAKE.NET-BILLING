@@ -61,6 +61,8 @@ const DEFAULT_BUSINESS_NAME = 'ISP Billing';
 const DEFAULT_APP_SUBTITLE = 'Billing ISP dan RT/RW Net';
 const DEFAULT_BUSINESS_CODE = 'ISP';
 const APP_COPYRIGHT_NAME = 'FAKE.NET';
+const LEAFLET_CSS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+const LEAFLET_JS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
 const DEFAULT_PROFILE_PHOTO_URL = '/default-user-avatar.svg';
 const LEGACY_SOURCE_OFFSET_MINUTES = 7 * 60;
 const XENDIT_WITHDRAW_RESERVE_AMOUNT = 10000;
@@ -319,6 +321,7 @@ let appUpdateProgressLastPercent = 0;
 let renderGeneration = 0;
 let pageRequestController = new AbortController();
 let loginDomRepairing = false;
+let leafletLoadPromise = null;
 const NOTIFICATION_CACHE_PREFIX = 'fakenetOpsNotifications';
 const PAYMENT_NOTIFICATION_SEEN_PREFIX = 'fakenetBillingPaymentNotificationsSeen';
 const PAYMENT_NOTIFICATION_TTL_MS = 3000;
@@ -624,6 +627,50 @@ function appTimeZoneOptionMarkup(selected = DEFAULT_APP_TIME_ZONE) {
     ...APP_TIME_ZONE_OPTIONS.map(([zone, label]) => `<option value="${escapeHtml(zone)}" ${known && zone === value ? 'selected' : ''}>${escapeHtml(label)}</option>`),
     `<option value="custom" ${known ? '' : 'selected'}>Custom / Zona lain</option>`
   ].join('');
+}
+
+function ensureLeafletLoaded() {
+  if (window.L) return Promise.resolve(true);
+  if (leafletLoadPromise) return leafletLoadPromise;
+  leafletLoadPromise = new Promise((resolve) => {
+    if (!document.querySelector(`link[href="${LEAFLET_CSS_URL}"]`)) {
+      const stylesheet = document.createElement('link');
+      stylesheet.rel = 'stylesheet';
+      stylesheet.href = LEAFLET_CSS_URL;
+      document.head.appendChild(stylesheet);
+    }
+    const existing = document.querySelector(`script[src="${LEAFLET_JS_URL}"]`);
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(Boolean(ok && window.L));
+    };
+    const timer = window.setTimeout(() => finish(false), 7000);
+    const onReady = () => {
+      window.clearTimeout(timer);
+      finish(true);
+    };
+    const onError = () => {
+      window.clearTimeout(timer);
+      finish(false);
+    };
+    if (existing) {
+      existing.addEventListener('load', onReady, { once: true });
+      existing.addEventListener('error', onError, { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = LEAFLET_JS_URL;
+    script.async = true;
+    script.addEventListener('load', onReady, { once: true });
+    script.addEventListener('error', onError, { once: true });
+    document.head.appendChild(script);
+  }).then((loaded) => {
+    if (!loaded) leafletLoadPromise = null;
+    return loaded;
+  });
+  return leafletLoadPromise;
 }
 
 function dateTimeValueDate(value) {
@@ -9678,7 +9725,13 @@ function bindRadiusMemberFields(options = {}) {
     }
   };
   const ensureMap = () => {
-    if (map || !mapEl || !window.L) return;
+    if (map || !mapEl) return;
+    if (!window.L) {
+      ensureLeafletLoaded().then((loaded) => {
+        if (loaded) ensureMap();
+      });
+      return;
+    }
     map = window.L.map(mapEl, { zoomControl: true }).setView([-2.5489, 118.0149], 5);
     mapEl._radiusMap = map;
     window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -14067,7 +14120,13 @@ function bindMemberDetailModal(detail = {}) {
 
 function initMemberContactMap() {
   const mapEl = modalBody.querySelector('#memberContactLeafletMap');
-  if (!mapEl || mapEl._memberMap || !window.L || mapEl.closest('[hidden]')) return;
+  if (!mapEl || mapEl._memberMap || mapEl.closest('[hidden]')) return;
+  if (!window.L) {
+    ensureLeafletLoaded().then((loaded) => {
+      if (loaded) initMemberContactMap();
+    });
+    return;
+  }
   const latitude = Number(modalBody.querySelector('[name="latitude"]')?.value || 0);
   const longitude = Number(modalBody.querySelector('[name="longitude"]')?.value || 0);
   const hasPoint = Number.isFinite(latitude) && Number.isFinite(longitude) && latitude !== 0 && longitude !== 0;

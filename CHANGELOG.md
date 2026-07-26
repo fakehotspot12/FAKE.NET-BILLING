@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.40] - 2026-07-26
+
+### Fixed
+
+- Halaman login tidak lagi tertahan oleh CDN Leaflet/OpenStreetMap; library peta sekarang dimuat hanya saat fitur peta dibuka.
+- Mengatasi tampilan stuck di shell Dashboard sebelum login ketika koneksi ke CDN lambat atau terblokir.
+
 ## [2.9.39] - 2026-07-26
 
 ### Fixed
