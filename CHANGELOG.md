@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.33] - 2026-07-26
+
+### Changed
+
+- Sidebar submenu diberi penanda visual berupa rail dan chip ikon kecil agar hierarki menu lebih jelas di desktop maupun mobile.
+- Ikon menu dan submenu disesuaikan ulang sesuai fungsi, termasuk Monitoring, Laporan Statistik, Rekapitulasi, Voucher, Stok Inventaris, GenieACS, dan Manajemen Keuangan.
+
 ## [2.9.32] - 2026-07-26
 
 ### Fixed
