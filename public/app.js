@@ -296,6 +296,10 @@ let webPushSubscriptionActive = false;
 const paymentNotificationTimers = new Map();
 let topWaStatusTimer = null;
 let topWaStatusLoading = false;
+let appUpdateProgressTimer = null;
+let appUpdateProgressSeenRunning = false;
+let appUpdateProgressStartedAt = 0;
+let appUpdateProgressLastPercent = 0;
 let renderGeneration = 0;
 let pageRequestController = new AbortController();
 let loginDomRepairing = false;
@@ -17394,6 +17398,232 @@ function openAppChangelogModal(changelogText = '') {
   `, async () => {});
 }
 
+function appUpdateVersionLabel(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '-';
+  return /^\d/.test(raw) ? `v${raw}` : raw;
+}
+
+function appUpdateLogTail(log = '') {
+  const lines = String(log || '')
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  return lines.slice(-80).join('\n');
+}
+
+function appUpdateProgressPercent({ running = false, done = false, failed = false, waiting = false, log = '', elapsedSeconds = 0 } = {}) {
+  if (done) {
+    appUpdateProgressLastPercent = 100;
+    return 100;
+  }
+  if (failed) {
+    return Math.max(12, Math.min(96, appUpdateProgressLastPercent || 72));
+  }
+  const text = String(log || '');
+  let percent = waiting ? 76 : 8;
+  if (/memulai|dimulai|menyiapkan/i.test(text)) percent = Math.max(percent, 12);
+  if (/backup|stash|menyimpan/i.test(text)) percent = Math.max(percent, 22);
+  if (/git|fetch|pull|checkout|reset|merge/i.test(text)) percent = Math.max(percent, 36);
+  if (/dependency|npm|install|package|tesseract|ocr|apt|dnf|apk/i.test(text)) percent = Math.max(percent, 58);
+  if (/migrasi|migration|schema|database|repair/i.test(text)) percent = Math.max(percent, 74);
+  if (/restart|systemctl|service/i.test(text)) percent = Math.max(percent, 88);
+  if (running || waiting) {
+    const timePercent = Math.min(92, 10 + Math.floor(Number(elapsedSeconds || 0) / 4));
+    percent = Math.max(percent, timePercent);
+  }
+  percent = Math.max(appUpdateProgressLastPercent || 0, Math.min(96, percent));
+  appUpdateProgressLastPercent = percent;
+  return percent;
+}
+
+function appUpdateCloseEnabled(enabled) {
+  modal.querySelectorAll('[data-close-modal], #appUpdateProgressClose').forEach((button) => {
+    button.disabled = !enabled;
+    button.title = enabled ? 'Tutup' : 'Update masih berjalan';
+  });
+}
+
+function renderAppUpdateProgress(payload = {}, options = {}) {
+  const processStatus = payload.process || {};
+  const updateInfo = payload.update || {};
+  const log = appUpdateLogTail(payload.log || options.log || '');
+  const running = options.running ?? processStatus.running === true;
+  const failed = options.failed === true || processStatus.stale === true;
+  const done = options.done === true;
+  const waiting = options.waiting === true;
+  const title = failed
+    ? 'Update gagal atau tertahan'
+    : done
+      ? 'Update selesai'
+      : running
+        ? 'Update sedang berjalan'
+        : waiting
+          ? 'Menunggu service kembali'
+          : 'Menyiapkan update';
+  const subtitle = failed
+    ? (options.message || 'Periksa log terakhir, lalu jalankan update ulang jika diperlukan.')
+    : done
+      ? 'Aplikasi sudah diperbarui. Tutup popup atau muat ulang halaman untuk memakai file UI terbaru.'
+      : running
+        ? 'Jangan tutup browser atau restart service manual sampai proses selesai.'
+        : waiting
+          ? 'Service bisa terputus sebentar saat restart. Popup akan lanjut cek otomatis.'
+          : 'Perintah update sedang dikirim ke server.';
+  const installed = appUpdateVersionLabel(updateInfo.currentVersion || state.branding.appVersion);
+  const remote = appUpdateVersionLabel(updateInfo.remoteVersion || updateInfo.currentVersion || state.branding.appVersion);
+  const elapsedSeconds = appUpdateProgressStartedAt
+    ? Math.max(0, Math.round((Date.now() - appUpdateProgressStartedAt) / 1000))
+    : 0;
+  const percent = appUpdateProgressPercent({ running, done, failed, waiting, log, elapsedSeconds });
+  const progressClass = failed ? 'is-failed' : done ? 'is-done' : running || waiting ? 'is-running' : '';
+
+  modalBody.innerHTML = `
+    <div class="app-update-progress" data-app-update-progress>
+      <div class="app-update-meter-wrap">
+        <div class="app-update-meter ${progressClass}" style="--update-progress: ${percent * 3.6}deg;">
+          <div>
+            <strong>${escapeHtml(`${percent}%`)}</strong>
+            <span>${escapeHtml(done ? 'Selesai' : failed ? 'Gagal' : waiting ? 'Reconnect' : running ? 'Berjalan' : 'Mulai')}</span>
+          </div>
+        </div>
+      </div>
+      <section class="notice ${failed ? 'error' : done ? 'positive' : 'warning'}">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(subtitle)}</span>
+      </section>
+      <div class="app-update-progress-grid">
+        <div>
+          <span>Versi lokal</span>
+          <strong>${escapeHtml(installed)}</strong>
+        </div>
+        <div>
+          <span>Rilis terbaru</span>
+          <strong>${escapeHtml(remote)}</strong>
+        </div>
+        <div>
+          <span>Proses</span>
+          <strong>${running ? `PID ${processStatus.pid || '-'}` : (done ? 'Selesai' : failed ? 'Gagal' : 'Menunggu')}</strong>
+        </div>
+        <div>
+          <span>Durasi</span>
+          <strong>${escapeHtml(`${elapsedSeconds} detik`)}</strong>
+        </div>
+      </div>
+      <div class="app-update-log">
+        <div class="app-update-log-head">
+          <strong>Log update terakhir</strong>
+          <span>${escapeHtml(payload.system?.hostname || '')}</span>
+        </div>
+        <pre>${escapeHtml(log || 'Belum ada log update.')}</pre>
+      </div>
+      <div class="modal-actions">
+        ${done ? '<button class="button" id="appUpdateProgressReload" type="button">Muat Ulang Halaman</button>' : ''}
+        <button class="ghost-button" id="appUpdateProgressClose" type="button" ${done || failed ? '' : 'disabled'}>Tutup</button>
+      </div>
+    </div>
+  `;
+  modalBody.querySelector('#appUpdateProgressClose')?.addEventListener('click', () => modal.close());
+  modalBody.querySelector('#appUpdateProgressReload')?.addEventListener('click', () => window.location.reload());
+  appUpdateCloseEnabled(done || failed);
+}
+
+function clearAppUpdateProgressTimer() {
+  if (appUpdateProgressTimer) {
+    window.clearTimeout(appUpdateProgressTimer);
+    appUpdateProgressTimer = null;
+  }
+}
+
+function scheduleAppUpdateProgressPoll(delayMs = 2500) {
+  clearAppUpdateProgressTimer();
+  appUpdateProgressTimer = window.setTimeout(() => {
+    pollAppUpdateProgress().catch(() => {});
+  }, delayMs);
+}
+
+async function pollAppUpdateProgress() {
+  if (!modal.open || !modalBody.querySelector('[data-app-update-progress]')) {
+    clearAppUpdateProgressTimer();
+    return;
+  }
+  const elapsedMs = appUpdateProgressStartedAt ? Date.now() - appUpdateProgressStartedAt : 0;
+  try {
+    const payload = await api('/api/system/update/status?refresh=1', {
+      skipAuthRedirect: true,
+      timeoutMs: 8000
+    });
+    const running = payload.process?.running === true || payload.running === true;
+    const stale = payload.process?.stale === true;
+    const log = String(payload.log || '');
+    const logFinished = /Repair selesai|Update selesai|Update berhasil|Service.*restart/i.test(log);
+    const logFailed = /(Update aplikasi gagal|Repair gagal|npm ERR!|fatal:|fatal error|failed to)/i.test(log) && !/Repair selesai/i.test(log);
+    if (running) appUpdateProgressSeenRunning = true;
+    const done = !running && !stale && !logFailed && (appUpdateProgressSeenRunning || logFinished || elapsedMs > 12000);
+    const failed = stale || logFailed || elapsedMs > 20 * 60 * 1000;
+    renderAppUpdateProgress(payload, {
+      running,
+      done,
+      failed,
+      message: failed ? 'Update tidak selesai normal. Cek log terakhir sebelum mencoba ulang.' : ''
+    });
+    if (done || failed) {
+      clearAppUpdateProgressTimer();
+      renderSettings({ refreshUpdateStatus: true }).catch(() => {});
+      return;
+    }
+    scheduleAppUpdateProgressPoll(2500);
+  } catch (error) {
+    renderAppUpdateProgress({}, {
+      waiting: true,
+      log: error.message || 'Menunggu service update kembali...',
+      running: false
+    });
+    scheduleAppUpdateProgressPoll(3000);
+  }
+}
+
+async function openAppUpdateProgressModal() {
+  clearAppUpdateProgressTimer();
+  appUpdateProgressSeenRunning = false;
+  appUpdateProgressStartedAt = Date.now();
+  appUpdateProgressLastPercent = 0;
+  openModal('Progress Update Aplikasi', `
+    <div class="app-update-progress" data-app-update-progress></div>
+  `, async () => {});
+  renderAppUpdateProgress({ log: 'Memulai update...' }, { running: false });
+  appUpdateCloseEnabled(false);
+  const preventCancelWhileRunning = (event) => {
+    if (modalBody.querySelector('#appUpdateProgressClose')?.disabled) {
+      event.preventDefault();
+    }
+  };
+  modal.addEventListener('cancel', preventCancelWhileRunning);
+  modal.addEventListener('close', () => {
+    clearAppUpdateProgressTimer();
+    modal.removeEventListener('cancel', preventCancelWhileRunning);
+  }, { once: true });
+  try {
+    const result = await api('/api/system/update', {
+      method: 'POST',
+      body: JSON.stringify({}),
+      timeoutMs: 15000
+    });
+    renderAppUpdateProgress({
+      update: {},
+      process: { running: true, pid: result.pid || 0 },
+      log: result.message || 'Update aplikasi dimulai...'
+    }, { running: true });
+    scheduleAppUpdateProgressPoll(1500);
+  } catch (error) {
+    renderAppUpdateProgress({}, {
+      failed: true,
+      log: error.message || 'Update aplikasi gagal dijalankan',
+      message: error.message || 'Update aplikasi gagal dijalankan'
+    });
+  }
+}
+
 async function renderSettings(options = {}) {
   app.innerHTML = '<div class="empty">Memuat pengaturan...</div>';
   const { settings } = await api('/api/settings');
@@ -17418,6 +17648,17 @@ async function renderSettings(options = {}) {
   const installedVersionLabel = versionLabel(installedVersion);
   const latestVersionLabel = versionLabel(latestVersion);
   const hasNewVersion = updateAvailable && installedVersionLabel && latestVersionLabel && installedVersionLabel !== latestVersionLabel;
+  const updateButtonUpToDate = Boolean(updateStatus.updaterInstalled && !updateInfo.error && !hasNewVersion);
+  const updateButtonEnabled = Boolean(updateStatus.updaterInstalled && hasNewVersion && !updateStatus.running);
+  const updateButtonClass = updateButtonUpToDate ? 'button update-ready-button' : 'button';
+  const updateButtonText = updateButtonUpToDate ? 'Up To Date' : 'Update Aplikasi';
+  const updateButtonTitle = !updateStatus.updaterInstalled
+    ? 'Updater belum terpasang'
+    : updateButtonUpToDate
+      ? 'Versi aplikasi sudah terbaru'
+      : hasNewVersion
+        ? 'Jalankan update aplikasi'
+        : 'Cek update terlebih dahulu';
   const changelogText = updateStatus.changelog || 'Belum ada changelog rilis.';
   const updateNoticeClass = !updateStatus.updaterInstalled || updateInfo.error ? 'warning' : hasNewVersion ? 'warning' : 'positive';
   const updateTitle = !updateStatus.updaterInstalled
@@ -17547,7 +17788,7 @@ async function renderSettings(options = {}) {
             </div>
           </div>
           <div class="modal-actions field full">
-            <button class="button" id="runAppUpdateButton" type="button" ${updateStatus.updaterInstalled ? '' : 'disabled'}>Update Aplikasi</button>
+            <button class="${updateButtonClass}" id="runAppUpdateButton" type="button" title="${escapeHtml(updateButtonTitle)}" ${updateButtonEnabled ? '' : 'disabled'}>${escapeHtml(updateButtonText)}</button>
             <button class="ghost-button" id="refreshAppUpdateStatus" type="button">Check for Update</button>
             <button class="ghost-button" id="openAppChangelogButton" type="button">Lihat Changelog</button>
           </div>
@@ -17662,25 +17903,11 @@ async function renderSettings(options = {}) {
     openAppChangelogModal(changelogText);
   });
 
-  document.getElementById('runAppUpdateButton')?.addEventListener('click', async (event) => {
+  document.getElementById('runAppUpdateButton')?.addEventListener('click', async () => {
     if (!window.confirm('Update aplikasi akan membuat backup, memperbarui kode/dependency, lalu restart service. Lanjutkan?')) {
       return;
     }
-    const button = event.currentTarget;
-    try {
-      button.disabled = true;
-      setToast('Update aplikasi dimulai...');
-      const result = await api('/api/system/update', {
-        method: 'POST',
-        body: JSON.stringify({}),
-        timeoutMs: 15000
-      });
-      setToast(result.message || 'Update aplikasi dimulai');
-      setTimeout(() => renderSettings().catch(() => {}), 3000);
-    } catch (error) {
-      setToast(error.message || 'Update aplikasi gagal dijalankan');
-      button.disabled = false;
-    }
+    await openAppUpdateProgressModal();
   });
 
 }

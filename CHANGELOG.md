@@ -2,6 +2,20 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.35] - 2026-07-26
+
+### Added
+
+- Pengaturan > Update Aplikasi sekarang memakai popup progress dengan indikator persen bulat, status proses, durasi, dan log update terakhir.
+
+### Changed
+
+- Tombol update otomatis menjadi hijau `Up To Date` dan terkunci saat versi lokal sudah sama dengan rilis terbaru.
+
+### Fixed
+
+- Proses update yang lama karena install dependency atau restart service tidak lagi terasa menggantung tanpa informasi.
+
 ## [2.9.34] - 2026-07-26
 
 ### Added

@@ -530,6 +530,26 @@ function clearStaleUpdateLock() {
   return { cleared: true, pid: lock.pid };
 }
 
+function publicUpdateProcessStatus() {
+  const lock = activeUpdateLock();
+  if (!lock) {
+    return {
+      running: false,
+      active: false,
+      stale: false,
+      pid: 0,
+      ageSeconds: 0
+    };
+  }
+  return {
+    running: lock.active === true,
+    active: lock.active === true,
+    stale: lock.stale === true,
+    pid: lock.pid || 0,
+    ageSeconds: Math.round(Number(lock.ageMs || 0) / 1000)
+  };
+}
+
 async function startUpdateProcess() {
   if (!fsSync.existsSync(APP_UPDATE_COMMAND)) {
     throw new Error(`Command update tidak ditemukan: ${APP_UPDATE_COMMAND}`);
@@ -17960,15 +17980,26 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/system/update/status') {
     const authContext = await requirePermission(req, res, 'settings:write');
     if (!authContext) return;
+    const processStatus = publicUpdateProcessStatus();
+    const refresh = url.searchParams.get('refresh') === '1';
     const [log, update] = await Promise.all([
       updateLogTail(),
-      appUpdateStatus({ force: url.searchParams.get('refresh') === '1' })
+      processStatus.running
+        ? Promise.resolve(updateStatusCache.value || {
+          currentVersion: APP_VERSION,
+          remoteVersion: APP_VERSION,
+          updateAvailable: false,
+          checkedAt: new Date().toISOString()
+        })
+        : appUpdateStatus({ force: refresh })
     ]);
     sendJson(res, 200, {
       ok: true,
       system: publicSystemInfo(),
       updaterInstalled: fsSync.existsSync(APP_UPDATE_COMMAND),
       update,
+      process: processStatus,
+      running: processStatus.running,
       log,
       changelog: update.remoteChangelog || update.remoteCommitLog || updateAvailableFallbackSummary(update) || appChangelogSummary(10)
     });

@@ -3319,6 +3319,10 @@ dialog:has(.changelog-preview) {
   width: min(760px, calc(100vw - 24px));
 }
 
+dialog:has(.app-update-progress) {
+  width: min(860px, calc(100vw - 24px));
+}
+
 .changelog-preview {
   max-height: min(68vh, 680px);
   display: grid;
@@ -3373,6 +3377,178 @@ dialog:has(.changelog-preview) {
   margin-top: 3px;
   color: var(--primary);
   font-size: 11px;
+}
+
+.app-update-progress {
+  display: grid;
+  gap: 14px;
+}
+
+.app-update-meter-wrap {
+  display: grid;
+  place-items: center;
+  padding: 4px 0 2px;
+}
+
+.app-update-meter {
+  --update-progress: 0deg;
+  width: 132px;
+  height: 132px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background:
+    conic-gradient(var(--primary) var(--update-progress), rgba(148, 163, 184, 0.22) 0),
+    var(--surface-soft);
+  box-shadow: inset 0 0 0 1px var(--line), 0 16px 32px rgba(15, 23, 42, 0.13);
+}
+
+.app-update-meter::before {
+  content: '';
+  grid-area: 1 / 1;
+  width: 104px;
+  height: 104px;
+  border-radius: inherit;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.app-update-meter > div {
+  grid-area: 1 / 1;
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 3px;
+  text-align: center;
+}
+
+.app-update-meter strong {
+  color: var(--text);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.app-update-meter span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.app-update-meter.is-running {
+  animation: updatePulse 1.6s ease-in-out infinite;
+}
+
+.app-update-meter.is-done {
+  background:
+    conic-gradient(#16a34a var(--update-progress), rgba(148, 163, 184, 0.22) 0),
+    var(--surface-soft);
+}
+
+.app-update-meter.is-failed {
+  background:
+    conic-gradient(var(--danger) var(--update-progress), rgba(148, 163, 184, 0.22) 0),
+    var(--surface-soft);
+}
+
+.app-update-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.app-update-progress-grid > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.app-update-progress-grid span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.app-update-progress-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-update-log {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.app-update-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.app-update-log-head strong {
+  color: #e5e7eb;
+  font-size: 13px;
+}
+
+.app-update-log-head span {
+  min-width: 0;
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-update-log pre {
+  max-height: min(30vh, 260px);
+  margin: 0;
+  overflow: auto;
+  color: #dbeafe;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.update-ready-button,
+.update-ready-button:disabled {
+  color: #fff;
+  background: linear-gradient(180deg, #22c55e, #16a34a);
+  border-color: #15803d;
+  box-shadow: 0 10px 22px rgba(22, 163, 74, 0.2);
+  cursor: default;
+  opacity: 1;
+}
+
+[data-theme="dark"] .app-update-meter::before {
+  background: var(--surface);
+}
+
+[data-theme="dark"] .app-update-progress-grid > div {
+  background: rgba(15, 23, 42, 0.36);
+}
+
+@keyframes updatePulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+  }
 }
 
 .login-info-link {
@@ -9237,6 +9413,28 @@ dialog::backdrop {
     padding: 13px;
   }
 
+  .app-update-progress-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-update-meter {
+    width: 112px;
+    height: 112px;
+  }
+
+  .app-update-meter::before {
+    width: 88px;
+    height: 88px;
+  }
+
+  .app-update-meter strong {
+    font-size: 24px;
+  }
+
+  .app-update-log pre {
+    max-height: 220px;
+  }
+
   .member-contact-preview-grid {
     grid-template-columns: 1fr;
   }
@@ -9327,6 +9525,10 @@ dialog::backdrop {
   .modal-actions .ghost-button,
   .modal-actions .danger-button {
     width: 100%;
+  }
+
+  .app-update-progress-grid {
+    grid-template-columns: 1fr;
   }
 
   .list-actions .button,
