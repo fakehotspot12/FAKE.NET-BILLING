@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.53] - 2026-07-26
+
+### Fixed
+
+- Posisi QR voucher pada print thermal RawBT diratakan ke tengah struk, lalu alignment printer dikembalikan normal setelah QR selesai dicetak.
+
 ## [2.9.52] - 2026-07-26
 
 ### Fixed
