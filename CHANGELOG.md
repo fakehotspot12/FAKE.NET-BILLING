@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.54] - 2026-07-26
+
+### Changed
+
+- Teks kode voucher pada print thermal RawBT dibuat menjadi `Kode Voucher : XXXXX` dan tetap rata tengah.
+
 ## [2.9.53] - 2026-07-26
 
 ### Fixed

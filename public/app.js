@@ -8490,7 +8490,7 @@ function hotspotVoucherRawBtTicketText(row = {}, index = 0, template = {}, mode 
     thermalCenter(hotspotVoucherBusinessName(), width),
     thermalCenter('VOUCHER HOTSPOT', width),
     thermalSeparator(width),
-    thermalCenter(voucherCode, width),
+    thermalCenter(`Kode Voucher : ${voucherCode}`, width),
     ...(password && password !== voucherCode ? thermalKeyValue('Password', password, width) : []),
     ...thermalKeyValue('Paket', row.profile || '-', width),
     ...thermalKeyValue('Harga', hotspotVoucherPriceText(row.price), width),
