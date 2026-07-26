@@ -340,7 +340,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Memasang dan memverifikasi Web Push; kunci VAPID dibuat otomatis saat dipakai pertama kali dan disimpan persisten di `data/`.
 - Memvalidasi kelengkapan source, lockfile, service worker, manifest, SQL FreeRADIUS, helper command, dan unit service sebelum instalasi dilanjutkan.
 - Membuat `/etc/fakenet-billing.env` dan `/etc/fakenet-billing-waha.env`.
-- Membuat `/etc/fakenet-billing-genieacs.env` dengan permission `600` dan secret JWT acak.
+- Membuat `/etc/fakenet-billing-genieacs.env` dengan permission `600` dan secret JWT acak hanya jika mesin belum memiliki GenieACS existing.
 - Membuat password random untuk database aplikasi, database Radius, dan WAHA.
 - Membuat database PostgreSQL `fakenet_billing` dan `radius`.
 - Membuat schema FreeRADIUS dasar: `nas`, `radcheck`, `radreply`, `radusergroup`, `radgroupcheck`, `radgroupreply`, dan `radacct`.
@@ -351,7 +351,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Memasang command stack `fakenet-billing-stack`.
 - Menyesuaikan unit systemd atau OpenRC sesuai distro yang dipakai.
 - Menjalankan health check aplikasi dan worker BullMQ sebelum instalasi dinyatakan selesai.
-- Menjalankan health check GenieACS UI/NBI dan bootstrap parameter sebelum instalasi dinyatakan selesai.
+- Menjalankan health check GenieACS UI/NBI dan bootstrap parameter hanya pada instalasi GenieACS bawaan billing.
 
 Yang tetap perlu diatur setelah install:
 
@@ -372,9 +372,11 @@ Env utama:
 
 ### GenieACS Lokal
 
-Instalasi baru memasang GenieACS lokal secara default. MongoDB dijalankan dalam container dengan data persisten di `/opt/fakenet-billing-genieacs/mongodb`; proses CWMP, NBI, FS, dan UI berjalan sebagai user sistem `genieacs`.
+Instalasi baru pada mesin kosong memasang GenieACS lokal secara default. MongoDB dijalankan dalam container dengan data persisten di `/opt/fakenet-billing-genieacs/mongodb`; proses CWMP, NBI, FS, dan UI berjalan sebagai user sistem `genieacs`.
 
-Jika installer menemukan GenieACS existing dari service, proses, atau port default `7547/7557/7567/7568`, instalasi GenieACS bawaan billing akan dilewati otomatis supaya tidak konflik dengan ACS yang sudah berjalan. Aplikasi billing tetap diinstall normal. Jika NBI existing ada di `127.0.0.1:7557`, billing akan menggunakannya sebagai default; jika berbeda, isi URL NBI dari menu `GenieACS > Pengaturan`.
+Jika installer menemukan GenieACS existing dari service, proses, atau port default `7547/7557/7567/7568`, instalasi GenieACS bawaan billing akan dilewati otomatis supaya tidak konflik dengan ACS yang sudah berjalan. Unit service bawaan billing yang sempat tertinggal akan di-stop, di-disable, dan dibersihkan dari systemd/OpenRC, tanpa menghapus data ACS existing. Aplikasi billing tetap diinstall normal. Jika NBI existing ada di `127.0.0.1:7557`, billing akan menggunakannya sebagai default; jika berbeda, isi URL NBI dari menu `GenieACS > Pengaturan`.
+
+Installer menulis marker `GENIEACS_SOURCE` dan `FAKENET_BUNDLED_GENIEACS` di `/etc/fakenet-billing.env`. Helper `fakenet-billing-stack` hanya akan start/restart service GenieACS bawaan jika marker tersebut menunjukkan instalasi `bundled`, sehingga update web tidak memaksa ACS bawaan pada mesin yang sudah punya GenieACS sendiri.
 
 Konfigurasi awal:
 
@@ -415,6 +417,9 @@ Service utama:
 - `fakenet-billing-wifiku.service`
 - `fakenet-billing-radius-connector.service`
 - `fakenet-billing-waha.service`
+
+Service GenieACS bawaan berikut hanya ada dan ikut dikelola jika install dilakukan pada mesin kosong tanpa GenieACS existing:
+
 - `fakenet-billing-genieacs-mongodb.service`
 - `fakenet-billing-genieacs-cwmp.service`
 - `fakenet-billing-genieacs-nbi.service`

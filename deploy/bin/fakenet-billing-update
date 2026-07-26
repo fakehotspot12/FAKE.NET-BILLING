@@ -298,7 +298,12 @@ if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
 fi
 
 if [ -f "$APP_DIR/install.sh" ]; then
-  APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 INSTALL_GENIEACS=0 bash "$APP_DIR/install.sh" repair || true
+  load_env_file
+  INSTALL_GENIEACS_FOR_REPAIR=0
+  if [ "${FAKENET_BUNDLED_GENIEACS:-0}" = "1" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
+    INSTALL_GENIEACS_FOR_REPAIR=1
+  fi
+  APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair || true
 fi
 
 if command -v systemctl >/dev/null 2>&1; then

@@ -211,9 +211,6 @@ external_genieacs_process_exists() {
 
 external_genieacs_detected() {
   [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 1
-  if [ -f "$GENIEACS_ENV_FILE" ] && fakenet_genieacs_unit_exists; then
-    return 1
-  fi
   external_genieacs_unit_exists && return 0
   external_genieacs_process_exists && return 0
   for port in 7547 7557 7567 7568; do
@@ -222,11 +219,38 @@ external_genieacs_detected() {
   return 1
 }
 
+cleanup_fakenet_genieacs_services() {
+  local service
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop "${GENIEACS_UNITS[@]}" >/dev/null 2>&1 || true
+    systemctl disable "${GENIEACS_UNITS[@]}" >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/fakenet-billing-genieacs-*.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed >/dev/null 2>&1 || true
+  fi
+  if command -v rc-service >/dev/null 2>&1; then
+    for service in \
+      fakenet-billing-genieacs-mongodb \
+      fakenet-billing-genieacs-cwmp \
+      fakenet-billing-genieacs-nbi \
+      fakenet-billing-genieacs-fs \
+      fakenet-billing-genieacs-ui; do
+      rc-service "$service" stop >/dev/null 2>&1 || true
+      rc-update del "$service" default >/dev/null 2>&1 || true
+      rm -f "/etc/init.d/$service"
+    done
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    docker rm -f fakenet-billing-genieacs-mongodb >/dev/null 2>&1 || true
+  fi
+}
+
 auto_skip_existing_genieacs() {
   if external_genieacs_detected; then
     INSTALL_GENIEACS=0
     GENIEACS_EXTERNAL_DETECTED=1
     export INSTALL_GENIEACS GENIEACS_EXTERNAL_DETECTED
+    cleanup_fakenet_genieacs_services
     echo "GenieACS existing terdeteksi. Instalasi GenieACS bawaan FAKE.NET Billing dilewati agar tidak konflik service/port."
     echo "Billing akan memakai GenieACS existing jika NBI localhost tersedia; jika berbeda, atur URL dari menu GenieACS > Setting."
   fi
@@ -499,11 +523,18 @@ install_env() {
     chmod 600 "$GENIEACS_ENV_FILE"
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_ENABLED 1
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_BASE_URL http://127.0.0.1:7557
+    replace_or_append_env /etc/fakenet-billing.env FAKENET_BUNDLED_GENIEACS 1
+    replace_or_append_env /etc/fakenet-billing.env GENIEACS_SOURCE bundled
   elif [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ]; then
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_ENABLED 1
     if port_is_listening 7557; then
       append_env_if_missing /etc/fakenet-billing.env GENIEACS_BASE_URL http://127.0.0.1:7557
     fi
+    replace_or_append_env /etc/fakenet-billing.env FAKENET_BUNDLED_GENIEACS 0
+    replace_or_append_env /etc/fakenet-billing.env GENIEACS_SOURCE existing
+  else
+    replace_or_append_env /etc/fakenet-billing.env FAKENET_BUNDLED_GENIEACS 0
+    replace_or_append_env /etc/fakenet-billing.env GENIEACS_SOURCE disabled
   fi
 }
 
@@ -1059,6 +1090,11 @@ install_openrc() {
 
 repair_install() {
   mkdir -p /var/log/fakenet-billing
+  if [ "${INSTALL_GENIEACS:-1}" = "0" ] && external_genieacs_unit_exists; then
+    GENIEACS_EXTERNAL_DETECTED=1
+    export GENIEACS_EXTERNAL_DETECTED
+    cleanup_fakenet_genieacs_services
+  fi
   install_ocr_runtime
   install_env
 

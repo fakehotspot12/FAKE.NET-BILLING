@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.46] - 2026-07-26
+
+### Fixed
+
+- Installer sekarang melewati GenieACS bawaan billing jika mesin sudah memiliki GenieACS existing, lalu membersihkan unit `fakenet-billing-genieacs-*` yang stale agar tidak ikut start/restart.
+- Helper `fakenet-billing-stack` hanya mengelola GenieACS bawaan jika instalasi ditandai sebagai bundled, sehingga update web tidak memaksa service ACS tambahan pada server yang sudah punya ACS sendiri.
+- Updater mempertahankan mode GenieACS sesuai marker instalasi: bundled tetap dikelola, existing tetap dibiarkan memakai ACS yang sudah ada.
+
 ## [2.9.45] - 2026-07-26
 
 ### Changed

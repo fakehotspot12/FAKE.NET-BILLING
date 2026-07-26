@@ -2,14 +2,18 @@
 set -euo pipefail
 
 ACTION="${1:-status}"
+ENV_FILE="${FAKENET_ENV_FILE:-/etc/fakenet-billing.env}"
 
-APP_UNITS=(
+BILLING_UNITS=(
   fakenet-billing.service
   fakenet-billing-isolir.service
   fakenet-billing-voucher.service
   fakenet-billing-wifiku.service
   fakenet-billing-radius-connector.service
   fakenet-billing-waha.service
+)
+
+GENIEACS_UNITS=(
   fakenet-billing-genieacs-mongodb.service
   fakenet-billing-genieacs-cwmp.service
   fakenet-billing-genieacs-nbi.service
@@ -17,13 +21,16 @@ APP_UNITS=(
   fakenet-billing-genieacs-ui.service
 )
 
-APP_SERVICES=(
+BILLING_SERVICES=(
   fakenet-billing
   fakenet-billing-isolir
   fakenet-billing-voucher
   fakenet-billing-wifiku
   fakenet-billing-radius-connector
   fakenet-billing-waha
+)
+
+GENIEACS_SERVICES=(
   fakenet-billing-genieacs-mongodb
   fakenet-billing-genieacs-cwmp
   fakenet-billing-genieacs-nbi
@@ -64,6 +71,14 @@ systemd_unit_exists() {
   systemctl list-unit-files "$1" --no-legend >/dev/null 2>&1
 }
 
+bundled_genieacs_enabled() {
+  local bundled=""
+  if [ -f "$ENV_FILE" ]; then
+    bundled="$(grep -E '^FAKENET_BUNDLED_GENIEACS=' "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '\"' || true)"
+  fi
+  [ "$bundled" = "1" ]
+}
+
 resolve_systemd_group() {
   local unit
   for unit in "$@"; do
@@ -86,9 +101,26 @@ systemd_base_units() {
 systemd_units() {
   local unit
   systemd_base_units
-  for unit in "${APP_UNITS[@]}"; do
+  for unit in "${BILLING_UNITS[@]}"; do
     systemd_unit_exists "$unit" && printf '%s\n' "$unit"
   done
+  if bundled_genieacs_enabled; then
+    for unit in "${GENIEACS_UNITS[@]}"; do
+      systemd_unit_exists "$unit" && printf '%s\n' "$unit"
+    done
+  fi
+}
+
+systemd_app_units() {
+  local unit
+  for unit in "${BILLING_UNITS[@]}"; do
+    systemd_unit_exists "$unit" && printf '%s\n' "$unit"
+  done
+  if bundled_genieacs_enabled; then
+    for unit in "${GENIEACS_UNITS[@]}"; do
+      systemd_unit_exists "$unit" && printf '%s\n' "$unit"
+    done
+  fi
 }
 
 restart_unit() {
@@ -106,9 +138,26 @@ openrc_service_exists() {
 
 openrc_services() {
   local service
-  for service in "${OPENRC_BASE_SERVICES[@]}" "${APP_SERVICES[@]}"; do
+  for service in "${OPENRC_BASE_SERVICES[@]}" "${BILLING_SERVICES[@]}"; do
     openrc_service_exists "$service" && printf '%s\n' "$service"
   done
+  if bundled_genieacs_enabled; then
+    for service in "${GENIEACS_SERVICES[@]}"; do
+      openrc_service_exists "$service" && printf '%s\n' "$service"
+    done
+  fi
+}
+
+openrc_app_services() {
+  local service
+  for service in "${BILLING_SERVICES[@]}"; do
+    openrc_service_exists "$service" && printf '%s\n' "$service"
+  done
+  if bundled_genieacs_enabled; then
+    for service in "${GENIEACS_SERVICES[@]}"; do
+      openrc_service_exists "$service" && printf '%s\n' "$service"
+    done
+  fi
 }
 
 run_systemd() {
@@ -126,15 +175,16 @@ run_systemd() {
       ;;
     restart-app)
       failed=0
-      for unit in "${APP_UNITS[@]}"; do
-        systemd_unit_exists "$unit" || continue
+      mapfile -t units < <(systemd_app_units)
+      for unit in "${units[@]}"; do
         restart_unit "$unit" || failed=1
       done
       return "$failed"
       ;;
     stop)
-      for unit in "${APP_UNITS[@]}"; do
-        systemd_unit_exists "$unit" && systemctl stop "$unit" || true
+      mapfile -t units < <(systemd_app_units)
+      for unit in "${units[@]}"; do
+        systemctl stop "$unit" || true
       done
       ;;
     status)
@@ -168,14 +218,15 @@ run_openrc() {
       ;;
     restart-app)
       failed=0
-      for service in "${APP_SERVICES[@]}"; do
-        openrc_service_exists "$service" || continue
+      mapfile -t services < <(openrc_app_services)
+      for service in "${services[@]}"; do
         rc-service "$service" restart || rc-service "$service" start || failed=1
       done
       return "$failed"
       ;;
     stop)
-      for service in "${APP_SERVICES[@]}"; do openrc_service_exists "$service" && rc-service "$service" stop || true; done
+      mapfile -t services < <(openrc_app_services)
+      for service in "${services[@]}"; do rc-service "$service" stop || true; done
       ;;
     status)
       for service in "${services[@]}"; do rc-service "$service" status || true; done
