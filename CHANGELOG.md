@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.41] - 2026-07-26
+
+### Fixed
+
+- Memperbaiki boot frontend yang gagal karena fungsi tanggal membaca `state` sebelum inisialisasi setelah penambahan pengaturan zona waktu.
+- Halaman login/dashboard tidak lagi stuck kosong setelah update timezone.
+
 ## [2.9.40] - 2026-07-26
 
 ### Fixed

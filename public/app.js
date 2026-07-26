@@ -75,6 +75,7 @@ const LEGACY_LAST_VIEW_STORAGE_KEY = 'fakenetOpsLastView';
 const LOGIN_RETURN_VIEW_STORAGE_KEY = 'fakenetBillingReturnView';
 const THEME_STORAGE_KEY = 'fakenetBillingTheme';
 const MONITORING_BILLING_PERIOD_STORAGE_KEY = 'fakenetBillingMonitoringBillingPeriod';
+let activeClientTimeZone = DEFAULT_APP_TIME_ZONE;
 
 const titles = {
   dashboard: 'Dashboard',
@@ -611,8 +612,14 @@ function isValidTimeZone(value = '') {
 }
 
 function appTimeZone() {
-  const value = String(state.settings.timeZone || state.branding.timeZone || DEFAULT_APP_TIME_ZONE).trim();
+  const value = String(activeClientTimeZone || DEFAULT_APP_TIME_ZONE).trim();
   return isValidTimeZone(value) ? value : DEFAULT_APP_TIME_ZONE;
+}
+
+function setActiveClientTimeZone(value = '') {
+  const next = String(value || '').trim();
+  activeClientTimeZone = isValidTimeZone(next) ? next : DEFAULT_APP_TIME_ZONE;
+  return activeClientTimeZone;
 }
 
 function appTimeZoneLabel(value = appTimeZone()) {
@@ -2786,6 +2793,7 @@ function updateBranding(payload = {}) {
       ...payload.settings,
       logoUrl: safeLogoUrl(payload.settings.logoUrl)
     };
+    setActiveClientTimeZone(state.settings.timeZone || state.branding.timeZone || DEFAULT_APP_TIME_ZONE);
   }
   let source = null;
   if (payload.branding && typeof payload.branding === 'object') {
@@ -2814,6 +2822,7 @@ function updateBranding(payload = {}) {
       ...source,
       logoUrl: safeLogoUrl(source.logoUrl || state.settings.logoUrl)
     };
+    setActiveClientTimeZone(state.branding.timeZone || state.settings.timeZone || DEFAULT_APP_TIME_ZONE);
     if (Object.prototype.hasOwnProperty.call(source, 'loginVerificationEnabled')) {
       state.settings = {
         ...state.settings,
