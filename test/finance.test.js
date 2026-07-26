@@ -6957,11 +6957,12 @@ test('startup migration moves legacy base64 user and house photos to upload fold
 
   const result = await serverInternals.migrateLegacyInlineImages(data, { uploadRoot });
 
-  assert.equal(result.migrated, 2);
+  assert.equal(result.migrated, 3);
+  assert.match(data.settings.logoUrl, /^\/uploads\/profile\/migrated-/);
   assert.match(data.users[0].photoUrl, /^\/uploads\/profile\/migrated-/);
   assert.match(data.customers[0].housePhotoUrl, /^\/uploads\/member-house\/migrated-/);
   assert.equal(data.customers[0].note, 'jangan berubah');
-  assert.equal(data.settings.logoUrl, legacyPng);
+  await assert.doesNotReject(fs.stat(path.join(uploadRoot, data.settings.logoUrl.replace('/uploads/', ''))));
   await assert.doesNotReject(fs.stat(path.join(uploadRoot, data.users[0].photoUrl.replace('/uploads/', ''))));
   await assert.doesNotReject(fs.stat(path.join(uploadRoot, data.customers[0].housePhotoUrl.replace('/uploads/', ''))));
 

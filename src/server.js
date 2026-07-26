@@ -170,8 +170,8 @@ function staticRuntimeTokenSuffix(dynamic = false) {
   return dynamic ? `-${APP_VERSION}-${APP_BUILD_VERSION}-${APP_RELEASE_DATE}` : '';
 }
 
-function staticRuntimeEtag(stat, encoding = '', dynamic = false) {
-  const suffix = `${staticRuntimeTokenSuffix(dynamic)}${encoding ? `-${encoding}` : ''}`;
+function staticRuntimeEtag(stat, encoding = '', dynamic = false, dynamicKey = '') {
+  const suffix = `${staticRuntimeTokenSuffix(dynamic)}${dynamicKey ? `-${dynamicKey}` : ''}${encoding ? `-${encoding}` : ''}`;
   return `W/"${Number(stat.size).toString(16)}-${Math.floor(Number(stat.mtimeMs)).toString(16)}${suffix}"`;
 }
 
@@ -183,9 +183,9 @@ function staticResponseEncoding(req = {}, ext = '', size = 0) {
   return '';
 }
 
-async function compressedStaticBody(filePath = '', stat = {}, body = Buffer.alloc(0), encoding = '') {
+async function compressedStaticBody(filePath = '', stat = {}, body = Buffer.alloc(0), encoding = '', cacheKeyExtra = '') {
   if (!encoding) return body;
-  const key = `${filePath}:${Number(stat.size || 0)}:${Math.floor(Number(stat.mtimeMs || 0))}:${encoding}`;
+  const key = `${filePath}:${Number(stat.size || 0)}:${Math.floor(Number(stat.mtimeMs || 0))}:${encoding}:${cacheKeyExtra}`;
   if (staticCompressionCache.has(key)) return staticCompressionCache.get(key);
   const compressed = encoding === 'br'
     ? await brotliCompressAsync(body, {
@@ -199,19 +199,98 @@ async function compressedStaticBody(filePath = '', stat = {}, body = Buffer.allo
   return compressed;
 }
 
-function staticRuntimeBody(ext = '', sourceBody = Buffer.alloc(0)) {
+function escapeHtmlAttribute(value = '') {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function requestOrigin(req = {}) {
+  const headerValue = (name) => String(req.headers?.[name] || '').split(',')[0].trim();
+  const host = headerValue('x-forwarded-host') || headerValue('host');
+  if (!host) return '';
+  const proto = headerValue('x-forwarded-proto') || (req.socket?.encrypted ? 'https' : 'http');
+  return `${proto}://${host}`;
+}
+
+function absoluteRequestUrl(req = {}, value = '/') {
+  const raw = String(value || '/').trim() || '/';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const origin = requestOrigin(req);
+  if (!origin) return raw;
+  try {
+    return new URL(raw, origin).toString();
+  } catch {
+    return raw;
+  }
+}
+
+function staticPageBrandingMeta(req = {}) {
+  let branding;
+  let settings = {};
+  try {
+    const data = peekStore();
+    settings = data?.settings || {};
+    branding = publicBranding(settings);
+  } catch {
+    branding = publicBranding({});
+  }
+  const title = branding.businessName || 'ISP Billing';
+  const description = branding.appSubtitle || 'Billing ISP dan RT/RW Net';
+  const icon = branding.logoUrl || '/fakenet-logo.png';
+  const url = absoluteRequestUrl(req, req.url || '/');
+  return {
+    title: escapeHtmlAttribute(title),
+    description: escapeHtmlAttribute(description),
+    icon: escapeHtmlAttribute(icon),
+    image: escapeHtmlAttribute(absoluteRequestUrl(req, brandingPreviewUrl(settings))),
+    url: escapeHtmlAttribute(url)
+  };
+}
+
+function staticPageMetaTags(req = {}) {
+  const meta = staticPageBrandingMeta(req);
+  return [
+    `<meta name="description" content="${meta.description}">`,
+    '<meta property="og:type" content="website">',
+    `<meta property="og:title" content="${meta.title}">`,
+    `<meta property="og:description" content="${meta.description}">`,
+    `<meta property="og:image" content="${meta.image}">`,
+    `<meta property="og:url" content="${meta.url}">`,
+    '<meta name="twitter:card" content="summary_large_image">',
+    `<meta name="twitter:title" content="${meta.title}">`,
+    `<meta name="twitter:description" content="${meta.description}">`,
+    `<meta name="twitter:image" content="${meta.image}">`
+  ].join('\n    ');
+}
+
+function staticRuntimeBody(ext = '', sourceBody = Buffer.alloc(0), req = {}) {
   if (!STATIC_RUNTIME_TOKEN_EXTENSIONS.has(ext)) {
-    return { body: sourceBody, dynamic: false };
+    return { body: sourceBody, dynamic: false, cacheKey: '' };
   }
   const original = sourceBody.toString('utf8');
-  const next = original
+  let next = original
     .replace(/__FAKENET_APP_VERSION__/g, APP_VERSION)
     .replace(/__FAKENET_BUILD_VERSION__/g, APP_BUILD_VERSION)
     .replace(/__FAKENET_RELEASE_DATE__/g, APP_RELEASE_DATE)
     .replace(/fakenet-billing-\d+\.\d+\.\d+/g, `fakenet-billing-${APP_VERSION}`);
+  if (next.includes('__FAKENET_META_')) {
+    const meta = staticPageBrandingMeta(req);
+    next = next
+      .replace(/__FAKENET_META_TAGS__/g, staticPageMetaTags(req))
+      .replace(/__FAKENET_META_TITLE__/g, meta.title)
+      .replace(/__FAKENET_META_DESCRIPTION__/g, meta.description)
+      .replace(/__FAKENET_META_ICON__/g, meta.icon)
+      .replace(/__FAKENET_META_IMAGE__/g, meta.image)
+      .replace(/__FAKENET_META_URL__/g, meta.url);
+  }
+  const dynamic = next !== original;
   return {
     body: Buffer.from(next, 'utf8'),
-    dynamic: next !== original
+    dynamic,
+    cacheKey: dynamic ? crypto.createHash('sha1').update(next).digest('hex').slice(0, 16) : ''
   };
 }
 
@@ -611,6 +690,85 @@ function sendBinary(res, status, body, contentType, filename = '') {
   res.end(buffer);
 }
 
+async function serveBrandingLogo(req, res) {
+  let dataLogo = null;
+  try {
+    const data = peekStore();
+    dataLogo = logoDataUrlPayload(data?.settings?.logoUrl || '');
+  } catch {
+    dataLogo = null;
+  }
+  if (dataLogo) {
+    const etag = `W/"branding-logo-${dataLogo.hash}"`;
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, {
+        ETag: etag,
+        'Cache-Control': 'public, max-age=86400'
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': dataLogo.mime,
+      'Content-Length': dataLogo.buffer.length,
+      'Cache-Control': 'public, max-age=86400',
+      ETag: etag
+    });
+    res.end(dataLogo.buffer);
+    return;
+  }
+  res.writeHead(302, {
+    Location: '/fakenet-logo.png',
+    'Cache-Control': 'no-store'
+  });
+  res.end();
+}
+
+async function serveBrandingPreview(req, res) {
+  let settings = {};
+  try {
+    const data = peekStore();
+    settings = data?.settings || {};
+  } catch {
+    settings = {};
+  }
+  try {
+    const source = await readPublicLogoBuffer(settings);
+    const png = await sharp(source, { failOn: 'none', limitInputPixels: 20_000_000 })
+      .rotate()
+      .resize(512, 512, {
+        fit: 'contain',
+        background: { r: 255, g: 255, b: 255, alpha: 0 },
+        withoutEnlargement: false
+      })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
+    const hash = crypto.createHash('sha1').update(png).digest('hex').slice(0, 16);
+    const etag = `W/"branding-preview-${hash}"`;
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, {
+        ETag: etag,
+        'Cache-Control': 'public, max-age=86400'
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': png.length,
+      'Cache-Control': 'public, max-age=86400',
+      ETag: etag
+    });
+    res.end(png);
+  } catch {
+    res.writeHead(302, {
+      Location: '/fakenet-logo.png',
+      'Cache-Control': 'no-store'
+    });
+    res.end();
+  }
+}
+
 function qrTextParam(value = '') {
   return String(value || '').trim().slice(0, 1000);
 }
@@ -869,6 +1027,56 @@ function sanitizeLogoUrl(value, fallback = '/fakenet-logo.png') {
     return fallback;
   }
   return fallback;
+}
+
+function logoDataUrlPayload(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > LOGO_DATA_URL_LIMIT_BYTES) return null;
+  const match = raw.match(/^data:image\/(png|jpe?g|webp|gif);base64,([a-z0-9+/=\s]+)$/i);
+  if (!match) return null;
+  const subtype = match[1].toLowerCase() === 'jpg' ? 'jpeg' : match[1].toLowerCase();
+  const buffer = Buffer.from(match[2].replace(/\s+/g, ''), 'base64');
+  if (!buffer.length || buffer.length > LOGO_DATA_URL_LIMIT_BYTES) return null;
+  return {
+    buffer,
+    mime: `image/${subtype}`,
+    hash: crypto.createHash('sha1').update(buffer).digest('hex').slice(0, 16)
+  };
+}
+
+function publicLogoUrl(settings = {}, fallback = '/fakenet-logo.png') {
+  const logo = sanitizeLogoUrl(settings.logoUrl, fallback);
+  const dataLogo = logoDataUrlPayload(logo);
+  if (dataLogo) return `/branding-logo?v=${dataLogo.hash}`;
+  return logo;
+}
+
+function brandingLogoVersion(settings = {}) {
+  const raw = String(settings.logoUrl || '').trim() || '/fakenet-logo.png';
+  return crypto.createHash('sha1').update(raw).digest('hex').slice(0, 16);
+}
+
+function brandingPreviewUrl(settings = {}) {
+  return `/branding-preview.png?v=${brandingLogoVersion(settings)}`;
+}
+
+async function readPublicLogoBuffer(settings = {}) {
+  const logo = sanitizeLogoUrl(settings.logoUrl);
+  const dataLogo = logoDataUrlPayload(logo);
+  if (dataLogo) return dataLogo.buffer;
+  if (logo.startsWith('/uploads/') && !logo.includes('\0') && !logo.split('/').some((part) => part === '..')) {
+    const uploadPath = path.normalize(path.join(UPLOAD_ROOT, logo.slice('/uploads/'.length)));
+    if (uploadPath.startsWith(UPLOAD_ROOT)) {
+      return fs.readFile(uploadPath);
+    }
+  }
+  if (logo.startsWith('/') && !logo.startsWith('//') && !logo.includes('\0') && !logo.split('/').some((part) => part === '..')) {
+    const publicPath = path.normalize(path.join(PUBLIC_DIR, logo.slice(1)));
+    if (publicPath.startsWith(PUBLIC_DIR)) {
+      return fs.readFile(publicPath);
+    }
+  }
+  return fs.readFile(path.join(PUBLIC_DIR, 'fakenet-logo.png'));
 }
 
 function sanitizePublicUrl(value = '') {
@@ -1419,6 +1627,7 @@ function referencedUploadUrls(data = {}) {
     const url = String(value || '').trim();
     if (url.startsWith('/uploads/profile/') || url.startsWith('/uploads/member-house/')) urls.add(url);
   };
+  add(data.settings?.logoUrl);
   for (const user of data.users || []) {
     add(user.photoUrl);
     add(user.avatarUrl);
@@ -1518,6 +1727,10 @@ async function migrateLegacyInlineImages(data = {}, options = {}) {
     errors: []
   };
 
+  if (data.settings && isInlineImageDataUrl(data.settings.logoUrl)) {
+    await migrateInlineImageField(data.settings, 'logoUrl', 'profile', 'settings-logo', stats, options);
+  }
+
   for (const user of data.users || []) {
     const prefix = `user-${user.id || user.username || 'profile'}`;
     const photoUrl = await migrateInlineImageField(user, 'photoUrl', 'profile', `${prefix}-photo`, stats, options);
@@ -1550,6 +1763,10 @@ async function migrateLegacyInlineImages(data = {}, options = {}) {
 }
 
 function hasLegacyInlineImages(data = {}) {
+  if (isInlineImageDataUrl(data.settings?.logoUrl)) {
+    return true;
+  }
+
   const userPhotoFields = ['photoUrl', 'avatarUrl'];
   for (const user of data.users || []) {
     if (userPhotoFields.some((field) => isInlineImageDataUrl(user?.[field]))) {
@@ -1617,7 +1834,7 @@ function publicBranding(settings = {}) {
   return {
     businessName,
     appSubtitle,
-    logoUrl: sanitizeLogoUrl(settings.logoUrl),
+    logoUrl: publicLogoUrl(settings),
     copyrightYear: new Date().getFullYear(),
     copyrightName,
     appVersion: APP_VERSION,
@@ -1627,16 +1844,9 @@ function publicBranding(settings = {}) {
   };
 }
 
-function manifestIconType(logoUrl = '') {
-  const ext = path.extname(String(logoUrl || '').split('?')[0]).toLowerCase();
-  if (ext === '.svg') return 'image/svg+xml';
-  if (ext === '.webp') return 'image/webp';
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  return 'image/png';
-}
-
 function publicManifest(settings = {}) {
   const branding = publicBranding(settings);
+  const iconUrl = brandingPreviewUrl(settings);
   const shortName = String(settings.shortName || branding.businessName || settings.receiptBusinessCode || 'Billing')
     .trim()
     .slice(0, 24) || 'Billing';
@@ -1651,9 +1861,9 @@ function publicManifest(settings = {}) {
     theme_color: '#08204f',
     icons: [
       {
-        src: branding.logoUrl,
-        sizes: '640x640',
-        type: manifestIconType(branding.logoUrl),
+        src: iconUrl,
+        sizes: '512x512',
+        type: 'image/png',
         purpose: 'any maskable'
       }
     ]
@@ -17466,6 +17676,19 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'settings:write');
     if (!authContext) return;
     const payload = await readBody(req);
+    let uploadedLogoUrl = '';
+    if (typeof payload.logoUrl === 'string' && /^data:image\//i.test(payload.logoUrl.trim())) {
+      try {
+        const uploadedLogo = await saveUploadedImage({
+          purpose: 'profile',
+          image: payload.logoUrl
+        });
+        uploadedLogoUrl = uploadedLogo.url;
+      } catch (error) {
+        badRequest(res, error.message || 'Logo tidak bisa diupload');
+        return;
+      }
+    }
     const { data } = await mutate((store) => {
       if (typeof payload.businessName === 'string') {
         store.settings.businessName = payload.businessName.trim() || store.settings.businessName;
@@ -17507,7 +17730,7 @@ async function handleApi(req, res, url) {
       store.settings.collectorDailyBonusPercent = 0;
       store.settings.collectorDailyBonusAmount = 0;
       if (typeof payload.logoUrl === 'string') {
-        store.settings.logoUrl = sanitizeLogoUrl(payload.logoUrl);
+        store.settings.logoUrl = sanitizeLogoUrl(uploadedLogoUrl || payload.logoUrl);
       }
       if (payload.packagePrices && typeof payload.packagePrices === 'object') {
         const nextPrices = {};
@@ -17592,6 +17815,14 @@ async function serveStatic(req, res, url) {
   let pathname = decodeURIComponent(url.pathname);
   if (pathname === '/') {
     pathname = '/index.html';
+  }
+  if (pathname === '/branding-logo') {
+    await serveBrandingLogo(req, res);
+    return;
+  }
+  if (pathname === '/branding-preview.png') {
+    await serveBrandingPreview(req, res);
+    return;
   }
   if (pathname.startsWith('/uploads/')) {
     const uploadRelative = pathname.slice('/uploads/'.length);
@@ -17716,11 +17947,11 @@ async function serveStatic(req, res, url) {
     const ext = path.extname(filePath);
     const encoding = staticResponseEncoding(req, ext, stat.size);
     const sourceBody = await fs.readFile(filePath);
-    const runtime = staticRuntimeBody(ext, sourceBody);
+    const runtime = staticRuntimeBody(ext, sourceBody, req);
     const runtimeStat = runtime.dynamic
       ? { ...stat, size: runtime.body.length }
       : stat;
-    const runtimeEtag = staticRuntimeEtag(runtimeStat, encoding, runtime.dynamic);
+    const runtimeEtag = staticRuntimeEtag(runtimeStat, encoding, runtime.dynamic, runtime.cacheKey);
     if (req.headers['if-none-match'] === runtimeEtag) {
       res.writeHead(304, {
         ETag: runtimeEtag,
@@ -17730,7 +17961,7 @@ async function serveStatic(req, res, url) {
       res.end();
       return;
     }
-    const body = await compressedStaticBody(filePath, runtimeStat, runtime.body, encoding);
+    const body = await compressedStaticBody(filePath, runtimeStat, runtime.body, encoding, runtime.cacheKey);
     res.writeHead(200, {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
       'Content-Length': body.length,
@@ -17743,13 +17974,14 @@ async function serveStatic(req, res, url) {
     res.end(body);
   } catch (error) {
     if (pathname !== '/index.html' && !pathname.includes('.')) {
-      const body = await fs.readFile(path.join(PUBLIC_DIR, 'index.html'));
+      const sourceBody = await fs.readFile(path.join(PUBLIC_DIR, 'index.html'));
+      const runtime = staticRuntimeBody('.html', sourceBody, req);
       res.writeHead(200, {
         'Content-Type': MIME_TYPES['.html'],
-        'Content-Length': body.length,
+        'Content-Length': runtime.body.length,
         'Cache-Control': 'no-store'
       });
-      res.end(body);
+      res.end(runtime.body);
       return;
     }
     notFound(res);

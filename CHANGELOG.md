@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.32] - 2026-07-26
+
+### Fixed
+
+- Metadata awal HTML, favicon, Open Graph, dan manifest PWA dibuat mengikuti nama usaha serta logo dari pengaturan sebelum JavaScript berjalan, termasuk PNG preview khusus untuk pratinjau Whatsapp dan install app.
+- Upload logo usaha baru disimpan sebagai file terkompresi di `data/uploads/profile/`; pengaturan hanya menyimpan path file, dengan migrasi otomatis untuk logo lama yang masih berupa base64.
+- Tabel User memakai label `Identitas Staf` dan menampilkan nama, alamat, kontak, serta jabatan lengkap tanpa dipotong `...` di desktop maupun mobile.
+
 ## [2.9.31] - 2026-07-26
 
 ### Fixed

@@ -2608,23 +2608,6 @@ function safePublicUrl(value) {
   return '';
 }
 
-function readLogoFile(file) {
-  if (!file) return Promise.resolve(null);
-  const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
-  if (!allowedTypes.includes(file.type)) {
-    return Promise.reject(new Error('Format logo harus PNG, JPG, WEBP, atau GIF'));
-  }
-  if (file.size > MAX_LOGO_UPLOAD_BYTES) {
-    return Promise.reject(new Error('Ukuran logo maksimal 1 MB'));
-  }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Logo tidak bisa dibaca'));
-    reader.readAsDataURL(file);
-  });
-}
-
 function readImageFile(file, options = {}) {
   if (!file) return Promise.resolve(null);
   const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
@@ -2652,6 +2635,13 @@ async function uploadImageFile(file, purpose, options = {}) {
     body: JSON.stringify({ purpose, image })
   });
   return result.url || '';
+}
+
+function uploadLogoFile(file) {
+  return uploadImageFile(file, 'profile', {
+    label: 'Logo',
+    maxBytes: MAX_LOGO_UPLOAD_BYTES
+  });
 }
 
 async function uploadMemberKtpFile(file, options = {}) {
@@ -15171,7 +15161,7 @@ async function renderUsers(options = {}) {
           <thead>
             <tr>
               <th>Pengguna</th>
-              <th>Kepegawaian</th>
+              <th>Identitas Staf</th>
               <th>Role / Unit</th>
               <th>Kontak</th>
               <th>NAS Lock</th>
@@ -17237,7 +17227,7 @@ async function renderSettings(options = {}) {
           </label>
           <label class="field">
             <span>Upload logo</span>
-            <input id="logoUploadInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+            <input id="logoUploadInput" type="file" accept="image/png,image/jpeg,image/webp">
           </label>
           <div class="field logo-preview-field">
             <span>Preview logo</span>
@@ -17302,7 +17292,7 @@ async function renderSettings(options = {}) {
   document.getElementById('logoUploadInput')?.addEventListener('change', async (event) => {
     const preview = document.querySelector('.logo-preview img');
     try {
-      const uploadedLogo = await readLogoFile(event.target.files?.[0]);
+      const uploadedLogo = await uploadLogoFile(event.target.files?.[0]);
       if (!uploadedLogo) return;
       pendingLogoUrl = uploadedLogo;
       if (preview) {
