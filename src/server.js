@@ -17029,10 +17029,16 @@ async function handleApi(req, res, url) {
       }) || {};
       const profile = radiusFindProfile(authContext.data, radiusUser.profileId || customer.packageName, radiusUser.serviceType || 'pppoe') || {};
       const nas = radiusFindNas(authContext.data, radiusUser.nasId || customer.nas || customer.siteName) || {};
+      const customerUsernameKey = String(customer.username || '').trim().toLowerCase();
+      const customerAccountKey = String(customer.code || customer.accountId || '').trim().toLowerCase();
       const invoices = (authContext.data.invoices || [])
-        .filter((invoice) => invoice.customerId === customer.id
-          || String(invoice.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase()
-          || String(invoice.accountId || '').trim().toLowerCase() === String(customer.code || customer.accountId || '').trim().toLowerCase())
+        .filter((invoice) => {
+          const invoiceUsernameKey = String(invoice.username || '').trim().toLowerCase();
+          const invoiceAccountKey = String(invoice.accountId || invoice.memberCode || '').trim().toLowerCase();
+          return invoice.customerId === customer.id
+            || (customerUsernameKey && invoiceUsernameKey === customerUsernameKey)
+            || (customerAccountKey && invoiceAccountKey === customerAccountKey);
+        })
         .sort((a, b) => String(b.dueDate || b.invoiceDate || b.createdAt || '').localeCompare(String(a.dueDate || a.invoiceDate || a.createdAt || '')))
         .slice(0, 12)
         .map((invoice) => ({

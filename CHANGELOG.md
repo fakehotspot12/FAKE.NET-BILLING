@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.47] - 2026-07-26
+
+### Fixed
+
+- Detail invoice di Monitoring > Member sekarang hanya menampilkan invoice milik member tersebut. Pencocokan `accountId` kosong tidak lagi dianggap cocok agar invoice pelanggan lain tidak ikut tampil.
+
 ## [2.9.46] - 2026-07-26
 
 ### Fixed
