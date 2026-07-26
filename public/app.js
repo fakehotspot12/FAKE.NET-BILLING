@@ -18049,12 +18049,37 @@ function appUpdateLogTail(log = '') {
   return lines.slice(-80).join('\n');
 }
 
+function appUpdateLogHasTimestamp(line = '') {
+  return /^\s*(?:\[[^\]]*(?:\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})[^\]]*\]|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})/.test(String(line || ''));
+}
+
+function appUpdateFormattedLog(log = '', polledAt = new Date().toISOString()) {
+  const fallbackTimestamp = `${dateTimeText(polledAt)} ${appTimeZoneLabel()}`.trim();
+  const lines = String(log || '')
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  if (!lines.length) return 'Belum ada log update.';
+  return lines.map((line) => {
+    if (appUpdateLogHasTimestamp(line)) return line;
+    return `[${fallbackTimestamp}] ${line}`;
+  }).join('\n');
+}
+
 function appUpdateLatestLogLine(log = '') {
   const lines = String(log || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   return lines.length ? lines[lines.length - 1] : 'Menunggu log update terbaru...';
+}
+
+function scrollAppUpdateLogToBottom() {
+  const output = modalBody.querySelector('[data-app-update-log-output]');
+  if (!output) return;
+  window.requestAnimationFrame(() => {
+    output.scrollTop = output.scrollHeight;
+  });
 }
 
 function appUpdateProgressPercent({ running = false, done = false, failed = false, waiting = false, log = '', elapsedSeconds = 0 } = {}) {
@@ -18092,11 +18117,13 @@ function appUpdateCloseEnabled(enabled) {
 function renderAppUpdateProgress(payload = {}, options = {}) {
   const processStatus = payload.process || {};
   const updateInfo = payload.update || {};
-  const log = appUpdateLogTail(payload.log || options.log || '');
   const running = options.running ?? processStatus.running === true;
   const failed = options.failed === true || processStatus.stale === true;
   const done = options.done === true;
   const waiting = options.waiting === true;
+  const polledAt = options.polledAt || payload.polledAt || new Date().toISOString();
+  const log = appUpdateLogTail(payload.log || options.log || '');
+  const displayLog = appUpdateFormattedLog(log, polledAt);
   const title = failed
     ? 'Update gagal atau tertahan'
     : done
@@ -18120,7 +18147,6 @@ function renderAppUpdateProgress(payload = {}, options = {}) {
   const elapsedSeconds = appUpdateProgressStartedAt
     ? Math.max(0, Math.round((Date.now() - appUpdateProgressStartedAt) / 1000))
     : 0;
-  const polledAt = options.polledAt || payload.polledAt || new Date().toISOString();
   const latestLogLine = appUpdateLatestLogLine(log);
   const percent = appUpdateProgressPercent({ running, done, failed, waiting, log, elapsedSeconds });
   const progressClass = failed ? 'is-failed' : done ? 'is-done' : running || waiting ? 'is-running' : '';
@@ -18167,9 +18193,9 @@ function renderAppUpdateProgress(payload = {}, options = {}) {
       <div class="app-update-log">
         <div class="app-update-log-head">
           <strong>Detail log proses</strong>
-          <span>${escapeHtml(payload.system?.hostname || '')}</span>
+          <span>Otomatis mengikuti baris terakhir</span>
         </div>
-        <pre>${escapeHtml(log || 'Belum ada log update.')}</pre>
+        <pre data-app-update-log-output>${escapeHtml(displayLog)}</pre>
       </div>
       <div class="modal-actions">
         ${done ? '<button class="button" id="appUpdateProgressReload" type="button">Muat Ulang Halaman</button>' : ''}
@@ -18179,6 +18205,7 @@ function renderAppUpdateProgress(payload = {}, options = {}) {
   `;
   modalBody.querySelector('#appUpdateProgressClose')?.addEventListener('click', () => modal.close());
   modalBody.querySelector('#appUpdateProgressReload')?.addEventListener('click', () => window.location.reload());
+  scrollAppUpdateLogToBottom();
   appUpdateCloseEnabled(done || failed);
 }
 

@@ -3557,9 +3557,11 @@ dialog:has(.app-update-progress) {
   overflow: auto;
   color: #dbeafe;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.55;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .update-ready-button,

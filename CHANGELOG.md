@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.56] - 2026-07-26
+
+### Changed
+
+- Popup progress update sekarang menampilkan log dari atas ke bawah dengan aktivitas terbaru di posisi paling bawah dan otomatis scroll ke baris terakhir.
+- Log update ditampilkan dengan timestamp detail agar proses update lebih mudah diaudit.
+
 ## [2.9.55] - 2026-07-26
 
 ### Changed
