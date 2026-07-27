@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.62] - 2026-07-27
+
+### Fixed
+
+- Dashboard memakai fast-path periode pembayaran dari timestamp ISO sehingga ringkasan pembayaran bulanan tidak memanggil parser tanggal lengkap untuk ribuan transaksi.
+
 ## [2.9.61] - 2026-07-27
 
 ### Fixed

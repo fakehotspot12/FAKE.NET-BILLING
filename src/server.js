@@ -5439,6 +5439,12 @@ function paymentPeriodKey(payment = {}, invoice = {}) {
   return paymentDateKey(payment, invoice).slice(0, 7);
 }
 
+function paymentPeriodKeyFast(payment = {}, invoice = {}) {
+  const raw = String(payment.paidAt || invoice.paidAt || payment.createdAt || '').trim();
+  if (/^\d{4}-\d{2}/.test(raw)) return raw.slice(0, 7);
+  return paymentPeriodKey(payment, invoice);
+}
+
 function paymentBelongsToCollector(data = {}, payment = {}) {
   if (String(payment.createdByRole || '').toLowerCase() === 'collector') return true;
   return collectorUsers(data).some((collector) => actorMatchesDashboardUser(payment, collector));
@@ -9519,7 +9525,7 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     if (!paymentIsActive(payment)) continue;
     const invoiceId = String(payment.invoiceId || '');
     if (invoiceId && invoiceStatuses.has(invoiceId) && invoiceStatuses.get(invoiceId) !== 'paid') continue;
-    if (paymentPeriodKey(payment) !== selectedPeriod) continue;
+    if (paymentPeriodKeyFast(payment) !== selectedPeriod) continue;
     summary.monthlyPaidCount += 1;
     summary.monthlyPaidAmount += Number(payment.amount || 0);
   }
