@@ -173,13 +173,6 @@ function createDefaultStore() {
           memberStatus: 'Halo *[fullname]*, status layanan internet Anda saat ini [status].\n\n[footer]'
         }
       },
-      telegram: {
-        pppoeEnabled: false,
-        botToken: '',
-        chatId: '',
-        pollIntervalSeconds: 5,
-        includeAcsInfo: true
-      },
       paymentGateway: {
         enabled: false,
         provider: 'tripay',
@@ -589,7 +582,6 @@ function ensureShape(data) {
   const xendit = settings.xendit && typeof settings.xendit === 'object' ? settings.xendit : {};
   const billing = settings.billing && typeof settings.billing === 'object' ? settings.billing : {};
   const waGateway = settings.waGateway && typeof settings.waGateway === 'object' ? settings.waGateway : {};
-  const telegram = settings.telegram && typeof settings.telegram === 'object' ? settings.telegram : {};
   const paymentGateway = settings.paymentGateway && typeof settings.paymentGateway === 'object' ? settings.paymentGateway : {};
   const hotspotVoucherOnline = settings.hotspotVoucherOnline && typeof settings.hotspotVoucherOnline === 'object' ? settings.hotspotVoucherOnline : {};
   const publicInfo = settings.publicInfo && typeof settings.publicInfo === 'object' ? settings.publicInfo : {};
@@ -649,10 +641,6 @@ function ensureShape(data) {
           ...base.settings.waGateway.templates,
           ...(waGateway.templates || {})
         })
-      },
-      telegram: {
-        ...base.settings.telegram,
-        ...telegram
       },
       paymentGateway: {
         ...base.settings.paymentGateway,
@@ -1112,7 +1100,6 @@ function publicSettings(settings) {
     xendit,
     genieAcs,
     waGateway,
-    telegram,
     paymentGateway,
     license,
     ...safeSettings
@@ -1161,12 +1148,6 @@ function publicSettings(settings) {
     ...rawWaGateway,
     token: '',
     tokenConfigured: waProvider !== 'waha' && Boolean(rawWaGateway.token)
-  };
-  const rawTelegram = telegram && typeof telegram === 'object' ? telegram : {};
-  const publicTelegram = {
-    ...rawTelegram,
-    botToken: '',
-    botTokenConfigured: Boolean(rawTelegram.botToken)
   };
   const rawPaymentGateway = paymentGateway && typeof paymentGateway === 'object' ? paymentGateway : {};
   const maskProvider = (provider = {}) => Object.fromEntries(Object.entries(provider || {}).map(([key, value]) => {
@@ -1227,7 +1208,6 @@ function publicSettings(settings) {
     license: publicLicense,
     ...(standalone ? {} : { radboox: publicRadboox }),
     waGateway: publicWaGateway,
-    telegram: publicTelegram,
     paymentGateway: publicPaymentGateway
   };
 }

@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.66] - 2026-07-27
+
+### Changed
+
+- Fitur Telegram PPPoE server-side dihapus dari menu Pengaturan dan API agar notifikasi PPPoE tetap memakai mekanisme router/site masing-masing.
+
 ## [2.9.65] - 2026-07-27
 
 ### Fixed

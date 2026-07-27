@@ -18318,116 +18318,6 @@ async function openAppUpdateProgressModal() {
   }
 }
 
-function telegramPppoePreviewText() {
-  return [
-    '🟢 PPPoE LOGIN',
-    '📅 Tanggal: 27/07/2026',
-    '⏰ Jam: 14:30',
-    '👤 User: pelanggan@site',
-    '🌐 IP Client: 172.16.10.10',
-    '📶 Redaman Modem: -19,8 dBm',
-    '📡 Total Active Modem: 4 Client',
-    '📊 Total Active: 128 Client',
-    '',
-    '🔴 PPPoE LOGOUT',
-    '📅 Tanggal: 27/07/2026',
-    '⏰ Jam: 16:05',
-    '👤 User: pelanggan@site',
-    '📶 Redaman Modem: -19,8 dBm',
-    '📡 Total Active Modem: 4 Client',
-    '📊 Total Active: 127 Client'
-  ].join('\n');
-}
-
-function telegramPppoePayload(payload = {}) {
-  return {
-    pppoeEnabled: payload.telegramPppoeEnabled === true,
-    botToken: payload.telegramBotToken || '',
-    clearBotToken: payload.telegramClearBotToken === true,
-    chatId: payload.telegramChatId || '',
-    pollIntervalSeconds: payload.telegramPollIntervalSeconds || 5,
-    includeAcsInfo: payload.telegramIncludeAcsInfo !== false
-  };
-}
-
-function telegramPppoeSettingsBody(settings = {}) {
-  const telegram = settings.telegram || {};
-  return `
-    <div class="stack compact-stack">
-      <div class="notice">
-        <strong>Notif login/logout PPPoE dari server billing</strong>
-        <span>Billing memantau session FreeRADIUS dan mengirim pesan Telegram, sehingga Mikrotik tidak perlu script schedule/profile tambahan.</span>
-      </div>
-      <div class="form-grid">
-        <label class="field">
-          <span>Status Telegram PPPoE</span>
-          <label class="check-row">
-            <input name="telegramPppoeEnabled" type="checkbox" value="true" ${telegram.pppoeEnabled ? 'checked' : ''}>
-            <span>Aktifkan notifikasi login/logout PPPoE</span>
-          </label>
-        </label>
-        <label class="field">
-          <span>Bot token</span>
-          <input name="telegramBotToken" type="password" autocomplete="off" placeholder="${telegram.botTokenConfigured ? 'Token tersimpan, kosongkan jika tidak diubah' : '123456:ABCDEF'}">
-          ${telegram.botTokenConfigured ? '<label class="check-row compact"><input name="telegramClearBotToken" type="checkbox" value="true"><span>Hapus token tersimpan</span></label>' : ''}
-        </label>
-        <label class="field">
-          <span>Chat ID</span>
-          <input name="telegramChatId" value="${escapeHtml(telegram.chatId || '')}" placeholder="-1001234567890">
-        </label>
-        <label class="field">
-          <span>Interval pantau</span>
-          <input name="telegramPollIntervalSeconds" type="number" min="5" max="300" step="1" value="${escapeHtml(telegram.pollIntervalSeconds || 5)}">
-          <small class="muted">Default 15 detik. Naikkan jika server kecil atau jumlah session sangat besar.</small>
-        </label>
-        <label class="field">
-          <span>Info modem dari ACS</span>
-          <label class="check-row">
-            <input name="telegramIncludeAcsInfo" type="checkbox" value="true" ${telegram.includeAcsInfo !== false ? 'checked' : ''}>
-            <span>Tambahkan redaman modem dan total active modem</span>
-          </label>
-        </label>
-        <label class="field full">
-          <span>Preview pesan</span>
-          <textarea rows="15" readonly>${escapeHtml(telegramPppoePreviewText())}</textarea>
-        </label>
-      </div>
-      <div class="modal-actions">
-        <button class="ghost-button" value="cancel" type="button">Batal</button>
-        <button class="ghost-button" id="testTelegramPppoeButton" type="button">Simpan & Test</button>
-        <button class="button" type="submit">Simpan Telegram</button>
-      </div>
-    </div>
-  `;
-}
-
-function openTelegramPppoeSettingsModal(settings = {}) {
-  openModal('Telegram PPPoE', telegramPppoeSettingsBody(settings), async (payload) => {
-    const result = await api('/api/settings', {
-      method: 'PUT',
-      body: JSON.stringify({ telegram: telegramPppoePayload(payload) })
-    });
-    updateBranding({ settings: result.settings });
-    setToast('Telegram PPPoE tersimpan');
-    renderSettings();
-  });
-  modalBody.querySelector('#testTelegramPppoeButton')?.addEventListener('click', async () => {
-    try {
-      const form = modal.querySelector('.modal-frame');
-      const payload = formData(form);
-      const result = await api('/api/settings', {
-        method: 'PUT',
-        body: JSON.stringify({ telegram: telegramPppoePayload(payload) })
-      });
-      state.settings = { ...state.settings, ...(result.settings || {}) };
-      const test = await api('/api/settings/telegram/test', { method: 'POST', body: '{}' });
-      setToast(test.message || 'Test Telegram berhasil dikirim');
-    } catch (error) {
-      setToast(error.message);
-    }
-  });
-}
-
 async function renderSettings(options = {}) {
   app.innerHTML = '<div class="empty">Memuat pengaturan...</div>';
   const { settings } = await api('/api/settings');
@@ -18497,7 +18387,6 @@ async function renderSettings(options = {}) {
     const maxText = Number(tier.maxAmount || 0) > 0 ? rupiah(tier.maxAmount) : 'lebih';
     return `${rupiah(tier.minAmount)} - ${maxText}: ${rupiah(tier.bonusAmount)}`;
   }).join('\n');
-  const telegram = settings.telegram || {};
   app.innerHTML = `
     <div class="stack">
       <section class="form-panel">
@@ -18546,14 +18435,6 @@ async function renderSettings(options = {}) {
               <span>Aktifkan kode verifikasi saat login</span>
             </label>
           </label>
-          <div class="field">
-            <span>Telegram PPPoE</span>
-            <button class="ghost-button" id="openTelegramPppoeSettings" type="button">
-              <i class="fa-brands fa-telegram" aria-hidden="true"></i>
-              <span>${telegram.pppoeEnabled ? 'Aktif' : 'Atur Telegram'}</span>
-            </button>
-            <small class="muted">${telegram.pppoeEnabled ? `Aktif, pantau tiap ${displayNumber(telegram.pollIntervalSeconds || 5)} detik.` : 'Notif login/logout PPPoE dipindah ke server billing.'}</small>
-          </div>
           <label class="field full">
             <span>Tier bonus collector default</span>
             <textarea rows="5" readonly>${escapeHtml(collectorBonusTierText)}</textarea>
@@ -18678,10 +18559,6 @@ async function renderSettings(options = {}) {
     updateBranding({ settings: result.settings });
     setToast('Pengaturan tersimpan');
     renderSettings();
-  });
-
-  document.getElementById('openTelegramPppoeSettings')?.addEventListener('click', () => {
-    openTelegramPppoeSettingsModal(settings);
   });
 
   document.getElementById('downloadSettingsBackup')?.addEventListener('click', async () => {

@@ -115,11 +115,6 @@ const WA_GATEWAY_BULK_PROFILES = Object.freeze({
   bulk: Object.freeze({ delaySeconds: 28, maxPerBatch: 100, batchPauseSeconds: 10 * 60, jitterSeconds: 10 })
 });
 const WA_GATEWAY_TRANSACTIONAL_TYPES = new Set(['paymentPaid', 'accountActive', 'voucherIssued']);
-const TELEGRAM_PPPOE_STATE_KEY = process.env.TELEGRAM_PPPOE_STATE_KEY || 'fakenet:telegram:pppoe:active:v1';
-const TELEGRAM_PPPOE_STATE_TTL_SECONDS = Math.max(86400, Number(process.env.TELEGRAM_PPPOE_STATE_TTL_SECONDS || 30 * 86400) || 30 * 86400);
-const TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS = Math.max(5, Number(process.env.TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS || 5) || 5);
-const TELEGRAM_PPPOE_ACS_REFRESH_SECONDS = Math.max(60, Number(process.env.TELEGRAM_PPPOE_ACS_REFRESH_SECONDS || 120) || 120);
-const TELEGRAM_PPPOE_MAX_EVENTS_PER_TICK = Math.max(1, Number(process.env.TELEGRAM_PPPOE_MAX_EVENTS_PER_TICK || 50) || 50);
 const WAHA_ENV_FILE = process.env.WAHA_ENV_FILE || '/etc/fakenet-billing-waha.env';
 const APP_UPDATE_COMMAND = process.env.FAKENET_UPDATE_COMMAND || '/usr/local/bin/fakenet-billing-update';
 const APP_UPDATE_LOG = process.env.FAKENET_UPDATE_LOG || '/var/log/fakenet-billing/update.log';
@@ -1939,7 +1934,6 @@ function licenseBlocksAccess(data = {}) {
 function publicAppSettings(settings = {}) {
   const safe = publicSettings(settings);
   safe.timeZone = appTimeZone(safe);
-  safe.telegram = publicTelegramSettings(settings.telegram || safe.telegram || {});
   if (safe.billing && typeof safe.billing === 'object' && safe.billing.invoiceBusinessCode === 'FAKE.NET') {
     safe.billing = {
       ...safe.billing,
@@ -7135,44 +7129,6 @@ function sanitizeWaGatewaySettings(payload = {}, current = {}) {
   };
 }
 
-function sanitizeTelegramSettings(payload = {}, current = {}) {
-  const next = {
-    ...current,
-    pppoeEnabled: Object.prototype.hasOwnProperty.call(payload, 'pppoeEnabled')
-      ? payloadEnabled(payload.pppoeEnabled)
-      : current.pppoeEnabled === true,
-    botToken: keepSecret(current.botToken, payload.botToken),
-    chatId: typeof payload.chatId === 'string'
-      ? payload.chatId.trim().slice(0, 80)
-      : String(current.chatId || '').trim().slice(0, 80),
-    pollIntervalSeconds: clampInteger(
-      payload.pollIntervalSeconds,
-      5,
-      300,
-      current.pollIntervalSeconds || TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS
-    ),
-    includeAcsInfo: Object.prototype.hasOwnProperty.call(payload, 'includeAcsInfo')
-      ? payloadEnabled(payload.includeAcsInfo)
-      : current.includeAcsInfo !== false
-  };
-  if (Object.prototype.hasOwnProperty.call(payload, 'clearBotToken') && payloadEnabled(payload.clearBotToken)) {
-    next.botToken = '';
-  }
-  return next;
-}
-
-function publicTelegramSettings(settings = {}) {
-  const raw = settings && typeof settings === 'object' ? settings : {};
-  return {
-    pppoeEnabled: raw.pppoeEnabled === true,
-    botToken: '',
-    botTokenConfigured: Boolean(raw.botToken),
-    chatId: raw.chatId || '',
-    pollIntervalSeconds: clampInteger(raw.pollIntervalSeconds, 5, 300, TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS),
-    includeAcsInfo: raw.includeAcsInfo !== false
-  };
-}
-
 function localDateParts(date = new Date(), timeZone = '') {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: normalizeAppTimeZone(timeZone || activeAppTimeZone || DEFAULT_APP_TIME_ZONE),
@@ -11330,275 +11286,6 @@ function startWaGatewaySender() {
   waGatewaySenderTimer = setInterval(() => run('interval'), WA_GATEWAY_SEND_INTERVAL_MS);
   waGatewaySenderTimer.unref?.();
   console.log(`Whatsapp Gateway BullMQ relay aktif setiap ${Math.round(WA_GATEWAY_SEND_INTERVAL_MS / 1000)} detik`);
-}
-
-function telegramConfigured(settings = {}) {
-  return Boolean(settings?.pppoeEnabled === true && settings.botToken && settings.chatId);
-}
-
-function telegramSessionKey(session = {}) {
-  const username = radiusSessionUsername(session.username);
-  if (!username) return '';
-  return [
-    username,
-    radiusNasAddressKey(session.nasIpAddress || ''),
-    String(session.framedIpAddress || '').trim(),
-    String(session.callingStationId || '').trim().toLowerCase()
-  ].filter(Boolean).join('|');
-}
-
-let telegramPppoeStateMemory = { sessions: {}, updatedAt: '', acsUpdatedAt: '' };
-
-async function telegramLoadPppoeState() {
-  if (!redisCache.enabled()) return structuredClone(telegramPppoeStateMemory);
-  try {
-    const raw = await redisCache.get(TELEGRAM_PPPOE_STATE_KEY);
-    const payload = raw ? JSON.parse(raw) : {};
-    telegramPppoeStateMemory = {
-      sessions: payload.sessions && typeof payload.sessions === 'object' ? payload.sessions : {},
-      updatedAt: payload.updatedAt || '',
-      acsUpdatedAt: payload.acsUpdatedAt || ''
-    };
-    return structuredClone(telegramPppoeStateMemory);
-  } catch {
-    return structuredClone(telegramPppoeStateMemory);
-  }
-}
-
-async function telegramSavePppoeState(sessions = {}, meta = {}) {
-  const payload = {
-    sessions,
-    updatedAt: new Date().toISOString(),
-    acsUpdatedAt: meta.acsUpdatedAt || telegramPppoeStateMemory.acsUpdatedAt || ''
-  };
-  telegramPppoeStateMemory = structuredClone(payload);
-  if (!redisCache.enabled()) return payload;
-  try {
-    await redisCache.set(TELEGRAM_PPPOE_STATE_KEY, JSON.stringify(payload), TELEGRAM_PPPOE_STATE_TTL_SECONDS);
-  } catch {
-    // State cache is only used to prevent duplicate Telegram events.
-  }
-  return payload;
-}
-
-function telegramEscapeHtml(value = '') {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-function telegramDateTimeParts(date = new Date()) {
-  const parts = localDateParts(date);
-  return {
-    date: `${parts.day}/${parts.month}/${parts.year}`,
-    time: `${parts.hour}:${parts.minute}`
-  };
-}
-
-function telegramAcsDeviceIndex(rows = []) {
-  const map = new Map();
-  for (const row of rows || []) {
-    const key = radiusSessionUsername(row.username);
-    if (key && !map.has(key)) map.set(key, row);
-  }
-  return map;
-}
-
-async function telegramPppoeAcsIndex(data = {}, enabled = true) {
-  if (!enabled || !genieAcs.configured(data.settings || {})) return { index: new Map(), refreshed: false };
-  try {
-    const payload = await genieAcs.listDevices(data.settings || {}, {
-      page: 1,
-      limit: 'all',
-      status: 'all',
-      redaman: 'all'
-    });
-    return { index: telegramAcsDeviceIndex(payload.rows || []), refreshed: true };
-  } catch {
-    return { index: new Map(), refreshed: false };
-  }
-}
-
-function telegramPppoeMessage(type = 'login', session = {}, meta = {}) {
-  const login = type === 'login';
-  const when = telegramDateTimeParts(new Date());
-  const device = meta.device || {};
-  const redamanText = device.rxPowerText || session.lastRxPowerText || '-';
-  const activeClientValue = device.clientsTotal ?? device.wifiClientsTotal ?? session.lastClientsTotal ?? session.lastWifiClientsTotal;
-  const activeClients = Number.isFinite(Number(activeClientValue))
-    ? `${Number(activeClientValue)} Client`
-    : '-';
-  const rows = [
-    `${login ? '🟢 PPPoE LOGIN' : '🔴 PPPoE LOGOUT'}`,
-    `📅 Tanggal: ${when.date}`,
-    `⏰ Jam: ${when.time}`,
-    `👤 User: ${session.username || '-'}`,
-    ...(login ? [`🌐 IP Client: ${session.framedIpAddress || '-'}`] : []),
-    `📶 Redaman Modem: ${redamanText}`,
-    `📡 Total Active Modem: ${activeClients}`,
-    `📊 Total Active: ${Number(meta.totalActive || 0)} Client`
-  ];
-  return rows.map(telegramEscapeHtml).join('\n');
-}
-
-async function telegramSendMessage(settings = {}, text = '') {
-  if (!telegramConfigured(settings)) {
-    throw new Error('Telegram PPPoE belum aktif atau bot/chat belum lengkap');
-  }
-  const response = await fetch(`https://api.telegram.org/bot${settings.botToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: settings.chatId,
-      text,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true
-    }),
-    signal: AbortSignal.timeout(10000)
-  });
-  const body = await response.text();
-  let payload = null;
-  try {
-    payload = body ? JSON.parse(body) : null;
-  } catch {
-    payload = { description: body };
-  }
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.description || `Telegram HTTP ${response.status}`);
-  }
-  return payload || { ok: true };
-}
-
-let telegramPppoeMonitorRunning = false;
-let telegramPppoeMonitorTimer = null;
-
-async function runTelegramPppoeMonitor(reason = 'interval') {
-  if (MIGRATION_MODE || telegramPppoeMonitorRunning) return null;
-  telegramPppoeMonitorRunning = true;
-  try {
-    const data = await loadStore();
-    const settings = data.settings?.telegram || {};
-    if (!telegramConfigured(settings)) return { skipped: true, reason: 'telegram-disabled' };
-    const pollIntervalSeconds = Math.max(5, Number(settings.pollIntervalSeconds || TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS) || TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS);
-    const sessionPayload = await freeradiusSessions.activeSessions({
-      limit: 5000,
-      allowCache: true,
-      preferCache: true,
-      maxCacheAgeSeconds: Math.max(3, Math.min(10, pollIntervalSeconds))
-    });
-    if (sessionPayload.ok === false && !sessionPayload.cache) {
-      return { skipped: true, reason: sessionPayload.error || 'radius-session-error' };
-    }
-    const usersByUsername = radiusUserByUsername(data);
-    const pppoeSessions = (sessionPayload.rows || []).filter((session) => {
-      const username = radiusSessionUsername(session.username);
-      if (!username) return false;
-      const user = usersByUsername.get(username) || null;
-      return radiusSessionServiceType(data, session, user) === 'pppoe';
-    });
-    const previous = await telegramLoadPppoeState();
-    const previousSessions = previous.sessions || {};
-    const current = {};
-    for (const session of pppoeSessions) {
-      const key = telegramSessionKey(session);
-      if (!key) continue;
-      const previousSession = previousSessions[key] || {};
-      current[key] = {
-        username: session.username || '',
-        framedIpAddress: session.framedIpAddress || '',
-        nasIpAddress: session.nasIpAddress || '',
-        callingStationId: session.callingStationId || '',
-        startedAt: session.startedAt || '',
-        lastRxPowerText: previousSession.lastRxPowerText || '',
-        lastClientsTotal: previousSession.lastClientsTotal,
-        lastWifiClientsTotal: previousSession.lastWifiClientsTotal
-      };
-    }
-    const loginKeys = Object.keys(current).filter((key) => !previousSessions[key]);
-    const logoutKeys = Object.keys(previousSessions).filter((key) => !current[key]);
-    const acsUpdatedAtMs = previous.acsUpdatedAt ? new Date(previous.acsUpdatedAt).getTime() : 0;
-    const acsAgeSeconds = acsUpdatedAtMs ? Math.max(0, Math.round((Date.now() - acsUpdatedAtMs) / 1000)) : Infinity;
-    const shouldIndexAcs = settings.includeAcsInfo !== false
-      && pppoeSessions.length > 0
-      && (
-        (reason === 'startup' && !previous.acsUpdatedAt)
-        || loginKeys.length > 0
-        || (!logoutKeys.length && acsAgeSeconds >= TELEGRAM_PPPOE_ACS_REFRESH_SECONDS)
-      );
-    const acsSnapshot = await telegramPppoeAcsIndex(data, shouldIndexAcs);
-    const deviceIndex = acsSnapshot.index || new Map();
-    if (deviceIndex.size) {
-      for (const session of pppoeSessions) {
-        const key = telegramSessionKey(session);
-        if (!key || !current[key]) continue;
-        const usernameKey = radiusSessionUsername(session.username);
-        const device = deviceIndex.get(usernameKey) || {};
-        current[key].lastRxPowerText = device.rxPowerText || current[key].lastRxPowerText || '';
-        if (Number.isFinite(Number(device.clientsTotal))) {
-          current[key].lastClientsTotal = Number(device.clientsTotal);
-        }
-        if (Number.isFinite(Number(device.wifiClientsTotal))) {
-          current[key].lastWifiClientsTotal = Number(device.wifiClientsTotal);
-        }
-      }
-    }
-    const acsStateAt = acsSnapshot.refreshed ? new Date().toISOString() : previous.acsUpdatedAt || '';
-    if (reason === 'startup' && !previous.updatedAt) {
-      await telegramSavePppoeState(current, { acsUpdatedAt: acsStateAt });
-      return { initialized: true, active: Object.keys(current).length };
-    }
-    if (!loginKeys.length && !logoutKeys.length) {
-      await telegramSavePppoeState(current, { acsUpdatedAt: acsStateAt });
-      return { sent: 0, active: Object.keys(current).length };
-    }
-    const events = [
-      ...loginKeys.map((key) => ({ type: 'login', session: current[key] })),
-      ...logoutKeys.map((key) => ({ type: 'logout', session: previousSessions[key] }))
-    ].slice(0, TELEGRAM_PPPOE_MAX_EVENTS_PER_TICK);
-    let sent = 0;
-    const errors = [];
-    for (const event of events) {
-      const usernameKey = radiusSessionUsername(event.session.username);
-      const message = telegramPppoeMessage(event.type, event.session, {
-        totalActive: pppoeSessions.length,
-        device: deviceIndex.get(usernameKey) || {}
-      });
-      try {
-        await telegramSendMessage(settings, message);
-        sent += 1;
-      } catch (error) {
-        if (errors.length < 3) errors.push(error.message || String(error));
-      }
-    }
-    await telegramSavePppoeState(current, { acsUpdatedAt: acsStateAt });
-    return { sent, active: Object.keys(current).length, errors };
-  } finally {
-    telegramPppoeMonitorRunning = false;
-  }
-}
-
-async function refreshTelegramPppoeMonitorInterval() {
-  const data = await loadStore().catch(() => null);
-  const settings = data?.settings?.telegram || {};
-  const enabled = telegramConfigured(settings);
-  const intervalMs = clampInteger(settings.pollIntervalSeconds, 5, 300, TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS) * 1000;
-  if (telegramPppoeMonitorTimer) {
-    clearInterval(telegramPppoeMonitorTimer);
-    telegramPppoeMonitorTimer = null;
-  }
-  if (!enabled || MIGRATION_MODE) return false;
-  const run = (reason) => {
-    runTelegramPppoeMonitor(reason).catch((error) => {
-      console.error(`Telegram PPPoE monitor gagal: ${error.message || error}`);
-    });
-  };
-  const initialTimer = setTimeout(() => run('startup'), 5000);
-  initialTimer.unref?.();
-  telegramPppoeMonitorTimer = setInterval(() => run('interval'), intervalMs);
-  telegramPppoeMonitorTimer.unref?.();
-  console.log(`Telegram PPPoE monitor aktif setiap ${Math.round(intervalMs / 1000)} detik`);
-  return true;
 }
 
 function paymentGatewayPackageLabel(value = '') {
@@ -19117,25 +18804,6 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  if (method === 'POST' && pathname === '/api/settings/telegram/test') {
-    const authContext = await requirePermission(req, res, 'settings:write');
-    if (!authContext) return;
-    const settings = authContext.data.settings?.telegram || {};
-    try {
-      await telegramSendMessage(settings, [
-        '🟢 Test Telegram PPPoE',
-        `📅 Tanggal: ${telegramDateTimeParts(new Date()).date}`,
-        `⏰ Jam: ${telegramDateTimeParts(new Date()).time}`,
-        `👤 User: ${authContext.user.name || authContext.user.username || 'Admin Billing'}`,
-        '📊 Status: Notifikasi Telegram berhasil terhubung'
-      ].map(telegramEscapeHtml).join('\n'));
-      sendJson(res, 200, { ok: true, message: 'Test Telegram berhasil dikirim' });
-    } catch (error) {
-      sendJson(res, 400, { ok: false, error: error.message || 'Test Telegram gagal' });
-    }
-    return;
-  }
-
   if (method === 'PUT' && pathname === '/api/settings') {
     const authContext = await requirePermission(req, res, 'settings:write');
     if (!authContext) return;
@@ -19232,12 +18900,6 @@ async function handleApi(req, res, url) {
       if (payload.radius && typeof payload.radius === 'object') {
         store.settings.radius = sanitizeRadiusSettings(payload.radius, store.settings.radius || {});
       }
-      if (payload.telegram && typeof payload.telegram === 'object') {
-        store.settings.telegram = sanitizeTelegramSettings(payload.telegram, store.settings.telegram || {});
-      }
-    });
-    await refreshTelegramPppoeMonitorInterval().catch((error) => {
-      console.error(`Telegram PPPoE monitor gagal reload: ${error.message || error}`);
     });
     sendJson(res, 200, { settings: publicAppSettings(data.settings) });
     return;
@@ -19503,7 +19165,6 @@ if (require.main === module) {
       startStandaloneBillingAutomation();
       startWaGatewaySender();
       startPaymentGatewayHistorySync();
-      refreshTelegramPppoeMonitorInterval().catch((error) => console.error(`Telegram PPPoE monitor gagal start: ${error.message || error}`));
       imageCleanupTimer = setInterval(() => {
         runImageCleanup().catch((error) => console.error(`Pembersihan upload gagal: ${error.message || error}`));
       }, IMAGE_ORPHAN_CLEANUP_INTERVAL_MS);
@@ -19523,7 +19184,6 @@ if (require.main === module) {
     if (waGatewaySenderTimer) clearInterval(waGatewaySenderTimer);
     if (billingAutomationTimer) clearInterval(billingAutomationTimer);
     if (paymentGatewayHistorySyncTimer) clearInterval(paymentGatewayHistorySyncTimer);
-    if (telegramPppoeMonitorTimer) clearInterval(telegramPppoeMonitorTimer);
     if (imageCleanupTimer) clearInterval(imageCleanupTimer);
     server.close();
     await waGatewayQueue?.close().catch((error) => {
