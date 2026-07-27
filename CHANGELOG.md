@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.63] - 2026-07-27
+
+### Fixed
+
+- Dashboard, Laporan Harian lokal, Statistik, dan Router NAS memakai cache runtime Redis dengan TTL pendek serta fallback cache memori agar reload menu berat tidak menghitung ulang data besar terus-menerus.
+- Statistik pelanggan/voucher/pendapatan mengurangi lookup member PPP berulang sehingga chart 12 bulan lebih ringan pada data invoice dan payment besar.
+
 ## [2.9.62] - 2026-07-27
 
 ### Fixed

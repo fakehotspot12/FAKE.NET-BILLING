@@ -68,6 +68,7 @@ const freeradiusSessions = require('./freeradius-sessions');
 const freeradiusSql = require('./freeradius-sql');
 const genieAcs = require('./genieacs');
 const license = require('./license');
+const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
 const { WhatsAppQueue } = require('./whatsapp-queue');
 const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
@@ -5798,6 +5799,15 @@ async function dashboardRadiusSummary(data = {}, period = currentPeriod()) {
   if (cached && cached.expiresAt > Date.now()) {
     return structuredClone(cached.value);
   }
+  const redisKey = runtimeCacheKey('dashboard-radius-summary', cacheKey);
+  const redisCached = await runtimeJsonCacheGet(redisKey);
+  if (redisCached) {
+    dashboardRadiusSummaryCache.set(cacheKey, {
+      expiresAt: Date.now() + DASHBOARD_RADIUS_SUMMARY_CACHE_MS,
+      value: structuredClone(redisCached)
+    });
+    return redisCached;
+  }
   const summary = {
     pppDhcp: dashboardRadiusServiceSummary(data, 'pppoe', period),
     hotspot: dashboardRadiusServiceSummary(data, 'hotspot', period),
@@ -5838,6 +5848,7 @@ async function dashboardRadiusSummary(data = {}, period = currentPeriod()) {
   while (dashboardRadiusSummaryCache.size > 16) {
     dashboardRadiusSummaryCache.delete(dashboardRadiusSummaryCache.keys().next().value);
   }
+  await runtimeJsonCacheSet(redisKey, summary, Math.max(1, Math.floor(DASHBOARD_RADIUS_SUMMARY_CACHE_MS / 1000)));
   return summary;
 }
 
@@ -6715,6 +6726,26 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
     fetchedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+}
+
+function localDailyReportCacheKey(data = {}, date = normalizeDateParam(), options = {}) {
+  return runtimeCacheKey('local-daily-report', [
+    normalizeDateParam(date),
+    options.includeDueInvoices === true ? 'due:1' : 'due:0',
+    runtimeDataSignature(data, ['invoices', 'payments', 'customers', 'monitoringTargets'])
+  ].join('|'));
+}
+
+async function cachedLocalDailyReport(data = {}, date = normalizeDateParam(), options = {}) {
+  if (Array.isArray(options.payments)) {
+    return localDailyReport(data, date, options);
+  }
+  const cacheKey = localDailyReportCacheKey(data, date, options);
+  const cached = await runtimeJsonCacheGet(cacheKey);
+  if (cached) return cached;
+  const report = localDailyReport(data, date, options);
+  await runtimeJsonCacheSet(cacheKey, report, REPORT_RUNTIME_CACHE_TTL_SECONDS);
+  return report;
 }
 
 function activeReportSites(data = {}) {
@@ -9245,12 +9276,59 @@ function statisticsActivePppCustomerCountAtMonthEnd(data = {}, period = currentP
 
 async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period);
+  const cacheKey = runtimeCacheKey('report-statistics', [
+    selectedPeriod,
+    runtimeDataSignature(data, [
+      'radiusUsers',
+      'radiusRemovedRecords',
+      'radiusVoucherRecords',
+      'radiusProfiles',
+      'customers',
+      'invoices',
+      'payments',
+      'externalIncomes',
+      'expenses',
+      'hotspotVoucherOrders',
+      'hotspotVoucherSalesHistory'
+    ]),
+    collectionNewestTimestamp([data.settings || {}])
+  ].join('|'));
+  const cached = await runtimeJsonCacheGet(cacheKey);
+  if (cached) return cached;
   const dailyGroups = new Map();
   const monthlyGroups = new Map();
   const monthPeriods = statisticsMonthPeriods(selectedPeriod, 12);
   const monthPeriodSet = new Set(monthPeriods);
   const newInstallKeys = new Set();
   const removedKeys = new Set();
+  const customersById = new Map();
+  const customersByRadiusUserId = new Map();
+  for (const customer of data.customers || []) {
+    const customerId = String(customer.id || '').trim();
+    if (customerId && !customersById.has(customerId)) customersById.set(customerId, customer);
+    const radiusUserId = String(customer.radiusUserId || '').trim();
+    if (radiusUserId && !customersByRadiusUserId.has(radiusUserId)) customersByRadiusUserId.set(radiusUserId, customer);
+  }
+  const pppStatisticRows = (data.radiusUsers || [])
+    .filter((user) => String(user.serviceType || '').trim().toLowerCase() === 'pppoe')
+    .map((user) => {
+      const customer = customersById.get(String(user.customerId || '').trim())
+        || customersByRadiusUserId.get(String(user.id || '').trim())
+        || null;
+      const installDate = customer
+        ? String(customer.activeDate || user.activeDate || customer.createdAt || user.createdAt || '').slice(0, 10)
+        : '';
+      const status = customer
+        ? strongestCustomerStatus(customer.status, radiusStatusForCustomer(user))
+        : radiusStatusForCustomer(user);
+      return {
+        user,
+        customer,
+        installDate,
+        status,
+        customerKey: String(customer?.id || customer?.code || '').trim()
+      };
+    });
   const addRow = (date = '', field = '', amount = 1) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return;
     const rowPeriod = date.slice(0, 7);
@@ -9287,12 +9365,23 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return;
     addRow(date, 'expenseAmount', Number(amount || 0));
   };
+  const isNewPsbStatisticRow = (row = {}, rowPeriod = currentPeriod()) => {
+    const customer = row.customer || {};
+    const user = row.user || {};
+    if (!customer.id || customer.countsAsPsb === false || !user.customerId) return false;
+    const createdPeriod = String(user.createdAt || '').slice(0, 7);
+    const activePeriod = String(customer.activeDate || customer.installedAt || user.activeDate || '').slice(0, 7);
+    const origin = String(customer.recordOrigin || customer.migrationSource || '').trim().toLowerCase();
+    const importedAsNew = ['import', 'migration', 'radboox'].includes(origin) && customer.countsAsPsb === true;
+    if ((!importedAsNew && createdPeriod !== rowPeriod) || activePeriod !== rowPeriod) return false;
+    if (['import', 'migration', 'radboox'].includes(origin) && !importedAsNew) return false;
+    return !['terminate', 'terminated', 'removed', 'cabut'].includes(String(user.status || '').trim().toLowerCase());
+  };
 
-  for (const user of data.radiusUsers || []) {
-    if (user.serviceType !== 'pppoe') continue;
-    const customer = statisticsLinkedPppCustomer(data, user);
-    const date = pppInstallDateForUser(data, user);
-    if (!customer || !isNewPsbPppAccount(data, user, date.slice(0, 7))) continue;
+  for (const row of pppStatisticRows) {
+    const { user, customer } = row;
+    const date = row.installDate;
+    if (!customer || !isNewPsbStatisticRow(row, date.slice(0, 7))) continue;
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     const key = statisticsRecordKey('active', customer);
     if (!key || newInstallKeys.has(key)) continue;
@@ -9364,8 +9453,23 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
 
   const dailyRows = statisticsPeriodRows(selectedPeriod, dailyGroups);
   const monthlyRows = statisticsMonthlyRows(monthPeriods, monthlyGroups);
+  const activePppCountAtMonthEnd = (rowPeriod = currentPeriod()) => {
+    const monthEnd = statisticsMonthEndIso(rowPeriod);
+    const customerKeys = new Set();
+    for (const row of pppStatisticRows) {
+      if (!row.customer || !row.installDate || row.installDate > monthEnd) continue;
+      if (!statisticsPppStatusIsActive(row.status)) continue;
+      if (row.customerKey) customerKeys.add(row.customerKey);
+    }
+    for (const record of data.radiusRemovedRecords || []) {
+      if (!statisticsRemovedPppCustomerActiveAtMonthEnd(record, rowPeriod)) continue;
+      const key = String(record.customerId || record.memberCode || '').trim();
+      if (key) customerKeys.add(key);
+    }
+    return customerKeys.size;
+  };
   for (const row of monthlyRows) {
-    row.activeCustomerCount = statisticsActivePppCustomerCountAtMonthEnd(data, row.period);
+    row.activeCustomerCount = activePppCountAtMonthEnd(row.period);
   }
   const summary = dailyRows.reduce((acc, row) => {
     acc.newInstallCount += Number(row.newInstallCount || 0);
@@ -9406,7 +9510,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   summary.profitAmount = summary.revenueAmount - summary.expenseAmount;
   summary.activeCustomerCount = monthlyRows.find((row) => row.period === selectedPeriod)?.activeCustomerCount || 0;
 
-  return {
+  const payload = {
     ok: true,
     period: selectedPeriod,
     summary,
@@ -9414,6 +9518,8 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     dailyRows,
     checkedAt: new Date().toISOString()
   };
+  await runtimeJsonCacheSet(cacheKey, payload, REPORT_RUNTIME_CACHE_TTL_SECONDS);
+  return payload;
 }
 
 function localManualInvoiceMembers(data = {}, query = {}) {
@@ -9450,15 +9556,88 @@ function localManualInvoiceMembers(data = {}, query = {}) {
 }
 
 const DASHBOARD_BILLING_SUMMARY_CACHE_MS = 15000;
+const DASHBOARD_RUNTIME_CACHE_TTL_SECONDS = Math.max(5, Number(process.env.DASHBOARD_RUNTIME_CACHE_TTL_SECONDS || 20) || 20);
+const REPORT_RUNTIME_CACHE_TTL_SECONDS = Math.max(10, Number(process.env.REPORT_RUNTIME_CACHE_TTL_SECONDS || 60) || 60);
+const RUNTIME_JSON_MEMORY_CACHE_MAX = 64;
 const dashboardBillingSummaryCache = new Map();
+const runtimeJsonMemoryCache = new Map();
 
 function collectionNewestTimestamp(rows = []) {
   let newest = '';
   for (const row of rows || []) {
-    const stamp = String(row.updatedAt || row.paidAt || row.createdAt || row.dueDate || '');
+    const stamp = String(
+      row.updatedAt
+      || row.paidAt
+      || row.createdAt
+      || row.dueDate
+      || row.invoiceDate
+      || row.date
+      || row.removedAt
+      || row.activeDate
+      || row.statusUpdatedAt
+      || ''
+    );
     if (stamp > newest) newest = stamp;
   }
   return newest;
+}
+
+function runtimeDataSignature(data = {}, collections = []) {
+  return collections.map((name) => {
+    const rows = Array.isArray(data[name]) ? data[name] : [];
+    return `${name}:${rows.length}:${collectionNewestTimestamp(rows)}`;
+  }).join('|');
+}
+
+function runtimeCacheKey(namespace = '', signature = '') {
+  const digest = crypto.createHash('sha1')
+    .update(`${namespace}|${signature}`)
+    .digest('hex');
+  return `fakenet:runtime:${APP_VERSION}:${namespace}:${digest}`;
+}
+
+function pruneRuntimeJsonMemoryCache() {
+  while (runtimeJsonMemoryCache.size > RUNTIME_JSON_MEMORY_CACHE_MAX) {
+    runtimeJsonMemoryCache.delete(runtimeJsonMemoryCache.keys().next().value);
+  }
+}
+
+async function runtimeJsonCacheGet(key = '') {
+  if (!key) return null;
+  const memory = runtimeJsonMemoryCache.get(key);
+  if (memory && memory.expiresAt > Date.now()) {
+    return structuredClone(memory.value);
+  }
+  if (!redisCache.enabled()) return null;
+  try {
+    const raw = await redisCache.get(key);
+    if (!raw) return null;
+    const value = JSON.parse(raw);
+    runtimeJsonMemoryCache.set(key, {
+      expiresAt: Date.now() + Math.max(1000, DASHBOARD_RUNTIME_CACHE_TTL_SECONDS * 1000),
+      value: structuredClone(value)
+    });
+    pruneRuntimeJsonMemoryCache();
+    return structuredClone(value);
+  } catch {
+    return null;
+  }
+}
+
+async function runtimeJsonCacheSet(key = '', value = null, ttlSeconds = REPORT_RUNTIME_CACHE_TTL_SECONDS) {
+  if (!key || value === null || value === undefined) return;
+  const ttl = Math.max(1, Number(ttlSeconds || REPORT_RUNTIME_CACHE_TTL_SECONDS) || REPORT_RUNTIME_CACHE_TTL_SECONDS);
+  runtimeJsonMemoryCache.set(key, {
+    expiresAt: Date.now() + ttl * 1000,
+    value: structuredClone(value)
+  });
+  pruneRuntimeJsonMemoryCache();
+  if (!redisCache.enabled()) return;
+  try {
+    await redisCache.set(key, JSON.stringify(value), ttl);
+  } catch {
+    // Redis cache is optional; the in-process cache above still protects the hot path.
+  }
 }
 
 function dashboardBillingSummaryCacheKey(data = {}, period = currentPeriod()) {
@@ -9537,6 +9716,17 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
   while (dashboardBillingSummaryCache.size > 16) {
     dashboardBillingSummaryCache.delete(dashboardBillingSummaryCache.keys().next().value);
   }
+  return structuredClone(summary);
+}
+
+async function cachedDashboardBillingSummary(data = {}, period = currentPeriod()) {
+  const selectedPeriod = normalizePeriod(period);
+  const signature = dashboardBillingSummaryCacheKey(data, selectedPeriod);
+  const cacheKey = runtimeCacheKey('dashboard-billing-summary', signature);
+  const cached = await runtimeJsonCacheGet(cacheKey);
+  if (cached) return cached;
+  const summary = dashboardBillingSummary(data, selectedPeriod);
+  await runtimeJsonCacheSet(cacheKey, summary, DASHBOARD_RUNTIME_CACHE_TTL_SECONDS);
   return structuredClone(summary);
 }
 
@@ -14538,7 +14728,7 @@ async function handleApi(req, res, url) {
 
     const summary = summarize(standaloneMode(data) ? dataWithResolvedCustomerStatuses(data) : data, period);
     summary.monthlyTransactionCount = dashboardMonthlyTransactionCount(data, period);
-    summary.billingSummary = dashboardBillingSummary(data, period);
+    summary.billingSummary = await cachedDashboardBillingSummary(data, period);
     const members = await dashboardCustomerSummary(data, { force: refreshRadboox, period });
     const response = {
       summary: await publicDashboardSummary(summary, data, authContext.user, period),
@@ -14634,10 +14824,15 @@ async function handleApi(req, res, url) {
 
     if (standaloneMode(data)) {
       const collectorReport = userIsCollector(authContext.user);
-      const report = dailyReportResponse(localDailyReport(data, date, {
-        payments: collectorReport ? collectorReportPayments(data, authContext.user) : undefined,
-        includeDueInvoices: false
-      }));
+      const reportSource = collectorReport
+        ? localDailyReport(data, date, {
+          payments: collectorReportPayments(data, authContext.user),
+          includeDueInvoices: false
+        })
+        : await cachedLocalDailyReport(data, date, {
+          includeDueInvoices: false
+        });
+      const report = dailyReportResponse(reportSource);
       sendJson(res, 200, {
         source: 'local',
         date,

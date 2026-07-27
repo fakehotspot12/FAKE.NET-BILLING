@@ -1,8 +1,10 @@
 'use strict';
 
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { createId } = require('./store');
+const redisCache = require('./redis-cache');
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_SNMP_OID = '1.3.6.1.2.1.1.3.0';
@@ -21,6 +23,7 @@ const IP_NET_TO_MEDIA_NET_ADDRESS_OID = '1.3.6.1.2.1.4.22.1.3';
 const dashboardTrafficSamples = new Map();
 const routerDashboardSummaryCache = new Map();
 const ROUTER_DASHBOARD_CACHE_MS = 15000;
+const ROUTER_DASHBOARD_REDIS_TTL_SECONDS = Math.max(5, Number(process.env.ROUTER_DASHBOARD_REDIS_TTL_SECONDS || 15) || 15);
 
 function cleanText(value) {
   return String(value || '').trim();
@@ -1179,6 +1182,30 @@ async function checkRouterDashboardTarget(target = {}) {
   }
 }
 
+function routerDashboardRedisKey(signature = '') {
+  const digest = crypto.createHash('sha1').update(String(signature || '')).digest('hex');
+  return `fakenet:runtime:router-dashboard:${digest}`;
+}
+
+async function getRouterDashboardRedisCache(signature = '') {
+  if (!redisCache.enabled() || !signature) return null;
+  try {
+    const raw = await redisCache.get(routerDashboardRedisKey(signature));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function setRouterDashboardRedisCache(signature = '', payload = null) {
+  if (!redisCache.enabled() || !signature || !payload) return;
+  try {
+    await redisCache.set(routerDashboardRedisKey(signature), JSON.stringify(payload), ROUTER_DASHBOARD_REDIS_TTL_SECONDS);
+  } catch {
+    // Redis cache is optional; SNMP polling still works without it.
+  }
+}
+
 async function routerDashboardSummary(targets = []) {
   const activeTargets = (targets || [])
     .filter((target) => target && target.status !== 'inactive' && cleanText(target.host))
@@ -1197,6 +1224,14 @@ async function routerDashboardSummary(targets = []) {
   const cached = routerDashboardSummaryCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return structuredClone(cached.value);
+  }
+  const redisCached = await getRouterDashboardRedisCache(cacheKey);
+  if (redisCached) {
+    routerDashboardSummaryCache.set(cacheKey, {
+      expiresAt: Date.now() + ROUTER_DASHBOARD_CACHE_MS,
+      value: structuredClone(redisCached)
+    });
+    return structuredClone(redisCached);
   }
   const routers = await Promise.all(activeTargets.map((target) => checkRouterDashboardTarget(target)));
   const payload = {
@@ -1217,6 +1252,7 @@ async function routerDashboardSummary(targets = []) {
   while (routerDashboardSummaryCache.size > 8) {
     routerDashboardSummaryCache.delete(routerDashboardSummaryCache.keys().next().value);
   }
+  await setRouterDashboardRedisCache(cacheKey, payload);
   return payload;
 }
 
