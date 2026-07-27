@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.59] - 2026-07-27
+
+### Fixed
+
+- Dashboard Billing menghitung ringkasan tagihan langsung dari invoice/payment tanpa membangun seluruh row tagihan, sehingga load awal dashboard jauh lebih ringan pada data invoice besar.
+- Widget Router NAS dashboard memakai cache singkat dan timeout SNMP interface yang lebih hemat agar site yang lambat/timeout tidak menahan dashboard terlalu lama.
+
 ## [2.9.58] - 2026-07-27
 
 ### Changed

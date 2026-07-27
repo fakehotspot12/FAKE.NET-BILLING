@@ -19,6 +19,8 @@ const IF_OUT_OCTETS_OID = '1.3.6.1.2.1.2.2.1.16';
 const IP_NET_TO_MEDIA_PHYS_ADDRESS_OID = '1.3.6.1.2.1.4.22.1.2';
 const IP_NET_TO_MEDIA_NET_ADDRESS_OID = '1.3.6.1.2.1.4.22.1.3';
 const dashboardTrafficSamples = new Map();
+const routerDashboardSummaryCache = new Map();
+const ROUTER_DASHBOARD_CACHE_MS = 15000;
 
 function cleanText(value) {
   return String(value || '').trim();
@@ -123,9 +125,12 @@ async function readSnmpValue(target, oid) {
   return sanitizeSnmpValue(output.stdout || output.stderr);
 }
 
-async function readSnmpIndexedValues(target, oid) {
+async function readSnmpIndexedValues(target, oid, options = {}) {
   const base = snmpTargetArgs(target, oid, '-Onq');
-  const timeoutMs = Math.max(8000, base.timeoutMs);
+  const timeoutOverride = Number(options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutOverride)
+    ? Math.max(1000, Math.min(15000, Math.trunc(timeoutOverride)))
+    : Math.max(8000, base.timeoutMs);
   const args = [...base.args];
   const timeoutIndex = args.indexOf('-t');
   if (timeoutIndex !== -1) {
@@ -203,11 +208,13 @@ function resolveDashboardInterface(target = {}, interfaces = []) {
 }
 
 async function readDashboardInterfaceList(target = {}) {
+  const timeoutMs = Math.max(2500, Math.min(4000, Number(target.dashboardSnmpTimeoutMs || target.timeoutMs || 3000) || 3000));
   let rows = [];
   try {
-    rows = await readSnmpIndexedValues(target, IF_NAME_OID);
-  } catch {
-    rows = await readSnmpIndexedValues(target, IF_DESCR_OID);
+    rows = await readSnmpIndexedValues(target, IF_NAME_OID, { timeoutMs });
+  } catch (error) {
+    if (error?.killed) return [];
+    rows = await readSnmpIndexedValues(target, IF_DESCR_OID, { timeoutMs });
   }
   return rows
     .filter((row) => row.index && row.value)
@@ -1176,8 +1183,23 @@ async function routerDashboardSummary(targets = []) {
   const activeTargets = (targets || [])
     .filter((target) => target && target.status !== 'inactive' && cleanText(target.host))
     .slice(0, 20);
+  const cacheKey = activeTargets.map((target) => [
+    target.id,
+    target.name,
+    target.host,
+    target.port || 161,
+    target.snmpVersion,
+    target.community,
+    target.dashboardInterface || target.trafficInterface,
+    target.timeoutMs || 3000,
+    target.updatedAt || ''
+  ].map((value) => cleanText(value)).join(':')).join('|');
+  const cached = routerDashboardSummaryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return structuredClone(cached.value);
+  }
   const routers = await Promise.all(activeTargets.map((target) => checkRouterDashboardTarget(target)));
-  return {
+  const payload = {
     ok: routers.some((router) => router.status === 'up'),
     source: 'mikrotik-snmp',
     routers,
@@ -1188,6 +1210,14 @@ async function routerDashboardSummary(targets = []) {
       generatedAt: nowIso()
     }
   };
+  routerDashboardSummaryCache.set(cacheKey, {
+    expiresAt: Date.now() + ROUTER_DASHBOARD_CACHE_MS,
+    value: structuredClone(payload)
+  });
+  while (routerDashboardSummaryCache.size > 8) {
+    routerDashboardSummaryCache.delete(routerDashboardSummaryCache.keys().next().value);
+  }
+  return payload;
 }
 
 async function mikrotikCustomerSummary(targets = []) {

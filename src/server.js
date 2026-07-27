@@ -9411,31 +9411,87 @@ function localManualInvoiceMembers(data = {}, query = {}) {
   };
 }
 
+const DASHBOARD_BILLING_SUMMARY_CACHE_MS = 15000;
+const dashboardBillingSummaryCache = new Map();
+
+function collectionNewestTimestamp(rows = []) {
+  let newest = '';
+  for (const row of rows || []) {
+    const stamp = String(row.updatedAt || row.paidAt || row.createdAt || row.dueDate || '');
+    if (stamp > newest) newest = stamp;
+  }
+  return newest;
+}
+
+function dashboardBillingSummaryCacheKey(data = {}, period = currentPeriod()) {
+  return [
+    normalizePeriod(period),
+    (data.invoices || []).length,
+    (data.payments || []).length,
+    (data.customers || []).length,
+    (data.radiusUsers || []).length,
+    collectionNewestTimestamp(data.invoices || []),
+    collectionNewestTimestamp(data.payments || []),
+    collectionNewestTimestamp(data.customers || []),
+    collectionNewestTimestamp(data.radiusUsers || [])
+  ].join('|');
+}
+
 function dashboardBillingSummary(data = {}, period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period);
-  const rows = localBillingInvoiceRows(data, selectedPeriod).filter((invoice) => invoice.status !== 'cancelled');
-  const monthlyInvoices = (data.invoices || []).filter((invoice) => (
-    String(invoice.status || '').toLowerCase() !== 'cancelled'
-    && String(invoice.period || '').slice(0, 7) === selectedPeriod
-  ));
-  const monthlyPayments = activePayments(data).filter((payment) => (
-    paymentPeriodKey(payment) === selectedPeriod
-  ));
-  const unpaidRows = rows.filter((invoice) => ['unpaid', 'pending', 'overdue'].includes(String(invoice.status || '').toLowerCase()));
-  const overdueRows = unpaidRows.filter((invoice) => {
-    const customerStatus = normalizeCustomerStatusLocal(invoice.customerStatus || invoice.serviceStatus);
-    return customerStatus === 'isolated' || customerStatus === 'terminate';
-  });
-  return {
-    totalUnpaidCount: unpaidRows.length,
-    totalUnpaidAmount: unpaidRows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
-    overdueCount: overdueRows.length,
-    overdueAmount: overdueRows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
-    monthlyPaidCount: monthlyPayments.length,
-    monthlyPaidAmount: monthlyPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
-    monthlyInvoiceCount: monthlyInvoices.length,
-    monthlyInvoiceAmount: monthlyInvoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0)
+  const cacheKey = dashboardBillingSummaryCacheKey(data, selectedPeriod);
+  const cached = dashboardBillingSummaryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return structuredClone(cached.value);
+  }
+  const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
+  const resolver = radiusStatusResolver(data);
+  const summary = {
+    totalUnpaidCount: 0,
+    totalUnpaidAmount: 0,
+    overdueCount: 0,
+    overdueAmount: 0,
+    monthlyPaidCount: 0,
+    monthlyPaidAmount: 0,
+    monthlyInvoiceCount: 0,
+    monthlyInvoiceAmount: 0
   };
+
+  for (const invoice of data.invoices || []) {
+    const runtimeStatus = invoiceRuntimeStatus(invoice);
+    if (runtimeStatus === 'cancelled') continue;
+    const amount = Number(invoice.amount || 0);
+    if (String(invoice.period || '').slice(0, 7) === selectedPeriod) {
+      summary.monthlyInvoiceCount += 1;
+      summary.monthlyInvoiceAmount += amount;
+    }
+    if (!invoiceCoversPeriod(invoice, selectedPeriod)) continue;
+    const rowStatus = runtimeStatus === 'pending' ? 'unpaid' : runtimeStatus;
+    if (!['unpaid', 'pending', 'overdue'].includes(String(rowStatus || '').toLowerCase())) continue;
+    summary.totalUnpaidCount += 1;
+    summary.totalUnpaidAmount += amount;
+    const customer = customers.get(invoice.customerId) || {};
+    const customerStatus = normalizeCustomerStatusLocal(resolver.statusForInvoice(invoice, customer));
+    if (customerStatus === 'isolated' || customerStatus === 'terminate') {
+      summary.overdueCount += 1;
+      summary.overdueAmount += amount;
+    }
+  }
+
+  for (const payment of activePayments(data)) {
+    if (paymentPeriodKey(payment) !== selectedPeriod) continue;
+    summary.monthlyPaidCount += 1;
+    summary.monthlyPaidAmount += Number(payment.amount || 0);
+  }
+
+  dashboardBillingSummaryCache.set(cacheKey, {
+    expiresAt: Date.now() + DASHBOARD_BILLING_SUMMARY_CACHE_MS,
+    value: structuredClone(summary)
+  });
+  while (dashboardBillingSummaryCache.size > 16) {
+    dashboardBillingSummaryCache.delete(dashboardBillingSummaryCache.keys().next().value);
+  }
+  return structuredClone(summary);
 }
 
 function formatCurrencyText(value) {
