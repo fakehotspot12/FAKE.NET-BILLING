@@ -94,6 +94,19 @@ const DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS = [
   'Device.WiFi.AccessPoint.2.AssociatedDeviceNumberOfEntries'
 ];
 
+const DEFAULT_LAN_CLIENT_COUNT_PARAMETERS = [
+  'VirtualParameters.LANClients',
+  'VirtualParameters.LANActiveClients',
+  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.AssociatedDeviceNumberOfEntries',
+  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.AssociatedDeviceNumberOfEntries',
+  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.AssociatedDeviceNumberOfEntries',
+  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.AssociatedDeviceNumberOfEntries',
+  'Device.Ethernet.Interface.1.AssociatedDeviceNumberOfEntries',
+  'Device.Ethernet.Interface.2.AssociatedDeviceNumberOfEntries',
+  'Device.Ethernet.Interface.3.AssociatedDeviceNumberOfEntries',
+  'Device.Ethernet.Interface.4.AssociatedDeviceNumberOfEntries'
+];
+
 const WIFI_CONFIGURATION_INDEXES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const WIFI_5G_CONFIGURATION_INDEXES = new Set([5, 6, 7, 8, 10]);
 
@@ -142,6 +155,7 @@ function normalizeSettings(settings = {}) {
     wifi5gSsidParameters: DEFAULT_WIFI_5G_SSID_PARAMETERS.slice(),
     wifiClientCountParameters: DEFAULT_WIFI_CLIENT_COUNT_PARAMETERS.slice(),
     wifi5gClientCountParameters: DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS.slice(),
+    lanClientCountParameters: DEFAULT_LAN_CLIENT_COUNT_PARAMETERS.slice(),
     excludeUsernameSuffixes: normalizeUsernameSuffixes(process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES || raw.excludeUsernameSuffixes || [])
   };
 }
@@ -476,6 +490,77 @@ function normalizeWifiNetworks(device = {}) {
   }).filter(Boolean);
 }
 
+function pathNode(source = {}, path = '') {
+  if (!path) return null;
+  return path.split('.').reduce((node, part) => {
+    if (!node || typeof node !== 'object') return null;
+    return node[part] || null;
+  }, source);
+}
+
+function hostPrefixes(device = {}, basePath = '') {
+  const prefixes = new Set();
+  const node = pathNode(device, basePath);
+  if (node && typeof node === 'object') {
+    for (const key of Object.keys(node)) {
+      if (/^\d+$/.test(String(key))) prefixes.add(`${basePath}.${key}`);
+    }
+  }
+  const prefix = `${basePath}.`;
+  for (const key of Object.keys(device || {})) {
+    if (!key.startsWith(prefix)) continue;
+    const rest = key.slice(prefix.length);
+    const index = rest.split('.')[0];
+    if (/^\d+$/.test(index)) prefixes.add(`${basePath}.${index}`);
+  }
+  return [...prefixes];
+}
+
+function hostActiveValue(device = {}, prefix = '') {
+  return [
+    getPathValue(device, `${prefix}.Active`),
+    getPathValue(device, `${prefix}.Enable`),
+    getPathValue(device, `${prefix}.Status`)
+  ].find((value) => value !== '') || '';
+}
+
+function hostLooksActive(device = {}, prefix = '') {
+  const value = hostActiveValue(device, prefix);
+  if (value) {
+    const normalized = cleanText(value).toLowerCase();
+    return ['1', 'true', 'yes', 'on', 'up', 'active', 'enabled', 'online'].includes(normalized);
+  }
+  return Boolean(getPathValue(device, `${prefix}.IPAddress`) || getPathValue(device, `${prefix}.MACAddress`));
+}
+
+function hostInterfaceText(device = {}, prefix = '') {
+  return [
+    getPathValue(device, `${prefix}.Layer1Interface`),
+    getPathValue(device, `${prefix}.Layer2Interface`),
+    getPathValue(device, `${prefix}.InterfaceType`),
+    getPathValue(device, `${prefix}.PhysAddress`),
+    getPathValue(device, `${prefix}.ConnectionType`)
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function hostLooksLan(device = {}, prefix = '') {
+  const text = hostInterfaceText(device, prefix);
+  if (/wifi|wi-fi|wlan|ssid|radio/i.test(text)) return false;
+  return /ethernet|lanethernet|eth|lan/i.test(text);
+}
+
+function lanHostSummary(device = {}) {
+  const prefixes = [
+    ...hostPrefixes(device, 'InternetGatewayDevice.LANDevice.1.Hosts.Host'),
+    ...hostPrefixes(device, 'Device.Hosts.Host')
+  ];
+  const activePrefixes = prefixes.filter((prefix) => hostLooksActive(device, prefix));
+  return {
+    activeTotal: activePrefixes.length,
+    lanTotal: activePrefixes.filter((prefix) => hostLooksLan(device, prefix)).length
+  };
+}
+
 function safeTags(value = []) {
   if (!Array.isArray(value)) return [];
   return value.map(cleanText).filter(Boolean).slice(0, 8);
@@ -491,6 +576,8 @@ function normalizeDevice(device = {}, settings = {}) {
   const ssid5 = firstParameter(device, cfg.wifi5gSsidParameters);
   const clients24 = firstParameter(device, cfg.wifiClientCountParameters);
   const clients5 = firstParameter(device, cfg.wifi5gClientCountParameters);
+  const lanClientsParameter = firstParameter(device, cfg.lanClientCountParameters);
+  const lanHosts = lanHostSummary(device);
   const wifiNetworks = normalizeWifiNetworks(device);
   const activeWifiNetworks = wifiNetworks.filter((item) => item.enabled);
   const wifi24 = activeWifiNetworks.find((item) => item.band === '2.4G') || wifiNetworks.find((item) => item.band === '2.4G');
@@ -501,6 +588,9 @@ function normalizeDevice(device = {}, settings = {}) {
   const wifiClients5 = wifiNetworks.length
     ? activeWifiNetworks.filter((item) => item.band === '5G').reduce((sum, item) => sum + item.clients, 0)
     : normalizeCount(clients5.value);
+  const explicitLanClients = normalizeCount(lanClientsParameter.value);
+  const lanClients = Math.max(explicitLanClients, lanHosts.lanTotal);
+  const clientsTotal = Math.max(wifiClients24 + wifiClients5 + lanClients, lanHosts.activeTotal);
   const serial = cleanText(device._deviceId?._SerialNumber)
     || getPathValue(device, 'InternetGatewayDevice.DeviceInfo.SerialNumber')
     || getPathValue(device, 'Device.DeviceInfo.SerialNumber');
@@ -540,7 +630,11 @@ function normalizeDevice(device = {}, settings = {}) {
     wifiClients24Parameter: wifi24?.clientsParameter || clients24.path,
     wifiClients5,
     wifiClients5Parameter: wifi5?.clientsParameter || clients5.path,
-    wifiClientsTotal: wifiClients24 + wifiClients5,
+    lanClients,
+    lanClientsParameter: lanClientsParameter.path,
+    hostClientsTotal: lanHosts.activeTotal,
+    clientsTotal,
+    wifiClientsTotal: clientsTotal,
     wifiNetworks,
     lastInform,
     online,

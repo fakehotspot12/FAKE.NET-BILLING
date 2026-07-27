@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.64] - 2026-07-27
+
+### Added
+
+- Pengaturan menambahkan popup Telegram PPPoE untuk mengaktifkan notifikasi login/logout dari server billing, lengkap dengan bot token, chat ID, interval pantau, preview pesan, dan tombol Simpan & Test.
+- Notifikasi Telegram PPPoE memantau session FreeRADIUS dari billing, menyimpan state aktif di Redis agar tidak spam setelah restart, dan dapat menambahkan redaman serta total active modem dari GenieACS.
+- GenieACS kini menghitung total active modem secara global dari WiFi dan LAN host yang terbaca, bukan hanya asosiasi 2.4G/5G.
+
 ## [2.9.63] - 2026-07-27
 
 ### Fixed
