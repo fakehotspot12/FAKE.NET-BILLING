@@ -106,6 +106,32 @@ const ROLE_DEFINITIONS = {
       'radius:write'
     ]
   },
+  secretary: {
+    label: 'Sekretaris',
+    description: 'Akses operasional lintas menu seperti owner terbatas, tanpa kewenangan admin, pengaturan, atau transaksi sensitif.',
+    permissions: [
+      'dashboard:read',
+      'external-incomes:read',
+      'external-incomes:write',
+      'expenses:read',
+      'expenses:write',
+      'reports:daily:read',
+      'reports:voucher:read',
+      'billing-monitor:read',
+      'customers:manage',
+      'invoices:manage',
+      'xendit:read',
+      'inventory:read',
+      'inventory:write',
+      'network-assets:read',
+      'network-assets:write',
+      'radius:read',
+      'genieacs:read',
+      'monitoring:read',
+      'monitoring:write',
+      'monitoring:check'
+    ]
+  },
   technician: {
     label: 'Teknisi',
     description: 'Akses teknis lapangan tanpa data kas, pemasukan, atau pengeluaran.',

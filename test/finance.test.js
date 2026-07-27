@@ -7228,9 +7228,16 @@ test('auth creates default admin and protects admin role', () => {
     role: 'collector',
     password: 'rahasia5'
   });
+  const secretary = createUser(data, {
+    username: 'sekretaris',
+    name: 'Sekretaris',
+    role: 'secretary',
+    password: 'rahasia6'
+  });
   assert.equal(noc.role, 'noc');
   assert.equal(viewer.role, 'viewer');
   assert.equal(collector.role, 'collector');
+  assert.equal(secretary.role, 'secretary');
   assert.equal(hasPermission(publicUser(data.users[4]), 'dashboard:read'), true);
   assert.equal(hasPermission(publicUser(data.users[5]), 'dashboard:read'), true);
   assert.equal(hasPermission(publicUser(data.users[4]), 'radius:read'), true);
@@ -7245,6 +7252,25 @@ test('auth creates default admin and protects admin role', () => {
   assert.equal(hasPermission(publicUser(collector), 'reports:voucher:read'), false);
   assert.equal(hasPermission(publicUser(collector), 'billing-monitor:read'), true);
   assert.equal(hasPermission(publicUser(collector), 'settings:write'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'dashboard:read'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'external-incomes:write'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'expenses:write'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'billing-monitor:read'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'customers:manage'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'invoices:manage'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'inventory:write'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'network-assets:write'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'radius:read'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'radius:write'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'genieacs:read'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'genieacs:write'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'monitoring:write'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'settings:write'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'users:manage'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'payment-gateway:manage'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'wa-gateway:manage'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'xendit:balance'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'xendit:withdraw'), false);
   assert.throws(() => updateUser(data, data.users[0].id, { active: false }), /admin aktif/);
   assert.throws(() => deleteUser(data, data.users[0].id, data.users[1].id), /admin aktif/);
 });

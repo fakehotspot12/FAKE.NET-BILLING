@@ -2415,12 +2415,17 @@ function bindDashboardRouterNasControls() {
 function scheduleDashboardRouterNas() {
   if (dashboardRouterNasTimer) window.clearTimeout(dashboardRouterNasTimer);
   if (state.view !== 'dashboard') return;
-  dashboardRouterNasTimer = window.setTimeout(() => loadDashboardRouterNas({ silent: true }), mobileMenuQuery.matches ? 6000 : 3000);
+  const delay = document.hidden ? 15000 : (mobileMenuQuery.matches ? 12000 : 8000);
+  dashboardRouterNasTimer = window.setTimeout(() => loadDashboardRouterNas({ silent: true }), delay);
 }
 
 async function loadDashboardRouterNas(options = {}) {
   const container = document.getElementById('dashboardRouterNas');
   if (!container || dashboardRouterNasLoading) return;
+  if (document.hidden && !options.force) {
+    scheduleDashboardRouterNas();
+    return;
+  }
   dashboardRouterNasLoading = true;
   if (!options.silent && !dashboardRouterNasPayload) {
     container.innerHTML = dashboardRouterNasLoadingMarkup();
@@ -6801,7 +6806,8 @@ function roleOptions(selected) {
 const USER_POSITION_OPTIONS = Object.freeze({
   admin: ['CEO/Direktur'],
   owner: ['CEO/Direktur'],
-  finance: ['Sekretaris', 'Kepala Subbagian Keuangan dan Aset'],
+  finance: ['Kepala Subbagian Keuangan dan Aset'],
+  secretary: ['Sekretaris'],
   technician: ['Kepala Teknisi dan Perlengkapan', 'Staf Teknisi dan Perlengkapan'],
   noc: ['Kepala Teknisi dan Perlengkapan', 'Staf Teknisi dan Perlengkapan'],
   collector: ['Staf Penagihan'],
@@ -14459,6 +14465,11 @@ function paymentModalBody(member = {}, payment = {}, editable = false) {
           <label>Diskon (Rp)
             <input name="discount" type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(memberNumberInput(payment.discount || member.discount))}" ${disabled}>
           </label>
+          <label class="field span-2 checkbox-field">
+            <input name="billingIsolationOverride" type="checkbox" value="true" ${(payment.billingIsolationOverride || member.billingIsolationOverride) ? 'checked' : ''} ${disabled}>
+            <span>Dikecualikan dari isolir otomatis</span>
+            <small class="muted">Default tidak aktif. Gunakan hanya untuk pelanggan yang mendapat kebijakan khusus; invoice dan reminder tetap berjalan.</small>
+          </label>
           <div class="field span-2 member-addon-editor">
             <input type="hidden" name="memberAddons" value="[]">
             <div class="batch-toolbar compact">
@@ -14746,6 +14757,7 @@ async function openMemberPaymentModal(member = {}) {
         body: JSON.stringify({
           memberId: memberId(member),
           ...formPayload,
+          billingIsolationOverride: formPayload.billingIsolationOverride === true,
           memberAddons: JSON.stringify(collectMemberAddons(form)),
           nextDue
         })
@@ -18654,12 +18666,14 @@ async function render(options = {}) {
 document.querySelectorAll('[data-view]').forEach((button) => {
   button.addEventListener('click', () => {
     setView(button.dataset.view);
-    const group = button.closest('[data-nav-group]');
-    if (group) {
-      group.classList.remove('is-open');
-      group.querySelector('[data-nav-toggle]')?.setAttribute('aria-expanded', 'false');
+    if (menuIsMobile()) {
+      const group = button.closest('[data-nav-group]');
+      if (group) {
+        group.classList.remove('is-open');
+        group.querySelector('[data-nav-toggle]')?.setAttribute('aria-expanded', 'false');
+      }
+      setMenuOpen(false);
     }
-    setMenuOpen(false);
   });
 });
 

@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.58] - 2026-07-27
+
+### Changed
+
+- Sidebar desktop sekarang mempertahankan submenu yang sedang terbuka saat memilih submenu; drawer mobile tetap menutup setelah menu dipilih.
+- Menambahkan role Sekretaris sebagai akses operasional terbatas seperti owner, tanpa kewenangan admin, pengaturan, payment gateway, WA gateway, atau withdraw.
+- Edit Payment Member menambahkan opsi pengecualian isolir otomatis untuk pelanggan kebijakan khusus; default tetap mengikuti sistem billing.
+- Dashboard memakai cache singkat untuk ringkasan session Radius dan refresh NAS yang lebih hemat saat tab browser tidak aktif.
+
 ## [2.9.57] - 2026-07-27
 
 ### Changed

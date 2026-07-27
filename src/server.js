@@ -5731,7 +5731,35 @@ function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period 
   return counts;
 }
 
+const DASHBOARD_RADIUS_SUMMARY_CACHE_MS = 10000;
+const dashboardRadiusSummaryCache = new Map();
+
+function dashboardRadiusSummaryCacheKey(data = {}, period = currentPeriod()) {
+  const newestTimestamp = (rows = []) => {
+    let newest = '';
+    for (const row of rows || []) {
+      const stamp = String(row.updatedAt || row.createdAt || row.activeDate || row.statusUpdatedAt || '');
+      if (stamp > newest) newest = stamp;
+    }
+    return newest;
+  };
+  const radiusUsers = data.radiusUsers || [];
+  const customers = data.customers || [];
+  return [
+    period,
+    radiusUsers.length,
+    customers.length,
+    newestTimestamp(radiusUsers),
+    newestTimestamp(customers)
+  ].join('|');
+}
+
 async function dashboardRadiusSummary(data = {}, period = currentPeriod()) {
+  const cacheKey = dashboardRadiusSummaryCacheKey(data, period);
+  const cached = dashboardRadiusSummaryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return structuredClone(cached.value);
+  }
   const summary = {
     pppDhcp: dashboardRadiusServiceSummary(data, 'pppoe', period),
     hotspot: dashboardRadiusServiceSummary(data, 'hotspot', period),
@@ -5764,6 +5792,13 @@ async function dashboardRadiusSummary(data = {}, period = currentPeriod()) {
     }
   } catch (error) {
     summary.sessionError = error.message || 'Session FreeRADIUS tidak bisa dibaca';
+  }
+  dashboardRadiusSummaryCache.set(cacheKey, {
+    expiresAt: Date.now() + DASHBOARD_RADIUS_SUMMARY_CACHE_MS,
+    value: structuredClone(summary)
+  });
+  while (dashboardRadiusSummaryCache.size > 16) {
+    dashboardRadiusSummaryCache.delete(dashboardRadiusSummaryCache.keys().next().value);
   }
   return summary;
 }
@@ -6145,6 +6180,7 @@ function localMonitoringMemberRows(data = {}, query = {}) {
       addons: normalizeBillingAddons(customer),
       addOnMonthlyTotal: billingAddonsMonthlyTotal(customer),
       packageName: customer.packageName || '',
+      billingIsolationOverride: customer.billingIsolationOverride === true || radiusUser.billingIsolationOverride === true,
       createdByName,
       createdByUsername,
       createdByRole: customer.createdByRole || radiusUser.createdByRole || '',
@@ -17264,7 +17300,8 @@ async function handleApi(req, res, url) {
         discount: customer.discount || '',
         addOns: normalizeBillingAddons(customer),
         addons: normalizeBillingAddons(customer),
-        addOnMonthlyTotal: billingAddonsMonthlyTotal(customer)
+        addOnMonthlyTotal: billingAddonsMonthlyTotal(customer),
+        billingIsolationOverride: customer.billingIsolationOverride === true || radiusUser.billingIsolationOverride === true
       };
       const internet = {
         username: radiusUser.username || customer.username || '',
@@ -17457,6 +17494,30 @@ async function handleApi(req, res, url) {
           customer.dueDate = customer.nextDue;
           customer.ppn = String(payload.ppn || '').trim();
           customer.discount = String(payload.discount || '').trim();
+          const isolationOverride = payloadEnabled(payload.billingIsolationOverride);
+          customer.billingIsolationOverride = isolationOverride;
+          const linkedRadiusUser = (data.radiusUsers || []).find((user) => {
+            return user.customerId === customer.id
+              || user.id === customer.radiusUserId
+              || String(user.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase();
+          });
+          if (linkedRadiusUser) {
+            linkedRadiusUser.billingIsolationOverride = isolationOverride;
+            if (!isolationOverride) {
+              linkedRadiusUser.manualActivatedAt = '';
+              linkedRadiusUser.manualActivatedByName = '';
+              linkedRadiusUser.manualActivatedByUsername = '';
+              linkedRadiusUser.manualActivatedByRole = '';
+            }
+            linkedRadiusUser.updatedAt = new Date().toISOString();
+            linkedRadiusUser.updatedBy = authContext.user.name || authContext.user.username;
+          }
+          if (!isolationOverride) {
+            customer.manualActivatedAt = '';
+            customer.manualActivatedByName = '';
+            customer.manualActivatedByUsername = '';
+            customer.manualActivatedByRole = '';
+          }
           const memberAddons = normalizeBillingAddons(payload);
           customer.addOns = memberAddons;
           customer.addons = memberAddons;
