@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.61] - 2026-07-27
+
+### Fixed
+
+- Ringkasan dashboard memakai status invoice yang sudah dihitung pada scan invoice yang sama, sehingga tidak menghitung ulang ribuan invoice saat menghitung pembayaran bulan berjalan.
+
 ## [2.9.60] - 2026-07-27
 
 ### Fixed

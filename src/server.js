@@ -9478,6 +9478,7 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
   }
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const resolver = radiusStatusResolver(data);
+  const invoiceStatuses = new Map();
   const summary = {
     totalUnpaidCount: 0,
     totalUnpaidAmount: 0,
@@ -9491,6 +9492,10 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
 
   for (const invoice of data.invoices || []) {
     const runtimeStatus = invoiceRuntimeStatus(invoice);
+    const invoiceId = String(invoice.id || '');
+    if (invoiceId && !invoiceStatuses.has(invoiceId)) {
+      invoiceStatuses.set(invoiceId, runtimeStatus);
+    }
     if (runtimeStatus === 'cancelled') continue;
     const amount = Number(invoice.amount || 0);
     if (String(invoice.period || '').slice(0, 7) === selectedPeriod) {
@@ -9510,7 +9515,10 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     }
   }
 
-  for (const payment of activePayments(data)) {
+  for (const payment of data.payments || []) {
+    if (!paymentIsActive(payment)) continue;
+    const invoiceId = String(payment.invoiceId || '');
+    if (invoiceId && invoiceStatuses.has(invoiceId) && invoiceStatuses.get(invoiceId) !== 'paid') continue;
     if (paymentPeriodKey(payment) !== selectedPeriod) continue;
     summary.monthlyPaidCount += 1;
     summary.monthlyPaidAmount += Number(payment.amount || 0);
