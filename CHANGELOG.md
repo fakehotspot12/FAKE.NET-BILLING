@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.65] - 2026-07-27
+
+### Fixed
+
+- Telegram PPPoE logout sekarang menyertakan redaman modem dan total active modem terakhir dari cache state billing.
+- Monitor Telegram PPPoE memakai cache session FreeRADIUS dan refresh data ACS secara terukur agar notifikasi tetap cepat tanpa membebani router, ACS, atau database.
+- Default interval pantau Telegram PPPoE untuk install baru diturunkan menjadi 5 detik.
+
 ## [2.9.64] - 2026-07-27
 
 ### Added

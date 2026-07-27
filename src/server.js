@@ -117,7 +117,8 @@ const WA_GATEWAY_BULK_PROFILES = Object.freeze({
 const WA_GATEWAY_TRANSACTIONAL_TYPES = new Set(['paymentPaid', 'accountActive', 'voucherIssued']);
 const TELEGRAM_PPPOE_STATE_KEY = process.env.TELEGRAM_PPPOE_STATE_KEY || 'fakenet:telegram:pppoe:active:v1';
 const TELEGRAM_PPPOE_STATE_TTL_SECONDS = Math.max(86400, Number(process.env.TELEGRAM_PPPOE_STATE_TTL_SECONDS || 30 * 86400) || 30 * 86400);
-const TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS = Math.max(5, Number(process.env.TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS || 15) || 15);
+const TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS = Math.max(5, Number(process.env.TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS || 5) || 5);
+const TELEGRAM_PPPOE_ACS_REFRESH_SECONDS = Math.max(60, Number(process.env.TELEGRAM_PPPOE_ACS_REFRESH_SECONDS || 120) || 120);
 const TELEGRAM_PPPOE_MAX_EVENTS_PER_TICK = Math.max(1, Number(process.env.TELEGRAM_PPPOE_MAX_EVENTS_PER_TICK || 50) || 50);
 const WAHA_ENV_FILE = process.env.WAHA_ENV_FILE || '/etc/fakenet-billing-waha.env';
 const APP_UPDATE_COMMAND = process.env.FAKENET_UPDATE_COMMAND || '/usr/local/bin/fakenet-billing-update';
@@ -11346,7 +11347,7 @@ function telegramSessionKey(session = {}) {
   ].filter(Boolean).join('|');
 }
 
-let telegramPppoeStateMemory = { sessions: {}, updatedAt: '' };
+let telegramPppoeStateMemory = { sessions: {}, updatedAt: '', acsUpdatedAt: '' };
 
 async function telegramLoadPppoeState() {
   if (!redisCache.enabled()) return structuredClone(telegramPppoeStateMemory);
@@ -11355,7 +11356,8 @@ async function telegramLoadPppoeState() {
     const payload = raw ? JSON.parse(raw) : {};
     telegramPppoeStateMemory = {
       sessions: payload.sessions && typeof payload.sessions === 'object' ? payload.sessions : {},
-      updatedAt: payload.updatedAt || ''
+      updatedAt: payload.updatedAt || '',
+      acsUpdatedAt: payload.acsUpdatedAt || ''
     };
     return structuredClone(telegramPppoeStateMemory);
   } catch {
@@ -11363,10 +11365,11 @@ async function telegramLoadPppoeState() {
   }
 }
 
-async function telegramSavePppoeState(sessions = {}) {
+async function telegramSavePppoeState(sessions = {}, meta = {}) {
   const payload = {
     sessions,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    acsUpdatedAt: meta.acsUpdatedAt || telegramPppoeStateMemory.acsUpdatedAt || ''
   };
   telegramPppoeStateMemory = structuredClone(payload);
   if (!redisCache.enabled()) return payload;
@@ -11403,7 +11406,7 @@ function telegramAcsDeviceIndex(rows = []) {
 }
 
 async function telegramPppoeAcsIndex(data = {}, enabled = true) {
-  if (!enabled || !genieAcs.configured(data.settings || {})) return new Map();
+  if (!enabled || !genieAcs.configured(data.settings || {})) return { index: new Map(), refreshed: false };
   try {
     const payload = await genieAcs.listDevices(data.settings || {}, {
       page: 1,
@@ -11411,9 +11414,9 @@ async function telegramPppoeAcsIndex(data = {}, enabled = true) {
       status: 'all',
       redaman: 'all'
     });
-    return telegramAcsDeviceIndex(payload.rows || []);
+    return { index: telegramAcsDeviceIndex(payload.rows || []), refreshed: true };
   } catch {
-    return new Map();
+    return { index: new Map(), refreshed: false };
   }
 }
 
@@ -11421,9 +11424,10 @@ function telegramPppoeMessage(type = 'login', session = {}, meta = {}) {
   const login = type === 'login';
   const when = telegramDateTimeParts(new Date());
   const device = meta.device || {};
-  const redamanText = device.rxPowerText || '-';
-  const activeClients = Number.isFinite(Number(device.clientsTotal ?? device.wifiClientsTotal))
-    ? `${Number(device.clientsTotal ?? device.wifiClientsTotal)} Client`
+  const redamanText = device.rxPowerText || session.lastRxPowerText || '-';
+  const activeClientValue = device.clientsTotal ?? device.wifiClientsTotal ?? session.lastClientsTotal ?? session.lastWifiClientsTotal;
+  const activeClients = Number.isFinite(Number(activeClientValue))
+    ? `${Number(activeClientValue)} Client`
     : '-';
   const rows = [
     `${login ? '🟢 PPPoE LOGIN' : '🔴 PPPoE LOGOUT'}`,
@@ -11431,8 +11435,8 @@ function telegramPppoeMessage(type = 'login', session = {}, meta = {}) {
     `⏰ Jam: ${when.time}`,
     `👤 User: ${session.username || '-'}`,
     ...(login ? [`🌐 IP Client: ${session.framedIpAddress || '-'}`] : []),
-    ...(login ? [`📶 Redaman Modem: ${redamanText}`] : []),
-    ...(login ? [`📡 Total Active Modem: ${activeClients}`] : []),
+    `📶 Redaman Modem: ${redamanText}`,
+    `📡 Total Active Modem: ${activeClients}`,
     `📊 Total Active: ${Number(meta.totalActive || 0)} Client`
   ];
   return rows.map(telegramEscapeHtml).join('\n');
@@ -11476,7 +11480,13 @@ async function runTelegramPppoeMonitor(reason = 'interval') {
     const data = await loadStore();
     const settings = data.settings?.telegram || {};
     if (!telegramConfigured(settings)) return { skipped: true, reason: 'telegram-disabled' };
-    const sessionPayload = await freeradiusSessions.activeSessions({ limit: 5000, allowCache: true });
+    const pollIntervalSeconds = Math.max(5, Number(settings.pollIntervalSeconds || TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS) || TELEGRAM_PPPOE_DEFAULT_POLL_SECONDS);
+    const sessionPayload = await freeradiusSessions.activeSessions({
+      limit: 5000,
+      allowCache: true,
+      preferCache: true,
+      maxCacheAgeSeconds: Math.max(3, Math.min(10, pollIntervalSeconds))
+    });
     if (sessionPayload.ok === false && !sessionPayload.cache) {
       return { skipped: true, reason: sessionPayload.error || 'radius-session-error' };
     }
@@ -11487,30 +11497,61 @@ async function runTelegramPppoeMonitor(reason = 'interval') {
       const user = usersByUsername.get(username) || null;
       return radiusSessionServiceType(data, session, user) === 'pppoe';
     });
+    const previous = await telegramLoadPppoeState();
+    const previousSessions = previous.sessions || {};
     const current = {};
     for (const session of pppoeSessions) {
       const key = telegramSessionKey(session);
-      if (key) current[key] = {
+      if (!key) continue;
+      const previousSession = previousSessions[key] || {};
+      current[key] = {
         username: session.username || '',
         framedIpAddress: session.framedIpAddress || '',
         nasIpAddress: session.nasIpAddress || '',
         callingStationId: session.callingStationId || '',
-        startedAt: session.startedAt || ''
+        startedAt: session.startedAt || '',
+        lastRxPowerText: previousSession.lastRxPowerText || '',
+        lastClientsTotal: previousSession.lastClientsTotal,
+        lastWifiClientsTotal: previousSession.lastWifiClientsTotal
       };
     }
-    const previous = await telegramLoadPppoeState();
-    if (reason === 'startup' && !previous.updatedAt) {
-      await telegramSavePppoeState(current);
-      return { initialized: true, active: Object.keys(current).length };
-    }
-    const previousSessions = previous.sessions || {};
     const loginKeys = Object.keys(current).filter((key) => !previousSessions[key]);
     const logoutKeys = Object.keys(previousSessions).filter((key) => !current[key]);
+    const acsUpdatedAtMs = previous.acsUpdatedAt ? new Date(previous.acsUpdatedAt).getTime() : 0;
+    const acsAgeSeconds = acsUpdatedAtMs ? Math.max(0, Math.round((Date.now() - acsUpdatedAtMs) / 1000)) : Infinity;
+    const shouldIndexAcs = settings.includeAcsInfo !== false
+      && pppoeSessions.length > 0
+      && (
+        (reason === 'startup' && !previous.acsUpdatedAt)
+        || loginKeys.length > 0
+        || (!logoutKeys.length && acsAgeSeconds >= TELEGRAM_PPPOE_ACS_REFRESH_SECONDS)
+      );
+    const acsSnapshot = await telegramPppoeAcsIndex(data, shouldIndexAcs);
+    const deviceIndex = acsSnapshot.index || new Map();
+    if (deviceIndex.size) {
+      for (const session of pppoeSessions) {
+        const key = telegramSessionKey(session);
+        if (!key || !current[key]) continue;
+        const usernameKey = radiusSessionUsername(session.username);
+        const device = deviceIndex.get(usernameKey) || {};
+        current[key].lastRxPowerText = device.rxPowerText || current[key].lastRxPowerText || '';
+        if (Number.isFinite(Number(device.clientsTotal))) {
+          current[key].lastClientsTotal = Number(device.clientsTotal);
+        }
+        if (Number.isFinite(Number(device.wifiClientsTotal))) {
+          current[key].lastWifiClientsTotal = Number(device.wifiClientsTotal);
+        }
+      }
+    }
+    const acsStateAt = acsSnapshot.refreshed ? new Date().toISOString() : previous.acsUpdatedAt || '';
+    if (reason === 'startup' && !previous.updatedAt) {
+      await telegramSavePppoeState(current, { acsUpdatedAt: acsStateAt });
+      return { initialized: true, active: Object.keys(current).length };
+    }
     if (!loginKeys.length && !logoutKeys.length) {
-      await telegramSavePppoeState(current);
+      await telegramSavePppoeState(current, { acsUpdatedAt: acsStateAt });
       return { sent: 0, active: Object.keys(current).length };
     }
-    const deviceIndex = await telegramPppoeAcsIndex(data, settings.includeAcsInfo !== false && loginKeys.length > 0);
     const events = [
       ...loginKeys.map((key) => ({ type: 'login', session: current[key] })),
       ...logoutKeys.map((key) => ({ type: 'logout', session: previousSessions[key] }))
@@ -11530,7 +11571,7 @@ async function runTelegramPppoeMonitor(reason = 'interval') {
         if (errors.length < 3) errors.push(error.message || String(error));
       }
     }
-    await telegramSavePppoeState(current);
+    await telegramSavePppoeState(current, { acsUpdatedAt: acsStateAt });
     return { sent, active: Object.keys(current).length, errors };
   } finally {
     telegramPppoeMonitorRunning = false;

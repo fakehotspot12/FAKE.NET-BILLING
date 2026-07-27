@@ -177,7 +177,7 @@ function createDefaultStore() {
         pppoeEnabled: false,
         botToken: '',
         chatId: '',
-        pollIntervalSeconds: 15,
+        pollIntervalSeconds: 5,
         includeAcsInfo: true
       },
       paymentGateway: {

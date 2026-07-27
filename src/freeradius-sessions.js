@@ -486,6 +486,8 @@ async function cachedSessions(fallbackError = '') {
     const raw = await redisCache.get(SESSION_CACHE_KEY);
     if (!raw) return null;
     const payload = JSON.parse(raw);
+    const cachedAtMs = payload.cachedAt ? new Date(payload.cachedAt).getTime() : 0;
+    const cacheAgeSeconds = cachedAtMs ? Math.max(0, Math.round((Date.now() - cachedAtMs) / 1000)) : null;
     return {
       ...payload,
       ok: true,
@@ -493,6 +495,7 @@ async function cachedSessions(fallbackError = '') {
       configured: true,
       source: 'freeradius-radacct-cache',
       cache: true,
+      cacheAgeSeconds,
       stale: true,
       error: fallbackError || payload.error || ''
     };
@@ -519,6 +522,17 @@ async function activeSessions(options = {}) {
       rows: [],
       error: 'FREERADIUS_DATABASE_URL belum diisi'
     };
+  }
+  if (options.preferCache && options.allowCache !== false) {
+    const cached = await cachedSessions('');
+    const maxCacheAgeSeconds = Math.max(0, Number(options.maxCacheAgeSeconds || 0) || 0);
+    if (cached && (!maxCacheAgeSeconds || Number(cached.cacheAgeSeconds || 0) <= maxCacheAgeSeconds)) {
+      return {
+        ...cached,
+        stale: false,
+        error: ''
+      };
+    }
   }
   try {
     const columns = await radacctColumns();

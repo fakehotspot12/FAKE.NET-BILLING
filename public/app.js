@@ -18333,6 +18333,8 @@ function telegramPppoePreviewText() {
     '📅 Tanggal: 27/07/2026',
     '⏰ Jam: 16:05',
     '👤 User: pelanggan@site',
+    '📶 Redaman Modem: -19,8 dBm',
+    '📡 Total Active Modem: 4 Client',
     '📊 Total Active: 127 Client'
   ].join('\n');
 }
@@ -18343,7 +18345,7 @@ function telegramPppoePayload(payload = {}) {
     botToken: payload.telegramBotToken || '',
     clearBotToken: payload.telegramClearBotToken === true,
     chatId: payload.telegramChatId || '',
-    pollIntervalSeconds: payload.telegramPollIntervalSeconds || 15,
+    pollIntervalSeconds: payload.telegramPollIntervalSeconds || 5,
     includeAcsInfo: payload.telegramIncludeAcsInfo !== false
   };
 }
@@ -18375,7 +18377,7 @@ function telegramPppoeSettingsBody(settings = {}) {
         </label>
         <label class="field">
           <span>Interval pantau</span>
-          <input name="telegramPollIntervalSeconds" type="number" min="5" max="300" step="1" value="${escapeHtml(telegram.pollIntervalSeconds || 15)}">
+          <input name="telegramPollIntervalSeconds" type="number" min="5" max="300" step="1" value="${escapeHtml(telegram.pollIntervalSeconds || 5)}">
           <small class="muted">Default 15 detik. Naikkan jika server kecil atau jumlah session sangat besar.</small>
         </label>
         <label class="field">
@@ -18550,7 +18552,7 @@ async function renderSettings(options = {}) {
               <i class="fa-brands fa-telegram" aria-hidden="true"></i>
               <span>${telegram.pppoeEnabled ? 'Aktif' : 'Atur Telegram'}</span>
             </button>
-            <small class="muted">${telegram.pppoeEnabled ? `Aktif, pantau tiap ${displayNumber(telegram.pollIntervalSeconds || 15)} detik.` : 'Notif login/logout PPPoE dipindah ke server billing.'}</small>
+            <small class="muted">${telegram.pppoeEnabled ? `Aktif, pantau tiap ${displayNumber(telegram.pollIntervalSeconds || 5)} detik.` : 'Notif login/logout PPPoE dipindah ke server billing.'}</small>
           </div>
           <label class="field full">
             <span>Tier bonus collector default</span>
