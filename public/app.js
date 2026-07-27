@@ -2788,6 +2788,109 @@ async function uploadMemberKtpFile(file, options = {}) {
   });
 }
 
+function ktpOcrName(result = {}) {
+  return String(result?.name || result?.fullName || result?.ocr?.name || result?.ocr?.fullName || '').trim();
+}
+
+function normalizeOcrComparableName(value = '') {
+  return String(value || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b(?:bapak|ibu|pak|bu|mr|mrs|ms)\b/gi, ' ')
+    .replace(/[._-]+/g, ' ')
+    .replace(/\S+@\S+/g, ' ')
+    .replace(/@[\w.-]+/g, ' ')
+    .replace(/[0-9]+/g, ' ')
+    .replace(/[^A-Za-z\u00c0-\u024f\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('id-ID');
+}
+
+function ocrNameTokens(value = '') {
+  return normalizeOcrComparableName(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 2);
+}
+
+function ocrNameSimilarity(left = '', right = '') {
+  const leftTokens = new Set(ocrNameTokens(left));
+  const rightTokens = new Set(ocrNameTokens(right));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  let intersection = 0;
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) intersection += 1;
+  });
+  return (2 * intersection) / (leftTokens.size + rightTokens.size);
+}
+
+function isAutoLikeMemberName(value = '') {
+  const raw = String(value || '').trim();
+  const normalized = normalizeOcrComparableName(raw);
+  if (!raw || !normalized) return true;
+  if (/@/.test(raw)) return true;
+  if (/^(?:pppoe|hotspot|user|member|pelanggan|customer)[\s._-]*\d*/i.test(raw)) return true;
+  return false;
+}
+
+function ktpOcrNameDecision(currentName = '', ocrName = '', options = {}) {
+  const current = String(currentName || '').trim();
+  const ocr = String(ocrName || '').trim();
+  if (!ocr) return { action: 'none', shouldReplace: false, message: '' };
+  const currentNorm = normalizeOcrComparableName(current);
+  const ocrNorm = normalizeOcrComparableName(ocr);
+  const autoFilled = options.replaceAutoFilled === true && options.autoFilled === true;
+  if (!currentNorm || autoFilled || isAutoLikeMemberName(current)) {
+    return { action: 'filled', shouldReplace: true, message: `Nama diisi dari OCR: ${ocr}` };
+  }
+  if (currentNorm === ocrNorm) {
+    return { action: 'matched', shouldReplace: true, message: `Nama cocok: ${ocr}` };
+  }
+  const currentTokens = ocrNameTokens(current);
+  const ocrTokens = ocrNameTokens(ocr);
+  const currentSubset = currentTokens.length > 0 && currentTokens.every((token) => ocrTokens.includes(token));
+  const compactCurrent = currentNorm.replace(/\s+/g, '');
+  const compactOcr = ocrNorm.replace(/\s+/g, '');
+  const compactSubset = compactCurrent.length >= 3 && compactOcr.includes(compactCurrent);
+  const similarity = ocrNameSimilarity(current, ocr);
+  if (currentSubset || compactSubset || similarity >= 0.8) {
+    return { action: 'completed', shouldReplace: true, message: `Nama dilengkapi dari OCR: ${ocr}` };
+  }
+  return {
+    action: similarity >= 0.5 ? 'review' : 'different',
+    shouldReplace: false,
+    message: `Nama berbeda, review manual: ${current} (${ocr})`
+  };
+}
+
+function ktpOcrStatusText(result = {}, decision = null) {
+  const nik = String(result?.ktp || result?.nik || result?.ocr?.nik || '').trim();
+  const name = ktpOcrName(result);
+  const parts = [];
+  if (nik) parts.push(`NIK terbaca: ${nik}`);
+  if (decision?.message) {
+    parts.push(decision.message);
+  } else if (name) {
+    parts.push(`Nama terbaca: ${name}`);
+  }
+  if (parts.length) return parts.join(' | ');
+  return result?.ocr?.error || 'Foto tersimpan. NIK dan nama belum terbaca otomatis, isi manual dari foto KTP.';
+}
+
+function fillKtpOcrNameInput(input, result = {}, options = {}) {
+  if (!input) return { action: 'none', shouldReplace: false, message: '' };
+  const name = ktpOcrName(result);
+  if (!name) return { action: 'none', shouldReplace: false, message: '' };
+  const decision = ktpOcrNameDecision(input.value, name, {
+    replaceAutoFilled: options.replaceAutoFilled,
+    autoFilled: input.dataset.autoFilled === '1'
+  });
+  if (decision.shouldReplace) {
+    input.value = name;
+    input.dataset.autoFilled = '0';
+  }
+  return decision;
+}
+
 function updateBranding(payload = {}) {
   if (payload.settings && typeof payload.settings === 'object') {
     state.settings = {
@@ -9447,6 +9550,7 @@ function radiusMemberFieldsMarkup(options = {}) {
         <span>Nama Member</span>
         <input name="memberName" data-member-field autocomplete="off" disabled>
       </label>
+      <input type="hidden" name="memberKtpName" value="" data-member-field disabled>
       <label class="field">
         <span>Nomor KTP</span>
         <input name="memberKtp" data-member-field inputmode="numeric" autocomplete="off" disabled>
@@ -9457,7 +9561,7 @@ function radiusMemberFieldsMarkup(options = {}) {
         <input name="memberKtpPhoto" type="hidden" value="" data-member-field disabled>
         <div class="ktp-upload-preview">
           <img class="member-ktp-photo-preview" id="radiusKtpPhotoPreview" alt="Preview foto KTP" hidden>
-          <p class="muted" id="radiusKtpUploadStatus">Opsional. OCR akan mencoba membaca NIK dan mengisi Nomor KTP otomatis.</p>
+          <p class="muted" id="radiusKtpUploadStatus">Opsional. OCR akan mencoba membaca NIK dan nama dari KTP otomatis.</p>
         </div>
       </label>
       <label class="field">
@@ -9884,6 +9988,16 @@ async function openRadiusPppUserModal(user = null) {
       if (ktpUpload?.ktp && !String(payload.memberKtp || '').trim()) {
         payload.memberKtp = ktpUpload.ktp;
       }
+      if (ktpOcrName(ktpUpload)) {
+        payload.memberKtpName = ktpOcrName(ktpUpload);
+      }
+      const nameDecision = ktpOcrNameDecision(payload.memberName || '', ktpOcrName(ktpUpload), {
+        replaceAutoFilled: true,
+        autoFilled: form.querySelector('[name="memberName"]')?.dataset.autoFilled === '1'
+      });
+      if (nameDecision.shouldReplace) {
+        payload.memberName = ktpOcrName(ktpUpload);
+      }
     }
     delete payload.memberKtpPhotoUpload;
     const housePhotoFile = form.querySelector('input[name="memberHousePhoto"]')?.files?.[0];
@@ -10174,6 +10288,7 @@ function bindRadiusMemberFields(options = {}) {
   const memberFields = [...modalBody.querySelectorAll('[data-member-field]')];
   const usernameInput = modalBody.querySelector('input[name="username"]');
   const nameInput = modalBody.querySelector('[name="memberName"]');
+  const ktpNameInput = modalBody.querySelector('[name="memberKtpName"]');
   const ktpInput = modalBody.querySelector('[name="memberKtp"]');
   const priceInput = modalBody.querySelector('[name="memberPrice"]');
   const paymentTypeSelect = modalBody.querySelector('[name="memberPaymentType"]');
@@ -10357,7 +10472,7 @@ function bindRadiusMemberFields(options = {}) {
         ktpPhotoPreview.hidden = true;
         ktpPhotoPreview.removeAttribute('src');
       }
-      if (ktpUploadStatus) ktpUploadStatus.textContent = 'Opsional. OCR akan mencoba membaca NIK dan mengisi Nomor KTP otomatis.';
+      if (ktpUploadStatus) ktpUploadStatus.textContent = 'Opsional. OCR akan mencoba membaca NIK dan nama dari KTP otomatis.';
       return;
     }
     try {
@@ -10366,16 +10481,16 @@ function bindRadiusMemberFields(options = {}) {
         ktpPhotoPreview.src = preview;
         ktpPhotoPreview.hidden = false;
       }
-      if (ktpUploadStatus) ktpUploadStatus.textContent = 'Mengupload dan membaca NIK dari KTP...';
+      if (ktpUploadStatus) ktpUploadStatus.textContent = 'Mengupload dan membaca NIK serta nama dari KTP...';
       const result = await uploadMemberKtpFile(file, { label: 'Foto KTP' });
       if (ktpPhotoHidden) ktpPhotoHidden.value = JSON.stringify(result?.storedPhoto || result?.photo || {});
       if (result?.ktp && ktpInput && !ktpInput.value) {
         ktpInput.value = result.ktp;
       }
+      if (ktpNameInput) ktpNameInput.value = ktpOcrName(result);
+      const nameDecision = fillKtpOcrNameInput(nameInput, result, { replaceAutoFilled: true });
       if (ktpUploadStatus) {
-        ktpUploadStatus.textContent = result?.ktp
-          ? `NIK terbaca: ${result.ktp}`
-          : (result?.ocr?.error || 'Foto tersimpan. NIK belum terbaca otomatis, isi manual dari foto KTP.');
+        ktpUploadStatus.textContent = ktpOcrStatusText(result, nameDecision);
       }
     } catch (error) {
       ktpPhotoInput.value = '';
@@ -14280,6 +14395,9 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
           <label>Nama Lengkap
             <input name="fullName" value="${escapeHtml(contact.fullName || member.fullName || member.customerName || '')}" required ${disabled}>
           </label>
+          <label>Nama Terbaca
+            <input name="ktpName" value="${escapeHtml(contact.ktpName || member.ktpName || '')}" readonly ${disabled}>
+          </label>
           <label>WhatsApp
             <input name="whatsapp" value="${escapeHtml(contact.whatsapp || member.whatsapp || member.phone || '')}" inputmode="tel" ${disabled}>
           </label>
@@ -14326,7 +14444,7 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
               ${editable && ktpPhotoUrl ? '<button class="ghost-button compact danger" id="memberRemoveKtpPhoto" type="button">Hapus</button>' : ''}
             </div>
             ${ktpPhotoUrl ? `<img class="member-ktp-photo-large" id="memberKtpPhotoPreview" src="${escapeHtml(ktpPhotoUrl)}" alt="Foto KTP ${escapeHtml(memberTitle(member))}">` : '<div class="empty compact" id="memberKtpPhotoEmpty">Foto KTP belum tersedia.</div><img class="member-ktp-photo-large" id="memberKtpPhotoPreview" alt="Preview foto KTP" hidden>'}
-            ${editable ? '<input id="memberKtpPhotoUpload" type="file" accept="image/png,image/jpeg,image/webp"><input id="memberKtpPhotoValue" type="hidden" value=""><p class="muted" id="memberKtpUploadStatus">Upload KTP akan mencoba membaca Nomor KTP otomatis.</p>' : ''}
+            ${editable ? '<input id="memberKtpPhotoUpload" type="file" accept="image/png,image/jpeg,image/webp"><input id="memberKtpPhotoValue" type="hidden" value=""><p class="muted" id="memberKtpUploadStatus">Upload KTP akan mencoba membaca Nomor KTP dan nama otomatis.</p>' : ''}
           </div>
         </div>
       </section>
@@ -14513,6 +14631,13 @@ async function openMemberContactModal(member = {}) {
         if (ktpUpload?.ktp && !String(formPayload.ktp || '').trim()) {
           formPayload.ktp = ktpUpload.ktp;
         }
+        if (ktpOcrName(ktpUpload)) {
+          formPayload.ktpName = ktpOcrName(ktpUpload);
+        }
+        const nameDecision = ktpOcrNameDecision(formPayload.fullName || '', ktpOcrName(ktpUpload));
+        if (nameDecision.shouldReplace) {
+          formPayload.fullName = ktpOcrName(ktpUpload);
+        }
       } else if (ktpPhotoValue) {
         formPayload.ktpPhoto = ktpPhotoValue;
       }
@@ -14582,7 +14707,7 @@ function bindMemberDetailModal(detail = {}) {
         preview.hidden = false;
       }
       if (empty) empty.hidden = true;
-      if (status) status.textContent = 'Mengupload dan membaca NIK dari KTP...';
+      if (status) status.textContent = 'Mengupload dan membaca NIK serta nama dari KTP...';
       const result = await uploadMemberKtpFile(file, { label: 'Foto KTP' });
       const hidden = modalBody.querySelector('#memberKtpPhotoValue');
       if (hidden) hidden.value = JSON.stringify(result?.storedPhoto || result?.photo || {});
@@ -14592,10 +14717,11 @@ function bindMemberDetailModal(detail = {}) {
       if (result?.ktp && ktpInput && !ktpInput.value) {
         ktpInput.value = result.ktp;
       }
+      const ktpNameInput = modalBody.querySelector('[name="ktpName"]');
+      if (ktpNameInput) ktpNameInput.value = ktpOcrName(result);
+      const nameDecision = fillKtpOcrNameInput(modalBody.querySelector('[name="fullName"]'), result);
       if (status) {
-        status.textContent = result?.ktp
-          ? `NIK terbaca: ${result.ktp}`
-          : (result?.ocr?.error || 'Foto tersimpan. NIK belum terbaca otomatis, isi manual dari foto KTP.');
+        status.textContent = ktpOcrStatusText(result, nameDecision);
       }
     } catch (error) {
       ktpUpload.value = '';

@@ -35,3 +35,18 @@ test('extracts KTP NIK from OCR text', () => {
     ''
   );
 });
+
+test('extracts KTP customer name from OCR text', () => {
+  assert.equal(
+    serverInternals.extractKtpNameFromOcrText('NIK : 6472041309960005\nNama : RINALDI\nTempat/Tgl Lahir SAMARINDA, 13-09-1996'),
+    'Rinaldi'
+  );
+  assert.equal(
+    serverInternals.extractKtpNameFromOcrText('NAMA LENGKAP\nH RIDWAN TASA\nJENIS KELAMIN LAKI-LAKI'),
+    'H. Ridwan Tasa'
+  );
+  assert.equal(
+    serverInternals.extractKtpNameFromOcrText('PROVINSI KALIMANTAN TIMUR\nKOTA SAMARINDA\nNIK 6472041309960005\nSITI NUR AINI\nAlamat JL. TEST'),
+    'Siti Nur Aini'
+  );
+});

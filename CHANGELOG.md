@@ -2,6 +2,19 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.0] - 2026-07-28
+
+### Changed
+
+- Upload KTP menyimpan nama hasil OCR sebagai `Nama Terbaca` dan hanya melengkapi nama pelanggan otomatis jika nama lama kosong, auto-fill, cocok, atau kurang lengkap.
+- Nama pelanggan yang berbeda dari hasil OCR tidak ditimpa; form menampilkan status review dengan format nama lama dan nama hasil OCR di dalam tanda kurung.
+
+## [2.9.67] - 2026-07-28
+
+### Added
+
+- OCR foto KTP sekarang mencoba membaca nama pelanggan selain NIK, lalu mengisi Nama Member/Nama Lengkap otomatis saat field masih kosong atau masih auto-fill dari username.
+
 ## [2.9.66] - 2026-07-27
 
 ### Changed

@@ -1284,6 +1284,7 @@ function sanitizeStoredKtpPhoto(value = null) {
     uploadedByName: String(input.uploadedByName || '').slice(0, 80),
     uploadedByUsername: String(input.uploadedByUsername || '').slice(0, 80),
     ocrNik: String(input.ocrNik || '').replace(/\D+/g, '').slice(0, 16),
+    ocrName: String(input.ocrName || input.ocrFullName || '').trim().slice(0, 120),
     ocrAvailable: input.ocrAvailable !== false,
     ocrError: String(input.ocrError || '').slice(0, 180)
   };
@@ -1486,6 +1487,73 @@ function extractKtpNikFromOcrText(text = '') {
   return '';
 }
 
+function titleCaseOcrPersonName(value = '') {
+  return String(value || '')
+    .toLocaleLowerCase('id-ID')
+    .replace(/(^|[\s.'-])([a-z\u00c0-\u024f])/giu, (_, prefix, char) => `${prefix}${char.toLocaleUpperCase('id-ID')}`)
+    .replace(/\b(Alm|Hj|H|Dr|Ir|St)\b\.?/g, (match) => {
+      const clean = match.replace(/\.$/, '');
+      if (clean.toLowerCase() === 'hj') return 'Hj.';
+      if (clean.toLowerCase() === 'h') return 'H.';
+      if (clean.toLowerCase() === 'dr') return 'Dr.';
+      if (clean.toLowerCase() === 'ir') return 'Ir.';
+      return clean;
+    })
+    .trim();
+}
+
+function extractKtpNameFromOcrText(text = '') {
+  const raw = String(text || '');
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => String(line || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/[|_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim())
+    .filter(Boolean);
+  const stopLabels = /\b(?:NIK|TEMPAT|TGL|TANGGAL|LAHIR|JENIS|KELAMIN|GOL|DARAH|ALAMAT|RT\/?RW|KEL\b|DESA|KECAMATAN|AGAMA|STATUS|PERKAWINAN|PEKERJAAN|KEWARGANEGARAAN|BERLAKU|PROVINSI|KABUPATEN|KOTA)\b/i;
+  const obviousNonNames = /\b(?:REPUBLIK|INDONESIA|PROVINSI|KABUPATEN|KOTA|KECAMATAN|KELURAHAN|DESA|NIK)\b/i;
+  const cleanCandidate = (value = '') => {
+    let candidate = String(value || '')
+      .replace(/^[\s:;,.>\-_/\\]+/, '')
+      .replace(/\b(?:TEMPAT|TGL|TANGGAL|LAHIR|JENIS|KELAMIN|GOL|DARAH|ALAMAT|RT\/?RW|KEL\b|DESA|KECAMATAN|AGAMA|STATUS|PERKAWINAN|PEKERJAAN|KEWARGANEGARAAN|BERLAKU)\b.*$/i, '')
+      .replace(/^[\s:;,.>\-_/\\]+/, '')
+      .replace(/[0-9]+/g, ' ')
+      .replace(/[^A-Za-z\u00c0-\u024f\s.'-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    candidate = candidate.replace(/^(?:NAMA\s+LENGKAP|N[A4]M[A4]|NAMA|NAME)\b[\s:;,.>\-_/\\]*/i, '').trim();
+    if (candidate.length < 3 || candidate.length > 80) return '';
+    if (stopLabels.test(candidate) || obviousNonNames.test(candidate)) return '';
+    if (!/[AIUEOaiueo]/.test(candidate)) return '';
+    return titleCaseOcrPersonName(candidate);
+  };
+  const nameLabel = /\b(?:NAMA\s+LENGKAP|N[A4]M[A4]|NAMA|NAME)\b/i;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = line.match(nameLabel);
+    if (!match) continue;
+    const afterLabel = line.slice(match.index + match[0].length);
+    const sameLine = cleanCandidate(afterLabel);
+    if (sameLine) return sameLine;
+    for (let offset = 1; offset <= 2; offset += 1) {
+      const nextLine = lines[index + offset] || '';
+      if (!nextLine || stopLabels.test(nextLine)) break;
+      const nextCandidate = cleanCandidate(nextLine);
+      if (nextCandidate) return nextCandidate;
+    }
+  }
+  const nikIndex = lines.findIndex((line) => /[NMW][I1l|][KX]/i.test(line));
+  if (nikIndex >= 0) {
+    for (let index = nikIndex + 1; index <= Math.min(lines.length - 1, nikIndex + 4); index += 1) {
+      const candidate = cleanCandidate(lines[index]);
+      if (candidate) return candidate;
+    }
+  }
+  return '';
+}
+
 async function runKtpOcr(buffer = Buffer.alloc(0)) {
   const tempPaths = [];
   const writeOcrImage = async (name = 'full', source = Buffer.alloc(0), options = {}) => {
@@ -1587,10 +1655,14 @@ async function runKtpOcr(buffer = Buffer.alloc(0)) {
     }
     const digitText = await readOcr(tempPaths[0], { psm: 6, whitelist: true });
     texts.push(digitText);
-    const nik = extractKtpNikFromOcrText(texts.join('\n'));
+    const ocrText = texts.join('\n');
+    const nik = extractKtpNikFromOcrText(ocrText);
+    const name = extractKtpNameFromOcrText(ocrText);
     return {
       available: true,
       nik,
+      name,
+      fullName: name,
       text: texts.join('\n---\n').slice(0, 2000),
       error: nik ? '' : 'NIK belum terbaca otomatis. Isi manual dari foto KTP.'
     };
@@ -1599,6 +1671,8 @@ async function runKtpOcr(buffer = Buffer.alloc(0)) {
     return {
       available: !missing,
       nik: '',
+      name: '',
+      fullName: '',
       text: '',
       error: missing
         ? 'OCR belum aktif di server. Install paket tesseract-ocr lalu upload ulang.'
@@ -1642,6 +1716,7 @@ async function saveMemberKtpUpload(data = {}, payload = {}, actor = {}) {
     uploadedByName: actor.name || actor.username || '',
     uploadedByUsername: actor.username || '',
     ocrNik: ocr.nik || '',
+    ocrName: ocr.name || ocr.fullName || '',
     ocrAvailable: ocr.available !== false,
     ocrError: ocr.error || ''
   });
@@ -1649,6 +1724,8 @@ async function saveMemberKtpUpload(data = {}, payload = {}, actor = {}) {
     photo,
     publicPhoto: publicMemberKtpPhotoMeta(photo),
     ktp: ocr.nik || '',
+    name: ocr.name || ocr.fullName || '',
+    fullName: ocr.fullName || ocr.name || '',
     ocr
   };
 }
@@ -4790,6 +4867,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     phone,
     email: payload.memberEmail || payload.email || '',
     ktp: payload.memberKtp || payload.ktp || payload.idCard || '',
+    ktpName: payload.memberKtpName || payload.ktpName || payload.ocrName || '',
     address: payload.memberAddress || payload.address || '',
     latitude,
     longitude,
@@ -4811,6 +4889,7 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
     whatsapp: phone,
     email: String(payload.memberEmail || payload.email || '').trim(),
     ktp: String(payload.memberKtp || payload.ktp || payload.idCard || '').trim(),
+    ktpName: String(payload.memberKtpName || payload.ktpName || payload.ocrName || '').trim(),
     paymentType: billingMode.paymentType,
     billingPeriod: billingMode.billingPeriod,
     ppn: String(payload.memberPpn || payload.ppn || '').trim(),
@@ -4871,6 +4950,7 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   }
   customer.email = String(payload.memberEmail || payload.email || customer.email || '').trim();
   customer.ktp = String(payload.memberKtp || payload.ktp || payload.idCard || customer.ktp || customer.idCard || '').trim();
+  customer.ktpName = String(payload.memberKtpName || payload.ktpName || payload.ocrName || customer.ktpName || '').trim();
   customer.address = String(payload.memberAddress || payload.address || customer.address || '').trim();
   customer.packageName = payload.memberPackageName || profile.name || payload.profile || customer.packageName || '';
   customer.price = radiusProfileMemberPrice(profile, payload, customer.price);
@@ -14560,6 +14640,8 @@ async function handleApi(req, res, url) {
         photo: result.publicPhoto,
         storedPhoto: result.photo,
         ktp: result.ktp,
+        name: result.name,
+        fullName: result.fullName,
         ocr: result.ocr
       });
     } catch (error) {
@@ -17575,6 +17657,7 @@ async function handleApi(req, res, url) {
         }));
       const contact = {
         fullName: customer.name || customer.customerName || '',
+        ktpName: customer.ktpName || '',
         whatsapp: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
         phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
         email: customer.email || '',
@@ -17683,6 +17766,7 @@ async function handleApi(req, res, url) {
           customer.whatsapp = customer.phone;
           customer.email = String(payload.email || '').trim();
           customer.ktp = String(payload.ktp || payload.idCard || '').trim();
+          customer.ktpName = String(payload.ktpName || payload.memberKtpName || customer.ktpName || '').trim();
           customer.address = String(payload.address || '').trim();
           customer.latitude = String(payload.latitude || payload.memberLatitude || '').trim();
           customer.longitude = String(payload.longitude || payload.memberLongitude || '').trim();
@@ -19211,6 +19295,7 @@ module.exports = {
     deleteRadiusLinkedMember,
     deleteOrphanRadiusMembers,
     extractKtpNikFromOcrText,
+    extractKtpNameFromOcrText,
     fulfillHotspotVoucherOrder,
     fulfillPaymentGatewayCallback,
     hotspotVoucherRevision,
