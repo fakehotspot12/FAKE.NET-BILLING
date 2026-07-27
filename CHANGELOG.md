@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.9.60] - 2026-07-27
+
+### Fixed
+
+- Pembacaan payment aktif diberi cache singkat dan validasi status invoice dihitung sekali per siklus, sehingga Dashboard dan Laporan Harian tidak mengulang validasi ribuan payment pada setiap render.
+
 ## [2.9.59] - 2026-07-27
 
 ### Fixed

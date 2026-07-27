@@ -5336,13 +5336,45 @@ function paymentCountsAsPaid(data = {}, payment = {}, invoicesById = null) {
   return invoice ? invoiceRuntimeStatus(invoice) === 'paid' : true;
 }
 
+const ACTIVE_PAYMENTS_CACHE_MS = 15000;
+const activePaymentsCache = new Map();
+
+function activePaymentsCacheKey(data = {}) {
+  return [
+    (data.invoices || []).length,
+    (data.payments || []).length,
+    collectionNewestTimestamp(data.invoices || []),
+    collectionNewestTimestamp(data.payments || [])
+  ].join('|');
+}
+
 function activePayments(data = {}) {
-  const invoicesById = new Map();
+  const cacheKey = activePaymentsCacheKey(data);
+  const cached = activePaymentsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+  const invoiceStatuses = new Map();
   for (const invoice of data.invoices || []) {
     const id = String(invoice.id || '');
-    if (id && !invoicesById.has(id)) invoicesById.set(id, invoice);
+    if (id && !invoiceStatuses.has(id)) {
+      invoiceStatuses.set(id, invoiceRuntimeStatus(invoice));
+    }
   }
-  return (data.payments || []).filter((payment) => paymentCountsAsPaid(data, payment, invoicesById));
+  const rows = (data.payments || []).filter((payment) => {
+    if (!paymentIsActive(payment)) return false;
+    const invoiceId = String(payment.invoiceId || '');
+    if (!invoiceId || !invoiceStatuses.has(invoiceId)) return true;
+    return invoiceStatuses.get(invoiceId) === 'paid';
+  });
+  activePaymentsCache.set(cacheKey, {
+    expiresAt: Date.now() + ACTIVE_PAYMENTS_CACHE_MS,
+    value: rows
+  });
+  while (activePaymentsCache.size > 16) {
+    activePaymentsCache.delete(activePaymentsCache.keys().next().value);
+  }
+  return rows;
 }
 
 function userIsCollector(user = {}) {
