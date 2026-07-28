@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.9] - 2026-07-28
+
+### Fixed
+
+- CSS halaman link invoice kini menghormati atribut `hidden`, sehingga row `Fee Rp 0` benar-benar hilang pada invoice paid manual/tunai lama.
+
 ## [2.10.8] - 2026-07-28
 
 ### Fixed

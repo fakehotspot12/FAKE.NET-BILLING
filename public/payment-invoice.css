@@ -25,6 +25,10 @@ select {
   color: #172033;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .payment-page {
   min-height: 100vh;
   display: grid;
