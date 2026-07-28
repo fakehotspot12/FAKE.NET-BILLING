@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.4] - 2026-07-28
+
+### Fixed
+
+- Modal Tambah User PPP-DHCP tidak lagi bisa freeze/not responding saat auto username/password menunggu preview Member ID dari server.
+
 ## [2.10.3] - 2026-07-28
 
 ### Changed

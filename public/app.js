@@ -10028,7 +10028,7 @@ function bindRadiusAutoPppCredentials() {
           ? `Username ${username}, password ${code}. Matikan checklist jika ingin input manual.`
           : 'Menyiapkan Member ID untuk auto username/password...';
       }
-      if (!code) ensureRadiusMemberCodePreview().then(sync);
+      if (!code) ensureRadiusMemberCodePreview();
     } else if (preview && !isDhcp) {
       preview.textContent = memberEnabled
         ? 'Auto credential nonaktif. Username dan password dapat diisi manual.'
