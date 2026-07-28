@@ -60,27 +60,104 @@ function rowCounts(rows = {}) {
   };
 }
 
-function reloadFreeradiusIfNasChanged(previous = {}, current = {}) {
-  if (String(process.env.FREERADIUS_AUTO_RELOAD || '1') === '0') return Promise.resolve(false);
-  const before = unique(previous.nasnames || []).sort().join('|');
-  const after = unique(current.nasnames || []).sort().join('|');
-  if (before === after) return Promise.resolve(false);
+function runServiceCommand(command, args = []) {
   return new Promise((resolve) => {
-    const child = spawn('systemctl', ['reload', 'freeradius.service']);
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const child = spawn(command, args, { stdio: 'ignore' });
     child.once('close', (code) => {
-      if (code === 0) {
-        resolve(true);
-        return;
-      }
-      const fallback = spawn('systemctl', ['restart', 'freeradius.service']);
-      fallback.once('close', () => resolve(true));
-      fallback.once('error', () => resolve(false));
+      done({
+        ok: code === 0,
+        command,
+        args,
+        code
+      });
     });
-    child.once('error', () => resolve(false));
+    child.once('error', (error) => {
+      done({
+        ok: false,
+        command,
+        args,
+        error: error.message || String(error)
+      });
+    });
   });
 }
 
+async function restartFreeradiusIfNasChanged(previous = {}, current = {}) {
+  if (String(process.env.FREERADIUS_AUTO_RELOAD || '1') === '0') {
+    return { attempted: false, skipped: true, reason: 'disabled' };
+  }
+  const before = unique(previous.nasnames || []).sort().join('|');
+  const after = unique(current.nasnames || []).sort().join('|');
+  const previousSignature = String(previous.nasSignature || before);
+  const currentSignature = String(current.nasSignature || after);
+  if (before === after && previousSignature === currentSignature) {
+    return { attempted: false, changed: false };
+  }
+
+  const services = unique([
+    process.env.FREERADIUS_SERVICE,
+    'freeradius.service',
+    'radiusd.service'
+  ]);
+  const attempts = [];
+  for (const service of services) {
+    const result = await runServiceCommand('systemctl', ['restart', service]);
+    attempts.push(result);
+    if (result.ok) {
+      return {
+        attempted: true,
+        changed: true,
+        ok: true,
+        service,
+        command: result.command,
+        args: result.args
+      };
+    }
+  }
+
+  for (const service of unique([process.env.FREERADIUS_SERVICE, 'freeradius', 'radiusd'].map((value) => String(value || '').replace(/\.service$/, '')))) {
+    const result = await runServiceCommand('rc-service', [service, 'restart']);
+    attempts.push(result);
+    if (result.ok) {
+      return {
+        attempted: true,
+        changed: true,
+        ok: true,
+        service,
+        command: result.command,
+        args: result.args
+      };
+    }
+  }
+
+  return {
+    attempted: true,
+    changed: true,
+    ok: false,
+    attempts
+  };
+}
+
 function managedKeys(rows = {}) {
+  const nasSignature = (rows.nas || [])
+    .map((row) => [
+      row.nasname,
+      row.shortname,
+      row.type,
+      row.ports,
+      row.secret,
+      row.server,
+      row.community,
+      row.description
+    ].map((value) => String(value || '').trim()).join('\t'))
+    .sort()
+    .join('\n');
   return {
     usernames: unique([
       ...(rows.radcheck || []).map((row) => row.username),
@@ -92,7 +169,8 @@ function managedKeys(rows = {}) {
       ...(rows.radgroupcheck || []).map((row) => row.groupname),
       ...(rows.radgroupreply || []).map((row) => row.groupname)
     ]),
-    nasnames: unique((rows.nas || []).map((row) => row.nasname))
+    nasnames: unique((rows.nas || []).map((row) => row.nasname)),
+    nasSignature
   };
 }
 
@@ -287,6 +365,10 @@ function status(data = {}) {
     lastSyncAt: state.lastSyncAt || '',
     lastSyncOk: state.lastSyncOk === true,
     lastError: state.lastError || '',
+    lastServiceReloadAt: state.lastServiceReloadAt || '',
+    lastServiceReloadOk: state.lastServiceReloadOk === true,
+    lastServiceReloadError: state.lastServiceReloadError || '',
+    lastServiceReloadTarget: state.lastServiceReloadTarget || '',
     managed: {
       usernames: (state.managed.usernames || []).length,
       groupnames: (state.managed.groupnames || []).length,
@@ -333,10 +415,19 @@ async function syncAll(data = {}, context = {}) {
     state.lastError = '';
     state.lastAction = context.action || '';
     state.lastActor = context.actor?.name || context.actor?.username || '';
-    await reloadFreeradiusIfNasChanged(previousManaged, built.currentManaged);
+    const serviceRestart = await restartFreeradiusIfNasChanged(previousManaged, built.currentManaged);
+    if (serviceRestart.attempted) {
+      state.lastServiceReloadAt = new Date().toISOString();
+      state.lastServiceReloadOk = serviceRestart.ok === true;
+      state.lastServiceReloadTarget = serviceRestart.service || '';
+      state.lastServiceReloadError = serviceRestart.ok
+        ? ''
+        : 'Restart FreeRADIUS gagal setelah daftar NAS berubah';
+    }
     return {
       ok: true,
       rowCounts: counts,
+      serviceRestart,
       status: status(data)
     };
   } catch (error) {

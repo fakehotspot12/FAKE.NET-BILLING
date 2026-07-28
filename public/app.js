@@ -9985,7 +9985,7 @@ async function openRadiusPppUserModal(user = null) {
     if (ktpPhotoFile && !String(payload.memberKtpPhoto || '').trim()) {
       const ktpUpload = await uploadMemberKtpFile(ktpPhotoFile, { label: 'Foto KTP' });
       payload.memberKtpPhoto = JSON.stringify(ktpUpload?.storedPhoto || ktpUpload?.photo || {});
-      if (ktpUpload?.ktp && !String(payload.memberKtp || '').trim()) {
+      if (ktpUpload?.ktp) {
         payload.memberKtp = ktpUpload.ktp;
       }
       if (ktpOcrName(ktpUpload)) {
@@ -10484,7 +10484,7 @@ function bindRadiusMemberFields(options = {}) {
       if (ktpUploadStatus) ktpUploadStatus.textContent = 'Mengupload dan membaca NIK serta nama dari KTP...';
       const result = await uploadMemberKtpFile(file, { label: 'Foto KTP' });
       if (ktpPhotoHidden) ktpPhotoHidden.value = JSON.stringify(result?.storedPhoto || result?.photo || {});
-      if (result?.ktp && ktpInput && !ktpInput.value) {
+      if (result?.ktp && ktpInput) {
         ktpInput.value = result.ktp;
       }
       if (ktpNameInput) ktpNameInput.value = ktpOcrName(result);
@@ -14628,7 +14628,7 @@ async function openMemberContactModal(member = {}) {
       if (ktpPhotoFile && !ktpPhotoValue) {
         const ktpUpload = await uploadMemberKtpFile(ktpPhotoFile, { label: 'Foto KTP' });
         formPayload.ktpPhoto = JSON.stringify(ktpUpload?.storedPhoto || ktpUpload?.photo || {});
-        if (ktpUpload?.ktp && !String(formPayload.ktp || '').trim()) {
+        if (ktpUpload?.ktp) {
           formPayload.ktp = ktpUpload.ktp;
         }
         if (ktpOcrName(ktpUpload)) {
@@ -14714,7 +14714,7 @@ function bindMemberDetailModal(detail = {}) {
       const form = modal.querySelector('.modal-frame');
       if (form) form.dataset.removeKtpPhoto = '0';
       const ktpInput = modalBody.querySelector('[name="ktp"]');
-      if (result?.ktp && ktpInput && !ktpInput.value) {
+      if (result?.ktp && ktpInput) {
         ktpInput.value = result.ktp;
       }
       const ktpNameInput = modalBody.querySelector('[name="ktpName"]');

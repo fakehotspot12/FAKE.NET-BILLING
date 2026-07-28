@@ -2,6 +2,19 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.2] - 2026-07-28
+
+### Fixed
+
+- Sinkron NAS FreeRADIUS sekarang melakukan restart service FreeRADIUS penuh setelah daftar NAS berubah, bukan reload, agar SQL client baru langsung aktif dan tidak menyebabkan `radius timeout` / `unknown client`.
+- Restart FreeRADIUS dari aplikasi mendukung nama service `freeradius.service`, `radiusd.service`, dan OpenRC agar update lebih aman lintas distro.
+
+## [2.10.1] - 2026-07-28
+
+### Fixed
+
+- Upload KTP baru sekarang mengganti Nomor KTP dari hasil OCR walaupun field sebelumnya masih berisi data lama.
+
 ## [2.10.0] - 2026-07-28
 
 ### Changed
