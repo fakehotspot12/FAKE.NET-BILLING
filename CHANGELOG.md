@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.8] - 2026-07-28
+
+### Fixed
+
+- Row `Fee` pada halaman link invoice kini disembunyikan sejak HTML awal, lalu hanya ditampilkan oleh JavaScript saat invoice memang memakai fee payment gateway. Ini mencegah salah paham pada invoice lama yang sudah paid manual.
+
 ## [2.10.7] - 2026-07-28
 
 ### Fixed
