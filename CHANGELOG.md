@@ -2,6 +2,19 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.5] - 2026-07-28
+
+### Changed
+
+- Search di menu yang memakai kolom pencarian utama sekarang berjalan otomatis saat diketik dengan debounce 450ms; tombol Cari tetap tersedia untuk eksekusi manual.
+- Opsi filter Radius NAS/profile memakai cache browser singkat dan dibersihkan otomatis saat Site, NAS Radius, atau profile berubah agar live-search tetap ringan.
+
+### Fixed
+
+- Modal Tambah User PPP-DHCP kembali dimulai dari step Account, tetap menyediakan opsi tambah ke Member dan auto username/password tanpa membuat browser freeze.
+- Data Member, peta, OCR, dan pencarian duplikat di wizard PPP-DHCP baru diload saat step Member dibuka agar modal tetap ringan.
+- Search pada menu User dan modal Invoice Manual ikut berjalan otomatis saat diketik.
+
 ## [2.10.4] - 2026-07-28
 
 ### Fixed

@@ -291,6 +291,10 @@ const state = {
   search: ''
 };
 
+const LIVE_SEARCH_DEBOUNCE_MS = 450;
+const RADIUS_OPTIONS_CACHE_TTL_MS = 15000;
+const radiusOptionsCache = new Map();
+
 let monitoringCustomersTimer = null;
 let monitoringServicesTimer = null;
 let monitoringBillingTimer = null;
@@ -2459,6 +2463,52 @@ function queryString(params) {
   return new URLSearchParams(params).toString();
 }
 
+function focusSearchAfterRender(selector, expectedValue = '') {
+  window.requestAnimationFrame(() => {
+    const input = document.querySelector(selector);
+    if (!(input instanceof HTMLInputElement)) return;
+    if (String(input.value || '').trim() !== String(expectedValue || '').trim()) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+}
+
+function bindLiveTextSearch(input, options = {}) {
+  if (!input) return;
+  const {
+    getValue = () => '',
+    setValue = () => {},
+    handler = () => {},
+    debounceMs = LIVE_SEARCH_DEBOUNCE_MS,
+    refocusSelector = '#searchInput'
+  } = options;
+  const viewAtBind = state.view;
+  let timer = null;
+  const run = (force = false, refocus = true) => {
+    window.clearTimeout(timer);
+    if (state.view !== viewAtBind) return;
+    const next = String(input.value || '').trim();
+    if (!force && String(getValue() || '') === next) return;
+    setValue(next);
+    const result = handler();
+    Promise.resolve(result).finally(() => {
+      if (refocus && state.view === viewAtBind) {
+        focusSearchAfterRender(refocusSelector, next);
+      }
+    });
+  };
+  input.addEventListener('input', () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => run(false, true), debounceMs);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    run(true, true);
+  });
+  return { apply: () => run(true, true), reset: () => run(true, true) };
+}
+
 function bindSearch(handler) {
   const search = document.getElementById('searchInput');
   if (!search) return;
@@ -2469,23 +2519,20 @@ function bindSearch(handler) {
       <button class="ghost-button compact" type="button" data-search-reset>Reset</button>
     `);
   }
-  const apply = () => {
-    const next = search.value.trim();
-    if (state.search === next) return;
-    state.search = next;
-    handler();
-  };
+  const live = bindLiveTextSearch(search, {
+    getValue: () => state.search,
+    setValue: (value) => { state.search = value; },
+    handler,
+    refocusSelector: '#searchInput'
+  });
+  const apply = () => live?.apply();
   const reset = () => {
     if (!search.value && !state.search) return;
     search.value = '';
     state.search = '';
-    handler();
+    const result = handler();
+    Promise.resolve(result).finally(() => focusSearchAfterRender('#searchInput', ''));
   };
-  search.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    apply();
-  });
   filters?.querySelector('[data-search-apply]')?.addEventListener('click', apply);
   filters?.querySelector('[data-search-reset]')?.addEventListener('click', reset);
 }
@@ -7533,16 +7580,32 @@ function nasLockOptionTags(options = [], selected = '', emptyLabel = 'Pilih NAS'
   })), selected, emptyLabel);
 }
 
-async function loadRadiusOptions(section = 'ppp') {
+function clearRadiusOptionsCache(section = '') {
+  if (!section) {
+    radiusOptionsCache.clear();
+    return;
+  }
+  radiusOptionsCache.delete(section);
+}
+
+async function loadRadiusOptions(section = 'ppp', options = {}) {
+  const cacheKey = section === 'hotspot' ? 'hotspot' : 'ppp';
+  const cached = radiusOptionsCache.get(cacheKey);
+  if (!options.refresh && cached && (Date.now() - cached.time) < RADIUS_OPTIONS_CACHE_TTL_MS) {
+    return cached.value;
+  }
   const profilePath = section === 'hotspot' ? '/api/radius/hotspot' : '/api/radius/ppp-dhcp';
+  const refresh = options.refresh ? '1' : '';
   const [profilesPayload, nasPayload] = await Promise.all([
-    api(`${profilePath}?${queryString({ tab: 'profiles', page: 1, limit: 100, refresh: '1' })}`).catch(() => ({ rows: [] })),
-    api(`/api/radius/settings?${queryString({ page: 1, limit: 100, refresh: '1' })}`).catch(() => ({ rows: [] }))
+    api(`${profilePath}?${queryString({ tab: 'profiles', page: 1, limit: 100, refresh })}`).catch(() => ({ rows: [] })),
+    api(`/api/radius/settings?${queryString({ page: 1, limit: 100, refresh })}`).catch(() => ({ rows: [] }))
   ]);
-  return {
+  const value = {
     profiles: radiusProfileOptions(profilesPayload.rows || []),
     nas: radiusNasOptions(nasPayload.rows || [])
   };
+  radiusOptionsCache.set(cacheKey, { time: Date.now(), value });
+  return value;
 }
 
 function radiusStatusFilterOptions(section = 'ppp') {
@@ -9542,14 +9605,9 @@ function radiusMemberFieldsMarkup(options = {}) {
   const billing = options.billing || {};
   const bhpUsoEnabled = billing.bhpUsoEnabled === true;
   const bhpUsoRate = Number(billing.bhpUsoRate || 1.25);
-  const selectedProfile = options.selectedProfile || '';
   return `
     <section class="form-grid radius-wizard-panel compact-wizard-panel" id="radiusMemberFields" data-radius-wizard-panel="member" data-member-wizard-fields hidden>
       <div class="field full radius-wizard-title"><strong>Member</strong><span>Identitas, kontak, alamat, lokasi, dan dokumentasi pelanggan.</span></div>
-      <label class="field full checkbox-field radius-add-member-choice">
-        <input name="addToMember" id="radiusAddToMember" type="checkbox" value="true" checked>
-        <span>Buat sebagai Member pelanggan</span>
-      </label>
       <input type="hidden" name="memberCode" value="" data-member-field disabled>
       <input type="hidden" name="memberRecordOrigin" value="wizard" data-member-field disabled>
       <label class="field">
@@ -9607,10 +9665,6 @@ function radiusMemberFieldsMarkup(options = {}) {
     </section>
     <section class="form-grid radius-wizard-panel compact-wizard-panel" data-radius-wizard-panel="payment" hidden>
       <div class="field full radius-wizard-title"><strong>Payment</strong><span>Harga mengikuti profile, PPN dan diskon nominal tersimpan ke data member.</span></div>
-      <label class="field">
-        <span>Profile / Paket</span>
-        <select name="profile" id="radiusPppProfile" required>${radiusOptionTags(options.profiles || [], selectedProfile, 'None')}</select>
-      </label>
       <label class="field">
         <span>Tipe Pembayaran</span>
         <select name="memberPaymentType" data-member-field disabled>
@@ -9693,6 +9747,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
   const bhpUsoEnabled = options.billing?.bhpUsoEnabled === true;
   const bhpUsoRate = Number(options.billing?.bhpUsoRate || 1.25);
   const selectedNas = user ? radiusNasIpForRow(user, options.nas || []) : '';
+  const selectedProfile = user?.profile || user?.profileName || '';
   const canAddMember = !user && state.auth?.role !== 'reseller_voucher' && canAny([
     'customers:manage',
     'members:contact:write',
@@ -9729,12 +9784,16 @@ function radiusPppUserFormBody(user = null, options = {}) {
       <span>MAC Address</span>
       <input name="macAddress" value="${escapeHtml(user?.macAddress || '')}" autocomplete="off" placeholder="Untuk DHCP">
     </label>
-    ${canAddMember && !user ? '' : `
-      <label class="field">
-        <span>Profile</span>
-        <select name="profile" id="radiusPppProfile" ${user ? '' : 'required'}>${radiusOptionTags(options.profiles || [], user?.profile || '', 'None')}</select>
+    <label class="field">
+      <span>Profile</span>
+      <select name="profile" id="radiusPppProfile" ${user ? '' : 'required'}>${radiusOptionTags(options.profiles || [], user?.profile || selectedProfile, 'None')}</select>
+    </label>
+    ${canAddMember && !user ? `
+      <label class="field full checkbox-field radius-add-member-choice">
+        <input name="addToMember" id="radiusAddToMember" type="checkbox" value="true">
+        <span>Tambahkan ke Member</span>
       </label>
-    `}
+    ` : ''}
     <label class="field">
       <span>NAS</span>
       <select name="nas">${radiusOptionTags((options.nas || []).map((item) => ({ label: item.label, value: item.ip })), selectedNas, 'All')}</select>
@@ -9764,7 +9823,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
   return `
     <div class="radius-user-wizard" data-radius-ppp-wizard data-bhp-uso-enabled="${bhpUsoEnabled ? '1' : '0'}" data-bhp-uso-rate="${escapeHtml(String(bhpUsoRate))}">
       <div class="radius-wizard-steps MuiStepper-root MuiStepper-horizontal">
-        ${['Member', 'Payment', 'Account', 'Review'].map((label, index) => `
+        ${['Account', 'Member', 'Payment', 'Review'].map((label, index) => `
           <button class="radius-wizard-step MuiStep-root MuiStep-horizontal ${index === 0 ? 'is-active' : ''}" type="button" data-radius-wizard-goto="${index}" ${!canAddMember && index > 0 ? 'disabled' : ''}>
             <span class="radius-step-icon">${index + 1}</span>
             <span class="radius-step-label">${escapeHtml(label)}</span>
@@ -10142,10 +10201,10 @@ function bindRadiusPppWizard() {
   const submitButton = modalBody.querySelector('#radiusWizardSubmit');
   const addToMember = modalBody.querySelector('#radiusAddToMember');
   const form = modal.querySelector('.modal-frame');
-  const stepKeys = ['member', 'payment', 'account', 'review'];
+  const stepKeys = ['account', 'member', 'payment', 'review'];
   let step = 0;
   let highestUnlockedStep = 0;
-  const activeSteps = () => stepKeys;
+  const activeSteps = () => addToMember?.checked ? stepKeys : ['account'];
   const currentStepKey = () => activeSteps()[step] || 'account';
   const selectedText = (selector, fallback = '-') => {
     const select = modalBody.querySelector(selector);
@@ -10276,6 +10335,10 @@ function bindRadiusPppWizard() {
     if (submitButton) submitButton.hidden = step < steps.length - 1;
     if (form) {
       form.dataset.radiusWizardReady = (!addToMember?.checked || current === 'review') ? '1' : '0';
+    }
+    if (current === 'member') {
+      form?._radiusMemberSync?.();
+      window.setTimeout(() => modalBody.querySelector('#radiusLeafletMap')?._radiusMap?.invalidateSize?.(), 60);
     }
     if (current === 'review') syncReview();
   };
@@ -10561,15 +10624,20 @@ function bindRadiusMemberFields(options = {}) {
     if (checkbox.checked) {
       fillDefaults();
       syncBillingPeriod();
-      ensureRadiusMemberCodePreview();
-      ensureMap();
-      window.setTimeout(() => map?.invalidateSize?.(), 50);
-      updateLocationPreview();
-      scheduleDuplicateLookup();
+      const memberPanelActive = fieldsWrap.hidden === false;
+      if (memberPanelActive) {
+        ensureRadiusMemberCodePreview();
+        ensureMap();
+        window.setTimeout(() => map?.invalidateSize?.(), 50);
+        updateLocationPreview();
+        scheduleDuplicateLookup();
+      }
     } else if (duplicateHint) {
       duplicateHint.hidden = true;
     }
   };
+  const form = modal.querySelector('.modal-frame');
+  if (form) form._radiusMemberSync = sync;
   checkbox.addEventListener('change', sync);
   usernameInput?.addEventListener('input', () => {
     if (!checkbox.checked) return;
@@ -10716,6 +10784,7 @@ async function openRadiusProfileModal(type = 'ppp', profile = null) {
       body: JSON.stringify(payload)
     });
     setToast(profile ? `Profile ${label} diperbarui` : `Profile ${label} ditambahkan`);
+    clearRadiusOptionsCache(type);
     if (type === 'hotspot') {
       renderRadiusHotspot({ refresh: true });
     } else {
@@ -11289,7 +11358,7 @@ async function renderRadiusPppDhcp(options = {}) {
   let filterOptions = { profiles: [], nas: [] };
   if (['users', 'sessions'].includes(state.radiusPppTab)) {
     try {
-      filterOptions = await loadRadiusOptions('ppp');
+      filterOptions = await loadRadiusOptions('ppp', { refresh: options.refresh === true });
     } catch {
       filterOptions = { profiles: [], nas: [] };
     }
@@ -11505,6 +11574,7 @@ async function renderRadiusPppDhcp(options = {}) {
         if (!window.confirm(`Hapus profile PPP-DHCP ${name || button.dataset.deleteRadiusPppProfile}?`)) return;
         await api(`/api/radius/ppp-dhcp/profiles/${encodeURIComponent(button.dataset.deleteRadiusPppProfile)}`, { method: 'DELETE' });
         setToast('Profile PPP-DHCP dihapus');
+        clearRadiusOptionsCache('ppp');
         renderRadiusPppDhcp({ refresh: true });
       });
     });
@@ -11557,7 +11627,7 @@ async function renderRadiusHotspot(options = {}) {
   let filterOptions = { profiles: [], nas: [] };
   if (['users', 'sessions'].includes(state.radiusHotspotTab)) {
     try {
-      filterOptions = await loadRadiusOptions('hotspot');
+      filterOptions = await loadRadiusOptions('hotspot', { refresh: options.refresh === true });
     } catch {
       filterOptions = { profiles: [], nas: [] };
     }
@@ -11744,6 +11814,7 @@ async function renderRadiusHotspot(options = {}) {
         if (!window.confirm(`Hapus profile Hotspot ${name || button.dataset.deleteRadiusHotspotProfile}?`)) return;
         await api(`/api/radius/hotspot/profiles/${encodeURIComponent(button.dataset.deleteRadiusHotspotProfile)}`, { method: 'DELETE' });
         setToast('Profile Hotspot dihapus');
+        clearRadiusOptionsCache('hotspot');
         renderRadiusHotspot({ refresh: true });
       });
     });
@@ -12150,6 +12221,7 @@ async function renderRadiusSettings(options = {}) {
       method: 'PUT',
       body: JSON.stringify(formData(form))
     });
+    clearRadiusOptionsCache();
     setToast('Pengaturan Radius tersimpan');
     renderRadiusSettings({ refresh: true });
   });
@@ -12350,6 +12422,7 @@ async function renderMonitoringSite() {
         if (!target) return;
         if (!window.confirm(`Hapus target monitoring ${target.name}? Data target akan hilang dari daftar.`)) return;
         await api(`/api/monitoring/${encodeURIComponent(target.id)}`, { method: 'DELETE' });
+        clearRadiusOptionsCache();
         setToast('Target monitoring dihapus');
         renderMonitoringSite();
       });
@@ -12477,6 +12550,7 @@ function openMonitoringModal(target = null) {
       method: target ? 'PUT' : 'POST',
       body: JSON.stringify(payload)
     });
+    clearRadiusOptionsCache();
     setToast(target ? 'Target diperbarui' : 'Target ditambahkan');
     renderMonitoringSite();
   });
@@ -13961,6 +14035,7 @@ function openManualInvoiceModal() {
     preview: null,
     error: ''
   };
+  let manualInvoiceSearchTimer = null;
 
   const setLoading = (loading) => {
     wizard.loading = loading;
@@ -14063,17 +14138,24 @@ function openManualInvoiceModal() {
   `;
 
   function bindManualInvoiceModal() {
-    modalBody.querySelector('[data-manual-invoice-search]')?.addEventListener('click', () => {
-      wizard.search = modalBody.querySelector('#manualInvoiceSearch')?.value.trim() || '';
+    const searchInput = modalBody.querySelector('#manualInvoiceSearch');
+    const applyManualInvoiceSearch = (force = false) => {
+      const next = searchInput?.value.trim() || '';
+      if (!force && wizard.search === next) return;
+      wizard.search = next;
       wizard.page = 1;
-      loadMembers();
+      const result = loadMembers();
+      Promise.resolve(result).finally(() => focusSearchAfterRender('#manualInvoiceSearch', next));
+    };
+    modalBody.querySelector('[data-manual-invoice-search]')?.addEventListener('click', () => applyManualInvoiceSearch(true));
+    searchInput?.addEventListener('input', () => {
+      window.clearTimeout(manualInvoiceSearchTimer);
+      manualInvoiceSearchTimer = window.setTimeout(() => applyManualInvoiceSearch(false), LIVE_SEARCH_DEBOUNCE_MS);
     });
-    modalBody.querySelector('#manualInvoiceSearch')?.addEventListener('keydown', (event) => {
+    searchInput?.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
       event.preventDefault();
-      wizard.search = event.currentTarget.value.trim();
-      wizard.page = 1;
-      loadMembers();
+      applyManualInvoiceSearch(true);
     });
     modalBody.querySelectorAll('[data-manual-invoice-page]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -16442,6 +16524,15 @@ async function renderUsers(options = {}) {
     state.userSearch = document.getElementById('userSearchInput')?.value.trim() || '';
     state.userPage = 1;
     renderUsers({ focusSearch: true });
+  });
+  bindLiveTextSearch(document.getElementById('userSearchInput'), {
+    getValue: () => state.userSearch,
+    setValue: (value) => {
+      state.userSearch = value;
+      state.userPage = 1;
+    },
+    handler: () => renderUsers({ focusSearch: true }),
+    refocusSelector: '#userSearchInput'
   });
   document.getElementById('userRoleFilter')?.addEventListener('change', (event) => {
     state.userRole = event.target.value || 'all';
