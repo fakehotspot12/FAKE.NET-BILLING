@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.6] - 2026-07-28
+
+### Changed
+
+- Live-search di menu utama sekarang tidak lagi mengganti halaman/tabel menjadi teks `Memuat...` saat menunggu respons, sehingga terasa seperti pencarian cepat di menu User.
+- Pencarian Pelanggan Online memakai cache data yang sudah tampil saat mengetik, bukan fetch ulang ke backend setiap huruf.
+
 ## [2.10.5] - 2026-07-28
 
 ### Changed

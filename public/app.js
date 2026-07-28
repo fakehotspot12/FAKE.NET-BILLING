@@ -2463,6 +2463,10 @@ function queryString(params) {
   return new URLSearchParams(params).toString();
 }
 
+function shouldShowPageLoading(options = {}) {
+  return !options.silent || !app?.childElementCount;
+}
+
 function focusSearchAfterRender(selector, expectedValue = '') {
   window.requestAnimationFrame(() => {
     const input = document.querySelector(selector);
@@ -2490,7 +2494,7 @@ function bindLiveTextSearch(input, options = {}) {
     const next = String(input.value || '').trim();
     if (!force && String(getValue() || '') === next) return;
     setValue(next);
-    const result = handler();
+    const result = handler({ silent: true, liveSearch: true });
     Promise.resolve(result).finally(() => {
       if (refocus && state.view === viewAtBind) {
         focusSearchAfterRender(refocusSelector, next);
@@ -2530,7 +2534,7 @@ function bindSearch(handler) {
     if (!search.value && !state.search) return;
     search.value = '';
     state.search = '';
-    const result = handler();
+    const result = handler({ silent: true, liveSearch: true });
     Promise.resolve(result).finally(() => focusSearchAfterRender('#searchInput', ''));
   };
   filters?.querySelector('[data-search-apply]')?.addEventListener('click', apply);
@@ -3350,8 +3354,8 @@ async function renderDashboard(options = {}) {
   }
 }
 
-async function renderActivity() {
-  app.innerHTML = '<div class="empty">Memuat log...</div>';
+async function renderActivity(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat log...</div>';
   const params = queryString({
     search: state.search,
     page: state.activityPage,
@@ -3388,9 +3392,9 @@ async function renderActivity() {
     </div>
   `;
 
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.activityPage = 1;
-    renderActivity();
+    renderActivity(renderOptions);
   });
   document.querySelectorAll('[data-activity-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -4241,8 +4245,8 @@ async function renderReportsStatistics() {
   });
 }
 
-async function renderReportsMonthlyBilling() {
-  app.innerHTML = '<div class="empty">Memuat tagihan bulanan...</div>';
+async function renderReportsMonthlyBilling(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat tagihan bulanan...</div>';
   const collectorReport = state.auth?.role === 'collector';
   const collectorName = state.auth?.name || state.auth?.username || 'Collector';
   const params = queryString({
@@ -4297,9 +4301,9 @@ async function renderReportsMonthlyBilling() {
     state.reportMonthlyBillingPage = 1;
     renderReportsMonthlyBilling();
   });
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.reportMonthlyBillingPage = 1;
-    renderReportsMonthlyBilling();
+    renderReportsMonthlyBilling(renderOptions);
   });
   app.querySelectorAll('[data-monthly-billing-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -4464,7 +4468,7 @@ function voucherMonthlyRowsTable(rows = []) {
 
 async function renderReportsVoucherDaily(options = {}) {
   clearRealtimeTimers();
-  if (!options.silent) app.innerHTML = '<div class="empty">Memuat voucher harian...</div>';
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat voucher harian...</div>';
   const params = queryString({
     date: state.reportVoucherDailyDate || todayInput(),
     search: state.search,
@@ -4577,9 +4581,9 @@ async function renderReportsVoucherDaily(options = {}) {
     renderReportsVoucherDaily();
   });
   bindVoucherReportFilters(renderReportsVoucherDaily, { daily: true });
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.reportVoucherDailyPage = 1;
-    renderReportsVoucherDaily();
+    renderReportsVoucherDaily(renderOptions);
   });
   app.querySelectorAll('[data-voucher-daily-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -4597,7 +4601,7 @@ async function renderReportsVoucherDaily(options = {}) {
 
 async function renderReportsVoucherMonthly(options = {}) {
   clearRealtimeTimers();
-  if (!options.silent) app.innerHTML = '<div class="empty">Memuat voucher bulanan...</div>';
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat voucher bulanan...</div>';
   const period = state.reportVoucherMonthlyPeriod || state.period || todayInput().slice(0, 7);
   const payload = await api(`/api/reports/voucher-monthly?${queryString({
     period,
@@ -5069,7 +5073,7 @@ function openDailyBillingReceiptsModal(transactions = [], report = {}) {
 }
 
 async function renderReportsTransactions(options = {}) {
-  app.innerHTML = '<div class="empty">Memuat mutasi bulanan...</div>';
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat mutasi bulanan...</div>';
   const period = state.reportTransactionsPeriod || state.period || todayInput().slice(0, 7);
   const params = {
     period,
@@ -5187,9 +5191,9 @@ async function renderReportsTransactions(options = {}) {
     refreshFilters();
   });
   document.getElementById('refreshReportTransactions')?.addEventListener('click', () => renderReportsTransactions({ refresh: true }));
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.reportTransactionsPage = 1;
-    renderReportsTransactions();
+    renderReportsTransactions(renderOptions);
   });
   app.querySelectorAll('[data-report-transaction-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -5214,8 +5218,8 @@ function financeRecapRows(rows = [], tone = 'positive') {
   `).join('') : '<tr><td colspan="3">Belum ada data.</td></tr>';
 }
 
-async function renderReportsFinanceRecap() {
-  app.innerHTML = '<div class="empty">Memuat rekapitulasi...</div>';
+async function renderReportsFinanceRecap(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat rekapitulasi...</div>';
   const payload = await api(`/api/reports/finance-recap?${queryString({ period: state.period })}`);
   const summary = payload.summary || {};
   const incomeGroups = Array.isArray(payload.incomeGroups) ? payload.incomeGroups : [];
@@ -5746,7 +5750,7 @@ function openXenditWithdrawVerifyModal(preview = {}) {
 }
 
 async function renderXendit(options = {}) {
-  app.innerHTML = '<div class="empty">Memuat data Xendit...</div>';
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat data Xendit...</div>';
   const limit = 15;
   const activeTab = state.xenditTab || 'transactions';
   const nextId = activeTab === 'transactions'
@@ -5853,9 +5857,9 @@ async function renderXendit(options = {}) {
   });
   document.getElementById('refreshXendit')?.addEventListener('click', () => renderXendit({ refresh: true }));
   document.getElementById('xenditWithdrawButton')?.addEventListener('click', () => openXenditWithdrawModal(account, balance));
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     resetXenditPages();
-    renderXendit();
+    renderXendit(renderOptions);
   });
   app.querySelector('[data-xendit-prev]')?.addEventListener('click', () => {
     state.xenditPage = Math.max(1, Number(state.xenditPage || 1) - 1);
@@ -5932,8 +5936,8 @@ function receiptSignerName(income = {}) {
     || currentBranding().businessName;
 }
 
-async function renderReportsInventoryStock() {
-  app.innerHTML = '<div class="empty">Memuat laporan stok...</div>';
+async function renderReportsInventoryStock(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat laporan stok...</div>';
   const params = queryString({
     period: state.period,
     type: state.inventoryReportType,
@@ -6011,9 +6015,9 @@ async function renderReportsInventoryStock() {
     state.inventoryReportPage = 1;
     renderReportsInventoryStock();
   });
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.inventoryReportPage = 1;
-    renderReportsInventoryStock();
+    renderReportsInventoryStock(renderOptions);
   });
   app.querySelectorAll('[data-stock-report-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -6028,8 +6032,8 @@ async function renderReportsInventoryStock() {
   }, renderReportsInventoryStock, 10);
 }
 
-async function renderExpenses() {
-  app.innerHTML = '<div class="empty">Memuat pengeluaran...</div>';
+async function renderExpenses(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat pengeluaran...</div>';
   const period = normalizedPeriod(state.expensePeriod || state.period);
   state.expensePeriod = period;
   const params = queryString({
@@ -6633,8 +6637,8 @@ function bindMemberAddonRows(form, addons = []) {
   container.addEventListener('input', () => syncMemberAddonsHidden(form));
 }
 
-async function renderExternalIncomes() {
-  app.innerHTML = '<div class="empty">Memuat pemasukan...</div>';
+async function renderExternalIncomes(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat pemasukan...</div>';
   const period = normalizedPeriod(state.externalIncomePeriod || state.period);
   state.externalIncomePeriod = period;
   const params = queryString({
@@ -7078,8 +7082,8 @@ function openExpenseModal(expense = null) {
   bindBatchRows(modal.querySelector('.modal-frame'), 'expenseRows', expenseItemRow, 'Rincian');
 }
 
-async function renderInventory() {
-  app.innerHTML = '<div class="empty">Memuat inventaris...</div>';
+async function renderInventory(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat inventaris...</div>';
   const params = queryString({
     search: state.search,
     status: 'all',
@@ -7180,9 +7184,9 @@ async function renderInventory() {
       });
     });
   }
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.inventoryPage = 1;
-    renderInventory();
+    renderInventory(renderOptions);
   });
   app.querySelectorAll('[data-inventory-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -7316,8 +7320,8 @@ function openStockMovementModal(item, type = 'in') {
   });
 }
 
-async function renderNetworkAssets() {
-  app.innerHTML = '<div class="empty">Memuat aset...</div>';
+async function renderNetworkAssets(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat aset...</div>';
   const params = queryString({
     search: state.search,
     status: 'all'
@@ -11335,7 +11339,7 @@ async function kickRadiusSession(type = 'ppp', session = {}) {
 }
 
 async function renderRadiusPppDhcp(options = {}) {
-  app.innerHTML = '<div class="empty">Memuat Radius PPP-DHCP...</div>';
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat Radius PPP-DHCP...</div>';
   const params = queryString({
     tab: state.radiusPppTab,
     page: state.radiusPppPage,
@@ -11579,9 +11583,9 @@ async function renderRadiusPppDhcp(options = {}) {
       });
     });
   }
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.radiusPppPage = 1;
-    renderRadiusPppDhcp();
+    renderRadiusPppDhcp(renderOptions);
   });
   bindRadiusPager('radius-ppp', (page) => {
     state.radiusPppPage = page;
@@ -11592,7 +11596,7 @@ async function renderRadiusPppDhcp(options = {}) {
 
 async function renderRadiusHotspot(options = {}) {
   clearRealtimeTimers();
-  if (!options.silent) app.innerHTML = '<div class="empty">Memuat Radius Hotspot...</div>';
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat Radius Hotspot...</div>';
   const resellerVoucherRole = state.auth?.role === 'reseller_voucher';
   if (resellerVoucherRole && state.radiusHotspotTab === 'voucher-online') {
     state.radiusHotspotTab = 'users';
@@ -11843,9 +11847,9 @@ async function renderRadiusHotspot(options = {}) {
     });
   }
   if (!voucherOnlineTab) {
-    bindSearch(() => {
+    bindSearch((renderOptions = {}) => {
       state.radiusHotspotPage = 1;
-      renderRadiusHotspot();
+      renderRadiusHotspot(renderOptions);
     });
     bindRadiusPager('radius-hotspot', (page) => {
       state.radiusHotspotPage = page;
@@ -12298,8 +12302,8 @@ function openNetworkAssetModal(asset = null) {
   });
 }
 
-async function renderMonitoringSite() {
-  app.innerHTML = '<div class="empty">Memuat monitoring...</div>';
+async function renderMonitoringSite(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat monitoring...</div>';
   const params = queryString({
     search: state.search,
     status: 'all'
@@ -12933,7 +12937,7 @@ async function openGenieAcsSettingsModal() {
 }
 
 async function renderGenieAcs(options = {}) {
-  app.innerHTML = '<div class="empty">Memuat GenieACS...</div>';
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat GenieACS...</div>';
   const payload = await api(`/api/genieacs/devices?${queryString({
     page: state.genieAcsPage,
     limit: state.genieAcsLimit,
@@ -13071,9 +13075,9 @@ async function renderGenieAcs(options = {}) {
   document.getElementById('openGenieAcsSettings')?.addEventListener('click', () => {
     openGenieAcsSettingsModal().catch((error) => setToast(error.message));
   });
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.genieAcsPage = 1;
-    renderGenieAcs();
+    renderGenieAcs(renderOptions);
   });
   document.getElementById('genieAcsStatusFilter')?.addEventListener('change', (event) => {
     state.genieAcsStatus = event.target.value || 'all';
@@ -13297,8 +13301,8 @@ function filteredMonitoringCustomers(rows = []) {
 
 async function renderMonitoringCustomers(options = {}) {
   clearRealtimeTimers();
-  const shouldFetch = options.refresh || options.silent || !state.monitoringCustomersPayload;
-  if (shouldFetch && !options.silent) {
+  const shouldFetch = options.refresh || !state.monitoringCustomersPayload;
+  if (shouldFetch && shouldShowPageLoading(options)) {
     app.innerHTML = '<div class="empty">Memuat pelanggan online...</div>';
   }
   const payload = shouldFetch
@@ -13424,9 +13428,9 @@ async function renderMonitoringCustomers(options = {}) {
     });
   });
   document.getElementById('refreshCustomers')?.addEventListener('click', () => renderMonitoringCustomers({ refresh: true }));
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.monitoringCustomerPage = 1;
-    renderMonitoringCustomers();
+    renderMonitoringCustomers(renderOptions);
   });
   app.querySelectorAll('[data-customer-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -15267,7 +15271,7 @@ async function printMonitoringMembersReport() {
 
 async function renderMonitoringMembers(options = {}) {
   clearRealtimeTimers();
-  app.innerHTML = '<div class="empty">Memuat member...</div>';
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat member...</div>';
   const params = queryString({
     status: state.monitoringMemberStatus,
     paymentType: state.monitoringMemberPaymentType,
@@ -15485,9 +15489,9 @@ async function renderMonitoringMembers(options = {}) {
       setToast(error.message || 'Pratinjau PDF member gagal dibuat');
     }
   });
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.monitoringMemberPage = 1;
-    renderMonitoringMembers();
+    renderMonitoringMembers(renderOptions);
   });
   app.querySelectorAll('[data-member-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -15549,7 +15553,7 @@ function billingPaidMetric(summary = {}) {
 
 async function renderMonitoringBilling(options = {}) {
   clearRealtimeTimers();
-  if (!options.silent) {
+  if (shouldShowPageLoading(options)) {
     app.innerHTML = '<div class="empty">Memuat tagihan pelanggan...</div>';
   }
   const billingPeriod = normalizedPeriod(state.monitoringBillingPeriod || state.period || todayInput().slice(0, 7));
@@ -15842,9 +15846,9 @@ async function renderMonitoringBilling(options = {}) {
     setToast(`${displayNumber(cancelled)} invoice dibatalkan`);
     renderMonitoringBilling({ refresh: true });
   });
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.monitoringBillingPage = 1;
-    renderMonitoringBilling();
+    renderMonitoringBilling(renderOptions);
   });
   app.querySelectorAll('[data-billing-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -16177,7 +16181,7 @@ function serviceRowsMarkup(rows = [], label = 'layanan') {
 
 async function renderMonitoringServices(options = {}) {
   clearRealtimeTimers();
-  if (!options.silent) {
+  if (shouldShowPageLoading(options)) {
     app.innerHTML = '<div class="empty">Memuat layanan...</div>';
   }
   const payload = await api('/api/monitoring/services');
@@ -16320,9 +16324,9 @@ async function renderMonitoringServices(options = {}) {
   });
   document.getElementById('refreshServices')?.addEventListener('click', () => renderMonitoringServices());
   document.getElementById('goServiceSettings')?.addEventListener('click', () => setView('monitoringSite'));
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.monitoringServicesPage = 1;
-    renderMonitoringServices();
+    renderMonitoringServices(renderOptions);
   });
   app.querySelectorAll('[data-service-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -18061,8 +18065,8 @@ function paymentGatewayPager(total = 0, limit = 10, page = 1) {
   `;
 }
 
-async function renderPaymentGateway() {
-  app.innerHTML = '<div class="empty">Memuat Payment Gateway...</div>';
+async function renderPaymentGateway(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat Payment Gateway...</div>';
   const params = queryString({
     from: state.xenditFrom,
     to: state.xenditTo,
@@ -18280,9 +18284,9 @@ async function renderPaymentGateway() {
     state.paymentGatewayPage = 1;
     renderPaymentGateway();
   });
-  bindSearch(() => {
+  bindSearch((renderOptions = {}) => {
     state.paymentGatewayPage = 1;
-    renderPaymentGateway();
+    renderPaymentGateway(renderOptions);
   });
   app.querySelectorAll('[data-payment-gateway-page]').forEach((button) => {
     button.addEventListener('click', () => {
