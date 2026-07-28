@@ -9542,14 +9542,21 @@ function radiusMemberFieldsMarkup(options = {}) {
   const billing = options.billing || {};
   const bhpUsoEnabled = billing.bhpUsoEnabled === true;
   const bhpUsoRate = Number(billing.bhpUsoRate || 1.25);
+  const selectedProfile = options.selectedProfile || '';
   return `
     <section class="form-grid radius-wizard-panel compact-wizard-panel" id="radiusMemberFields" data-radius-wizard-panel="member" data-member-wizard-fields hidden>
       <div class="field full radius-wizard-title"><strong>Member</strong><span>Identitas, kontak, alamat, lokasi, dan dokumentasi pelanggan.</span></div>
+      <label class="field full checkbox-field radius-add-member-choice">
+        <input name="addToMember" id="radiusAddToMember" type="checkbox" value="true" checked>
+        <span>Buat sebagai Member pelanggan</span>
+      </label>
       <input type="hidden" name="memberCode" value="" data-member-field disabled>
+      <input type="hidden" name="memberRecordOrigin" value="wizard" data-member-field disabled>
       <label class="field">
         <span>Nama Member</span>
         <input name="memberName" data-member-field autocomplete="off" disabled>
       </label>
+      <div class="field full member-duplicate-hint" id="radiusMemberDuplicateHint" hidden></div>
       <input type="hidden" name="memberKtpName" value="" data-member-field disabled>
       <label class="field">
         <span>Nomor KTP</span>
@@ -9600,6 +9607,10 @@ function radiusMemberFieldsMarkup(options = {}) {
     </section>
     <section class="form-grid radius-wizard-panel compact-wizard-panel" data-radius-wizard-panel="payment" hidden>
       <div class="field full radius-wizard-title"><strong>Payment</strong><span>Harga mengikuti profile, PPN dan diskon nominal tersimpan ke data member.</span></div>
+      <label class="field">
+        <span>Profile / Paket</span>
+        <select name="profile" id="radiusPppProfile" required>${radiusOptionTags(options.profiles || [], selectedProfile, 'None')}</select>
+      </label>
       <label class="field">
         <span>Tipe Pembayaran</span>
         <select name="memberPaymentType" data-member-field disabled>
@@ -9696,6 +9707,16 @@ function radiusPppUserFormBody(user = null, options = {}) {
         <option value="DHCP" ${type === 'DHCP' ? 'selected' : ''}>DHCP</option>
       </select>
     </label>
+    ${canAddMember && !user ? `
+      <label class="field full checkbox-field" data-auto-ppp-field>
+        <input name="autoPppCredential" id="radiusAutoPppCredential" type="checkbox" value="true" checked>
+        <span>Buat username & password otomatis dari Member ID</span>
+      </label>
+      <div class="field full notice info" id="radiusAutoCredentialPreview" data-auto-ppp-field>
+        <strong>Auto credential</strong>
+        <span>Member ID akan dipakai sebagai password, username mengikuti domain site/NAS jika tersedia.</span>
+      </div>
+    ` : ''}
     <label class="field" data-ppp-credential>
       <span>Username</span>
       <input name="username" value="${escapeHtml(user?.username || '')}" autocomplete="off" required>
@@ -9708,10 +9729,12 @@ function radiusPppUserFormBody(user = null, options = {}) {
       <span>MAC Address</span>
       <input name="macAddress" value="${escapeHtml(user?.macAddress || '')}" autocomplete="off" placeholder="Untuk DHCP">
     </label>
-    <label class="field">
-      <span>Profile</span>
-      <select name="profile" id="radiusPppProfile" ${user ? '' : 'required'}>${radiusOptionTags(options.profiles || [], user?.profile || '', 'None')}</select>
-    </label>
+    ${canAddMember && !user ? '' : `
+      <label class="field">
+        <span>Profile</span>
+        <select name="profile" id="radiusPppProfile" ${user ? '' : 'required'}>${radiusOptionTags(options.profiles || [], user?.profile || '', 'None')}</select>
+      </label>
+    `}
     <label class="field">
       <span>NAS</span>
       <select name="nas">${radiusOptionTags((options.nas || []).map((item) => ({ label: item.label, value: item.ip })), selectedNas, 'All')}</select>
@@ -9741,7 +9764,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
   return `
     <div class="radius-user-wizard" data-radius-ppp-wizard data-bhp-uso-enabled="${bhpUsoEnabled ? '1' : '0'}" data-bhp-uso-rate="${escapeHtml(String(bhpUsoRate))}">
       <div class="radius-wizard-steps MuiStepper-root MuiStepper-horizontal">
-        ${['Account', 'Member', 'Payment', 'Review'].map((label, index) => `
+        ${['Member', 'Payment', 'Account', 'Review'].map((label, index) => `
           <button class="radius-wizard-step MuiStep-root MuiStep-horizontal ${index === 0 ? 'is-active' : ''}" type="button" data-radius-wizard-goto="${index}" ${!canAddMember && index > 0 ? 'disabled' : ''}>
             <span class="radius-step-icon">${index + 1}</span>
             <span class="radius-step-label">${escapeHtml(label)}</span>
@@ -9751,12 +9774,6 @@ function radiusPppUserFormBody(user = null, options = {}) {
       <section class="form-grid radius-wizard-panel" data-radius-wizard-panel="account">
         <div class="field full radius-wizard-title"><strong>Account</strong><span>Data akun Radius dan NAS.</span></div>
         ${accountFields}
-        ${canAddMember ? `
-          <label class="field full checkbox-field radius-add-member-choice">
-            <input name="addToMember" id="radiusAddToMember" type="checkbox" value="true">
-            <span>Tambahkan ke Member</span>
-          </label>
-        ` : ''}
       </section>
       ${canAddMember ? radiusMemberFieldsMarkup(options) : ''}
     </div>
@@ -9939,6 +9956,94 @@ function radiusProfileFormBody(profile = null, type = 'ppp') {
   `;
 }
 
+function radiusCredentialDomainFromText(value = '') {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+  const domain = text.match(/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/);
+  return domain ? domain[0].replace(/[^a-z0-9.-]/g, '') : '';
+}
+
+function radiusSelectedNasDomain() {
+  const select = modalBody.querySelector('select[name="nas"]');
+  const selectedText = select?.selectedOptions?.[0]?.textContent || '';
+  const selectedValue = select?.value || '';
+  return radiusCredentialDomainFromText(selectedText)
+    || radiusCredentialDomainFromText(selectedValue)
+    || radiusCredentialDomainFromText(currentBranding().businessName);
+}
+
+async function ensureRadiusMemberCodePreview() {
+  const input = modalBody.querySelector('input[name="memberCode"]');
+  if (!input || input.value) return input?.value || '';
+  if (input.dataset.loading === '1') return '';
+  input.dataset.loading = '1';
+  try {
+    const payload = await api('/api/radius/member-code-preview');
+    const code = String(payload.memberCode || '').trim();
+    if (code && !input.value) {
+      input.value = code;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    return input.value || code;
+  } catch {
+    return input.value || '';
+  } finally {
+    input.dataset.loading = '0';
+  }
+}
+
+function bindRadiusAutoPppCredentials() {
+  const autoCheckbox = modalBody.querySelector('#radiusAutoPppCredential');
+  const preview = modalBody.querySelector('#radiusAutoCredentialPreview span');
+  const usernameInput = modalBody.querySelector('input[name="username"]');
+  const passwordInput = modalBody.querySelector('input[name="password"]');
+  const memberCodeInput = modalBody.querySelector('input[name="memberCode"]');
+  const typeSelect = modalBody.querySelector('#radiusPppType');
+  const nasSelect = modalBody.querySelector('select[name="nas"]');
+  const addToMember = modalBody.querySelector('#radiusAddToMember');
+  const autoFields = [...modalBody.querySelectorAll('[data-auto-ppp-field]')];
+  if (!autoCheckbox || !usernameInput || !passwordInput || !memberCodeInput) return;
+
+  const generatedUsername = () => {
+    const code = String(memberCodeInput.value || '').trim();
+    if (!code) return '';
+    const domain = radiusSelectedNasDomain();
+    return domain ? `${code}@${domain}` : code;
+  };
+
+  const sync = () => {
+    const isDhcp = String(typeSelect?.value || '').toLowerCase() === 'dhcp';
+    autoFields.forEach((field) => { field.hidden = isDhcp; });
+    const memberEnabled = addToMember?.checked !== false;
+    const enabled = !isDhcp && memberEnabled && autoCheckbox.checked;
+    usernameInput.readOnly = enabled;
+    passwordInput.readOnly = enabled;
+    if (enabled) {
+      const code = String(memberCodeInput.value || '').trim();
+      const username = generatedUsername();
+      if (username) usernameInput.value = username;
+      if (code) passwordInput.value = code;
+      if (preview) {
+        preview.textContent = username
+          ? `Username ${username}, password ${code}. Matikan checklist jika ingin input manual.`
+          : 'Menyiapkan Member ID untuk auto username/password...';
+      }
+      if (!code) ensureRadiusMemberCodePreview().then(sync);
+    } else if (preview && !isDhcp) {
+      preview.textContent = memberEnabled
+        ? 'Auto credential nonaktif. Username dan password dapat diisi manual.'
+        : 'Auto credential membutuhkan Member pelanggan. Username dan password dapat diisi manual.';
+    }
+  };
+
+  autoCheckbox.addEventListener('change', sync);
+  memberCodeInput.addEventListener('input', sync);
+  typeSelect?.addEventListener('change', sync);
+  nasSelect?.addEventListener('change', sync);
+  addToMember?.addEventListener('change', sync);
+  sync();
+}
+
 async function openRadiusPppUserModal(user = null) {
   const [options, billingPayload] = await Promise.all([
     loadRadiusOptions('ppp'),
@@ -10023,6 +10128,7 @@ async function openRadiusPppUserModal(user = null) {
     bindMemberAddonRows(modal.querySelector('.modal-frame'), []);
     bindRadiusMemberFields(options);
     bindRadiusPppWizard();
+    bindRadiusAutoPppCredentials();
   }
 }
 
@@ -10036,10 +10142,10 @@ function bindRadiusPppWizard() {
   const submitButton = modalBody.querySelector('#radiusWizardSubmit');
   const addToMember = modalBody.querySelector('#radiusAddToMember');
   const form = modal.querySelector('.modal-frame');
-  const stepKeys = ['account', 'member', 'payment', 'review'];
+  const stepKeys = ['member', 'payment', 'account', 'review'];
   let step = 0;
   let highestUnlockedStep = 0;
-  const activeSteps = () => addToMember?.checked ? stepKeys : ['account'];
+  const activeSteps = () => stepKeys;
   const currentStepKey = () => activeSteps()[step] || 'account';
   const selectedText = (selector, fallback = '-') => {
     const select = modalBody.querySelector(selector);
@@ -10113,26 +10219,7 @@ function bindRadiusPppWizard() {
   };
   const validateStep = () => {
     const current = currentStepKey();
-    if (current === 'account') {
-      const type = String(modalBody.querySelector('#radiusPppType')?.value || '').toLowerCase();
-      const profile = modalBody.querySelector('#radiusPppProfile')?.value.trim() || '';
-      const username = modalBody.querySelector('input[name="username"]')?.value.trim() || '';
-      const password = modalBody.querySelector('input[name="password"]')?.value.trim() || '';
-      const mac = modalBody.querySelector('input[name="macAddress"]')?.value.trim() || '';
-      if (!profile) {
-        setToast('Profile PPP-DHCP wajib dipilih, tidak boleh None');
-        return false;
-      }
-      if (type === 'dhcp' && !mac) {
-        setToast('MAC Address wajib diisi untuk DHCP');
-        return false;
-      }
-      if (type !== 'dhcp' && (!username || !password)) {
-        setToast('Username dan password wajib diisi untuk PPPoE');
-        return false;
-      }
-    }
-    if (current === 'member') {
+    if (current === 'member' && addToMember?.checked) {
       const name = modalBody.querySelector('input[name="memberName"]')?.value.trim() || '';
       const phone = modalBody.querySelector('input[name="memberPhone"]')?.value.trim() || '';
       if (!name) {
@@ -10141,6 +10228,27 @@ function bindRadiusPppWizard() {
       }
       if (!phone) {
         setToast('Nomor WhatsApp wajib diisi');
+        return false;
+      }
+    }
+    if (current === 'payment') {
+      const profile = modalBody.querySelector('#radiusPppProfile')?.value.trim() || '';
+      if (!profile) {
+        setToast('Profile PPP-DHCP wajib dipilih, tidak boleh None');
+        return false;
+      }
+    }
+    if (current === 'account') {
+      const type = String(modalBody.querySelector('#radiusPppType')?.value || '').toLowerCase();
+      const username = modalBody.querySelector('input[name="username"]')?.value.trim() || '';
+      const password = modalBody.querySelector('input[name="password"]')?.value.trim() || '';
+      const mac = modalBody.querySelector('input[name="macAddress"]')?.value.trim() || '';
+      if (type === 'dhcp' && !mac) {
+        setToast('MAC Address wajib diisi untuk DHCP');
+        return false;
+      }
+      if (type !== 'dhcp' && (!username || !password)) {
+        setToast('Username dan password wajib diisi untuk PPPoE');
         return false;
       }
     }
@@ -10288,8 +10396,10 @@ function bindRadiusMemberFields(options = {}) {
   const memberFields = [...modalBody.querySelectorAll('[data-member-field]')];
   const usernameInput = modalBody.querySelector('input[name="username"]');
   const nameInput = modalBody.querySelector('[name="memberName"]');
+  const phoneInput = modalBody.querySelector('[name="memberPhone"]');
   const ktpNameInput = modalBody.querySelector('[name="memberKtpName"]');
   const ktpInput = modalBody.querySelector('[name="memberKtp"]');
+  const duplicateHint = modalBody.querySelector('#radiusMemberDuplicateHint');
   const priceInput = modalBody.querySelector('[name="memberPrice"]');
   const paymentTypeSelect = modalBody.querySelector('[name="memberPaymentType"]');
   const billingPeriodSelect = modalBody.querySelector('#radiusMemberBillingPeriod');
@@ -10312,6 +10422,7 @@ function bindRadiusMemberFields(options = {}) {
   const profiles = options.profiles || [];
   let map = null;
   let marker = null;
+  let duplicateTimer = null;
   const setMapPoint = (latitude, longitude, zoom = 17) => {
     if (!map || !Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return;
     const point = [Number(latitude), Number(longitude)];
@@ -10384,6 +10495,49 @@ function bindRadiusMemberFields(options = {}) {
     }
     syncProfilePrice();
   };
+  const renderDuplicateHint = (rows = [], query = '') => {
+    if (!duplicateHint) return;
+    if (!rows.length) {
+      duplicateHint.hidden = !query;
+      duplicateHint.className = 'field full member-duplicate-hint notice';
+      duplicateHint.innerHTML = query ? '<strong>Data mirip</strong><span>Tidak ada member mirip yang ditemukan.</span>' : '';
+      return;
+    }
+    duplicateHint.hidden = false;
+    duplicateHint.className = 'field full member-duplicate-hint notice warning';
+    duplicateHint.innerHTML = `
+      <strong>Data mirip ditemukan</strong>
+      <span>Periksa agar tidak membuat pelanggan ganda.</span>
+      <div class="mini-list">
+        ${rows.slice(0, 5).map((row) => `
+          <div>
+            <b>${escapeHtml(row.name || row.customerName || row.username || '-')}</b>
+            <small>${escapeHtml([row.whatsapp || row.phone || '', row.address || '', row.nas || row.siteName || ''].filter(Boolean).join(' · '))}</small>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  };
+  const scheduleDuplicateLookup = () => {
+    if (!duplicateHint || !checkbox.checked) return;
+    window.clearTimeout(duplicateTimer);
+    duplicateTimer = window.setTimeout(async () => {
+      const name = nameInput?.value.trim() || '';
+      const phone = phoneInput?.value.trim() || '';
+      const ktp = ktpInput?.value.trim() || '';
+      const query = phone.length >= 4 ? phone : (ktp.length >= 6 ? ktp : name);
+      if (query.length < 3) {
+        renderDuplicateHint([], '');
+        return;
+      }
+      try {
+        const payload = await api(`/api/monitoring/members?${queryString({ search: query, page: 1, limit: 5 })}`);
+        renderDuplicateHint(payload.rows || [], query);
+      } catch {
+        renderDuplicateHint([], '');
+      }
+    }, 350);
+  };
   const syncBillingPeriod = () => {
     syncBillingPeriodSelect(paymentTypeSelect, billingPeriodSelect);
   };
@@ -10407,9 +10561,13 @@ function bindRadiusMemberFields(options = {}) {
     if (checkbox.checked) {
       fillDefaults();
       syncBillingPeriod();
+      ensureRadiusMemberCodePreview();
       ensureMap();
       window.setTimeout(() => map?.invalidateSize?.(), 50);
       updateLocationPreview();
+      scheduleDuplicateLookup();
+    } else if (duplicateHint) {
+      duplicateHint.hidden = true;
     }
   };
   checkbox.addEventListener('change', sync);
@@ -10420,7 +10578,12 @@ function bindRadiusMemberFields(options = {}) {
       nameInput.dataset.autoFilled = '1';
     }
   });
-  nameInput?.addEventListener('input', () => { nameInput.dataset.autoFilled = '0'; });
+  nameInput?.addEventListener('input', () => {
+    nameInput.dataset.autoFilled = '0';
+    scheduleDuplicateLookup();
+  });
+  phoneInput?.addEventListener('input', scheduleDuplicateLookup);
+  ktpInput?.addEventListener('input', scheduleDuplicateLookup);
   paymentTypeSelect?.addEventListener('change', syncBillingPeriod);
   profileSelect?.addEventListener('change', () => {
     if (!checkbox.checked) return;
@@ -10492,6 +10655,7 @@ function bindRadiusMemberFields(options = {}) {
       if (ktpUploadStatus) {
         ktpUploadStatus.textContent = ktpOcrStatusText(result, nameDecision);
       }
+      scheduleDuplicateLookup();
     } catch (error) {
       ktpPhotoInput.value = '';
       if (ktpPhotoHidden) ktpPhotoHidden.value = '';

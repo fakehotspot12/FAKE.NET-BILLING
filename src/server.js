@@ -4742,6 +4742,16 @@ function payloadEnabled(value) {
   return value === true || ['1', 'true', 'yes', 'y', 'ya', 'iya', 'on', 'aktif', 'active'].includes(String(value || '').toLowerCase());
 }
 
+function memberCodeUsed(data = {}, code = '') {
+  const value = String(code || '').trim();
+  if (!value) return false;
+  return (data.customers || []).some((customer) => [
+    customer.code,
+    customer.accountId,
+    customer.userId
+  ].some((item) => String(item || '').trim() === value));
+}
+
 function generateMemberCode(data = {}) {
   const used = new Set((data.customers || []).flatMap((customer) => [
     customer.code,
@@ -4848,7 +4858,10 @@ function radiusMemberFromPayload(data = {}, payload = {}, radiusUser = {}, actor
   const requestedMemberCode = String(payload.memberCode || payload.accountId || '').trim();
   const preserveImportedMemberCode = String(payload.memberRecordOrigin || payload.recordOrigin || '').trim().toLowerCase() === 'import'
     && /^22\d{9}$/.test(requestedMemberCode);
-  const memberCode = preserveImportedMemberCode ? requestedMemberCode : generateMemberCode(data);
+  const preserveWizardMemberCode = String(payload.memberRecordOrigin || payload.recordOrigin || '').trim().toLowerCase() !== 'import'
+    && /^22\d{9}$/.test(requestedMemberCode)
+    && !memberCodeUsed(data, requestedMemberCode);
+  const memberCode = preserveImportedMemberCode || preserveWizardMemberCode ? requestedMemberCode : generateMemberCode(data);
   const latitude = String(payload.memberLatitude || payload.latitude || '').trim();
   const longitude = String(payload.memberLongitude || payload.longitude || '').trim();
   const locationAccuracy = String(payload.memberLocationAccuracy || payload.locationAccuracy || '').trim();
@@ -10250,6 +10263,14 @@ function paymentGatewayInvoiceReference(invoice = {}) {
   return displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id || '');
 }
 
+function latestInvoicePayment(data = {}, invoice = {}) {
+  const invoiceId = String(invoice.id || '').trim();
+  if (!invoiceId) return {};
+  return activePayments(data)
+    .filter((payment) => payment.invoiceId === invoiceId)
+    .sort((a, b) => String(b.paidAt || b.createdAt || '').localeCompare(String(a.paidAt || a.createdAt || '')))[0] || {};
+}
+
 function defaultInvoicePaymentGatewayLink(data = {}, invoice = {}) {
   const origin = paymentGatewayOrigin(data.settings || {});
   const reference = paymentGatewayInvoiceReference(invoice);
@@ -12851,10 +12872,33 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
   const customer = customerForInvoice(data, invoice);
   const radiusUser = radiusUserForInvoice(data, invoice, customer);
   const invoiceNo = paymentGatewayInvoiceReference(invoice);
-  const breakdown = paymentGatewayAmountBreakdown(data.settings || {}, invoice.amount || 0, 'monthly');
   const periodText = periodDisplayText(invoiceCoverageText(invoice) || invoice.period || '');
   const customerStatus = strongestCustomerStatus(customer.status, invoice.customerStatus, radiusUser.status);
   const invoiceStatus = invoiceRuntimeStatus(invoice);
+  const latestPayment = latestInvoicePayment(data, invoice);
+  const paymentCategory = invoiceStatus === 'paid'
+    ? paymentCategoryForRecord({ ...invoice, ...latestPayment }, latestPayment.method || latestPayment.paymentMethod || invoice.paymentMethod || '')
+    : '';
+  const onlinePaid = invoiceStatus === 'paid' && paymentCategory === 'online';
+  const checkoutBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, invoice.amount || 0, 'monthly');
+  const paidBaseAmount = Math.max(0, Math.round(Number(latestPayment.baseAmount ?? invoice.amount ?? 0) || 0));
+  const paidAdminFee = onlinePaid
+    ? Math.max(0, Math.round(Number(latestPayment.adminFee ?? latestPayment.fee ?? 0) || 0))
+    : 0;
+  const paidTotalAmount = Math.max(0, Math.round(Number(
+    latestPayment.customerAmount
+    ?? latestPayment.gatewayAmount
+    ?? latestPayment.amount
+    ?? invoice.amount
+    ?? 0
+  ) || 0));
+  const breakdown = invoiceStatus === 'paid'
+    ? {
+      baseAmount: paidBaseAmount,
+      adminFee: paidAdminFee,
+      totalAmount: Math.max(paidTotalAmount, paidBaseAmount + paidAdminFee)
+    }
+    : checkoutBreakdown;
   const terminated = customerStatus === 'terminate';
   const addOns = invoiceBillingAddons(invoice, customer);
   const addOnsTotal = billingAddonsTotal(addOns);
@@ -12911,8 +12955,11 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
     adminFeeText: formatCurrencyText(breakdown.adminFee),
     gatewayAmount: breakdown.totalAmount,
     gatewayAmountText: formatCurrencyText(breakdown.totalAmount),
-    paymentMethod: 'Semua metode tersedia',
-    paymentProvider: data.settings?.paymentGateway?.provider || 'tripay',
+    paymentMethod: invoiceStatus === 'paid'
+      ? paymentMethodDisplayLabel(latestPayment.method || latestPayment.paymentMethod || invoice.paymentMethod || '-', latestPayment.provider || invoice.paymentProvider || '')
+      : 'Semua metode tersedia',
+    paymentCategory,
+    paymentProvider: latestPayment.provider || invoice.paymentProvider || data.settings?.paymentGateway?.provider || 'tripay',
     paymentGatewayLink: invoicePaymentGatewayLink(data, invoice)
   };
 }
@@ -16980,6 +17027,16 @@ async function handleApi(req, res, url) {
         error: error.message || 'Aksi template voucher gagal'
       });
     }
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/radius/member-code-preview') {
+    const authContext = await requireAnyPermission(req, res, ['radius:write', 'radius:ppp-users:write', 'customers:manage']);
+    if (!authContext) return;
+    sendJson(res, 200, {
+      ok: true,
+      memberCode: generateMemberCode(authContext.data)
+    });
     return;
   }
 

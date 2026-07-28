@@ -2,6 +2,19 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.3] - 2026-07-28
+
+### Changed
+
+- Wizard Tambah User PPP-DHCP dibalik menjadi Member, Payment, Account, lalu Review agar data pelanggan dan paket dibuat sebelum akun teknis PPPoE/DHCP.
+- Tambah User PPP-DHCP menambahkan opsi auto username/password berbasis Member ID, tetap bisa dimatikan untuk input manual.
+- Saat mengetik nama, WhatsApp, atau NIK member baru, sistem menampilkan kandidat member mirip secara bertahap tanpa perlu tombol Cari.
+
+### Fixed
+
+- Link invoice yang sudah `paid` kini menampilkan metode dan nominal pembayaran aktual. Fee payment gateway tidak lagi ditambahkan ulang untuk pembayaran manual tunai/transfer/loket.
+- Baris Fee pada link invoice paid manual disembunyikan; Fee hanya tampil jika pembayaran benar-benar online/gateway.
+
 ## [2.10.2] - 2026-07-28
 
 ### Fixed

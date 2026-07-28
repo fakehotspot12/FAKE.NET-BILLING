@@ -166,6 +166,16 @@
     setText('adminFee', invoice.adminFeeText);
     setText('gatewayAmount', invoice.gatewayAmountText);
     const paid = String(invoice.status || '').toLowerCase() === 'paid';
+    const adminFeeRow = $('adminFeeRow');
+    const adminFee = Number(invoice.adminFee || 0) || 0;
+    if (adminFeeRow) adminFeeRow.hidden = paid && adminFee <= 0;
+    setText('gatewayAmountLabel', paid ? 'Total Dibayar' : 'Total Bayar');
+    const paidMethodRow = $('paidMethodRow');
+    if (paidMethodRow) paidMethodRow.hidden = !paid;
+    if (paid) {
+      setText('paymentMethod', invoice.paymentMethod || '-');
+      setText('paymentLabel', 'Bukti Pembayaran');
+    }
     const button = $('payButton');
     if (button) {
       button.disabled = paid || payload.paymentGatewayEnabled === false;

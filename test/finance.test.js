@@ -6791,6 +6791,41 @@ test('unified payment gateway callback pays monthly invoice without duplicating 
   assert.equal(data.paymentGatewayTransactions.length, 1);
 });
 
+test('public paid invoice uses actual manual payment without adding gateway fee', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.paymentGateway.provider = 'tripay';
+  data.settings.paymentGateway.monthlyAdminFee = 5000;
+  data.invoices.push({
+    id: 'inv-paid-manual-public',
+    externalId: '005482',
+    invoiceNo: '005482',
+    customerId: 'cus-paid-manual-public',
+    customerName: 'Acil Pirang',
+    username: 'acilpirang@cempaka.net',
+    packageName: '1P - 165K - BRONZE',
+    period: '2026-08',
+    coveredPeriods: ['2026-08'],
+    amount: 165000,
+    dueDate: '2026-08-10',
+    status: 'pending'
+  });
+
+  markInvoicePaid(data, 'inv-paid-manual-public', {
+    paymentMethod: 'Tunai - Loket',
+    paymentCategory: 'cash',
+    amount: 165000,
+    createdByName: 'Admin Loket'
+  });
+
+  const publicInvoice = serverInternals.publicPaymentGatewayInvoicePayload(data, data.invoices[0]);
+  assert.equal(publicInvoice.status, 'paid');
+  assert.equal(publicInvoice.adminFee, 0);
+  assert.equal(publicInvoice.gatewayAmount, 165000);
+  assert.equal(publicInvoice.paymentMethod, 'Loket');
+  assert.equal(publicInvoice.paymentCategory, 'cash');
+});
+
 test('Tripay monthly checkout keeps flat customer fee while retail cashier takes its share', () => {
   assert.equal(serverInternals.isTripayRetailChannel('Alfamart via Tripay'), true);
   assert.equal(serverInternals.isTripayRetailChannel('BCAVA'), false);
