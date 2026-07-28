@@ -334,6 +334,18 @@ sudo INSTALL_GENIEACS=0 bash install.sh
 
 Jika tetap membutuhkan GenieACS, gunakan ACS existing atau siapkan VM dengan resource sesuai tabel di atas. NBI GenieACS tetap disarankan hanya listen di localhost atau jaringan privat/VPN, bukan dibuka langsung ke internet.
 
+### Catatan CT/LXC
+
+Container CT/LXC tidak direkomendasikan untuk instalasi penuh jika GenieACS lokal ikut dipakai. Billing core masih dapat dipakai di CT/LXC untuk kebutuhan ringan, tetapi GenieACS membutuhkan MongoDB, Docker/nesting, proses Node tambahan, dan I/O storage yang lebih stabil. Pada CT/LXC yang resource atau nesting-nya tidak ideal, gejala yang umum muncul adalah load tinggi, service stuck, SSH lambat, atau browser menampilkan `Failed to fetch`.
+
+Untuk CT/LXC, gunakan mode ringan tanpa GenieACS lokal:
+
+```bash
+sudo INSTALL_GENIEACS=0 bash install.sh
+```
+
+Untuk instalasi penuh dengan GenieACS lokal, gunakan VM biasa. Rekomendasi minimalnya 2 vCPU dan 4 GB RAM, lebih aman 4 vCPU dan 8 GB RAM jika jumlah ONU/CPE besar.
+
 `install.sh` mendukung keluarga:
 
 - Debian/Ubuntu dengan `apt`
