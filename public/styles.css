@@ -1847,6 +1847,14 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
+.search-action-row {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
 .tab-switcher {
   display: inline-flex;
   flex-wrap: wrap;
@@ -5554,6 +5562,16 @@ td {
   flex: none;
   gap: 6px;
   width: 100%;
+}
+
+.radius-toolbar .filters .search-action-row {
+  flex: 1 0 100%;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.radius-toolbar .filters .search-action-row .ghost-button {
+  min-width: 78px;
 }
 
 .radius-toolbar-actions {
@@ -9327,6 +9345,17 @@ dialog::backdrop {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
     min-width: 0;
+    width: 100%;
+  }
+
+  .radius-toolbar .filters .search-action-row {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .radius-toolbar .filters .search-action-row .ghost-button {
     width: 100%;
   }
 

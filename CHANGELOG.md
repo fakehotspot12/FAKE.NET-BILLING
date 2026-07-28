@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.10] - 2026-07-28
+
+### Changed
+
+- Toolbar Radius PPP-DHCP dan Hotspot dirapikan: tombol `Cari` dan `Reset` sekarang berada di baris bawah filter, sementara tombol aksi tetap di bawahnya agar lebih mudah dipakai di browser desktop maupun mobile.
+
 ## [2.10.9] - 2026-07-28
 
 ### Fixed

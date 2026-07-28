@@ -2519,8 +2519,10 @@ function bindSearch(handler) {
   const filters = search.closest('.filters') || search.parentElement;
   if (filters && !filters.querySelector('[data-search-apply]')) {
     filters.insertAdjacentHTML('beforeend', `
-      <button class="ghost-button compact" type="button" data-search-apply>Cari</button>
-      <button class="ghost-button compact" type="button" data-search-reset>Reset</button>
+      <div class="search-action-row" data-search-actions>
+        <button class="ghost-button compact" type="button" data-search-apply>Cari</button>
+        <button class="ghost-button compact" type="button" data-search-reset>Reset</button>
+      </div>
     `);
   }
   const live = bindLiveTextSearch(search, {
