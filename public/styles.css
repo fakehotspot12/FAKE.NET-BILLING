@@ -5570,6 +5570,11 @@ td {
   width: 100%;
 }
 
+.radius-toolbar .filters .radius-search-input {
+  flex: 1 0 100%;
+  width: 100%;
+}
+
 .radius-toolbar .filters .search-action-row .ghost-button {
   min-width: 78px;
 }

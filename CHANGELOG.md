@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.11] - 2026-07-28
+
+### Changed
+
+- Kolom pencarian Radius PPP-DHCP dan Hotspot dipindahkan ke bawah filter `Online/Offline`, lalu tombol `Cari` dan `Reset` berada tepat di bawah kolom pencarian.
+
 ## [2.10.10] - 2026-07-28
 
 ### Changed

@@ -11387,7 +11387,6 @@ async function renderRadiusPppDhcp(options = {}) {
       ${payload.ok === false ? `<div class="notice warning">${escapeHtml(payload.error || 'Data Radius belum bisa dibaca')}</div>` : ''}
       <div class="toolbar radius-toolbar">
         <div class="filters">
-          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari user, nama, NAS, profile" autocomplete="off">
           ${['users', 'sessions'].includes(state.radiusPppTab) ? `
             <select class="control" id="radiusPppNasFilter">
               ${radiusOptionTags(filterOptions.nas, state.radiusPppNas, 'Semua NAS')}
@@ -11406,6 +11405,7 @@ async function renderRadiusPppDhcp(options = {}) {
               <option value="offline" ${state.radiusPppInternet === 'offline' ? 'selected' : ''}>Offline</option>
             </select>
           ` : ''}
+          <input class="control radius-search-input" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari user, nama, NAS, profile" autocomplete="off">
         </div>
         <div class="row-actions radius-toolbar-actions">
           ${userWriteAllowed && state.radiusPppTab === 'users' ? '<button class="button compact radius-primary-action" id="addRadiusPppUser" type="button">Tambah User</button>' : ''}
@@ -11658,7 +11658,6 @@ async function renderRadiusHotspot(options = {}) {
       ${payload.ok === false ? `<div class="notice warning">${escapeHtml(payload.error || 'Data Radius belum bisa dibaca')}</div>` : ''}
       <div class="toolbar radius-toolbar">
         <div class="filters">
-          ${voucherOnlineTab ? '' : `<input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari voucher, user, NAS, profile" autocomplete="off">`}
           ${['users', 'sessions'].includes(state.radiusHotspotTab) ? `
             <select class="control" id="radiusHotspotNasFilter">
               ${radiusOptionTags(filterOptions.nas, state.radiusHotspotNas, 'Semua NAS')}
@@ -11677,6 +11676,7 @@ async function renderRadiusHotspot(options = {}) {
               <option value="offline" ${state.radiusHotspotInternet === 'offline' ? 'selected' : ''}>Offline</option>
             </select>
           ` : ''}
+          ${voucherOnlineTab ? '' : `<input class="control radius-search-input" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari voucher, user, NAS, profile" autocomplete="off">`}
         </div>
         <div class="row-actions radius-toolbar-actions">
           ${userWriteAllowed && state.radiusHotspotTab === 'users' ? '<button class="button compact radius-primary-action" id="addRadiusHotspotUser" type="button">Tambah User</button>' : ''}
