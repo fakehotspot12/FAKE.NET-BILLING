@@ -12899,6 +12899,7 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
       totalAmount: Math.max(paidTotalAmount, paidBaseAmount + paidAdminFee)
     }
     : checkoutBreakdown;
+  const showAdminFee = breakdown.adminFee > 0 && (invoiceStatus !== 'paid' || onlinePaid);
   const terminated = customerStatus === 'terminate';
   const addOns = invoiceBillingAddons(invoice, customer);
   const addOnsTotal = billingAddonsTotal(addOns);
@@ -12953,6 +12954,7 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
     discountText: invoiceDiscountDisplayText(invoice),
     adminFee: breakdown.adminFee,
     adminFeeText: formatCurrencyText(breakdown.adminFee),
+    showAdminFee,
     gatewayAmount: breakdown.totalAmount,
     gatewayAmountText: formatCurrencyText(breakdown.totalAmount),
     paymentMethod: invoiceStatus === 'paid'

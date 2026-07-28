@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.7] - 2026-07-28
+
+### Fixed
+
+- Link invoice pembayaran yang sudah lunas lewat metode manual seperti Tunai, Transfer, atau Loket tidak lagi menampilkan baris `Fee`; Fee hanya tampil untuk checkout/pembayaran online yang benar-benar memakai payment gateway.
+
 ## [2.10.6] - 2026-07-28
 
 ### Changed

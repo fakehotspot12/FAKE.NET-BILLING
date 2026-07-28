@@ -168,7 +168,8 @@
     const paid = String(invoice.status || '').toLowerCase() === 'paid';
     const adminFeeRow = $('adminFeeRow');
     const adminFee = Number(invoice.adminFee || 0) || 0;
-    if (adminFeeRow) adminFeeRow.hidden = paid && adminFee <= 0;
+    const showAdminFee = invoice.showAdminFee !== false && adminFee > 0;
+    if (adminFeeRow) adminFeeRow.hidden = !showAdminFee;
     setText('gatewayAmountLabel', paid ? 'Total Dibayar' : 'Total Bayar');
     const paidMethodRow = $('paidMethodRow');
     if (paidMethodRow) paidMethodRow.hidden = !paid;
