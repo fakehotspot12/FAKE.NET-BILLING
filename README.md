@@ -19,6 +19,12 @@ cd FAKE.NET-BILLING
 bash install.sh
 ```
 
+Untuk VM kecil atau jika sudah memakai GenieACS existing, jalankan instalasi ringan:
+
+```bash
+INSTALL_GENIEACS=0 bash install.sh
+```
+
 ### CentOS/Rocky/Alma/Fedora
 
 ```bash
@@ -307,6 +313,26 @@ Minimal setara Ubuntu 22.04:
 - Docker untuk WAHA
 - GenieACS 1.2.16 dan MongoDB 7; dipasang otomatis oleh installer
 - Git, curl, rsync, tar, gzip, procps, dan iproute
+
+### Spesifikasi Minimal dan Rekomendasi
+
+Spesifikasi berikut adalah acuan praktis agar aplikasi nyaman dipakai. Angka sebenarnya tetap bergantung pada jumlah pelanggan, jumlah invoice/transaksi, aktif tidaknya Whatsapp Gateway, payment gateway, SNMP polling, dan GenieACS.
+
+| Skenario | CPU | RAM | Storage | Catatan |
+| --- | ---: | ---: | ---: | --- |
+| Demo/lab billing core | 1 vCPU | 2 GB | 20 GB SSD | Gunakan `INSTALL_GENIEACS=0`. Cocok untuk demo, uji fitur, dan data kecil. |
+| Produksi kecil tanpa GenieACS lokal | 2 vCPU | 4 GB | 40 GB SSD | Cocok untuk billing, FreeRADIUS, PostgreSQL, Redis, WAHA, laporan, voucher, dan payment gateway ringan. |
+| Produksi sampai sekitar 1.000 PPP-DHCP + 50 Hotspot aktif tanpa GenieACS lokal | 2-4 vCPU | 4 GB | 60 GB SSD | Disarankan memakai SSD, Redis aktif, dan tidak menjalankan service lain yang berat di mesin yang sama. |
+| Produksi dengan GenieACS lokal sampai sekitar 1.000 ONU/CPE | 4 vCPU | 8 GB | 100 GB SSD | GenieACS memakai MongoDB dan proses tambahan. Lebih aman dipisah atau RAM dinaikkan jika data perangkat besar. |
+| Produksi lebih besar atau multi-site padat | 4-8 vCPU | 8-16 GB | 150 GB+ SSD/NVMe | Pertimbangkan pisah database/GenieACS, backup terjadwal, dan monitoring resource. |
+
+RAM 1 GB tidak direkomendasikan untuk instalasi penuh. Billing core mungkin masih bisa berjalan untuk uji coba kecil, tetapi kombinasi PostgreSQL, FreeRADIUS, Redis, WAHA, Docker, GenieACS, dan MongoDB dapat membuat VM kehabisan memori, load tinggi, service lambat, atau browser menampilkan `Failed to fetch`. Untuk mesin kecil, jalankan instalasi ringan:
+
+```bash
+sudo INSTALL_GENIEACS=0 bash install.sh
+```
+
+Jika tetap membutuhkan GenieACS, gunakan ACS existing atau siapkan VM dengan resource sesuai tabel di atas. NBI GenieACS tetap disarankan hanya listen di localhost atau jaringan privat/VPN, bukan dibuka langsung ke internet.
 
 `install.sh` mendukung keluarga:
 
