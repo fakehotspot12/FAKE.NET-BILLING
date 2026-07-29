@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.14] - 2026-07-29
+
+### Changed
+
+- Dashboard mengikuti model ringkas Cempaka: kartu pendapatan/pengeluaran/profit lebih padat, panel Monthly Billing dalam satu section, serta panel transaksi dan audit terbaru.
+- Panel transaksi dan audit dashboard dimuat setelah ringkasan utama supaya loading dashboard tetap ringan.
+
 ## [2.10.13] - 2026-07-29
 
 ### Fixed

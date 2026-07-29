@@ -2004,17 +2004,35 @@ function mbpsAxisText(value) {
   return bitRateText(value);
 }
 
+function dashboardRadbillCard(label, value, sub = '', tone = 'neutral', icon = '•', view = '') {
+  const viewAttr = view && canView(view)
+    ? ` role="button" tabindex="0" data-dashboard-view="${escapeHtml(view)}"`
+    : '';
+  return `
+    <article class="dashboard-radbill-card tone-${escapeHtml(tone)}${viewAttr ? ' is-clickable' : ''}"${viewAttr}>
+      <div class="dashboard-radbill-icon">${escapeHtml(icon)}</div>
+      <div class="dashboard-radbill-card-body">
+        <p>${escapeHtml(label)}</p>
+        <strong>${escapeHtml(value)}</strong>
+        <span>${escapeHtml(sub || '')}</span>
+      </div>
+      ${viewAttr ? '<div class="dashboard-radbill-arrow">›</div>' : ''}
+    </article>
+  `;
+}
+
 function dashboardFinanceOverview(summary = {}) {
   const monthlyEarning = Number(summary.paidRevenue || 0);
   const monthlyExpense = Number(summary.expenseTotal || 0);
+  const billing = summary.billingSummary || {};
+  const monthlyTransaction = Number(summary.monthlyTransactionCount || summary.paidCount || 0);
+  const netCash = Number(summary.netCash || 0);
   return `
-    <section class="dashboard-finance-grid">
-      ${metric('Monthly Earning', rupiah(monthlyEarning), 'Billing + pemasukan lain', 'finance-earning')}
-      ${metric('Monthly Expense', rupiah(monthlyExpense), 'Pengeluaran bulan ini', 'finance-expense')}
-      <div class="dashboard-finance-mini-grid">
-        ${dashboardMiniMetric('Monthly Profit', rupiah(summary.netCash || 0), '', Number(summary.netCash || 0) >= 0 ? 'finance-profit' : 'finance-loss')}
-        ${dashboardMiniMetric('Monthly Transaction', displayNumber(summary.monthlyTransactionCount || summary.paidCount || 0), '', 'finance-transaction')}
-      </div>
+    <section class="dashboard-radbill-top">
+      ${dashboardRadbillCard('Pendapatan Bulan Ini', rupiah(monthlyEarning), `${displayNumber(monthlyTransaction)} transaksi`, 'success', 'Rp', 'reportsDaily')}
+      ${dashboardRadbillCard('Tagihan Terbayar', rupiah(billing.monthlyPaidAmount || 0), `${displayNumber(billing.monthlyPaidCount || 0)} invoice lunas`, 'info', '✓', 'reportsMonthlyBilling')}
+      ${dashboardRadbillCard('Pengeluaran Bulan Ini', rupiah(monthlyExpense), 'Biaya operasional', 'danger', '−', 'expenses')}
+      ${dashboardRadbillCard('Profit Bulan Ini', rupiah(netCash), netCash >= 0 ? 'Surplus kas' : 'Defisit kas', netCash >= 0 ? 'violet' : 'danger', '↗', 'reportsFinanceRecap')}
     </section>
   `;
 }
@@ -2059,11 +2077,36 @@ function dashboardPersonalScopeOverview(scope = {}) {
 function dashboardBillingOverview(summary = {}) {
   const billing = summary.billingSummary || {};
   return `
-    <section class="dashboard-billing-grid">
-      ${metric('Total Unpaid', displayNumber(billing.totalUnpaidCount || 0), rupiah(billing.totalUnpaidAmount || 0), 'billing-unpaid')}
-      ${metric('Total Overdue', displayNumber(billing.overdueCount || 0), rupiah(billing.overdueAmount || 0), 'billing-overdue')}
-      ${metric('Monthly Paid', displayNumber(billing.monthlyPaidCount || 0), rupiah(billing.monthlyPaidAmount || 0), 'billing-paid')}
-      ${metric('Monthly Invoice', displayNumber(billing.monthlyInvoiceCount || 0), rupiah(billing.monthlyInvoiceAmount || 0), 'billing-invoice')}
+    <section class="section dashboard-radbill-monthly is-clickable" data-dashboard-view="reportsMonthlyBilling" role="button" tabindex="0">
+      <div class="dashboard-radbill-section-head">
+        <div class="dashboard-radbill-title">
+          <span class="dashboard-radbill-square tone-info">▣</span>
+          <h2>Monthly Billing</h2>
+        </div>
+        <span class="dashboard-radbill-muted">Periode ${escapeHtml(state.period || todayInput().slice(0, 7))}</span>
+      </div>
+      <div class="dashboard-radbill-billing-grid">
+        <div>
+          <small>Total Invoice</small>
+          <strong>${displayNumber(billing.monthlyInvoiceCount || 0)}</strong>
+          <span>${rupiah(billing.monthlyInvoiceAmount || 0)}</span>
+        </div>
+        <div class="tone-warning">
+          <small>Unpaid</small>
+          <strong>${displayNumber(billing.totalUnpaidCount || 0)}</strong>
+          <span>${rupiah(billing.totalUnpaidAmount || 0)}</span>
+        </div>
+        <div class="tone-danger">
+          <small>Overdue</small>
+          <strong>${displayNumber(billing.overdueCount || 0)}</strong>
+          <span>${rupiah(billing.overdueAmount || 0)}</span>
+        </div>
+        <div class="tone-success">
+          <small>Paid</small>
+          <strong>${displayNumber(billing.monthlyPaidCount || 0)}</strong>
+          <span>${rupiah(billing.monthlyPaidAmount || 0)}</span>
+        </div>
+      </div>
     </section>
   `;
 }
@@ -2149,6 +2192,107 @@ function bindDashboardRadiusLinks() {
       setView(view);
     });
   });
+}
+
+function bindDashboardViewLinks() {
+  app.querySelectorAll('[data-dashboard-view]').forEach((element) => {
+    const open = () => {
+      const view = element.dataset.dashboardView;
+      if (view && canView(view)) setView(view);
+    };
+    element.addEventListener('click', open);
+    element.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      open();
+    });
+  });
+}
+
+function dashboardTransactionAmountClass(amount = 0) {
+  return Number(amount || 0) >= 0 ? 'tone-success' : 'tone-danger';
+}
+
+function dashboardRecentTransactionsPanel(transactions = [], options = {}) {
+  const rows = Array.isArray(transactions) ? transactions.slice(0, 7) : [];
+  const period = options.period || state.period || todayInput().slice(0, 7);
+  return `
+    <section class="section dashboard-radbill-list-panel">
+      <div class="dashboard-radbill-section-head">
+        <div class="dashboard-radbill-title">
+          <span class="dashboard-radbill-square tone-info">✓</span>
+          <h2>Recent Transactions</h2>
+        </div>
+        ${canView('reportsTransactions') ? '<button class="ghost-button compact" type="button" data-dashboard-view="reportsTransactions">Lihat semua</button>' : `<span class="dashboard-radbill-muted">${escapeHtml(period)}</span>`}
+      </div>
+      <div class="dashboard-radbill-list">
+        ${rows.length ? rows.map((item, index) => `
+          <article class="dashboard-radbill-list-item" data-row-index="${index}">
+            <div class="dashboard-radbill-list-main">
+              <strong>${escapeHtml(item.description || item.customerName || item.invoiceNo || 'Transaksi')}</strong>
+              <span>${escapeHtml(item.customerName || item.username || 'Unknown')} • ${escapeHtml(item.method || item.paymentCategory || item.sourceLabel || 'Pembayaran')}</span>
+            </div>
+            <div class="dashboard-radbill-list-side ${dashboardTransactionAmountClass(item.amount)}">
+              <strong>${rupiah(item.amount || 0)}</strong>
+              <span>${escapeHtml(dateTimeText(item.paidAt || item.submittedAt || item.createdAt || ''))}</span>
+            </div>
+          </article>
+        `).join('') : '<div class="empty mini-empty">Belum ada transaksi pada periode ini.</div>'}
+      </div>
+    </section>
+  `;
+}
+
+function dashboardAuditPanel(activity = []) {
+  const rows = Array.isArray(activity) ? activity.slice(0, 7) : [];
+  return `
+    <section class="section dashboard-radbill-list-panel">
+      <div class="dashboard-radbill-section-head">
+        <div class="dashboard-radbill-title">
+          <span class="dashboard-radbill-square tone-warning">!</span>
+          <h2>Audit Log</h2>
+        </div>
+        <span class="dashboard-radbill-muted">${displayNumber(rows.length)} entri</span>
+      </div>
+      <div class="dashboard-radbill-list">
+        ${rows.length ? rows.map((item, index) => `
+          <article class="dashboard-radbill-list-item" data-row-index="${index}">
+            <div class="dashboard-radbill-list-main">
+              <strong>${escapeHtml(activityLabel(item.type || 'activity'))}</strong>
+              <span>${escapeHtml(item.message || '-')}</span>
+            </div>
+            <div class="dashboard-radbill-list-side">
+              <span>${escapeHtml(dateTimeText(item.at || item.createdAt || ''))}</span>
+            </div>
+          </article>
+        `).join('') : '<div class="empty mini-empty">Belum ada log aktivitas.</div>'}
+      </div>
+    </section>
+  `;
+}
+
+async function renderDashboardExtraPanels(renderToken, canViewFinance = false) {
+  const target = document.getElementById('dashboardExtraPanels');
+  if (!target) return;
+  target.innerHTML = `
+    <section class="section dashboard-radbill-list-panel"><div class="empty mini-empty">Memuat transaksi terbaru...</div></section>
+    <section class="section dashboard-radbill-list-panel"><div class="empty mini-empty">Memuat audit log...</div></section>
+  `;
+  const requests = [
+    api('/api/activity?page=1&limit=7').catch(() => null),
+    canViewFinance && canView('reportsTransactions')
+      ? api(`/api/reports/monthly-transactions?${queryString({ period: state.period, page: 1, limit: 7 })}`).catch(() => null)
+      : Promise.resolve(null)
+  ];
+  const [activityPayload, transactionPayload] = await Promise.all(requests);
+  if (renderIsStale(renderToken) || state.view !== 'dashboard' || !document.getElementById('dashboardExtraPanels')) return;
+  const recentActivity = Array.isArray(activityPayload?.activity) ? activityPayload.activity : [];
+  const recentTransactions = Array.isArray(transactionPayload?.transactions) ? transactionPayload.transactions : [];
+  target.innerHTML = `
+    ${dashboardRecentTransactionsPanel(recentTransactions, { period: state.period })}
+    ${dashboardAuditPanel(recentActivity)}
+  `;
+  bindDashboardViewLinks();
 }
 
 function dashboardRouterKey(router = {}, index = 0) {
@@ -3345,14 +3489,17 @@ async function renderDashboard(options = {}) {
           ${dashboardMembersCompact(members, radiusSummary)}
           <div id="dashboardRouterNas"></div>
         </section>
+        <section class="dashboard-radbill-lower-grid" id="dashboardExtraPanels"></section>
       `}
     </div>
   `;
 
   if (!restrictedPersonalDashboard) {
     bindDashboardRadiusLinks();
+    bindDashboardViewLinks();
     mountDashboardRouterNasShell();
     loadDashboardRouterNas({ silent: Boolean(dashboardRouterNasPayload) });
+    renderDashboardExtraPanels(renderToken, canViewFinance);
   }
 }
 
