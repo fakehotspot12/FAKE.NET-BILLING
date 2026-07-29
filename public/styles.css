@@ -913,6 +913,17 @@ input[type="checkbox"] {
   box-shadow: 0 0 0 3px rgba(43, 139, 217, 0.18);
 }
 
+.control.month-picker-control {
+  min-width: 152px;
+  max-width: 190px;
+  cursor: pointer;
+}
+
+.control.month-picker-control::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.72;
+}
+
 .date-picker-control {
   position: relative;
   width: 100%;
@@ -2114,6 +2125,17 @@ input[type="checkbox"] {
   border-radius: 9px;
   background: var(--surface-soft);
   text-align: center;
+}
+
+.dashboard-radbill-billing-grid > div.is-clickable {
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.dashboard-radbill-billing-grid > div.is-clickable:hover {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
+  transform: translateY(-1px);
 }
 
 .dashboard-radbill-billing-grid small {
@@ -9498,6 +9520,10 @@ dialog::backdrop {
   .filters,
   .filters .control {
     width: 100%;
+  }
+
+  .control.month-picker-control {
+    max-width: none;
   }
 
   .button,

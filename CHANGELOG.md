@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.0] - 2026-07-29
+
+### Changed
+
+- Kartu dashboard sekarang membuka menu tujuan dengan preset filter yang sesuai: Tagihan Bulanan, Tagihan Pelanggan Lunas/Semua/Lewat Tempo/Isolir, Pengeluaran, dan Mutasi Bulanan.
+- Navigasi dashboard memakai history browser normal sehingga tombol Back kembali ke halaman sebelumnya.
+- Filter bulan di laporan, tagihan pelanggan, pemasukan, dan pengeluaran diseragamkan sebagai month picker.
+
 ## [2.10.14] - 2026-07-29
 
 ### Changed

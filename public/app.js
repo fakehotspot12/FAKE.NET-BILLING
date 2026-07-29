@@ -372,7 +372,7 @@ function periodLabel(period = state.period) {
 function periodFilterControls(prefix, period) {
   const safePeriod = normalizedPeriod(period);
   return `
-    <input class="control" id="${prefix}" type="month" value="${escapeHtml(safePeriod)}" aria-label="Filter bulan">
+    <input class="control month-picker-control" id="${prefix}" type="month" value="${escapeHtml(safePeriod)}" aria-label="Filter bulan">
   `;
 }
 
@@ -1603,7 +1603,7 @@ function storedView() {
   return normalizeView(raw);
 }
 
-function rememberView(view) {
+function rememberView(view, options = {}) {
   const safe = normalizeView(view);
   if (!safe) return;
   try {
@@ -1611,8 +1611,12 @@ function rememberView(view) {
   } catch (error) {
     // Ignore private-mode storage failures; hash still preserves refresh state.
   }
-  if (window.location.hash !== `#${safe}`) {
-    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${safe}`);
+  const nextUrl = `${window.location.pathname}${window.location.search}#${safe}`;
+  if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
+    const method = options.replace ? 'replaceState' : 'pushState';
+    window.history[method]({ view: safe }, '', nextUrl);
+  } else if (options.replace) {
+    window.history.replaceState({ view: safe }, '', nextUrl);
   }
 }
 
@@ -1830,7 +1834,7 @@ function configureShell() {
   updateMenuButton();
 }
 
-function setView(view) {
+function setView(view, options = {}) {
   if (!state.auth) {
     rememberLoginReturnView(view);
     renderLogin();
@@ -1895,7 +1899,7 @@ function setView(view) {
     clearRealtimeTimers();
   }
   state.view = nextView;
-  rememberView(nextView);
+  rememberView(nextView, { replace: Boolean(options.replace) });
   viewTitle.textContent = titles[state.view] || 'Dashboard';
   setMenuOpen(false);
   configureShell();
@@ -2004,12 +2008,17 @@ function mbpsAxisText(value) {
   return bitRateText(value);
 }
 
-function dashboardRadbillCard(label, value, sub = '', tone = 'neutral', icon = '•', view = '') {
-  const viewAttr = view && canView(view)
-    ? ` role="button" tabindex="0" data-dashboard-view="${escapeHtml(view)}"`
-    : '';
+function dashboardNavigationAttributes(view = '', action = '') {
+  const safeView = normalizeView(view);
+  if (!safeView || !canView(safeView)) return '';
+  return ` role="button" tabindex="0" data-dashboard-view="${escapeHtml(safeView)}"${action ? ` data-dashboard-action="${escapeHtml(action)}"` : ''}`;
+}
+
+function dashboardRadbillCard(label, value, sub = '', tone = 'neutral', icon = '•', view = '', action = '') {
+  const viewAttr = dashboardNavigationAttributes(view, action);
+  const clickClass = viewAttr ? ' is-clickable' : '';
   return `
-    <article class="dashboard-radbill-card tone-${escapeHtml(tone)}${viewAttr ? ' is-clickable' : ''}"${viewAttr}>
+    <article class="dashboard-radbill-card tone-${escapeHtml(tone)}${clickClass}"${viewAttr}>
       <div class="dashboard-radbill-icon">${escapeHtml(icon)}</div>
       <div class="dashboard-radbill-card-body">
         <p>${escapeHtml(label)}</p>
@@ -2021,6 +2030,57 @@ function dashboardRadbillCard(label, value, sub = '', tone = 'neutral', icon = '
   `;
 }
 
+function applyDashboardMonitoringBillingPreset(status = 'all', customerStatus = 'all') {
+  const period = normalizedPeriod(state.period || todayInput().slice(0, 7));
+  state.monitoringBillingStatus = status;
+  state.monitoringBillingCustomerStatus = customerStatus;
+  state.monitoringBillingSite = 'all';
+  state.monitoringBillingPeriod = period;
+  state.monitoringBillingPage = 1;
+  state.monitoringBillingKeepPreset = true;
+  state.search = '';
+  saveMonitoringBillingPeriod(period);
+}
+
+function applyDashboardViewAction(action = '', view = '') {
+  const period = normalizedPeriod(state.period || todayInput().slice(0, 7));
+  if (view === 'reportsMonthlyBilling') {
+    state.reportMonthlyBillingStatus = 'all';
+    state.reportMonthlyBillingPage = 1;
+    state.period = period;
+  }
+  if (view === 'expenses') {
+    state.expensePeriod = period;
+    state.search = '';
+  }
+  if (view === 'reportsTransactions') {
+    state.reportTransactionsPeriod = period;
+    state.reportTransactionsMethod = 'all';
+    state.reportTransactionsPage = 1;
+    state.search = '';
+  }
+  if (action === 'billing-paid') {
+    applyDashboardMonitoringBillingPreset('paid', 'all');
+  } else if (action === 'billing-all') {
+    applyDashboardMonitoringBillingPreset('all', 'all');
+  } else if (action === 'billing-unpaid-overdue') {
+    applyDashboardMonitoringBillingPreset('overdue', 'all');
+  } else if (action === 'billing-isolated') {
+    applyDashboardMonitoringBillingPreset('overdue', 'isolated');
+  }
+}
+
+function dashboardBillingCell(label, count, amount, tone = '', action = '') {
+  const viewAttr = dashboardNavigationAttributes('monitoringBilling', action);
+  return `
+    <div class="${[tone, viewAttr ? 'is-clickable' : ''].filter(Boolean).join(' ')}"${viewAttr}>
+      <small>${escapeHtml(label)}</small>
+      <strong>${displayNumber(count || 0)}</strong>
+      <span>${rupiah(amount || 0)}</span>
+    </div>
+  `;
+}
+
 function dashboardFinanceOverview(summary = {}) {
   const monthlyEarning = Number(summary.paidRevenue || 0);
   const monthlyExpense = Number(summary.expenseTotal || 0);
@@ -2029,10 +2089,10 @@ function dashboardFinanceOverview(summary = {}) {
   const netCash = Number(summary.netCash || 0);
   return `
     <section class="dashboard-radbill-top">
-      ${dashboardRadbillCard('Pendapatan Bulan Ini', rupiah(monthlyEarning), `${displayNumber(monthlyTransaction)} transaksi`, 'success', 'Rp', 'reportsDaily')}
-      ${dashboardRadbillCard('Tagihan Terbayar', rupiah(billing.monthlyPaidAmount || 0), `${displayNumber(billing.monthlyPaidCount || 0)} invoice lunas`, 'info', '✓', 'reportsMonthlyBilling')}
-      ${dashboardRadbillCard('Pengeluaran Bulan Ini', rupiah(monthlyExpense), 'Biaya operasional', 'danger', '−', 'expenses')}
-      ${dashboardRadbillCard('Profit Bulan Ini', rupiah(netCash), netCash >= 0 ? 'Surplus kas' : 'Defisit kas', netCash >= 0 ? 'violet' : 'danger', '↗', 'reportsFinanceRecap')}
+      ${dashboardRadbillCard('Pendapatan Bulan Ini', rupiah(monthlyEarning), `${displayNumber(monthlyTransaction)} transaksi`, 'success', 'Rp', 'reportsMonthlyBilling', 'monthly-billing-report')}
+      ${dashboardRadbillCard('Tagihan Terbayar', rupiah(billing.monthlyPaidAmount || 0), `${displayNumber(billing.monthlyPaidCount || 0)} invoice lunas`, 'info', '✓', 'monitoringBilling', 'billing-paid')}
+      ${dashboardRadbillCard('Pengeluaran Bulan Ini', rupiah(monthlyExpense), 'Biaya operasional', 'danger', '−', 'expenses', 'monthly-expenses')}
+      ${dashboardRadbillCard('Profit Bulan Ini', rupiah(netCash), netCash >= 0 ? 'Surplus kas' : 'Defisit kas', netCash >= 0 ? 'violet' : 'danger', '↗', 'reportsTransactions', 'monthly-transactions')}
     </section>
   `;
 }
@@ -2077,7 +2137,7 @@ function dashboardPersonalScopeOverview(scope = {}) {
 function dashboardBillingOverview(summary = {}) {
   const billing = summary.billingSummary || {};
   return `
-    <section class="section dashboard-radbill-monthly is-clickable" data-dashboard-view="reportsMonthlyBilling" role="button" tabindex="0">
+    <section class="section dashboard-radbill-monthly">
       <div class="dashboard-radbill-section-head">
         <div class="dashboard-radbill-title">
           <span class="dashboard-radbill-square tone-info">▣</span>
@@ -2086,26 +2146,10 @@ function dashboardBillingOverview(summary = {}) {
         <span class="dashboard-radbill-muted">Periode ${escapeHtml(state.period || todayInput().slice(0, 7))}</span>
       </div>
       <div class="dashboard-radbill-billing-grid">
-        <div>
-          <small>Total Invoice</small>
-          <strong>${displayNumber(billing.monthlyInvoiceCount || 0)}</strong>
-          <span>${rupiah(billing.monthlyInvoiceAmount || 0)}</span>
-        </div>
-        <div class="tone-warning">
-          <small>Unpaid</small>
-          <strong>${displayNumber(billing.totalUnpaidCount || 0)}</strong>
-          <span>${rupiah(billing.totalUnpaidAmount || 0)}</span>
-        </div>
-        <div class="tone-danger">
-          <small>Overdue</small>
-          <strong>${displayNumber(billing.overdueCount || 0)}</strong>
-          <span>${rupiah(billing.overdueAmount || 0)}</span>
-        </div>
-        <div class="tone-success">
-          <small>Paid</small>
-          <strong>${displayNumber(billing.monthlyPaidCount || 0)}</strong>
-          <span>${rupiah(billing.monthlyPaidAmount || 0)}</span>
-        </div>
+        ${dashboardBillingCell('Total Invoice', billing.monthlyInvoiceCount || 0, billing.monthlyInvoiceAmount || 0, '', 'billing-all')}
+        ${dashboardBillingCell('Unpaid', billing.totalUnpaidCount || 0, billing.totalUnpaidAmount || 0, 'tone-warning', 'billing-unpaid-overdue')}
+        ${dashboardBillingCell('Overdue', billing.overdueCount || 0, billing.overdueAmount || 0, 'tone-danger', 'billing-isolated')}
+        ${dashboardBillingCell('Paid', billing.monthlyPaidCount || 0, billing.monthlyPaidAmount || 0, 'tone-success', 'billing-paid')}
       </div>
     </section>
   `;
@@ -2198,7 +2242,10 @@ function bindDashboardViewLinks() {
   app.querySelectorAll('[data-dashboard-view]').forEach((element) => {
     const open = () => {
       const view = element.dataset.dashboardView;
-      if (view && canView(view)) setView(view);
+      if (view && canView(view)) {
+        applyDashboardViewAction(element.dataset.dashboardAction || '', view);
+        setView(view);
+      }
     };
     element.addEventListener('click', open);
     element.addEventListener('keydown', (event) => {
@@ -3343,7 +3390,7 @@ function renderLogin() {
       configureShell();
       startNotificationsTimer();
       setToast('Login berhasil');
-      setView(state.view);
+      setView(state.view, { replace: true });
     } catch (error) {
       if (error.status === 423) {
         renderActivation(error.payload?.license || {});
@@ -4347,7 +4394,7 @@ async function renderReportsStatistics() {
     <div class="stack">
       <div class="toolbar">
         <div class="filters">
-          <input class="control" id="reportStatisticsPeriod" type="month" value="${escapeHtml(state.reportStatisticsPeriod)}">
+          <input class="control month-picker-control" id="reportStatisticsPeriod" type="month" value="${escapeHtml(state.reportStatisticsPeriod)}">
         </div>
       </div>
 
@@ -4424,6 +4471,7 @@ async function renderReportsMonthlyBilling(options = {}) {
 
       <div class="toolbar">
         <div class="filters">
+          ${periodFilterControls('monthlyBillingPeriod', state.period)}
           ${collectorReport ? `<input class="control" value="${escapeHtml(collectorName)}" disabled>` : ''}
           <select class="control" id="monthlyBillingStatus">
             <option value="all" ${state.reportMonthlyBillingStatus === 'all' ? 'selected' : ''}>Semua status</option>
@@ -4447,6 +4495,11 @@ async function renderReportsMonthlyBilling(options = {}) {
 
   document.getElementById('monthlyBillingStatus')?.addEventListener('change', (event) => {
     state.reportMonthlyBillingStatus = event.target.value || 'all';
+    state.reportMonthlyBillingPage = 1;
+    renderReportsMonthlyBilling();
+  });
+  bindPeriodFilter('monthlyBillingPeriod', (nextPeriod) => {
+    state.period = normalizedPeriod(nextPeriod);
     state.reportMonthlyBillingPage = 1;
     renderReportsMonthlyBilling();
   });
@@ -4529,7 +4582,7 @@ function voucherReportBuyerText(order = {}) {
 function voucherReportFilterMarkup(filterOptions = {}, monthly = false) {
   const scoped = filterOptions.scoped === true;
   return `
-    ${monthly ? `<input class="control" id="voucherMonthlyPeriod" type="month" value="${escapeHtml(state.reportVoucherMonthlyPeriod || state.period || todayInput().slice(0, 7))}">` : ''}
+    ${monthly ? `<input class="control month-picker-control" id="voucherMonthlyPeriod" type="month" value="${escapeHtml(state.reportVoucherMonthlyPeriod || state.period || todayInput().slice(0, 7))}">` : ''}
     <select class="control" id="voucherReportNas">
       ${voucherReportOptionTags(filterOptions.nas || [], state.reportVoucherNas || 'all', 'Semua NAS')}
     </select>
@@ -5264,7 +5317,7 @@ async function renderReportsTransactions(options = {}) {
 
       <div class="toolbar">
         <div class="filters">
-          <input class="control" id="reportTransactionsPeriod" type="month" value="${escapeHtml(state.reportTransactionsPeriod)}">
+          <input class="control month-picker-control" id="reportTransactionsPeriod" type="month" value="${escapeHtml(state.reportTransactionsPeriod)}">
           <select class="control" id="reportTransactionsMethod">
             <option value="all" ${state.reportTransactionsMethod === 'all' ? 'selected' : ''}>Semua metode</option>
             <option value="cash" ${state.reportTransactionsMethod === 'cash' ? 'selected' : ''}>Tunai</option>
@@ -5377,6 +5430,12 @@ async function renderReportsFinanceRecap(options = {}) {
 
   app.innerHTML = `
     <div class="stack">
+      <div class="toolbar">
+        <div class="filters">
+          ${periodFilterControls('financeRecapPeriod', state.period)}
+        </div>
+      </div>
+
       <section class="metrics">
         ${metric('Total Pemasukan', rupiah(summary.incomeTotal || 0), `${displayNumber(summary.incomeCount || 0)} transaksi`, 'positive')}
         ${metric('Tunai', rupiah(summary.cashAmount || 0), `${displayNumber(summary.cashCount || 0)} transaksi`)}
@@ -5420,6 +5479,11 @@ async function renderReportsFinanceRecap(options = {}) {
       </section>
     </div>
   `;
+
+  bindPeriodFilter('financeRecapPeriod', (nextPeriod) => {
+    state.period = normalizedPeriod(nextPeriod);
+    renderReportsFinanceRecap();
+  });
 }
 
 function xenditTypeLabel(value) {
@@ -15812,7 +15876,7 @@ async function renderMonitoringBilling(options = {}) {
 
       <div class="toolbar">
         <div class="filters">
-          <input class="control" id="billingPeriodFilter" type="month" value="${escapeHtml(billingPeriod)}" aria-label="Filter bulan tagihan">
+          <input class="control month-picker-control" id="billingPeriodFilter" type="month" value="${escapeHtml(billingPeriod)}" aria-label="Filter bulan tagihan">
           <select class="control" id="billingSiteFilter" aria-label="Filter site">
             <option value="all" ${state.monitoringBillingSite === 'all' ? 'selected' : ''}>Semua site</option>
             ${sites.map((site) => `<option value="${escapeHtml(site.id)}" ${state.monitoringBillingSite === site.id ? 'selected' : ''}>${escapeHtml(site.name)}</option>`).join('')}
@@ -19348,6 +19412,16 @@ document.querySelectorAll('[data-open-nav-group]').forEach((button) => {
   });
 });
 
+window.addEventListener('popstate', () => {
+  const nextView = currentHashView() || firstAvailableView();
+  if (!state.auth) {
+    rememberLoginReturnView(nextView);
+    renderLogin();
+    return;
+  }
+  setView(nextView, { replace: true });
+});
+
 applyTheme();
 updatePeriodPicker();
 periodPickerButton?.addEventListener('click', () => {
@@ -19470,7 +19544,7 @@ async function init() {
     state.view = canView(lastView) ? lastView : firstAvailableView();
     configureShell();
     startNotificationsTimer();
-    setView(state.view);
+    setView(state.view, { replace: true });
   } catch (error) {
     if (error.status === 423) {
       try {
