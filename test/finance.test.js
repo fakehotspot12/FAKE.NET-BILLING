@@ -2471,6 +2471,107 @@ test('standalone automation generates fixed-date invoices only inside each membe
   }, '2026-08', '2026-08-05'), true);
 });
 
+test('standalone automation checks next invoice period while reminders and isolation stay date based', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = true;
+  data.settings.billing.fixedInvoiceAdvanceDays = 3;
+  data.settings.billing.notificationBeforeDueDays = 1;
+  data.settings.billing.notificationSendTime = '00:00';
+  data.settings.billing.suspendGraceDays = 5;
+  data.settings.billing.autoSuspendTime = '00:00';
+  data.customers.push(
+    {
+      id: 'cus-due-first',
+      source: 'radius',
+      username: 'due-first@ppp.test',
+      name: 'Due First',
+      phone: '081111111111',
+      status: 'active',
+      paymentType: 'postpaid',
+      billingPeriod: 'fixed',
+      dueDay: 1,
+      nextDue: '2026-08-01',
+      dueDate: '2026-08-01',
+      price: 100000
+    },
+    {
+      id: 'cus-reminder-next-scan',
+      source: 'radius',
+      username: 'reminder-next-scan@ppp.test',
+      name: 'Reminder Next Scan',
+      phone: '082222222222',
+      status: 'active',
+      paymentType: 'postpaid',
+      billingPeriod: 'fixed',
+      dueDay: 29,
+      price: 100000
+    },
+    {
+      id: 'cus-isolate-next-scan',
+      source: 'radius',
+      username: 'isolate-next-scan@ppp.test',
+      name: 'Isolate Next Scan',
+      phone: '083333333333',
+      status: 'active',
+      paymentType: 'postpaid',
+      billingPeriod: 'fixed',
+      dueDay: 24,
+      price: 100000
+    }
+  );
+  data.radiusUsers.push(
+    { id: 'rad-due-first', serviceType: 'pppoe', username: 'due-first@ppp.test', customerId: 'cus-due-first', status: 'active' },
+    { id: 'rad-reminder-next-scan', serviceType: 'pppoe', username: 'reminder-next-scan@ppp.test', customerId: 'cus-reminder-next-scan', status: 'active' },
+    { id: 'rad-isolate-next-scan', serviceType: 'pppoe', username: 'isolate-next-scan@ppp.test', customerId: 'cus-isolate-next-scan', status: 'active' }
+  );
+  data.invoices.push(
+    {
+      id: 'inv-reminder-next-scan',
+      customerId: 'cus-reminder-next-scan',
+      customerName: 'Reminder Next Scan',
+      username: 'reminder-next-scan@ppp.test',
+      period: '2026-07',
+      amount: 100000,
+      status: 'pending',
+      dueDate: '2026-07-29',
+      invoiceNo: '000201',
+      externalId: '000201'
+    },
+    {
+      id: 'inv-isolate-next-scan',
+      customerId: 'cus-isolate-next-scan',
+      customerName: 'Isolate Next Scan',
+      username: 'isolate-next-scan@ppp.test',
+      period: '2026-07',
+      amount: 100000,
+      status: 'pending',
+      dueDate: '2026-07-24',
+      invoiceNo: '000202',
+      externalId: '000202'
+    }
+  );
+
+  const result = serverInternals.standaloneBillingAutomation(data, {
+    username: 'billing-auto',
+    name: 'Billing Auto',
+    role: 'system'
+  }, { now: new Date('2026-07-28T16:30:00.000Z') });
+  const augustInvoice = data.invoices.find((invoice) => invoice.customerId === 'cus-due-first' && invoice.period === '2026-08');
+  const isolatedUser = data.radiusUsers.find((user) => user.id === 'rad-isolate-next-scan');
+
+  assert.equal(result.created.length, 1);
+  assert.equal(augustInvoice.dueDate, '2026-08-01');
+  assert.equal(data.customers.find((customer) => customer.id === 'cus-due-first').nextDue, '2026-09-01');
+  assert.equal(result.reminderInvoices.length, 1);
+  assert.equal(data.waMessages.filter((message) => message.type === 'paymentReminder').length, 1);
+  assert.equal(result.isolatedUsers.length, 1);
+  assert.equal(isolatedUser.status, 'isolated');
+  assert.equal(data.customers.find((customer) => customer.id === 'cus-isolate-next-scan').status, 'isolir');
+  assert.equal(data.waMessages.filter((message) => message.type === 'accountSuspend').length, 1);
+});
+
 test('expired hotspot voucher remove-record keeps terminated record', () => {
   const data = createDefaultStore();
   data.radiusProfiles.push({ id: 'profile-voucher', serviceType: 'hotspot', name: 'Voucher 1D', expiredMode: 'remove-record' });

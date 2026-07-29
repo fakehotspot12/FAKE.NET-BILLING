@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.3] - 2026-07-29
+
+### Fixed
+
+- Scheduler billing otomatis kini memeriksa periode berjalan dan periode berikutnya, sehingga invoice fixed date awal bulan tetap terbit sesuai H-advance sebelum pergantian bulan.
+- Waktu isolir otomatis kini memakai waktu runtime scheduler yang sama dengan invoice/reminder, sehingga simulasi dan eksekusi jam isolir konsisten.
+
 ## [2.11.2] - 2026-07-29
 
 ### Fixed

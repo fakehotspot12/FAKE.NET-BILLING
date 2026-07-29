@@ -7968,12 +7968,13 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   const now = runtime.now instanceof Date ? runtime.now : new Date();
   const nowIso = now.toISOString();
   const today = localTodayIso(now);
-  const period = currentPeriod();
+  const period = normalizePeriod(String(today).slice(0, 7));
+  const invoicePeriods = [...new Set([period, addMonthsToPeriod(period, 1)])];
   const terminationDateInitializations = [];
   const terminatedUsers = autoTerminateOverdueCustomers(data, settings, actor, today, terminationDateInitializations);
-  const created = generateInvoices(data, period, {
-    shouldGenerateCustomerInvoice: (customer) => customerInvoiceGenerationDue(settings, customer, period, today)
-  });
+  const created = invoicePeriods.flatMap((invoicePeriod) => generateInvoices(data, invoicePeriod, {
+    shouldGenerateCustomerInvoice: (customer) => customerInvoiceGenerationDue(settings, customer, invoicePeriod, today)
+  }));
   const activatedUsers = [];
   const isolatedUsers = [];
   const reminderInvoices = [];
@@ -8031,7 +8032,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   }
 
   const graceDays = Number(settings.suspendGraceDays || 0);
-  if (graceDays > 0 && localTimeText() >= (settings.autoSuspendTime || '13:30')) {
+  if (graceDays > 0 && localTimeText(now) >= (settings.autoSuspendTime || '13:30')) {
     for (const [customerId, info] of unpaidByCustomer.entries()) {
       if (!info.dueDate || today < addDaysIso(info.dueDate, graceDays)) continue;
       const customer = customers.get(customerId);
@@ -8123,6 +8124,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     addActivity(data, 'invoice', `Billing otomatis: ${created.length} invoice, ${reminderInvoices.length} reminder, ${isolatedUsers.length} isolir, ${terminatedUsers.length} terminated, ${activatedUsers.length} aktif`, {
       action: 'billing-automation',
       period,
+      periods: invoicePeriods,
       created: created.length,
       reminders: reminderInvoices.length,
       isolated: isolatedUsers.length,
