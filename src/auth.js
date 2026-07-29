@@ -20,6 +20,7 @@ const ROLE_DEFINITIONS = {
     description: 'Akses tertinggi untuk user, pengaturan sistem, billing, dan operasional.',
     permissions: [
       'dashboard:read',
+      'activity:read',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',
@@ -56,6 +57,7 @@ const ROLE_DEFINITIONS = {
     description: 'Akses bisnis dan operasional tanpa pengaturan sistem.',
     permissions: [
       'dashboard:read',
+      'activity:read',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',
@@ -89,6 +91,7 @@ const ROLE_DEFINITIONS = {
     description: 'Kelola pemasukan, pengeluaran, laporan tagihan, transaksi billing, dan Radius.',
     permissions: [
       'dashboard:read',
+      'activity:read',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',
@@ -111,6 +114,7 @@ const ROLE_DEFINITIONS = {
     description: 'Akses operasional lintas menu seperti owner terbatas, tanpa kewenangan admin, pengaturan, atau transaksi sensitif.',
     permissions: [
       'dashboard:read',
+      'activity:read',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',

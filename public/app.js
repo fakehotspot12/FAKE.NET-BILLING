@@ -2318,26 +2318,32 @@ function dashboardAuditPanel(activity = []) {
   `;
 }
 
-async function renderDashboardExtraPanels(renderToken, canViewFinance = false) {
+async function renderDashboardExtraPanels(renderToken, canViewFinance = false, canViewActivity = false) {
   const target = document.getElementById('dashboardExtraPanels');
   if (!target) return;
+  if (!canViewFinance && !canViewActivity) {
+    target.innerHTML = '';
+    return;
+  }
   target.innerHTML = `
-    <section class="section dashboard-radbill-list-panel"><div class="empty mini-empty">Memuat transaksi terbaru...</div></section>
-    <section class="section dashboard-radbill-list-panel"><div class="empty mini-empty">Memuat audit log...</div></section>
+    ${canViewFinance ? '<section class="section dashboard-radbill-list-panel"><div class="empty mini-empty">Memuat transaksi terbaru...</div></section>' : ''}
+    ${canViewActivity ? '<section class="section dashboard-radbill-list-panel"><div class="empty mini-empty">Memuat audit log...</div></section>' : ''}
   `;
   const requests = [
-    api('/api/activity?page=1&limit=7').catch(() => null),
     canViewFinance && canView('reportsTransactions')
       ? api(`/api/reports/monthly-transactions?${queryString({ period: state.period, page: 1, limit: 7 })}`).catch(() => null)
+      : Promise.resolve(null),
+    canViewActivity
+      ? api('/api/activity?page=1&limit=7').catch(() => null)
       : Promise.resolve(null)
   ];
-  const [activityPayload, transactionPayload] = await Promise.all(requests);
+  const [transactionPayload, activityPayload] = await Promise.all(requests);
   if (renderIsStale(renderToken) || state.view !== 'dashboard' || !document.getElementById('dashboardExtraPanels')) return;
   const recentActivity = Array.isArray(activityPayload?.activity) ? activityPayload.activity : [];
   const recentTransactions = Array.isArray(transactionPayload?.transactions) ? transactionPayload.transactions : [];
   target.innerHTML = `
-    ${dashboardRecentTransactionsPanel(recentTransactions, { period: state.period })}
-    ${dashboardAuditPanel(recentActivity)}
+    ${canViewFinance ? dashboardRecentTransactionsPanel(recentTransactions, { period: state.period }) : ''}
+    ${canViewActivity ? dashboardAuditPanel(recentActivity) : ''}
   `;
   bindDashboardViewLinks();
 }
@@ -3514,6 +3520,7 @@ async function renderDashboard(options = {}) {
   const { summary = {}, members = {}, radiusSummary = {}, settings } = payload;
   updateBranding({ settings });
   const canViewFinance = Boolean(payload.canViewFinance);
+  const canViewActivity = can('activity:read');
   const personalScope = summary.personalScope || null;
   const restrictedPersonalDashboard = Boolean(personalScope);
 
@@ -3546,7 +3553,7 @@ async function renderDashboard(options = {}) {
     bindDashboardViewLinks();
     mountDashboardRouterNasShell();
     loadDashboardRouterNas({ silent: Boolean(dashboardRouterNasPayload) });
-    renderDashboardExtraPanels(renderToken, canViewFinance);
+    renderDashboardExtraPanels(renderToken, canViewFinance, canViewActivity);
   }
 }
 

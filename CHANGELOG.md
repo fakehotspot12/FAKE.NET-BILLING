@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.1] - 2026-07-29
+
+### Fixed
+
+- Panel Audit Log dashboard dan endpoint aktivitas kini dibatasi untuk admin, owner, finance, dan sekretaris.
+
 ## [2.11.0] - 2026-07-29
 
 ### Changed

@@ -15108,7 +15108,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/activity') {
-    const authContext = await requirePermission(req, res, 'dashboard:read');
+    const authContext = await requirePermission(req, res, 'activity:read');
     if (!authContext) return;
     const data = authContext.data;
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
