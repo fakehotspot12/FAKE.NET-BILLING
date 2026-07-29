@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.13] - 2026-07-29
+
+### Fixed
+
+- WAHA default install baru dipindahkan ke engine `WEBJS` agar QR lebih stabil saat engine socket langsung gagal registration.
+- QR WAHA tidak lagi dicetak ke log service; QR tetap diambil dari menu Whatsapp Gateway.
+- Installer melengkapi `WAHA_PRINT_QR=false` pada env WAHA lama jika belum tersedia.
+
 ## [2.10.12] - 2026-07-29
 
 ### Fixed

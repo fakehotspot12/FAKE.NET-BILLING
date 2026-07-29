@@ -506,6 +506,7 @@ install_env() {
   append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_RETRIES_POLICY exponential
   append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_RETRIES_DELAY_SECONDS 2
   append_env_if_missing /etc/fakenet-billing-waha.env WHATSAPP_HOOK_RETRIES_ATTEMPTS 5
+  append_env_if_missing /etc/fakenet-billing-waha.env WAHA_PRINT_QR false
 
   if [ "${INSTALL_GENIEACS:-1}" != "0" ]; then
     if [ ! -f "$GENIEACS_ENV_FILE" ]; then
