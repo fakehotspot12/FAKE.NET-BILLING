@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.6] - 2026-07-29
+
+### Fixed
+
+- Tombol Unpaid dan Overdue di dashboard kini membuka Monitoring Tagihan dengan filter yang tepat: Belum Bayar dan Lewat Tempo, bukan filter pelanggan isolir.
+
 ## [2.11.5] - 2026-07-29
 
 ### Changed

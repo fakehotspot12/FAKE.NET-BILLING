@@ -2148,10 +2148,10 @@ function applyDashboardViewAction(action = '', view = '') {
     applyDashboardMonitoringBillingPreset('paid', 'all');
   } else if (action === 'billing-all') {
     applyDashboardMonitoringBillingPreset('all', 'all');
-  } else if (action === 'billing-unpaid-overdue') {
+  } else if (action === 'billing-unpaid') {
+    applyDashboardMonitoringBillingPreset('unpaid', 'all');
+  } else if (action === 'billing-overdue') {
     applyDashboardMonitoringBillingPreset('overdue', 'all');
-  } else if (action === 'billing-isolated') {
-    applyDashboardMonitoringBillingPreset('overdue', 'isolated');
   }
 }
 
@@ -2232,8 +2232,8 @@ function dashboardBillingOverview(summary = {}) {
       </div>
       <div class="dashboard-radbill-billing-grid">
         ${dashboardBillingCell('Total Invoice', billing.dashboardInvoiceCount ?? billing.monthlyInvoiceCount ?? 0, billing.dashboardInvoiceAmount ?? billing.monthlyInvoiceAmount ?? 0, '', 'billing-all')}
-        ${dashboardBillingCell('Unpaid', billing.totalUnpaidCount || 0, billing.totalUnpaidAmount || 0, 'tone-warning', 'billing-unpaid-overdue')}
-        ${dashboardBillingCell('Overdue', billing.overdueCount || 0, billing.overdueAmount || 0, 'tone-danger', 'billing-isolated')}
+        ${dashboardBillingCell('Unpaid', billing.totalUnpaidCount || 0, billing.totalUnpaidAmount || 0, 'tone-warning', 'billing-unpaid')}
+        ${dashboardBillingCell('Overdue', billing.overdueCount || 0, billing.overdueAmount || 0, 'tone-danger', 'billing-overdue')}
         ${dashboardBillingCell('Paid', billing.monthlyPaidCount || 0, billing.monthlyPaidAmount || 0, 'tone-success', 'billing-paid')}
       </div>
     </section>
