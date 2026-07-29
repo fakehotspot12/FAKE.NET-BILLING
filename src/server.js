@@ -19546,6 +19546,7 @@ if (require.main === module) {
 
 module.exports = {
   __test: {
+    addDaysIso,
     applyHotspotVoucherExpirations,
     autoTerminateOverdueCustomers,
     changelogSummaryFromText,

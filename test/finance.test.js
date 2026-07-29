@@ -2572,6 +2572,40 @@ test('standalone automation checks next invoice period while reminders and isola
   assert.equal(data.waMessages.filter((message) => message.type === 'accountSuspend').length, 1);
 });
 
+test('standalone automation creates fixed-date invoices for every due day when the advance window starts', () => {
+  for (let dueDay = 1; dueDay <= 31; dueDay += 1) {
+    const data = createDefaultStore();
+    data.settings.appMode = 'standalone';
+    data.settings.billingSource = 'local';
+    data.settings.waGateway.enabled = false;
+    data.settings.billing.fixedInvoiceAdvanceDays = 3;
+    const dueDate = dueDateForPeriod('2026-08', dueDay);
+    const advanceStart = serverInternals.addDaysIso(dueDate, -3);
+    data.customers.push({
+      id: `cus-fixed-${dueDay}`,
+      source: 'radius',
+      username: `fixed-${dueDay}@ppp.test`,
+      name: `Fixed ${dueDay}`,
+      status: 'active',
+      paymentType: 'postpaid',
+      billingPeriod: 'fixed',
+      dueDay,
+      nextDue: dueDate,
+      dueDate,
+      price: 100000
+    });
+
+    const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, {
+      now: new Date(`${advanceStart}T00:30:00+08:00`)
+    });
+    const invoice = data.invoices.find((item) => item.period === '2026-08');
+
+    assert.equal(result.created.length, 1, `due day ${dueDay}`);
+    assert.equal(invoice.dueDate, dueDate, `due day ${dueDay}`);
+    assert.equal(data.customers[0].nextDue, dueDateForPeriod('2026-09', dueDay), `due day ${dueDay}`);
+  }
+});
+
 test('expired hotspot voucher remove-record keeps terminated record', () => {
   const data = createDefaultStore();
   data.radiusProfiles.push({ id: 'profile-voucher', serviceType: 'hotspot', name: 'Voucher 1D', expiredMode: 'remove-record' });

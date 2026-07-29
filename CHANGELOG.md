@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.4] - 2026-07-29
+
+### Changed
+
+- Filter bulan halaman seperti Pengeluaran/Pemasukan/Rekap kini memakai month picker aplikasi dengan tampilan bulan yang jelas, tidak lagi bergantung pada tampilan native browser.
+
 ## [2.11.3] - 2026-07-29
 
 ### Fixed

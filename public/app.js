@@ -371,15 +371,100 @@ function periodLabel(period = state.period) {
 
 function periodFilterControls(prefix, period) {
   const safePeriod = normalizedPeriod(period);
+  const { year, month } = periodParts(safePeriod);
+  const startYear = year - 4;
+  const years = Array.from({ length: 9 }, (_, index) => startYear + index);
+  const months = MONTH_LABELS.map((label, index) => {
+    const value = `${year}-${String(index + 1).padStart(2, '0')}`;
+    const active = value === safePeriod;
+    return `<button class="period-month ${active ? 'is-active' : ''}" type="button" data-filter-period-month="${value}">${label}</button>`;
+  }).join('');
   return `
-    <input class="control month-picker-control" id="${prefix}" type="month" value="${escapeHtml(safePeriod)}" aria-label="Filter bulan">
+    <div class="filter-period-picker" data-filter-period-picker="${escapeHtml(prefix)}">
+      <input id="${prefix}" type="hidden" value="${escapeHtml(safePeriod)}">
+      <button class="period-trigger filter-period-trigger" type="button" data-filter-period-toggle aria-expanded="false">
+        <span>${escapeHtml(periodLabel(safePeriod))}</span>
+      </button>
+      <div class="period-panel filter-period-panel" data-filter-period-panel hidden>
+        <div class="period-panel-head">
+          <button class="icon-button compact" type="button" data-filter-period-prev aria-label="Tahun sebelumnya">‹</button>
+          <select data-filter-period-year aria-label="Tahun filter bulan">
+            ${years.map((item) => `<option value="${item}" ${item === year ? 'selected' : ''}>${item}</option>`).join('')}
+          </select>
+          <button class="icon-button compact" type="button" data-filter-period-next aria-label="Tahun berikutnya">›</button>
+        </div>
+        <div class="period-month-grid" data-filter-period-grid data-selected-month="${month}">
+          ${months}
+        </div>
+      </div>
+    </div>
   `;
+}
+
+function closeFilterPeriodPickers(except = null) {
+  document.querySelectorAll('[data-filter-period-picker].is-open').forEach((picker) => {
+    if (except && picker === except) return;
+    picker.classList.remove('is-open');
+    picker.querySelector('[data-filter-period-panel]')?.setAttribute('hidden', '');
+    picker.querySelector('[data-filter-period-toggle]')?.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function renderFilterPeriodMonths(picker, selectedPeriod = '') {
+  const yearSelect = picker?.querySelector('[data-filter-period-year]');
+  const grid = picker?.querySelector('[data-filter-period-grid]');
+  if (!picker || !yearSelect || !grid) return;
+  const selected = normalizedPeriod(selectedPeriod || picker.querySelector('input')?.value || state.period);
+  const selectedMonth = Number(grid.dataset.selectedMonth || periodParts(selected).month) || 1;
+  const year = Number(yearSelect.value || periodParts(selected).year) || periodParts(selected).year;
+  grid.innerHTML = MONTH_LABELS.map((label, index) => {
+    const value = `${year}-${String(index + 1).padStart(2, '0')}`;
+    const active = value === selected;
+    return `<button class="period-month ${active ? 'is-active' : ''}" type="button" data-filter-period-month="${value}">${label}</button>`;
+  }).join('');
+  if (String(selected).startsWith(`${year}-`)) {
+    grid.dataset.selectedMonth = String(periodParts(selected).month);
+  } else {
+    grid.dataset.selectedMonth = String(selectedMonth);
+  }
 }
 
 function bindPeriodFilter(prefix, onChange) {
   const input = document.getElementById(prefix);
-  input?.addEventListener('change', (event) => {
-    onChange(event.target.value || todayInput().slice(0, 7));
+  const picker = document.querySelector(`[data-filter-period-picker="${prefix}"]`);
+  if (!input) return;
+  if (!picker) {
+    input.addEventListener('change', (event) => {
+      onChange(event.target.value || todayInput().slice(0, 7));
+    });
+    return;
+  }
+  const toggle = picker.querySelector('[data-filter-period-toggle]');
+  const panel = picker.querySelector('[data-filter-period-panel]');
+  const yearSelect = picker.querySelector('[data-filter-period-year]');
+  const setOpen = (open) => {
+    closeFilterPeriodPickers(open ? picker : null);
+    picker.classList.toggle('is-open', open);
+    panel.hidden = !open;
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) renderFilterPeriodMonths(picker, input.value);
+  };
+  toggle?.addEventListener('click', () => setOpen(panel?.hidden !== false));
+  yearSelect?.addEventListener('change', () => renderFilterPeriodMonths(picker, input.value));
+  picker.querySelector('[data-filter-period-prev]')?.addEventListener('click', () => {
+    yearSelect.value = String((Number(yearSelect.value) || periodParts(input.value).year) - 1);
+    renderFilterPeriodMonths(picker, input.value);
+  });
+  picker.querySelector('[data-filter-period-next]')?.addEventListener('click', () => {
+    yearSelect.value = String((Number(yearSelect.value) || periodParts(input.value).year) + 1);
+    renderFilterPeriodMonths(picker, input.value);
+  });
+  picker.querySelector('[data-filter-period-grid]')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-filter-period-month]');
+    if (!button) return;
+    input.value = normalizedPeriod(button.dataset.filterPeriodMonth);
+    setOpen(false);
+    onChange(input.value);
   });
 }
 
@@ -19454,12 +19539,16 @@ periodMonthGrid?.addEventListener('click', (event) => {
 });
 document.addEventListener('click', (event) => {
   handleDatePickerDocumentClick(event);
+  if (!event.target.closest('[data-filter-period-picker]')) {
+    closeFilterPeriodPickers();
+  }
   if (!periodPicker || periodPicker.contains(event.target)) return;
   setPeriodPickerOpen(false);
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     closeDatePickers();
+    closeFilterPeriodPickers();
     setPeriodPickerOpen(false);
     setAccountMenuOpen(false);
   }
