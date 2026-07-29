@@ -2284,8 +2284,56 @@ input[type="checkbox"] {
     min-height: 84px;
   }
 
+  .dashboard-radbill-list-panel {
+    padding: 10px;
+  }
+
+  .dashboard-radbill-list-panel .dashboard-radbill-section-head {
+    align-items: center;
+  }
+
+  .dashboard-radbill-list-panel .dashboard-radbill-title {
+    gap: 7px;
+  }
+
+  .dashboard-radbill-list-panel .dashboard-radbill-title h2 {
+    font-size: 14px;
+  }
+
+  .dashboard-radbill-list-panel .dashboard-radbill-square {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
   .dashboard-radbill-list-item {
     align-items: flex-start;
+    gap: 8px;
+    padding: 9px 0;
+  }
+
+  .dashboard-radbill-list-main strong {
+    font-size: 12.5px;
+  }
+
+  .dashboard-radbill-list-main span {
+    font-size: 10.5px;
+  }
+
+  .dashboard-radbill-list-side {
+    flex: 0 0 92px;
+    max-width: 92px;
+  }
+
+  .dashboard-radbill-list-side strong {
+    font-size: 12px;
+    line-height: 1.15;
+  }
+
+  .dashboard-radbill-list-side span {
+    font-size: 9.5px;
+    line-height: 1.2;
   }
 }
 
@@ -9980,6 +10028,53 @@ dialog::backdrop {
   .top-actions .ghost-button {
     width: auto;
     flex: 0 0 auto;
+  }
+
+  .dashboard-radbill-list-panel {
+    padding: 9px;
+  }
+
+  .dashboard-radbill-list-panel .dashboard-radbill-section-head {
+    gap: 8px;
+  }
+
+  .dashboard-radbill-list-panel .ghost-button.compact {
+    width: auto;
+    min-height: 32px;
+    padding: 7px 9px;
+    white-space: nowrap;
+  }
+
+  .dashboard-radbill-list-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(76px, auto);
+    gap: 6px;
+  }
+
+  .dashboard-radbill-list-main strong,
+  .dashboard-radbill-list-main span {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .dashboard-radbill-list-main strong {
+    -webkit-line-clamp: 1;
+  }
+
+  .dashboard-radbill-list-main span {
+    -webkit-line-clamp: 2;
+  }
+
+  .dashboard-radbill-list-side {
+    max-width: none;
+    min-width: 0;
+    width: auto;
+  }
+
+  .dashboard-radbill-list-side strong {
+    overflow-wrap: anywhere;
   }
 
   .account-settings-modal {

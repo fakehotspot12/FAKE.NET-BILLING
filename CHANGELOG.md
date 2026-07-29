@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.2] - 2026-07-29
+
+### Fixed
+
+- Panel Recent Transactions dan Audit Log di dashboard dirapikan untuk layar mobile kecil agar nominal, waktu, dan teks tidak bertumpuk.
+
 ## [2.11.1] - 2026-07-29
 
 ### Fixed
