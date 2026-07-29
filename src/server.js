@@ -227,6 +227,28 @@ function requestOrigin(req = {}) {
   return `${proto}://${host}`;
 }
 
+function normalizeRequestIp(value = '') {
+  let text = String(value || '').split(',')[0].trim();
+  if (!text) return '';
+  if (text.startsWith('::ffff:')) text = text.slice(7);
+  if (text === '::1') return '127.0.0.1';
+  const bracketed = text.match(/^\[([^\]]+)\](?::\d+)?$/);
+  if (bracketed) return bracketed[1];
+  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(text)) {
+    text = text.replace(/:\d+$/, '');
+  }
+  return text;
+}
+
+function requestClientIp(req = {}) {
+  const forwardedBy = String(req.headers?.['x-forwarded-by'] || '').toLowerCase();
+  const directIp = normalizeRequestIp(req.socket?.remoteAddress || '');
+  if (forwardedBy.startsWith('fakenet-billing-')) {
+    return normalizeRequestIp(req.headers?.['x-forwarded-for'] || '') || directIp;
+  }
+  return directIp;
+}
+
 function absoluteRequestUrl(req = {}, value = '/') {
   const raw = String(value || '/').trim() || '/';
   if (/^https?:\/\//i.test(raw)) return raw;
@@ -1311,6 +1333,7 @@ function referencedKtpPhotoFiles(data = {}) {
 
 function extractKtpNikFromOcrText(text = '') {
   const raw = String(text || '');
+  const genderFemale = /\b(?:PEREMPUAN|WANITA|FEMALE)\b/i.test(raw);
   const normalizeDigitLike = (value = '') => String(value || '')
     .replace(/[OoQq]/g, '0')
     .replace(/[Il|!]/g, '1')
@@ -1328,6 +1351,13 @@ function extractKtpNikFromOcrText(text = '') {
     '81', '82',
     '91', '92', '93', '94', '95', '96'
   ]);
+  const knownCityCodesByProvince = {
+    61: new Set(['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '71', '72']),
+    62: new Set(['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '71']),
+    63: new Set(['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '71', '72']),
+    64: new Set(['01', '02', '03', '04', '05', '09', '11', '71', '72', '74']),
+    65: new Set(['01', '02', '03', '04', '71'])
+  };
   const birthFragments = new Map();
   const addBirthDateHint = (dayValue, monthValue, yearValue, weight = 1) => {
     const day = Number(dayValue);
@@ -1342,7 +1372,7 @@ function extractKtpNikFromOcrText(text = '') {
     const fragment = `${String(day).padStart(2, '0')}${String(month).padStart(2, '0')}${String(fullYear).slice(-2)}`;
     const femaleFragment = `${String(day + 40).padStart(2, '0')}${String(month).padStart(2, '0')}${String(fullYear).slice(-2)}`;
     birthFragments.set(fragment, (birthFragments.get(fragment) || 0) + weight);
-    birthFragments.set(femaleFragment, (birthFragments.get(femaleFragment) || 0) + Math.max(1, weight - 1));
+    birthFragments.set(femaleFragment, (birthFragments.get(femaleFragment) || 0) + (genderFemale ? weight + 2 : Math.max(1, weight - 1)));
   };
   for (const line of raw.split(/\r?\n/)) {
     if (/[NMW][I1l|][KX]/i.test(line)) continue;
@@ -1372,6 +1402,7 @@ function extractKtpNikFromOcrText(text = '') {
     let score = 1;
     if (validProvinceCodes.has(province)) score += 3;
     if (city > 0) score += 1;
+    if (knownCityCodesByProvince[province]?.has(digits.slice(2, 4))) score += 3;
     if (district > 0) score += 1;
     if (validDate) score += 4;
     score += birthDateHintScore(digits.slice(6, 12)) * 3;
@@ -1388,10 +1419,31 @@ function extractKtpNikFromOcrText(text = '') {
     }
     return result;
   };
+  const windowsWithDeletionRepairs = (digits = '') => {
+    const clean = String(digits || '').replace(/\D+/g, '');
+    const result = [...windows(clean)];
+    const maxDelete = Math.min(2, Math.max(0, clean.length - 16));
+    if (!maxDelete || clean.length > 20) return result;
+    const repaired = new Set();
+    const deleteDigits = (value, start, left) => {
+      if (left <= 0) {
+        windows(value).forEach((item) => repaired.add(item));
+        return;
+      }
+      for (let index = start; index < value.length; index += 1) {
+        deleteDigits(`${value.slice(0, index)}${value.slice(index + 1)}`, index, left - 1);
+      }
+    };
+    for (let count = 1; count <= maxDelete; count += 1) {
+      deleteDigits(clean, 0, count);
+    }
+    result.push(...repaired);
+    return result;
+  };
   const candidatesFrom = (value = '') => {
     const normalized = normalizeDigitLike(value);
     const chunks = normalized.match(/[0-9 \t:;,.>\-_/\\]{12,}/g) || [];
-    return chunks.flatMap(windows);
+    return chunks.flatMap(windowsWithDeletionRepairs);
   };
   const withBirthDateRepairs = (candidates = []) => {
     if (!birthFragments.size) return candidates;
@@ -1414,6 +1466,7 @@ function extractKtpNikFromOcrText(text = '') {
       if (Number(candidate.slice(2, 4)) <= 0 || Number(candidate.slice(4, 6)) <= 0) continue;
       if (Number(candidate.slice(12, 16)) <= 0) continue;
       const currentBirthFragment = candidate.slice(6, 12);
+      if (birthDateHintScore(currentBirthFragment) > 0) continue;
       for (const fragment of fragments) {
         if (distance(currentBirthFragment, fragment) > 2) continue;
         repaired.push(`${candidate.slice(0, 6)}${fragment}${candidate.slice(12)}`);
@@ -1431,7 +1484,8 @@ function extractKtpNikFromOcrText(text = '') {
     if (/[AaHhYy]/.test(char)) return ['4'];
     if (/[Ss$]/.test(char)) return ['5'];
     if (/[GgBbRr&£]/.test(char)) return ['6'];
-    if (/[Tt?]/.test(char)) return ['7'];
+    if (/[Tt]/.test(char)) return ['7'];
+    if (char === '?') return ['', '7'];
     return [];
   };
   const labelledDigitCandidates = (value = '') => {
@@ -1440,7 +1494,7 @@ function extractKtpNikFromOcrText(text = '') {
     for (const char of String(value || '')) {
       const options = digitOptions(char, digitPosition % 16);
       if (!options.length) continue;
-      digitPosition += 1;
+      if (options.some(Boolean)) digitPosition += 1;
       const next = [];
       for (const prefix of candidates) {
         for (const option of options) {
@@ -1450,7 +1504,7 @@ function extractKtpNikFromOcrText(text = '') {
       candidates.splice(0, candidates.length, ...next.slice(0, 128));
       if (digitPosition >= 22) break;
     }
-    return candidates.flatMap(windows);
+    return candidates.flatMap(windowsWithDeletionRepairs);
   };
   const rank = (candidates = []) => {
     const grouped = new Map();
@@ -1516,14 +1570,17 @@ function extractKtpNameFromOcrText(text = '') {
   const obviousNonNames = /\b(?:REPUBLIK|INDONESIA|PROVINSI|KABUPATEN|KOTA|KECAMATAN|KELURAHAN|DESA|NIK)\b/i;
   const cleanCandidate = (value = '') => {
     let candidate = String(value || '')
-      .replace(/^[\s:;,.>\-_/\\]+/, '')
+      .replace(/^[\s:;,.>'"`’‘\-_/\\]+/, '')
       .replace(/\b(?:TEMPAT|TGL|TANGGAL|LAHIR|JENIS|KELAMIN|GOL|DARAH|ALAMAT|RT\/?RW|KEL\b|DESA|KECAMATAN|AGAMA|STATUS|PERKAWINAN|PEKERJAAN|KEWARGANEGARAAN|BERLAKU)\b.*$/i, '')
-      .replace(/^[\s:;,.>\-_/\\]+/, '')
+      .replace(/^[\s:;,.>'"`’‘\-_/\\]+/, '')
       .replace(/[0-9]+/g, ' ')
       .replace(/[^A-Za-z\u00c0-\u024f\s.'-]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     candidate = candidate.replace(/^(?:NAMA\s+LENGKAP|N[A4]M[A4]|NAMA|NAME)\b[\s:;,.>\-_/\\]*/i, '').trim();
+    if (/^SRI[A-Z\u00c0-\u024f]{3,}$/i.test(candidate)) {
+      candidate = `SRI ${candidate.slice(3)}`;
+    }
     if (candidate.length < 3 || candidate.length > 80) return '';
     if (stopLabels.test(candidate) || obviousNonNames.test(candidate)) return '';
     if (!/[AIUEOaiueo]/.test(candidate)) return '';
@@ -1554,6 +1611,25 @@ function extractKtpNameFromOcrText(text = '') {
   return '';
 }
 
+let ktpOcrLanguageCache;
+async function ktpOcrLanguage() {
+  if (ktpOcrLanguageCache) return ktpOcrLanguageCache;
+  try {
+    const { stdout } = await execFileAsync('tesseract', ['--list-langs'], {
+      timeout: 2500,
+      maxBuffer: 256 * 1024
+    });
+    const languages = new Set(String(stdout || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean));
+    ktpOcrLanguageCache = languages.has('ind') ? 'ind+eng' : 'eng';
+  } catch {
+    ktpOcrLanguageCache = 'eng';
+  }
+  return ktpOcrLanguageCache;
+}
+
 async function runKtpOcr(buffer = Buffer.alloc(0)) {
   const tempPaths = [];
   const writeOcrImage = async (name = 'full', source = Buffer.alloc(0), options = {}) => {
@@ -1580,8 +1656,9 @@ async function runKtpOcr(buffer = Buffer.alloc(0)) {
     tempPaths.push(tempPath);
     return tempPath;
   };
+  const ocrLanguage = await ktpOcrLanguage();
   const readOcr = async (tempPath = '', options = {}) => {
-    const args = [tempPath, 'stdout', '-l', 'eng', '--psm', String(options.psm || 6)];
+    const args = [tempPath, 'stdout', '-l', ocrLanguage, '--psm', String(options.psm || 6)];
     if (options.whitelist) {
       args.push('-c', 'tessedit_char_whitelist=0123456789');
     }
@@ -10924,6 +11001,15 @@ function wahaIsConnected(status = {}) {
   return ['WORKING', 'CONNECTED', 'READY'].includes(state);
 }
 
+function wahaNeedsStart(status = {}) {
+  const state = wahaStatusText(status);
+  return ['FAILED', 'STOPPED', 'DISCONNECTED', 'OFFLINE'].includes(state);
+}
+
+function waitMs(duration = 0) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(duration) || 0)));
+}
+
 function wahaFriendlyMessage(message = '') {
   const text = String(message || '').trim();
   if (!text) return '';
@@ -11011,8 +11097,24 @@ async function wahaQr(settings = {}) {
   const session = wahaSessionName(settings);
   let status = await wahaSessionStatus(settings).catch(() => null);
   const initialState = wahaStatusText(status);
-  if (['FAILED', 'STOPPED'].includes(initialState)) {
+  if (wahaNeedsStart(status)) {
     status = await wahaStartSession(settings).catch(() => status);
+  }
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (status && wahaIsConnected(status)) {
+      return {
+        connected: true,
+        status,
+        message: 'WAHA sudah terhubung. Klik Logout jika ingin scan ulang perangkat.'
+      };
+    }
+    const state = wahaStatusText(status);
+    if (state === 'SCAN_QR_CODE') break;
+    if (attempt > 0 && wahaNeedsStart(status)) {
+      status = await wahaStartSession(settings).catch(() => status);
+    }
+    await waitMs(attempt < 2 ? 700 : 1200);
+    status = await wahaSessionStatus(settings).catch(() => status);
   }
   if (status && wahaIsConnected(status)) {
     return {
@@ -11037,7 +11139,7 @@ async function wahaQr(settings = {}) {
       lastError = error;
       if (Number(error.status) === 422 && error.payload?.status) {
         const state = wahaStatusText(error.payload);
-        if (['FAILED', 'STOPPED'].includes(state)) {
+        if (wahaNeedsStart(error.payload)) {
           await wahaStartSession(settings).catch(() => null);
         }
         return {
@@ -12534,6 +12636,77 @@ function findBillingInvoiceByReference(data = {}, value = '') {
       .filter(Boolean);
     return candidates.includes(needle);
   }) || null;
+}
+
+function customerForRadiusUser(data = {}, radiusUser = {}) {
+  const candidates = [
+    radiusUser.customerId,
+    radiusUser.memberId,
+    radiusUser.accountId,
+    radiusUser.username
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  if (!candidates.length) return {};
+  return (data.customers || []).find((customer) => [
+    customer.id,
+    customer.memberId,
+    customer.code,
+    customer.accountId,
+    customer.radiusUserId,
+    customer.username
+  ].some((value) => candidates.includes(String(value || '').trim().toLowerCase()))) || {};
+}
+
+function invoiceMatchesCustomerOrRadiusUser(invoice = {}, customer = {}, radiusUser = {}) {
+  const candidates = [
+    customer.id,
+    customer.memberId,
+    customer.code,
+    customer.accountId,
+    customer.username,
+    radiusUser.id,
+    radiusUser.customerId,
+    radiusUser.memberId,
+    radiusUser.accountId,
+    radiusUser.username
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  if (!candidates.length) return false;
+  return [
+    invoice.id,
+    invoice.customerId,
+    invoice.memberId,
+    invoice.accountId,
+    invoice.radiusUserId,
+    invoice.username
+  ].some((value) => candidates.includes(String(value || '').trim().toLowerCase()));
+}
+
+function latestIsolirInvoiceForCustomer(data = {}, customer = {}, radiusUser = {}) {
+  const rank = (invoice = {}) => {
+    const status = invoiceRuntimeStatus(invoice);
+    if (['pending', 'overdue', 'unpaid'].includes(status)) return 0;
+    if (status === 'paid') return 1;
+    return 2;
+  };
+  return (data.invoices || [])
+    .filter((invoice) => invoiceRuntimeStatus(invoice) !== 'cancelled')
+    .filter((invoice) => invoiceMatchesCustomerOrRadiusUser(invoice, customer, radiusUser))
+    .sort((a, b) => rank(a) - rank(b)
+      || String(b.dueDate || b.createdAt || '').localeCompare(String(a.dueDate || a.createdAt || '')))[0] || null;
+}
+
+function radiusUserForClientIp(data = {}, clientIp = '', sessions = []) {
+  const ip = normalizeRequestIp(clientIp);
+  if (!ip) return { radiusUser: {}, session: null };
+  const session = (sessions || []).find((item) => {
+    return normalizeRequestIp(item.framedIpAddress || item.ipAddress || item.framedipaddress || '') === ip;
+  }) || null;
+  const username = String(session?.username || '').trim().toLowerCase();
+  const radiusUser = (data.radiusUsers || []).find((user) => {
+    if (username && String(user.username || '').trim().toLowerCase() === username) return true;
+    return [user.staticIp, user.ipAddress, user.framedIpAddress]
+      .some((value) => normalizeRequestIp(value) === ip);
+  }) || (username ? { username, framedIpAddress: ip } : {});
+  return { radiusUser, session };
 }
 
 function invoiceManualDiscountAmount(invoice = {}) {
@@ -14120,6 +14293,37 @@ async function handleApi(req, res, url) {
         channels: []
       });
     }
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/public/isolir/current-invoice') {
+    const data = await requestStore(req);
+    const clientIp = requestClientIp(req);
+    const sessionPayload = await freeradiusSessions.activeSessions({
+      limit: 5000,
+      preferCache: true,
+      maxCacheAgeSeconds: 20
+    }).catch((error) => ({ ok: false, rows: [], error: error.message || 'Session FreeRADIUS tidak bisa dibaca' }));
+    const { radiusUser, session } = radiusUserForClientIp(data, clientIp, sessionPayload.rows || []);
+    const customer = customerForRadiusUser(data, radiusUser);
+    const invoice = latestIsolirInvoiceForCustomer(data, customer, radiusUser);
+    if (!invoice) {
+      sendJson(res, 404, {
+        ok: false,
+        error: 'Invoice pelanggan belum ditemukan dari IP isolir ini. Hubungi admin layanan.',
+        clientIp,
+        sessionFound: Boolean(session),
+        radiusUserFound: Boolean(radiusUser?.id || radiusUser?.username),
+        sessionError: sessionPayload.ok === false ? sessionPayload.error || '' : ''
+      });
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      resolvedBy: session ? 'radius-session-ip' : 'radius-user-static-ip',
+      clientIp,
+      invoice: publicPaymentGatewayInvoicePayload(data, invoice)
+    });
     return;
   }
 

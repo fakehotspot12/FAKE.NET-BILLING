@@ -31,6 +31,14 @@ test('extracts KTP NIK from OCR text', () => {
     '6472041309960005'
   );
   assert.equal(
+    serverInternals.extractKtpNikFromOcrText('NIK > 647?204410173000b\nNama SRIMAYA\nTempatTg! Lahir : SAMARINDA, 01-01-1973\nJemskeiamin _- PEREMPUAN Gol Darah'),
+    '6472044101730006'
+  );
+  assert.equal(
+    serverInternals.extractKtpNikFromOcrText('NIK : 647204410101730006\nNama : SRI MAYA\nTempat/Tgl Lahir SAMARINDA, 01-01-1973\nJenis Kelamin PEREMPUAN'),
+    '6472044101730006'
+  );
+  assert.equal(
     serverInternals.extractKtpNikFromOcrText('7\n647204130990005\n15091996\n08\n0397'),
     ''
   );
@@ -48,5 +56,9 @@ test('extracts KTP customer name from OCR text', () => {
   assert.equal(
     serverInternals.extractKtpNameFromOcrText('PROVINSI KALIMANTAN TIMUR\nKOTA SAMARINDA\nNIK 6472041309960005\nSITI NUR AINI\nAlamat JL. TEST'),
     'Siti Nur Aini'
+  );
+  assert.equal(
+    serverInternals.extractKtpNameFromOcrText('NIK > 647?204410173000b\nNama SRIMAYA\nTempatTg! Lahir : SAMARINDA, 01-01-1973'),
+    'Sri Maya'
   );
 });

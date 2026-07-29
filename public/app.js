@@ -14647,8 +14647,8 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
           <label>Nama Lengkap
             <input name="fullName" value="${escapeHtml(contact.fullName || member.fullName || member.customerName || '')}" required ${disabled}>
           </label>
-          <label>Nama Terbaca
-            <input name="ktpName" value="${escapeHtml(contact.ktpName || member.ktpName || '')}" readonly ${disabled}>
+          <label>Nama di KTP
+            <input name="ktpName" value="${escapeHtml(contact.ktpName || member.ktpName || '')}" ${disabled}>
           </label>
           <label>WhatsApp
             <input name="whatsapp" value="${escapeHtml(contact.whatsapp || member.whatsapp || member.phone || '')}" inputmode="tel" ${disabled}>
@@ -14877,17 +14877,20 @@ async function openMemberContactModal(member = {}) {
       delete formPayload.housePhotoUpload;
       const ktpPhotoFile = form.querySelector('#memberKtpPhotoUpload')?.files?.[0];
       const ktpPhotoValue = form.querySelector('#memberKtpPhotoValue')?.value || '';
-      if (ktpPhotoFile && !ktpPhotoValue) {
+      const typedKtp = String(formPayload.ktp || '').trim();
+      const typedKtpName = String(formPayload.ktpName || '').trim();
+      const typedFullName = String(formPayload.fullName || '').trim();
+      if (ktpPhotoFile) {
         const ktpUpload = await uploadMemberKtpFile(ktpPhotoFile, { label: 'Foto KTP' });
         formPayload.ktpPhoto = JSON.stringify(ktpUpload?.storedPhoto || ktpUpload?.photo || {});
-        if (ktpUpload?.ktp) {
+        if (!typedKtp && ktpUpload?.ktp) {
           formPayload.ktp = ktpUpload.ktp;
         }
-        if (ktpOcrName(ktpUpload)) {
+        if (!typedKtpName && ktpOcrName(ktpUpload)) {
           formPayload.ktpName = ktpOcrName(ktpUpload);
         }
-        const nameDecision = ktpOcrNameDecision(formPayload.fullName || '', ktpOcrName(ktpUpload));
-        if (nameDecision.shouldReplace) {
+        const nameDecision = ktpOcrNameDecision(typedFullName || formPayload.fullName || '', ktpOcrName(ktpUpload));
+        if (!typedFullName && nameDecision.shouldReplace) {
           formPayload.fullName = ktpOcrName(ktpUpload);
         }
       } else if (ktpPhotoValue) {
@@ -14970,7 +14973,8 @@ function bindMemberDetailModal(detail = {}) {
         ktpInput.value = result.ktp;
       }
       const ktpNameInput = modalBody.querySelector('[name="ktpName"]');
-      if (ktpNameInput) ktpNameInput.value = ktpOcrName(result);
+      const ocrName = ktpOcrName(result);
+      if (ktpNameInput && ocrName) ktpNameInput.value = ocrName;
       const nameDecision = fillKtpOcrNameInput(modalBody.querySelector('[name="fullName"]'), result);
       if (status) {
         status.textContent = ktpOcrStatusText(result, nameDecision);

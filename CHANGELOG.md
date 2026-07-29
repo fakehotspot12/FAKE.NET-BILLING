@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.10.12] - 2026-07-29
+
+### Fixed
+
+- Web isolir sekarang bisa mencari invoice aktif dari IP session FreeRADIUS saat URL isolir tidak membawa nomor invoice, sehingga tombol bayar tetap muncul untuk pelanggan yang sedang redirect isolir.
+- OCR KTP diperkuat untuk kasus NIK perempuan dan hasil OCR yang menyisipkan karakter noise seperti `?`, serta nama `SRI...` tanpa spasi.
+- Upload ulang foto KTP pada Edit Member kini benar-benar mengganti hasil OCR lama; field `Nama di KTP` dan `Nomor KTP` tetap bisa dikoreksi manual.
+- Tombol QR Whatsapp Gateway mencoba start/reconnect ulang session WAHA saat status disconnected/failed sebelum mengambil QR.
+
 ## [2.10.11] - 2026-07-28
 
 ### Changed

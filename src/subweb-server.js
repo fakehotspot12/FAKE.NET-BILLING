@@ -437,9 +437,16 @@ function proxyTargetUrl(reqUrl = '/') {
 
 function proxyToBilling(req, res) {
   const target = proxyTargetUrl(req.url || '/');
+  const remoteIp = String(req.socket?.remoteAddress || '').trim();
+  const forwardedFor = [req.headers['x-forwarded-for'], remoteIp]
+    .flatMap((value) => String(value || '').split(','))
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(', ');
   const headers = {
     ...req.headers,
     host: target.host,
+    ...(forwardedFor ? { 'x-forwarded-for': forwardedFor } : {}),
     'x-forwarded-host': req.headers.host || '',
     'x-forwarded-proto': 'http',
     'x-forwarded-by': `fakenet-billing-${SUBWEB_KIND}`

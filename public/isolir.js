@@ -199,14 +199,15 @@
     }
     updateAdminLink({});
 
-    if (!invoiceRef) {
-      applyManualIsolationText({});
-      return;
-    }
-
     try {
-      renderInvoice(await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(invoiceRef)}`));
+      const payload = invoiceRef
+        ? await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(invoiceRef)}`)
+        : await api('/api/public/isolir/current-invoice');
+      renderInvoice(payload);
     } catch (error) {
+      if (!invoiceRef) {
+        applyManualIsolationText({});
+      }
       showNotice(error.message || 'Invoice belum bisa dibaca. Hubungi admin layanan.');
     }
   }
