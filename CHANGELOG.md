@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.5] - 2026-07-29
+
+### Changed
+
+- Ringkasan Monthly Billing dashboard kini berbasis transaksi bulan terpilih: invoice dihitung dari tanggal terbit, sedangkan Paid dihitung dari tanggal bayar.
+- Invoice bulan depan yang sudah terbit H-advance ikut masuk Total Invoice dan Unpaid pada bulan invoice tersebut diterbitkan.
+
 ## [2.11.4] - 2026-07-29
 
 ### Changed

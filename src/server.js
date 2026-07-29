@@ -5610,10 +5610,32 @@ function paymentPeriodKey(payment = {}, invoice = {}) {
   return paymentDateKey(payment, invoice).slice(0, 7);
 }
 
+function periodKeyFromDateOrTimestamp(value = '', fallbackPeriod = '') {
+  const raw = String(value || '').trim();
+  const localDate = timestampLocalDateKey(raw);
+  if (/^\d{4}-\d{2}/.test(localDate)) return localDate.slice(0, 7);
+  if (/^\d{4}-\d{2}/.test(raw)) return raw.slice(0, 7);
+  return fallbackPeriod ? normalizePeriod(fallbackPeriod) : '';
+}
+
 function paymentPeriodKeyFast(payment = {}, invoice = {}) {
   const raw = String(payment.paidAt || invoice.paidAt || payment.createdAt || '').trim();
-  if (/^\d{4}-\d{2}/.test(raw)) return raw.slice(0, 7);
-  return paymentPeriodKey(payment, invoice);
+  return periodKeyFromDateOrTimestamp(raw, paymentPeriodKey(payment, invoice));
+}
+
+function invoiceIssueDateKey(invoice = {}) {
+  const raw = invoice.issuedAt || invoice.invoiceDate || invoice.createdAt || invoice.date || '';
+  const localDate = timestampLocalDateKey(raw);
+  if (localDate) return localDate;
+  const fallback = String(raw || invoice.period || '').trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(fallback)
+    ? fallback.slice(0, 10)
+    : '';
+}
+
+function invoiceIssuePeriodKeyFast(invoice = {}) {
+  const raw = String(invoice.issuedAt || invoice.invoiceDate || invoice.createdAt || invoice.date || '').trim();
+  return periodKeyFromDateOrTimestamp(raw || invoiceIssueDateKey(invoice), invoice.period || currentPeriod());
 }
 
 function paymentBelongsToCollector(data = {}, payment = {}) {
@@ -9815,6 +9837,7 @@ async function runtimeJsonCacheSet(key = '', value = null, ttlSeconds = REPORT_R
 
 function dashboardBillingSummaryCacheKey(data = {}, period = currentPeriod()) {
   return [
+    packageInfo.version || '',
     normalizePeriod(period),
     (data.invoices || []).length,
     (data.payments || []).length,
@@ -9838,6 +9861,8 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
   const resolver = radiusStatusResolver(data);
   const invoiceStatuses = new Map();
   const summary = {
+    dashboardInvoiceCount: 0,
+    dashboardInvoiceAmount: 0,
     totalUnpaidCount: 0,
     totalUnpaidAmount: 0,
     overdueCount: 0,
@@ -9856,20 +9881,21 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     }
     if (runtimeStatus === 'cancelled') continue;
     const amount = Number(invoice.amount || 0);
-    if (String(invoice.period || '').slice(0, 7) === selectedPeriod) {
+    if (invoiceIssuePeriodKeyFast(invoice) === selectedPeriod) {
       summary.monthlyInvoiceCount += 1;
       summary.monthlyInvoiceAmount += amount;
-    }
-    if (!invoiceCoversPeriod(invoice, selectedPeriod)) continue;
-    const rowStatus = runtimeStatus === 'pending' ? 'unpaid' : runtimeStatus;
-    if (!['unpaid', 'pending', 'overdue'].includes(String(rowStatus || '').toLowerCase())) continue;
-    summary.totalUnpaidCount += 1;
-    summary.totalUnpaidAmount += amount;
-    const customer = customers.get(invoice.customerId) || {};
-    const customerStatus = normalizeCustomerStatusLocal(resolver.statusForInvoice(invoice, customer));
-    if (customerStatus === 'isolated' || customerStatus === 'terminate') {
-      summary.overdueCount += 1;
-      summary.overdueAmount += amount;
+      summary.dashboardInvoiceCount += 1;
+      summary.dashboardInvoiceAmount += amount;
+      const rowStatus = runtimeStatus === 'pending' ? 'unpaid' : runtimeStatus;
+      if (!['unpaid', 'pending', 'overdue'].includes(String(rowStatus || '').toLowerCase())) continue;
+      summary.totalUnpaidCount += 1;
+      summary.totalUnpaidAmount += amount;
+      const customer = customers.get(invoice.customerId) || {};
+      const customerStatus = normalizeCustomerStatusLocal(resolver.statusForInvoice(invoice, customer));
+      if (runtimeStatus === 'overdue' || customerStatus === 'isolated' || customerStatus === 'terminate') {
+        summary.overdueCount += 1;
+        summary.overdueAmount += amount;
+      }
     }
   }
 

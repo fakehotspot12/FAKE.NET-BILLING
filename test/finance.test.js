@@ -5740,6 +5740,24 @@ test('dashboard monthly invoice counts issued invoices while monthly paid uses a
       coveredPeriods: ['2026-07'],
       amount: 200000,
       status: 'pending'
+    },
+    {
+      id: 'inv-issued-august-in-july',
+      period: '2026-08',
+      coveredPeriods: ['2026-08'],
+      amount: 250000,
+      status: 'pending',
+      createdAt: '2026-07-29T06:00:00.000Z',
+      dueDate: '2026-08-01'
+    },
+    {
+      id: 'inv-old-overdue',
+      period: '2026-06',
+      coveredPeriods: ['2026-06'],
+      amount: 120000,
+      status: 'pending',
+      createdAt: '2026-06-01T06:00:00.000Z',
+      dueDate: '2000-01-01'
     }
   );
   markInvoicePaid(data, 'inv-issued-june', {
@@ -5751,8 +5769,13 @@ test('dashboard monthly invoice counts issued invoices while monthly paid uses a
 
   const summary = serverInternals.dashboardBillingSummary(data, '2026-07');
 
-  assert.equal(summary.monthlyInvoiceCount, 1);
-  assert.equal(summary.monthlyInvoiceAmount, 200000);
+  assert.equal(summary.monthlyInvoiceCount, 2);
+  assert.equal(summary.monthlyInvoiceAmount, 450000);
+  assert.equal(summary.dashboardInvoiceCount, 2);
+  assert.equal(summary.dashboardInvoiceAmount, 450000);
+  assert.equal(summary.totalUnpaidCount, 2);
+  assert.equal(summary.totalUnpaidAmount, 450000);
+  assert.equal(summary.overdueCount, 0);
   assert.equal(summary.monthlyPaidCount, 1);
   assert.equal(summary.monthlyPaidAmount, 155000);
 });

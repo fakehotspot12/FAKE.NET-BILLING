@@ -2228,10 +2228,10 @@ function dashboardBillingOverview(summary = {}) {
           <span class="dashboard-radbill-square tone-info">▣</span>
           <h2>Monthly Billing</h2>
         </div>
-        <span class="dashboard-radbill-muted">Periode ${escapeHtml(state.period || todayInput().slice(0, 7))}</span>
+        <span class="dashboard-radbill-muted">Transaksi ${escapeHtml(periodLabel(state.period || todayInput().slice(0, 7)))}</span>
       </div>
       <div class="dashboard-radbill-billing-grid">
-        ${dashboardBillingCell('Total Invoice', billing.monthlyInvoiceCount || 0, billing.monthlyInvoiceAmount || 0, '', 'billing-all')}
+        ${dashboardBillingCell('Total Invoice', billing.dashboardInvoiceCount ?? billing.monthlyInvoiceCount ?? 0, billing.dashboardInvoiceAmount ?? billing.monthlyInvoiceAmount ?? 0, '', 'billing-all')}
         ${dashboardBillingCell('Unpaid', billing.totalUnpaidCount || 0, billing.totalUnpaidAmount || 0, 'tone-warning', 'billing-unpaid-overdue')}
         ${dashboardBillingCell('Overdue', billing.overdueCount || 0, billing.overdueAmount || 0, 'tone-danger', 'billing-isolated')}
         ${dashboardBillingCell('Paid', billing.monthlyPaidCount || 0, billing.monthlyPaidAmount || 0, 'tone-success', 'billing-paid')}
