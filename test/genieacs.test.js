@@ -100,6 +100,106 @@ test('normalizes GenieACS temperature from virtual and raw parameters', () => {
   assert.equal(invalidTemp.temperatureValue, null);
 });
 
+test('normalizes connected WiFi and LAN clients from GenieACS parameters', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'client-detail-1',
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'Rumah-2G' },
+              TotalAssociations: { _value: '1' },
+              AssociatedDevice: {
+                1: {
+                  AssociatedDeviceMACAddress: { _value: 'aa-bb-cc-00-00-01' },
+                  AssociatedDeviceIPAddress: { _value: '192.168.1.11' },
+                  AssociatedDeviceHostName: { _value: 'HP Android' }
+                }
+              }
+            },
+            5: {
+              SSID: { _value: 'Rumah-5G' },
+              TotalAssociations: { _value: '1' },
+              AssociatedDevice: {
+                1: {
+                  AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:02' },
+                  AssociatedDeviceIPAddress: { _value: '192.168.1.12' },
+                  AssociatedDeviceHostName: { _value: 'Laptop' }
+                }
+              }
+            }
+          },
+          Hosts: {
+            Host: {
+              1: {
+                Active: { _value: '1' },
+                IPAddress: { _value: '192.168.1.11' },
+                MACAddress: { _value: 'AA:BB:CC:00:00:01' },
+                HostName: { _value: 'HP Android' },
+                Layer1Interface: { _value: 'WLAN' }
+              },
+              2: {
+                Active: { _value: '1' },
+                IPAddress: { _value: '192.168.1.20' },
+                MACAddress: { _value: 'AA:BB:CC:00:00:20' },
+                HostName: { _value: 'STB TV' },
+                Layer1Interface: { _value: 'Ethernet' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.wifiClients24, 1);
+  assert.equal(device.wifiClients5, 1);
+  assert.equal(device.lanClients, 1);
+  assert.equal(device.clientsTotal, 3);
+  assert.deepEqual(device.connectedClients.map((row) => row.type), ['2.4G', '5G', 'LAN']);
+  assert.deepEqual(device.connectedClients.map((row) => row.ipAddress), ['192.168.1.11', '192.168.1.12', '192.168.1.20']);
+});
+
+test('fills connected WiFi client names from host table by MAC address', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'client-host-merge',
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'Rumah-2G' },
+              TotalAssociations: { _value: '1' },
+              AssociatedDevice: {
+                1: {
+                  AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:10' },
+                  AssociatedDeviceIPAddress: { _value: '192.168.1.10' }
+                }
+              }
+            }
+          },
+          Hosts: {
+            Host: {
+              1: {
+                Active: { _value: '1' },
+                IPAddress: { _value: '192.168.1.10' },
+                MACAddress: { _value: 'AA:BB:CC:00:00:10' },
+                HostName: { _value: 'iPhone Kinoy' },
+                Layer1Interface: { _value: 'WLAN' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.connectedClients.length, 1);
+  assert.equal(device.connectedClients[0].type, '2.4G');
+  assert.equal(device.connectedClients[0].name, 'iPhone Kinoy');
+});
+
 test('uses built-in GenieACS parameters and normalizes ZTE RX power', () => {
   const device = genieAcs.normalizeDevice({
     _id: 'zte-1',

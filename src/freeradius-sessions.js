@@ -269,6 +269,20 @@ function nextPeriod(period = normalizedPeriod()) {
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+function normalizedDate(value = '') {
+  const text = cleanText(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function shiftDate(dateIso = normalizedDate(), days = 0) {
+  const [year, month, day] = normalizedDate(dateIso).split('-').map(Number);
+  const date = new Date(Date.UTC(year || 1970, (month || 1) - 1, day || 1));
+  date.setUTCDate(date.getUTCDate() + Math.trunc(Number(days) || 0));
+  return date.toISOString().slice(0, 10);
+}
+
 function monthlyUsageQuery(usernames = [], period = normalizedPeriod(), columns = new Set()) {
   const values = [...new Set(usernames.map((username) => cleanText(username).toLowerCase()).filter(Boolean))]
     .slice(0, 5000);
@@ -295,6 +309,48 @@ FROM (
     AND acctstarttime < ${sqlLiteral(end)}
   GROUP BY lower(username)
 ) monthly_usage`;
+}
+
+function dailyUsageQuery(username = '', referenceDate = normalizedDate(), days = 7, columns = new Set()) {
+  const userKey = cleanText(username).toLowerCase();
+  if (!userKey) return '';
+  const dayCount = Math.max(1, Math.min(31, Math.trunc(Number(days || 7))));
+  const endDate = normalizedDate(referenceDate);
+  const startDate = shiftDate(endDate, -(dayCount - 1));
+  const exclusiveEndDate = shiftDate(endDate, 1);
+  const inputExpr = octetExpr('radacct', 'acctinputoctets', 'acctinputgigawords', columns);
+  const outputExpr = octetExpr('radacct', 'acctoutputoctets', 'acctoutputgigawords', columns);
+  return `
+WITH days AS (
+  SELECT generate_series(${sqlLiteral(startDate)}::date, ${sqlLiteral(endDate)}::date, interval '1 day')::date AS day_key
+),
+usage_rows AS (
+  SELECT
+    acctstarttime::date AS day_key,
+    COALESCE(SUM(${inputExpr}), 0)::bigint AS input_octets,
+    COALESCE(SUM(${outputExpr}), 0)::bigint AS output_octets,
+    COALESCE(SUM(${inputExpr} + ${outputExpr}), 0)::bigint AS total_octets,
+    COUNT(*)::bigint AS session_count,
+    to_char(MAX(COALESCE(acctstoptime, acctupdatetime, acctstarttime)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
+  FROM radacct
+  WHERE lower(username) = ${sqlLiteral(userKey)}
+    AND acctstarttime >= ${sqlLiteral(`${startDate} 00:00:00`)}
+    AND acctstarttime < ${sqlLiteral(`${exclusiveEndDate} 00:00:00`)}
+  GROUP BY acctstarttime::date
+)
+SELECT COALESCE(json_agg(row_to_json(daily_usage) ORDER BY daily_usage.day_key), '[]'::json)::text
+FROM (
+  SELECT
+    to_char(days.day_key, 'YYYY-MM-DD') AS day_key,
+    COALESCE(usage_rows.input_octets, 0)::bigint AS input_octets,
+    COALESCE(usage_rows.output_octets, 0)::bigint AS output_octets,
+    COALESCE(usage_rows.total_octets, 0)::bigint AS total_octets,
+    COALESCE(usage_rows.session_count, 0)::bigint AS session_count,
+    COALESCE(usage_rows.last_seen_at, '') AS last_seen_at
+  FROM days
+  LEFT JOIN usage_rows ON usage_rows.day_key = days.day_key
+  ORDER BY days.day_key
+) daily_usage`;
 }
 
 function usageHistoryQuery(username = '', period = normalizedPeriod(), limit = 40, columns = new Set()) {
@@ -465,6 +521,23 @@ function normalizeUsageHistory(row = {}) {
     download: formatBytes(outputOctets),
     totalUsageText: formatBytes(totalOctets),
     usageText: `U ${formatBytes(inputOctets)} / D ${formatBytes(outputOctets)}`
+  };
+}
+
+function normalizeDailyUsage(row = {}) {
+  const inputOctets = numberValue(row.input_octets);
+  const outputOctets = numberValue(row.output_octets);
+  const totalOctets = numberValue(row.total_octets);
+  return {
+    date: cleanText(row.day_key),
+    inputOctets,
+    outputOctets,
+    totalOctets,
+    upload: formatBytes(inputOctets),
+    download: formatBytes(outputOctets),
+    totalUsageText: formatBytes(totalOctets),
+    sessionCount: numberValue(row.session_count),
+    lastSeenAt: cleanText(row.last_seen_at)
   };
 }
 
@@ -768,6 +841,68 @@ async function usageHistoryByUsername(username = '', period = normalizedPeriod()
   }
 }
 
+async function dailyUsageByUsername(username = '', referenceDate = normalizedDate(), options = {}) {
+  const value = cleanText(username);
+  const days = Math.max(1, Math.min(31, Math.trunc(Number(options.days || 7))));
+  const selectedDate = normalizedDate(referenceDate);
+  if (!value) {
+    return {
+      ok: true,
+      enabled: enabled(),
+      configured: configured(),
+      source: 'freeradius-radacct',
+      referenceDate: selectedDate,
+      days,
+      rows: []
+    };
+  }
+  if (!enabled()) {
+    return {
+      ok: false,
+      enabled: false,
+      configured: configured(),
+      referenceDate: selectedDate,
+      days,
+      rows: [],
+      error: 'FreeRADIUS SQL sync belum aktif'
+    };
+  }
+  if (!configured()) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: false,
+      referenceDate: selectedDate,
+      days,
+      rows: [],
+      error: 'FREERADIUS_DATABASE_URL belum diisi'
+    };
+  }
+  try {
+    const columns = await radacctColumns();
+    const rows = await psqlJson(dailyUsageQuery(value, selectedDate, days, columns));
+    return {
+      ok: true,
+      enabled: true,
+      configured: true,
+      source: 'freeradius-radacct',
+      referenceDate: selectedDate,
+      days,
+      rows: rows.map(normalizeDailyUsage)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: true,
+      referenceDate: selectedDate,
+      days,
+      rows: [],
+      error: error.message || 'Usage harian FreeRADIUS tidak bisa dibaca'
+    };
+  }
+}
+
 module.exports = {
   activeSessions,
   cacheKey: SESSION_CACHE_KEY,
@@ -776,11 +911,14 @@ module.exports = {
   enabled,
   firstOnlineByUsernames,
   lastSeenByUsernames,
+  dailyUsageByUsername,
   monthlyUsageByUsernames,
   usageHistoryByUsername,
   __test: {
     closeSupersededSessionsQuery,
+    dailyUsageQuery,
     normalizeSession,
+    normalizeDailyUsage,
     normalizeUsageHistory
   }
 };

@@ -7,7 +7,7 @@
     <title>WifiKu - __FAKENET_META_TITLE__</title>
     __FAKENET_META_TAGS__
     <link id="appFavicon" rel="icon" href="__FAKENET_META_ICON__">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-__FAKENET_APP_VERSION__">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-chart-touch-tooltip-v5-20260730">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -107,21 +107,21 @@
         </section>
 
         <section class="grid stats-grid">
-          <article class="card primary">
+          <button class="card primary metric-card" id="usageSummaryButton" type="button">
             <span>Total Usage</span>
             <strong id="usageTotal">0 B</strong>
             <small id="usageDetail">U 0 B / D 0 B</small>
-          </article>
+          </button>
           <article class="card">
             <span>Redaman</span>
             <strong id="rxPower">-</strong>
             <small id="deviceStatus">-</small>
           </article>
-          <article class="card">
-            <span>Client WiFi</span>
+          <button class="card metric-card" id="clientSummaryButton" type="button">
+            <span>Client Terkoneksi</span>
             <strong id="wifiTotal">0 user</strong>
-            <small id="wifiDetail">2.4G 0 / 5G 0</small>
-          </article>
+            <small id="wifiDetail">2.4G 0 / 5G 0 / LAN 0</small>
+          </button>
         </section>
 
         <section class="panel compact wifi-panel">
@@ -162,6 +162,24 @@
         </div>
       </form>
     </dialog>
+    <dialog id="usageDialog">
+      <div class="dialog-card detail-dialog-card">
+        <div class="dialog-head-row">
+          <h2>Penggunaan 7 Hari Terakhir</h2>
+          <button value="cancel" type="button" id="closeUsageDialog">Tutup</button>
+        </div>
+        <div id="usageDialogBody"></div>
+      </div>
+    </dialog>
+    <dialog id="clientDialog">
+      <div class="dialog-card detail-dialog-card">
+        <div class="dialog-head-row">
+          <h2>Client Terkoneksi</h2>
+          <button value="cancel" type="button" id="closeClientDialog">Tutup</button>
+        </div>
+        <div id="clientDialogBody"></div>
+      </div>
+    </dialog>
     <dialog id="accountDialog">
       <form method="dialog" id="accountForm" class="dialog-card">
         <h2>Akun Saya</h2>
@@ -196,6 +214,6 @@
     </dialog>
 
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-__FAKENET_APP_VERSION__" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-chart-touch-tooltip-v5-20260730" defer></script>
   </body>
 </html>

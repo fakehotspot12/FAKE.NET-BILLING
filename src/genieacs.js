@@ -3,6 +3,9 @@
 const DEFAULT_BASE_URL = 'http://127.0.0.1:7557';
 const HTTP_TIMEOUT_MS = Math.max(3000, Number(process.env.GENIEACS_HTTP_TIMEOUT_MS || 10000) || 10000);
 const HIGH_REDAMAN_THRESHOLD_DBM = -26.5;
+const DEVICE_LIST_CACHE_TTL_MS = Math.max(0, Number(process.env.GENIEACS_DEVICE_CACHE_MS || 8000) || 8000);
+const DEVICE_LIST_CACHE_MAX = 12;
+const deviceListCache = new Map();
 
 const DEFAULT_USERNAME_PARAMETERS = [
   'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username',
@@ -12,6 +15,9 @@ const DEFAULT_USERNAME_PARAMETERS = [
   'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.4.WANPPPConnection.1.Username',
   'Device.PPP.Interface.1.Username'
 ];
+
+const DEFAULT_PPP_PASSWORD_PARAMETERS = DEFAULT_USERNAME_PARAMETERS
+  .map((path) => path.replace(/\.Username$/, '.Password'));
 
 const DEFAULT_RX_POWER_PARAMETERS = [
   'VirtualParameters.RXPower',
@@ -148,6 +154,7 @@ function normalizeSettings(settings = {}) {
     token: cleanText(process.env.GENIEACS_TOKEN || raw.token || ''),
     connectionRequest: raw.connectionRequest !== false,
     usernameParameters: DEFAULT_USERNAME_PARAMETERS.slice(),
+    pppPasswordParameters: DEFAULT_PPP_PASSWORD_PARAMETERS.slice(),
     rxPowerParameters: DEFAULT_RX_POWER_PARAMETERS.slice(),
     temperatureParameters: DEFAULT_TEMPERATURE_PARAMETERS.slice(),
     wifiPasswordParameters: DEFAULT_WIFI_PASSWORD_PARAMETERS.slice(),
@@ -163,6 +170,64 @@ function normalizeSettings(settings = {}) {
 function configured(settings = {}) {
   const cfg = normalizeSettings(settings);
   return Boolean(cfg.enabled && cfg.baseUrl);
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function pruneDeviceListCache() {
+  while (deviceListCache.size > DEVICE_LIST_CACHE_MAX) {
+    deviceListCache.delete(deviceListCache.keys().next().value);
+  }
+}
+
+function clearDeviceListCache() {
+  deviceListCache.clear();
+}
+
+function deviceListCacheKey(cfg = {}, query = {}, projection = '') {
+  return [
+    cfg.baseUrl,
+    cfg.token ? `token:${cfg.token.length}:${cfg.token.slice(-6)}` : 'token:',
+    JSON.stringify(query),
+    projection
+  ].join('|');
+}
+
+async function cachedDeviceRows(cfg = {}, query = {}, projection = '', refresh = false) {
+  const cacheKey = deviceListCacheKey(cfg, query, projection);
+  const now = Date.now();
+  if (!refresh && DEVICE_LIST_CACHE_TTL_MS > 0) {
+    const cached = deviceListCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) return cloneJson(cached.rows);
+  }
+  let rows;
+  try {
+    rows = await requestJson(cfg, '/devices/', {
+      query: {
+        query: JSON.stringify(query),
+        ...(projection ? { projection } : {})
+      }
+    });
+  } catch (error) {
+    const status = Number(error.status || 0);
+    const projectionTooLarge = projection && ([414, 431].includes(status) || /HTTP (414|431)/.test(error.message || ''));
+    if (!projectionTooLarge) throw error;
+    rows = await requestJson(cfg, '/devices/', {
+      query: {
+        query: JSON.stringify(query)
+      }
+    });
+  }
+  if (DEVICE_LIST_CACHE_TTL_MS > 0 && Array.isArray(rows)) {
+    deviceListCache.set(cacheKey, {
+      expiresAt: now + DEVICE_LIST_CACHE_TTL_MS,
+      rows: cloneJson(rows)
+    });
+    pruneDeviceListCache();
+  }
+  return rows;
 }
 
 function urlFor(cfg, pathname, params = {}) {
@@ -204,7 +269,9 @@ async function requestJson(settings = {}, pathname, options = {}) {
       }
     }
     if (!response.ok) {
-      throw new Error(`GenieACS HTTP ${response.status}${payload?.message ? `: ${payload.message}` : ''}`);
+      const error = new Error(`GenieACS HTTP ${response.status}${payload?.message ? `: ${payload.message}` : ''}`);
+      error.status = response.status;
+      throw error;
     }
     return payload;
   } catch (error) {
@@ -268,6 +335,19 @@ function firstParameter(device = {}, paths = []) {
     if (value) return { path, value };
   }
   return { path: '', value: '' };
+}
+
+function pppPasswordParameterCandidates(usernameParameter = '', fallbackParameters = DEFAULT_PPP_PASSWORD_PARAMETERS) {
+  const candidates = [];
+  const parameter = cleanText(usernameParameter);
+  if (parameter.endsWith('.Username')) {
+    candidates.push(parameter.replace(/\.Username$/, '.Password'));
+  }
+  for (const path of fallbackParameters || []) {
+    const cleanPath = cleanText(path);
+    if (cleanPath) candidates.push(cleanPath);
+  }
+  return [...new Set(candidates)];
 }
 
 function firstIpParameter(device = {}, paths = []) {
@@ -432,6 +512,50 @@ function wifiClientCountCandidates(index) {
   ];
 }
 
+function deviceListProjection(cfg = normalizeSettings({})) {
+  const paths = new Set([
+    '_id',
+    '_tags',
+    '_lastInform',
+    '_deviceId',
+    'InternetGatewayDevice.DeviceInfo.SerialNumber',
+    'InternetGatewayDevice.DeviceInfo.ProductClass',
+    'InternetGatewayDevice.DeviceInfo.Manufacturer',
+    'Device.DeviceInfo.SerialNumber',
+    'Device.DeviceInfo.ProductClass',
+    'Device.DeviceInfo.Manufacturer'
+  ]);
+  [
+    cfg.usernameParameters,
+    cfg.rxPowerParameters,
+    cfg.temperatureParameters,
+    cfg.wifiSsidParameters,
+    cfg.wifi5gSsidParameters,
+    cfg.wifiClientCountParameters,
+    cfg.wifi5gClientCountParameters,
+    cfg.lanClientCountParameters
+  ].forEach((list) => (list || []).forEach((path) => cleanText(path) && paths.add(cleanText(path))));
+  (cfg.usernameParameters || []).forEach((path) => {
+    pppIpParameterCandidates(path).forEach((candidate) => paths.add(candidate));
+  });
+  for (const index of WIFI_CONFIGURATION_INDEXES) {
+    const base = wifiConfigBase(index);
+    [
+      `${base}.SSID`,
+      `${base}.Enable`,
+      `${base}.Status`,
+      `${base}.BeaconType`,
+      `${base}.BasicAuthenticationMode`,
+      `${base}.WPAAuthenticationMode`,
+      `${base}.WPAEncryptionModes`,
+      `${base}.IEEE11iAuthenticationMode`,
+      `${base}.IEEE11iEncryptionModes`,
+      ...wifiClientCountCandidates(index)
+    ].forEach((path) => paths.add(path));
+  }
+  return [...paths].join(',');
+}
+
 function wifiBandForIndex(index, ssid = '') {
   if (WIFI_5G_CONFIGURATION_INDEXES.has(Number(index)) || /(^|[^0-9])5g([^0-9]|$)|5 ghz/i.test(ssid)) {
     return '5G';
@@ -458,6 +582,7 @@ function normalizeWifiNetworks(device = {}) {
       ? truthyWifiValue(enable.value)
       : (status.exists ? truthyWifiValue(status.value) : true);
     const password = firstExistingParameter(device, wifiPasswordParameterCandidates(index));
+    const passwordParameter = password.path || wifiPasswordParameterCandidates(index)[0] || '';
     const securityValues = [
       getPathState(device, `${base}.BeaconType`).value,
       getPathState(device, `${base}.BasicAuthenticationMode`).value,
@@ -478,7 +603,7 @@ function normalizeWifiNetworks(device = {}) {
       ssidParameter: ssid.path,
       enableParameter: enable.path,
       password: password.value,
-      passwordParameter: password.path,
+      passwordParameter,
       passwordWritable: password.writable,
       securityText,
       securityEnabled,
@@ -514,6 +639,35 @@ function hostPrefixes(device = {}, basePath = '') {
     if (/^\d+$/.test(index)) prefixes.add(`${basePath}.${index}`);
   }
   return [...prefixes];
+}
+
+function parameterValue(device = {}, prefix = '', suffixes = []) {
+  for (const suffix of suffixes) {
+    const value = getPathValue(device, `${prefix}.${suffix}`);
+    if (value) return value;
+  }
+  return '';
+}
+
+function falseyClientValue(value = '') {
+  return ['0', 'false', 'no', 'off', 'down', 'inactive', 'disabled', 'offline'].includes(cleanText(value).toLowerCase());
+}
+
+function trueyClientValue(value = '') {
+  return ['1', 'true', 'yes', 'on', 'up', 'active', 'enabled', 'online', 'authenticated'].includes(cleanText(value).toLowerCase());
+}
+
+function clientLooksActive(device = {}, prefix = '', defaultActive = true) {
+  const value = [
+    parameterValue(device, prefix, ['Active']),
+    parameterValue(device, prefix, ['Enable']),
+    parameterValue(device, prefix, ['Status']),
+    parameterValue(device, prefix, ['AssociatedDeviceAuthenticationState'])
+  ].find((item) => item !== '');
+  if (!value) return defaultActive;
+  if (falseyClientValue(value)) return false;
+  if (trueyClientValue(value)) return true;
+  return defaultActive;
 }
 
 function hostActiveValue(device = {}, prefix = '') {
@@ -561,6 +715,167 @@ function lanHostSummary(device = {}) {
   };
 }
 
+function normalizeClientField(value = '') {
+  const text = cleanText(value);
+  return text && text !== '-' ? text : '';
+}
+
+function normalizeClientMac(value = '') {
+  const text = normalizeClientField(value);
+  if (!text) return '';
+  const normalized = text.toUpperCase().replace(/-/g, ':');
+  return /[A-F0-9]{2}/i.test(normalized) ? normalized : '';
+}
+
+function connectedClientKey(row = {}) {
+  const mac = normalizeClientMac(row.macAddress);
+  if (mac) return `mac:${mac}`;
+  const ip = cleanText(row.ipAddress);
+  if (ip) return `ip:${ip}`;
+  return `name:${cleanText(row.name)}:${cleanText(row.type)}`;
+}
+
+function wifiAssociatedPrefixes(device = {}, index = 1) {
+  const prefixes = [
+    ...hostPrefixes(device, `${wifiConfigBase(index)}.AssociatedDevice`),
+    ...hostPrefixes(device, `Device.WiFi.AccessPoint.${index}.AssociatedDevice`)
+  ];
+  return [...new Set(prefixes)];
+}
+
+function wifiClientRows(device = {}, network = {}) {
+  const band = network.band || wifiBandForIndex(network.index, network.ssid);
+  return wifiAssociatedPrefixes(device, network.index)
+    .map((prefix) => {
+      const macAddress = parameterValue(device, prefix, [
+        'AssociatedDeviceMACAddress',
+        'MACAddress',
+        'PhysAddress'
+      ]);
+      const ipAddress = parameterValue(device, prefix, [
+        'AssociatedDeviceIPAddress',
+        'IPAddress',
+        'IPv4Address'
+      ]);
+      const name = parameterValue(device, prefix, [
+        'HostName',
+        'Name',
+        'AssociatedDeviceHostName',
+        'AssociatedDeviceName',
+        'ClientHostName',
+        'DeviceName',
+        'X_HW_HostName',
+        'X_ZTE-COM_HostName'
+      ]);
+      if (!macAddress && !ipAddress && !name) return null;
+      if (!clientLooksActive(device, prefix, true)) return null;
+      return {
+        type: band,
+        name: name || '-',
+        ipAddress: ipAddress || '-',
+        macAddress: macAddress || '-',
+        source: 'wifi'
+      };
+    })
+    .filter(Boolean);
+}
+
+function hostClientRows(device = {}) {
+  const prefixes = [
+    ...hostPrefixes(device, 'InternetGatewayDevice.LANDevice.1.Hosts.Host'),
+    ...hostPrefixes(device, 'Device.Hosts.Host')
+  ];
+  return [...new Set(prefixes)]
+    .map((prefix) => {
+      if (!hostLooksActive(device, prefix)) return null;
+      const macAddress = parameterValue(device, prefix, ['MACAddress', 'PhysAddress', 'Layer2Address']);
+      const ipAddress = parameterValue(device, prefix, ['IPAddress', 'IPv4Address']);
+      const name = parameterValue(device, prefix, [
+        'HostName',
+        'Name',
+        'Alias',
+        'DeviceName',
+        'ClientHostName',
+        'X_HW_HostName',
+        'X_ZTE-COM_HostName'
+      ]);
+      if (!macAddress && !ipAddress && !name) return null;
+      return {
+        type: hostLooksLan(device, prefix) ? 'LAN' : 'HOST',
+        name: name || '-',
+        ipAddress: ipAddress || '-',
+        macAddress: macAddress || '-',
+        interfaceText: hostInterfaceText(device, prefix),
+        source: 'host'
+      };
+    })
+    .filter(Boolean);
+}
+
+function mergeClientRowFromHosts(row = {}, hostRows = []) {
+  const rowMac = normalizeClientMac(row.macAddress);
+  const rowIp = normalizeClientField(row.ipAddress);
+  const host = hostRows.find((item) => rowMac && normalizeClientMac(item.macAddress) === rowMac)
+    || hostRows.find((item) => rowIp && normalizeClientField(item.ipAddress) === rowIp);
+  if (!host) return row;
+  return {
+    ...row,
+    name: normalizeClientField(row.name) || normalizeClientField(host.name) || '-',
+    ipAddress: normalizeClientField(row.ipAddress) || normalizeClientField(host.ipAddress) || '-',
+    macAddress: normalizeClientField(row.macAddress) || normalizeClientField(host.macAddress) || '-'
+  };
+}
+
+function lanClientRows(device = {}, wifiRows = [], hostRows = hostClientRows(device)) {
+  const wifiMacs = new Set(wifiRows.map((row) => normalizeClientMac(row.macAddress)).filter(Boolean));
+  return hostRows
+    .filter((row) => {
+      const normalizedMac = normalizeClientMac(row.macAddress);
+      if (normalizedMac && wifiMacs.has(normalizedMac)) return false;
+      if (/wifi|wi-fi|wlan|ssid|radio/i.test(row.interfaceText || '')) return false;
+      return row.type === 'LAN' || row.ipAddress || row.macAddress || row.name;
+    })
+    .map((row) => ({
+      type: 'LAN',
+      name: row.name || '-',
+      ipAddress: row.ipAddress || '-',
+      macAddress: row.macAddress || '-',
+      source: 'lan'
+    }));
+}
+
+function uniqueClientRows(rows = []) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = connectedClientKey(row);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function connectedClientSummary(device = {}, wifiNetworks = [], counts = {}) {
+  const activeNetworks = wifiNetworks.filter((network) => network.enabled !== false);
+  const hostRows = hostClientRows(device);
+  const wifiRows = uniqueClientRows(activeNetworks
+    .flatMap((network) => wifiClientRows(device, network))
+    .map((row) => mergeClientRowFromHosts(row, hostRows)));
+  const lanRows = uniqueClientRows(lanClientRows(device, wifiRows, hostRows));
+  const rows24 = wifiRows.filter((row) => row.type === '2.4G');
+  const rows5 = wifiRows.filter((row) => row.type === '5G');
+  const expected24 = Number(counts.wifi24 || 0);
+  const expected5 = Number(counts.wifi5 || 0);
+  const expectedLan = Number(counts.lan || 0);
+  const connectedClients = uniqueClientRows([...rows24, ...rows5, ...lanRows]);
+  return {
+    connectedClients,
+    wifi24: Math.max(expected24, rows24.length),
+    wifi5: Math.max(expected5, rows5.length),
+    lan: Math.max(expectedLan, lanRows.length),
+    total: Math.max(connectedClients.length, expected24 + expected5 + expectedLan)
+  };
+}
+
 function safeTags(value = []) {
   if (!Array.isArray(value)) return [];
   return value.map(cleanText).filter(Boolean).slice(0, 8);
@@ -590,7 +905,12 @@ function normalizeDevice(device = {}, settings = {}) {
     : normalizeCount(clients5.value);
   const explicitLanClients = normalizeCount(lanClientsParameter.value);
   const lanClients = Math.max(explicitLanClients, lanHosts.lanTotal);
-  const clientsTotal = Math.max(wifiClients24 + wifiClients5 + lanClients, lanHosts.activeTotal);
+  const clientSummary = connectedClientSummary(device, wifiNetworks, {
+    wifi24: wifiClients24,
+    wifi5: wifiClients5,
+    lan: lanClients
+  });
+  const clientsTotal = Math.max(clientSummary.total, wifiClients24 + wifiClients5 + lanClients, lanHosts.activeTotal);
   const serial = cleanText(device._deviceId?._SerialNumber)
     || getPathValue(device, 'InternetGatewayDevice.DeviceInfo.SerialNumber')
     || getPathValue(device, 'Device.DeviceInfo.SerialNumber');
@@ -603,9 +923,10 @@ function normalizeDevice(device = {}, settings = {}) {
   const lastInform = cleanText(device._lastInform);
   const lastInformTime = Date.parse(lastInform);
   const online = Number.isFinite(lastInformTime) && Date.now() - lastInformTime <= 15 * 60 * 1000;
+  const tags = safeTags(device._tags);
   return {
     id: cleanText(device._id),
-    tags: safeTags(device._tags),
+    tags,
     oui: cleanText(device._deviceId?._OUI),
     serialNumber: serial,
     productClass,
@@ -635,6 +956,7 @@ function normalizeDevice(device = {}, settings = {}) {
     hostClientsTotal: lanHosts.activeTotal,
     clientsTotal,
     wifiClientsTotal: clientsTotal,
+    connectedClients: clientSummary.connectedClients,
     wifiNetworks,
     lastInform,
     online,
@@ -683,11 +1005,7 @@ async function listDevices(settings = {}, options = {}) {
   const query = searchQuery(options.search || '');
   const status = cleanText(options.status || 'all').toLowerCase();
   const redaman = cleanText(options.redaman || 'all').toLowerCase();
-  const rawRows = await requestJson(cfg, '/devices/', {
-    query: {
-      query: JSON.stringify(query)
-    }
-  });
+  const rawRows = await cachedDeviceRows(cfg, query, deviceListProjection(cfg), options.refresh === true);
   const rows = (Array.isArray(rawRows) ? rawRows.map((device) => normalizeDevice(device, cfg)) : [])
     .filter((row) => !rowExcludedByUsernameSuffix(row, cfg.excludeUsernameSuffixes));
   const filteredRows = rows.filter((row) => {
@@ -746,17 +1064,22 @@ async function listDevices(settings = {}, options = {}) {
   };
 }
 
-async function getDevice(settings = {}, deviceId = '') {
+async function getDevice(settings = {}, deviceId = '', options = {}) {
   const cfg = normalizeSettings(settings);
-  const query = JSON.stringify({ _id: cleanText(deviceId) });
-  const rows = await requestJson(cfg, '/devices/', { query: { query } });
+  const rows = await cachedDeviceRows(cfg, { _id: cleanText(deviceId) }, '', options.refresh === true);
   const device = Array.isArray(rows) ? rows[0] : null;
   return device ? normalizeDevice(device, cfg) : null;
 }
 
-async function findDevice(settings = {}, search = '') {
-  const result = await listDevices(settings, { search, page: 1, limit: 1 });
-  return result.rows[0] || null;
+async function findDevice(settings = {}, search = '', options = {}) {
+  const result = await listDevices(settings, { search, page: 1, limit: 1, refresh: options.refresh === true });
+  const row = result.rows[0] || null;
+  if (!row || options.compact === true) return row;
+  try {
+    return await getDevice(settings, row.id, { refresh: options.refresh === true }) || row;
+  } catch {
+    return row;
+  }
 }
 
 async function task(settings = {}, deviceId = '', body = {}) {
@@ -781,9 +1104,11 @@ async function deleteDevice(settings = {}, deviceId = '') {
   const cfg = normalizeSettings(settings);
   const cleanId = cleanText(deviceId);
   if (!cleanId) throw new Error('ID perangkat GenieACS tidak tersedia');
-  return requestJson(cfg, `/devices/${encodeURIComponent(cleanId)}`, {
+  const result = await requestJson(cfg, `/devices/${encodeURIComponent(cleanId)}`, {
     method: 'DELETE'
   });
+  clearDeviceListCache();
+  return result;
 }
 
 async function setWifiPassword(settings = {}, deviceId = '', password = '', parameter = '') {
@@ -796,10 +1121,12 @@ async function setWifiPassword(settings = {}, deviceId = '', password = '', para
   if (!param) {
     throw new Error('Parameter password WiFi GenieACS belum diatur');
   }
-  return task(cfg, deviceId, {
+  const result = await task(cfg, deviceId, {
     name: 'setParameterValues',
     parameterValues: [[param, cleanPassword, 'xsd:string']]
   });
+  clearDeviceListCache();
+  return result;
 }
 
 async function setWifiSsid(settings = {}, deviceId = '', ssid = '', band = '2.4g', parameter = '') {
@@ -814,10 +1141,12 @@ async function setWifiSsid(settings = {}, deviceId = '', ssid = '', band = '2.4g
   if (!param) {
     throw new Error('Parameter SSID GenieACS belum diatur');
   }
-  return task(cfg, deviceId, {
+  const result = await task(cfg, deviceId, {
     name: 'setParameterValues',
     parameterValues: [[param, cleanSsid, 'xsd:string']]
   });
+  clearDeviceListCache();
+  return result;
 }
 
 function assertWifiParameter(path = '', suffixes = []) {
@@ -851,10 +1180,10 @@ async function setWifiCredentials(settings = {}, deviceId = '', payload = {}) {
   const values = [
     [`${base}.Enable`, true, 'xsd:boolean'],
     [ssidParameter, cleanSsid, 'xsd:string'],
-    [`${base}.BasicEncryptionModes`, 'None', 'xsd:string']
+    [`${base}.BasicEncryptionModes`, payload.usePassword === false ? 'None' : 'AESEncryption', 'xsd:string']
   ];
-  if (payload.usePassword !== false) {
-    const cleanPassword = cleanText(payload.password);
+  const cleanPassword = cleanText(payload.password);
+  if (payload.usePassword !== false && cleanPassword) {
     if (cleanPassword.length < 8 || cleanPassword.length > 63) {
       throw new Error('Password WPA/WPA2 wajib 8-63 karakter');
     }
@@ -873,16 +1202,18 @@ async function setWifiCredentials(settings = {}, deviceId = '', payload = {}) {
       [`${base}.IEEE11iEncryptionModes`, 'AESEncryption', 'xsd:string'],
       [passwordParameter, cleanPassword, 'xsd:string']
     );
-  } else {
+  } else if (payload.usePassword === false) {
     values.push(
       [`${base}.BeaconType`, 'Basic', 'xsd:string'],
       [`${base}.BasicAuthenticationMode`, 'OpenSystem', 'xsd:string']
     );
   }
-  return task(settings, deviceId, {
+  const result = await task(settings, deviceId, {
     name: 'setParameterValues',
     parameterValues: values
   });
+  clearDeviceListCache();
+  return result;
 }
 
 async function setWifiSsidAndOptionalPassword(settings = {}, deviceId = '', payload = {}) {
@@ -917,14 +1248,61 @@ async function setWifiSsidAndOptionalPassword(settings = {}, deviceId = '', payl
       [passwordParameter, cleanPassword, 'xsd:string']
     );
   }
-  return task(settings, deviceId, {
+  const result = await task(settings, deviceId, {
     name: 'setParameterValues',
     parameterValues: values
   });
+  clearDeviceListCache();
+  return result;
+}
+
+function assertPppUsernameParameter(path = '') {
+  const cleanPath = cleanText(path);
+  const ok = /^InternetGatewayDevice\.WANDevice\.\d+\.WANConnectionDevice\.\d+\.WANPPPConnection\.\d+\.Username$/.test(cleanPath)
+    || /^Device\.PPP\.Interface\.\d+\.Username$/.test(cleanPath);
+  if (!ok) {
+    throw new Error('Parameter username PPPoE GenieACS tidak valid');
+  }
+  return cleanPath;
+}
+
+function assertPppPasswordParameter(path = '') {
+  const cleanPath = cleanText(path);
+  const ok = /^InternetGatewayDevice\.WANDevice\.\d+\.WANConnectionDevice\.\d+\.WANPPPConnection\.\d+\.Password$/.test(cleanPath)
+    || /^Device\.PPP\.Interface\.\d+\.Password$/.test(cleanPath);
+  if (!ok) {
+    throw new Error('Parameter password PPPoE GenieACS tidak valid');
+  }
+  return cleanPath;
+}
+
+async function setPppCredentials(settings = {}, deviceId = '', payload = {}) {
+  const cfg = normalizeSettings(settings);
+  const username = cleanText(payload.username);
+  if (!username) {
+    throw new Error('Username PPPoE wajib diisi');
+  }
+  const usernameParameter = assertPppUsernameParameter(payload.usernameParameter || cfg.usernameParameters[0]);
+  const values = [[usernameParameter, username, 'xsd:string']];
+  const password = cleanText(payload.password);
+  if (password) {
+    const passwordParameter = assertPppPasswordParameter(
+      payload.passwordParameter
+      || pppPasswordParameterCandidates(usernameParameter, cfg.pppPasswordParameters)[0]
+    );
+    values.push([passwordParameter, password, 'xsd:string']);
+  }
+  const result = await task(cfg, deviceId, {
+    name: 'setParameterValues',
+    parameterValues: values
+  });
+  clearDeviceListCache();
+  return result;
 }
 
 module.exports = {
   DEFAULT_BASE_URL,
+  DEFAULT_PPP_PASSWORD_PARAMETERS,
   DEFAULT_RX_POWER_PARAMETERS,
   DEFAULT_TEMPERATURE_PARAMETERS,
   DEFAULT_USERNAME_PARAMETERS,
@@ -943,6 +1321,7 @@ module.exports = {
   normalizeSettings,
   reboot,
   refreshDevice,
+  setPppCredentials,
   setWifiCredentials,
   setWifiSsidAndOptionalPassword,
   setWifiPassword,

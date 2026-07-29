@@ -141,6 +141,7 @@ const ROLE_DEFINITIONS = {
     description: 'Akses teknis lapangan tanpa data kas, pemasukan, atau pengeluaran.',
     permissions: [
       'dashboard:read',
+      'activity:read',
       'inventory:read',
       'inventory:write',
       'network-assets:read',
@@ -160,6 +161,7 @@ const ROLE_DEFINITIONS = {
     description: 'Kelola aset dan monitoring jaringan tanpa akses buku kas.',
     permissions: [
       'dashboard:read',
+      'activity:read',
       'inventory:read',
       'network-assets:read',
       'network-assets:write',

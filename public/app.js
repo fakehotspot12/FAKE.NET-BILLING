@@ -96,6 +96,7 @@ const titles = {
   reportsTransactions: 'Mutasi Bulanan',
   reportsFinanceRecap: 'Rekapitulasi',
   reportsInventoryStock: 'Stok Inventaris',
+  activity: 'Log',
   waGateway: 'Whatsapp Gateway',
   paymentGateway: 'Payment Gateway',
   inventory: 'Inventaris',
@@ -117,6 +118,7 @@ const viewPermissions = {
   reportsTransactions: 'reports:daily:read',
   reportsFinanceRecap: 'reports:daily:read',
   reportsInventoryStock: 'inventory:read',
+  activity: 'activity:read',
   waGateway: 'wa-gateway:manage',
   paymentGateway: 'payment-gateway:manage',
   inventory: 'inventory:read',
@@ -165,6 +167,10 @@ const state = {
   customerStatus: 'all',
   activityPage: 1,
   activityLimit: 10,
+  activityRange: 'today',
+  activityCategory: 'all',
+  activityFrom: todayInput(),
+  activityTo: todayInput(),
   monitoringCustomerPage: 1,
   monitoringCustomerLimit: CUSTOMER_PAGE_SIZE,
   monitoringCustomerSite: 'all',
@@ -637,6 +643,12 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function chartTooltipAttr(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return `data-chart-tooltip="${escapeHtml(text).replace(/\n/g, '&#10;')}" tabindex="0"`;
+}
+
 function profileInitials(user = {}) {
   const source = String(user.name || user.username || 'U').trim();
   const words = source.split(/\s+/).filter(Boolean);
@@ -907,9 +919,12 @@ function activityLabel(type) {
     expense: 'Pengeluaran',
     inventory: 'Inventaris',
     asset: 'Aset',
+    network: 'Aset',
+    customer: 'Member',
     monitoring: 'Monitoring',
     invoice: 'Invoice',
     payment: 'Pembayaran',
+    xendit: 'Xendit',
     user: 'User',
     settings: 'Pengaturan'
   };
@@ -941,6 +956,141 @@ function activityAuditDetails(item = {}) {
       `).join('')}
     </div>
   `;
+}
+
+const ACTIVITY_CATEGORY_OPTIONS = [
+  ['all', 'Semua Kategori'],
+  ['billing', 'Billing'],
+  ['payment', 'Payment'],
+  ['radius', 'Radius'],
+  ['member', 'Member'],
+  ['inventory', 'Inventaris'],
+  ['asset', 'Aset'],
+  ['wa', 'WA Gateway'],
+  ['settings', 'Pengaturan'],
+  ['finance', 'Keuangan']
+];
+
+function dateInputShift(value = todayInput(), days = 0) {
+  const parts = String(value || todayInput()).split('-').map(Number);
+  const date = new Date(Date.UTC(parts[0] || 1970, (parts[1] || 1) - 1, parts[2] || 1));
+  date.setUTCDate(date.getUTCDate() + Math.trunc(Number(days) || 0));
+  return date.toISOString().slice(0, 10);
+}
+
+function monthEndInput(period = todayInput().slice(0, 7)) {
+  const [year, month] = String(period || todayInput().slice(0, 7)).split('-').map(Number);
+  const nextYear = month >= 12 ? year + 1 : year;
+  const nextMonth = month >= 12 ? 1 : month + 1;
+  return dateInputShift(`${String(nextYear || 1970).padStart(4, '0')}-${String(nextMonth || 1).padStart(2, '0')}-01`, -1);
+}
+
+function activityRangeDates(range = state.activityRange) {
+  const today = todayInput();
+  if (range === 'today') return { from: today, to: today };
+  if (range === 'week') return { from: dateInputShift(today, -6), to: today };
+  if (range === 'month') return { from: `${today.slice(0, 7)}-01`, to: monthEndInput(today.slice(0, 7)) };
+  if (range === 'custom') {
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(state.activityFrom || '') ? state.activityFrom : today;
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(state.activityTo || '') ? state.activityTo : from;
+    return from <= to ? { from, to } : { from: to, to: from };
+  }
+  return { from: '', to: '' };
+}
+
+function activityCategoryOptionsMarkup(selected = 'all') {
+  const technicalOnly = ['technician', 'noc'].includes(String(state.auth?.role || '').toLowerCase());
+  const options = technicalOnly
+    ? ACTIVITY_CATEGORY_OPTIONS.filter(([value]) => ['all', 'radius', 'member', 'inventory', 'asset'].includes(value))
+    : ACTIVITY_CATEGORY_OPTIONS;
+  return options.map(([value, label]) => `
+    <option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>
+  `).join('');
+}
+
+function normalizeActivityCategoryForRole(value = 'all') {
+  const category = String(value || 'all').trim().toLowerCase();
+  if (!['technician', 'noc'].includes(String(state.auth?.role || '').toLowerCase())) return category;
+  return ['all', 'radius', 'member', 'inventory', 'asset'].includes(category) ? category : 'all';
+}
+
+function activityRangeLabel(range = state.activityRange) {
+  if (range === 'today') return 'Hari Ini';
+  if (range === 'week') return '7 Hari';
+  if (range === 'month') return 'Bulan Ini';
+  if (range === 'custom') {
+    const dates = activityRangeDates('custom');
+    return `${dateText(dates.from)} - ${dateText(dates.to)}`;
+  }
+  return 'Semua Log';
+}
+
+function activityActorText(item = {}) {
+  const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+  return meta.actorName
+    || meta.actorUsername
+    || meta.updatedByName
+    || meta.updatedByUsername
+    || meta.radbooxUsername
+    || meta.username
+    || meta.user
+    || '-';
+}
+
+function activityMetaValueText(key = '', value = '') {
+  if (value === true) return 'Ya';
+  if (value === false) return 'Tidak';
+  if (value === null || value === undefined || value === '') return '-';
+  const lowerKey = String(key || '').toLowerCase();
+  if (typeof value === 'number' && /(amount|total|price|fee|saldo|nominal|discount)/.test(lowerKey)) {
+    return rupiah(value);
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function activityMetaGrid(item = {}) {
+  const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+  const rows = Object.entries(meta).slice(0, 18);
+  if (!rows.length) return '<div class="muted">Tidak ada detail tambahan.</div>';
+  return `
+    <div class="activity-audit-grid compact">
+      ${rows.map(([key, value]) => `
+        <div>
+          <span>${escapeHtml(key)}</span>
+          <strong>${escapeHtml(activityMetaValueText(key, value))}</strong>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function openActivityDetail(item = {}) {
+  openModal('Detail Log', `
+    <div class="activity-detail-modal">
+      <div class="activity-detail-summary">
+        <div>
+          <span>Kategori</span>
+          <strong>${escapeHtml(activityLabel(item.type || 'activity'))}</strong>
+        </div>
+        <div>
+          <span>Waktu</span>
+          <strong>${escapeHtml(dateTimeText(item.at || item.createdAt || ''))}</strong>
+        </div>
+        <div>
+          <span>Oleh</span>
+          <strong>${escapeHtml(activityActorText(item))}</strong>
+        </div>
+      </div>
+      <div class="activity-detail-message">
+        <span>Aktivitas</span>
+        <strong>${escapeHtml(item.message || '-')}</strong>
+      </div>
+      ${activityMetaGrid(item)}
+    </div>
+  `, async () => {});
 }
 
 function setToast(message) {
@@ -1658,12 +1808,11 @@ function canView(view) {
 }
 
 function firstAvailableView() {
-  return ['dashboard', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'genieAcs', 'monitoringSite', 'monitoringMembers', 'monitoringCustomers', 'monitoringBilling', 'monitoringServices', 'externalIncomes', 'expenses', 'reportsDaily', 'reportsMonthlyBilling', 'reportsStatistics', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsTransactions', 'reportsFinanceRecap', 'reportsInventoryStock', 'waGateway', 'paymentGateway', 'inventory', 'networkAssets', 'users', 'settings'].find(canView) || 'dashboard';
+  return ['dashboard', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'genieAcs', 'monitoringSite', 'monitoringMembers', 'monitoringCustomers', 'monitoringBilling', 'monitoringServices', 'externalIncomes', 'expenses', 'reportsDaily', 'reportsMonthlyBilling', 'reportsStatistics', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsTransactions', 'reportsFinanceRecap', 'reportsInventoryStock', 'activity', 'waGateway', 'paymentGateway', 'inventory', 'networkAssets', 'users', 'settings'].find(canView) || 'dashboard';
 }
 
 function normalizeView(view) {
   if (view === 'monitoring') return 'monitoringSite';
-  if (view === 'activity') return 'dashboard';
   return view;
 }
 
@@ -2353,9 +2502,9 @@ function dashboardRecentTransactionsPanel(transactions = [], options = {}) {
       <div class="dashboard-radbill-section-head">
         <div class="dashboard-radbill-title">
           <span class="dashboard-radbill-square tone-info">✓</span>
-          <h2>Recent Transactions</h2>
+          <h2>Riwayat Transaksi</h2>
         </div>
-        ${canView('reportsTransactions') ? '<button class="ghost-button compact" type="button" data-dashboard-view="reportsTransactions">Lihat semua</button>' : `<span class="dashboard-radbill-muted">${escapeHtml(period)}</span>`}
+        ${canView('reportsTransactions') ? '<button class="ghost-button compact" type="button" data-dashboard-view="reportsTransactions">Lihat Semua</button>' : `<span class="dashboard-radbill-muted">${escapeHtml(period)}</span>`}
       </div>
       <div class="dashboard-radbill-list">
         ${rows.length ? rows.map((item, index) => `
@@ -2384,7 +2533,7 @@ function dashboardAuditPanel(activity = []) {
           <span class="dashboard-radbill-square tone-warning">!</span>
           <h2>Audit Log</h2>
         </div>
-        <span class="dashboard-radbill-muted">${displayNumber(rows.length)} entri</span>
+        ${canView('activity') ? '<button class="ghost-button compact" type="button" data-dashboard-view="activity">Lihat Semua</button>' : `<span class="dashboard-radbill-muted">${displayNumber(rows.length)} entri</span>`}
       </div>
       <div class="dashboard-radbill-list">
         ${rows.length ? rows.map((item, index) => `
@@ -2795,25 +2944,60 @@ function bindLiveTextSearch(input, options = {}) {
   return { apply: () => run(true, true), reset: () => run(true, true) };
 }
 
+function bindSearchClearButton(input, onClear = () => {}) {
+  if (!(input instanceof HTMLInputElement) || input.dataset.searchClearBound === '1') return;
+  input.dataset.searchClearBound = '1';
+  input.type = 'search';
+  input.setAttribute('enterkeyhint', 'search');
+  input.classList.add('has-clear-button');
+  let wrapper = input.closest('.search-input-wrap');
+  if (!wrapper || wrapper.querySelector('input') !== input) {
+    wrapper = document.createElement('span');
+    wrapper.className = 'search-input-wrap';
+    input.parentNode?.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+  }
+  const wrapperParent = wrapper.parentElement;
+  if (
+    wrapperParent
+    && wrapper.nextElementSibling
+    && (
+      wrapperParent.classList.contains('filters')
+      || wrapperParent.classList.contains('manual-invoice-toolbar')
+    )
+  ) {
+    wrapperParent.appendChild(wrapper);
+  }
+  const button = document.createElement('button');
+  button.className = 'search-clear-button';
+  button.type = 'button';
+  button.title = 'Bersihkan pencarian';
+  button.setAttribute('aria-label', 'Bersihkan pencarian');
+  button.textContent = 'X';
+  wrapper.appendChild(button);
+  const refresh = () => {
+    button.hidden = !String(input.value || '').trim();
+  };
+  button.addEventListener('click', () => {
+    if (!input.value) return;
+    input.value = '';
+    refresh();
+    onClear();
+    input.focus({ preventScroll: true });
+  });
+  input.addEventListener('input', refresh);
+  refresh();
+}
+
 function bindSearch(handler) {
   const search = document.getElementById('searchInput');
   if (!search) return;
-  const filters = search.closest('.filters') || search.parentElement;
-  if (filters && !filters.querySelector('[data-search-apply]')) {
-    filters.insertAdjacentHTML('beforeend', `
-      <div class="search-action-row" data-search-actions>
-        <button class="ghost-button compact" type="button" data-search-apply>Cari</button>
-        <button class="ghost-button compact" type="button" data-search-reset>Reset</button>
-      </div>
-    `);
-  }
   const live = bindLiveTextSearch(search, {
     getValue: () => state.search,
     setValue: (value) => { state.search = value; },
     handler,
     refocusSelector: '#searchInput'
   });
-  const apply = () => live?.apply();
   const reset = () => {
     if (!search.value && !state.search) return;
     search.value = '';
@@ -2821,8 +3005,7 @@ function bindSearch(handler) {
     const result = handler({ silent: true, liveSearch: true });
     Promise.resolve(result).finally(() => focusSearchAfterRender('#searchInput', ''));
   };
-  filters?.querySelector('[data-search-apply]')?.addEventListener('click', apply);
-  filters?.querySelector('[data-search-reset]')?.addEventListener('click', reset);
+  bindSearchClearButton(search, reset);
 }
 
 document.addEventListener('keydown', (event) => {
@@ -3644,8 +3827,14 @@ async function renderDashboard(options = {}) {
 
 async function renderActivity(options = {}) {
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat log...</div>';
+  state.activityCategory = normalizeActivityCategoryForRole(state.activityCategory);
+  const rangeDates = activityRangeDates(state.activityRange);
   const params = queryString({
     search: state.search,
+    range: state.activityRange,
+    category: state.activityCategory,
+    from: rangeDates.from,
+    to: rangeDates.to,
     page: state.activityPage,
     limit: state.activityLimit
   });
@@ -3654,24 +3843,46 @@ async function renderActivity(options = {}) {
   const pagination = payload.pagination || { page: 1, totalPages: 1, total: activity.length, limit: state.activityLimit };
   state.activityPage = Number(pagination.page || 1);
   state.activityLimit = pagerLimitValue(pagination.limit || state.activityLimit || 10, 10);
+  const customHidden = state.activityRange === 'custom' ? '' : 'hidden';
 
   app.innerHTML = `
     <div class="stack">
-      <div class="toolbar">
+      <div class="toolbar activity-toolbar">
         <div class="filters">
+          <select class="control" id="activityRange">
+            <option value="today" ${state.activityRange === 'today' ? 'selected' : ''}>Hari Ini</option>
+            <option value="week" ${state.activityRange === 'week' ? 'selected' : ''}>7 Hari</option>
+            <option value="month" ${state.activityRange === 'month' ? 'selected' : ''}>Bulan Ini</option>
+            <option value="custom" ${state.activityRange === 'custom' ? 'selected' : ''}>Custom</option>
+            <option value="all" ${state.activityRange === 'all' ? 'selected' : ''}>Semua Log</option>
+          </select>
+          <select class="control" id="activityCategory">
+            ${activityCategoryOptionsMarkup(state.activityCategory)}
+          </select>
+          <input class="control date-picker-control" id="activityFrom" type="date" value="${escapeHtml(state.activityFrom || rangeDates.from || todayInput())}" ${customHidden}>
+          <input class="control date-picker-control" id="activityTo" type="date" value="${escapeHtml(state.activityTo || rangeDates.to || todayInput())}" ${customHidden}>
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari log" autocomplete="off">
         </div>
       </div>
       <section class="section">
+        <div class="section-head activity-section-head">
+          <h2>${escapeHtml(activityRangeLabel(state.activityRange))}</h2>
+          <span>${displayNumber(pagination.total || activity.length)} log</span>
+        </div>
         <div class="panel activity-list activity-feed">
           ${activity.length ? activity.map((item) => `
-            <div class="activity-item">
-              <div class="activity-title">
-                <span class="badge">${escapeHtml(activityLabel(item.type))}</span>
-                <strong>${escapeHtml(item.message)}</strong>
+            <div class="activity-item activity-row">
+              <div class="activity-row-time">
+                <strong>${escapeHtml(dateTimeText(item.at || item.createdAt || ''))}</strong>
+                <span>${escapeHtml(activityActorText(item))}</span>
               </div>
-              <span class="muted">${escapeHtml(dateTimeText(item.at))}</span>
-              ${activityAuditDetails(item)}
+              <div class="activity-row-main">
+                <div class="activity-title">
+                  <span class="badge">${escapeHtml(activityLabel(item.type))}</span>
+                  <strong>${escapeHtml(item.message || '-')}</strong>
+                </div>
+              </div>
+              <button class="ghost-button compact" type="button" data-activity-detail="${escapeHtml(item.id || '')}">Detail</button>
             </div>
           `).join('') : '<div class="muted">Belum ada log.</div>'}
         </div>
@@ -3680,6 +3891,40 @@ async function renderActivity(options = {}) {
     </div>
   `;
 
+  const rangeSelect = document.getElementById('activityRange');
+  const categorySelect = document.getElementById('activityCategory');
+  const fromInput = document.getElementById('activityFrom');
+  const toInput = document.getElementById('activityTo');
+  rangeSelect?.addEventListener('change', () => {
+    state.activityRange = rangeSelect.value || 'today';
+    const dates = activityRangeDates(state.activityRange);
+    if (state.activityRange !== 'custom') {
+      state.activityFrom = dates.from || todayInput();
+      state.activityTo = dates.to || todayInput();
+    }
+    state.activityPage = 1;
+    renderActivity();
+  });
+  categorySelect?.addEventListener('change', () => {
+    state.activityCategory = categorySelect.value || 'all';
+    state.activityPage = 1;
+    renderActivity();
+  });
+  [fromInput, toInput].forEach((input) => {
+    input?.addEventListener('change', () => {
+      state.activityRange = 'custom';
+      state.activityFrom = fromInput?.value || todayInput();
+      state.activityTo = toInput?.value || state.activityFrom;
+      state.activityPage = 1;
+      renderActivity();
+    });
+  });
+  app.querySelectorAll('[data-activity-detail]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const item = activity.find((row) => String(row.id || '') === String(button.dataset.activityDetail || ''));
+      if (item) openActivityDetail(item);
+    });
+  });
   bindSearch((renderOptions = {}) => {
     state.activityPage = 1;
     renderActivity(renderOptions);
@@ -3701,7 +3946,7 @@ function dailyReportSummary(report = {}, transactionCount = Number(report.transa
   return `
     <section class="daily-summary">
       ${metric('Tunai', rupiah(report.cashIncome), 'Tagihan dibayar tunai', 'positive')}
-      ${metric('Transfer', rupiah(report.transferIncome), 'Transfer bank manual', 'positive')}
+      ${metric('Transfer + Loket', rupiah(report.transferIncome), 'Transfer bank manual dan Loket', 'positive')}
       ${metric('Online', rupiah(report.onlineIncome), 'QRIS, VA, e-wallet, dan gerai', 'positive')}
       ${metric('Total Tagihan', rupiah(report.totalIncome), `${Number(transactionCount || 0).toLocaleString('id-ID')} transaksi`, 'positive')}
     </section>
@@ -3711,7 +3956,7 @@ function dailyReportSummary(report = {}, transactionCount = Number(report.transa
 function reportPaymentCategory(item = {}) {
   const explicit = String(item.paymentCategory || item.methodGroup || '').trim().toLowerCase();
   const method = String(item.method || item.paymentMethod || '').trim().toLowerCase();
-  if (method.includes('loket')) return 'cash';
+  if (method.includes('loket')) return 'transfer';
   if (['cash', 'transfer', 'online'].includes(explicit)) return explicit;
   if (method.includes('tunai') || method.includes('cash')) return 'cash';
   if (/qris|virtual\s*account|e-?wallet|retail\s*outlet|qr\s*code|briva|bniva|bcava|mandiriva|permatava|muamalatva|cimbva|danamonva|maybankva|bsi(?:va)?|ovo|dana|linkaja|shopeepay|gopay|alfamart|alfamidi|indomaret|tripay|xendit|midtrans|duitku|doku|ipaymu/i.test(method)) return 'online';
@@ -3959,8 +4204,8 @@ async function renderReportsDaily(options = {}) {
       ${!standaloneReport && sync.error ? `<div class="notice error">${escapeHtml(sync.error)}</div>` : ''}
       ${summaryReport ? dailyReportSummary(summaryReport, filteredTransactions.length) : '<div class="empty">Belum ada data tagihan harian untuk tanggal ini.</div>'}
       <section class="section">
-        <div class="table-wrap">
-          <table>
+        <div class="table-wrap daily-report-table-wrap">
+          <table class="daily-report-table">
             <thead>
               <tr>
                 <th><input type="checkbox" id="dailyReceiptSelectAll" aria-label="Pilih semua kuitansi"></th>
@@ -3986,11 +4231,13 @@ async function renderReportsDaily(options = {}) {
                   <td>
                     <strong>${escapeHtml(item.method || '-')}</strong>
                     ${String(item.method || '').trim().toLowerCase() === 'tunai - loket'
-                      ? `<div class="muted">Dikonfirmasi oleh: ${escapeHtml(dailyAdminLabel(item, report || {}))}</div>`
+                      ? `<div class="muted daily-confirmed-by" title="${escapeHtml(dailyAdminLabel(item, report || {}))}">Oleh: <span>${escapeHtml(dailyAdminLabel(item, report || {}))}</span></div>`
                       : ''}
                   </td>
                   <td><span class="badge ${billingStatusBadge(item.status)}">${escapeHtml(billingStatusLabel(item.status || (Number(item.income || 0) > 0 ? 'paid' : 'pending')))}</span></td>
-                  <td>${escapeHtml(dailyAdminLabel(item, report || {}))}</td>
+                  <td class="daily-admin-cell" title="${escapeHtml(dailyAdminLabel(item, report || {}))}">
+                    <span class="daily-admin-name">${escapeHtml(dailyAdminLabel(item, report || {}))}</span>
+                  </td>
                   <td class="amount positive">${rupiah(item.amount || item.income || 0)}</td>
                   <td class="billing-action-cell">
                     ${(dailyReceiptAllowed(item) || dailyDiscountAuditAllowed(item)) ? `
@@ -4316,7 +4563,10 @@ function statisticsGrowthLineChart(rows = []) {
           ${points.map((point) => {
             const row = point.row || {};
             const tooltip = `${periodLabel(row.period)}\nTotal pelanggan aktif: ${displayNumber(row.activeCustomerCount || 0)}\nPelanggan baru: ${displayNumber(row.newInstallCount || 0)}\nSenilai: ${rupiah(row.newInstallAmount || 0)}\nPelanggan berhenti: ${displayNumber(row.removedCount || 0)}\nSenilai cabut: ${rupiah(row.removedAmount || 0)}\nPertumbuhan bersih: ${statisticsNetText(row.netGrowth || 0)}`;
-            return `<circle class="statistics-dot active-total" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.5"><title>${escapeHtml(tooltip)}</title></circle>`;
+            return `
+              <circle class="statistics-dot active-total" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.5" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
+              <circle class="statistics-hit-circle" fill="transparent" pointer-events="all" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="13" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
+            `;
           }).join('')}
           ${statisticsMonthAxisMarkup(chartRows, box)}
         </svg>
@@ -4352,7 +4602,12 @@ function statisticsVoucherBarChart(rows = []) {
             const height = Math.max(0, (box.top + box.plotHeight) - y);
             const x = box.left + (step * index) + ((step - barWidth) / 2);
             const tooltip = `${periodLabel(row.period)}\nVoucher terjual: ${displayNumber(value)}\nOmzet voucher: ${rupiah(row.voucherAmount || 0)}`;
-            return `<rect class="statistics-bar voucher" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${height.toFixed(2)}" rx="5"><title>${escapeHtml(tooltip)}</title></rect>`;
+            const hitWidth = Math.max(28, barWidth + 12);
+            const hitX = x + (barWidth / 2) - (hitWidth / 2);
+            return `
+              <rect class="statistics-bar voucher" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${height.toFixed(2)}" rx="5" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+              <rect class="statistics-hit-rect" fill="transparent" pointer-events="all" x="${hitX.toFixed(2)}" y="${box.top}" width="${hitWidth.toFixed(2)}" height="${box.plotHeight}" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+            `;
           }).join('')}
           ${statisticsMonthAxisMarkup(chartRows, box)}
         </svg>
@@ -4392,9 +4647,12 @@ function statisticsRevenueGroupedChart(rows = []) {
             const expenseY = statisticsChartPoint(expense, range, box);
             const baseline = box.top + box.plotHeight;
             const tooltip = `${periodLabel(row.period)}\nPendapatan: ${rupiah(income)}\n  Tunai: ${rupiah(row.cashRevenueAmount || 0)}\n  Transfer: ${rupiah(row.transferRevenueAmount || 0)}\n  Online: ${rupiah(row.onlineRevenueAmount || 0)}\nPengeluaran: ${rupiah(expense)}\nLaba bersih: ${rupiah(net)}`;
+            const hitX = baseX - 7;
+            const hitWidth = Math.max(30, (barWidth * 2) + 17);
             return `
-              <rect class="statistics-bar income" x="${baseX.toFixed(2)}" y="${incomeY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(0, baseline - incomeY).toFixed(2)}" rx="4"><title>${escapeHtml(tooltip)}</title></rect>
-              <rect class="statistics-bar expense" x="${(baseX + barWidth + 3).toFixed(2)}" y="${expenseY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(0, baseline - expenseY).toFixed(2)}" rx="4"><title>${escapeHtml(tooltip)}</title></rect>
+              <rect class="statistics-bar income" x="${baseX.toFixed(2)}" y="${incomeY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(0, baseline - incomeY).toFixed(2)}" rx="4" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+              <rect class="statistics-bar expense" x="${(baseX + barWidth + 3).toFixed(2)}" y="${expenseY.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${Math.max(0, baseline - expenseY).toFixed(2)}" rx="4" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+              <rect class="statistics-hit-rect" fill="transparent" pointer-events="all" x="${hitX.toFixed(2)}" y="${box.top}" width="${hitWidth.toFixed(2)}" height="${box.plotHeight}" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
             `;
           }).join('')}
           ${statisticsMonthAxisMarkup(chartRows, box)}
@@ -4628,7 +4886,7 @@ function voucherMethodOptionTags(selected = 'all') {
   const options = [
     ['all', 'Semua metode'],
     ['cash', 'Tunai'],
-    ['transfer', 'Transfer'],
+    ['transfer', 'Transfer + Loket'],
     ['online', 'Online']
   ];
   return options.map(([value, label]) => `<option value="${value}" ${String(selected || 'all') === value ? 'selected' : ''}>${label}</option>`).join('');
@@ -5403,7 +5661,7 @@ async function renderReportsTransactions(options = {}) {
         ${metric('Tagihan', `${displayNumber(summary.billingCount || 0)} / ${rupiah(summary.billingAmount || 0)}`, 'Invoice bulanan')}
         ${metric('Voucher', `${displayNumber(summary.voucherCount || 0)} / ${rupiah(summary.voucherAmount || 0)}`, 'Voucher paid')}
         ${metric('Tunai', `${displayNumber(summary.cashCount || 0)} / ${rupiah(summary.cashAmount || 0)}`, 'Pembayaran langsung')}
-        ${metric('Transfer', `${displayNumber(summary.transferCount || 0)} / ${rupiah(summary.transferAmount || 0)}`, 'Transfer bank manual')}
+        ${metric('Transfer + Loket', `${displayNumber(summary.transferCount || 0)} / ${rupiah(summary.transferAmount || 0)}`, 'Transfer bank manual dan Loket')}
         ${metric('Online', `${displayNumber(summary.onlineCount || 0)} / ${rupiah(summary.onlineAmount || 0)}`, 'QRIS, VA, e-wallet, dan gerai')}
       </section>
 
@@ -5413,7 +5671,7 @@ async function renderReportsTransactions(options = {}) {
           <select class="control" id="reportTransactionsMethod">
             <option value="all" ${state.reportTransactionsMethod === 'all' ? 'selected' : ''}>Semua metode</option>
             <option value="cash" ${state.reportTransactionsMethod === 'cash' ? 'selected' : ''}>Tunai</option>
-            <option value="transfer" ${state.reportTransactionsMethod === 'transfer' ? 'selected' : ''}>Transfer</option>
+            <option value="transfer" ${state.reportTransactionsMethod === 'transfer' ? 'selected' : ''}>Transfer + Loket</option>
             <option value="online" ${state.reportTransactionsMethod === 'online' ? 'selected' : ''}>Online</option>
           </select>
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari invoice, sumber, deskripsi, metode" autocomplete="off">
@@ -5531,7 +5789,7 @@ async function renderReportsFinanceRecap(options = {}) {
       <section class="metrics">
         ${metric('Total Pemasukan', rupiah(summary.incomeTotal || 0), `${displayNumber(summary.incomeCount || 0)} transaksi`, 'positive')}
         ${metric('Tunai', rupiah(summary.cashAmount || 0), `${displayNumber(summary.cashCount || 0)} transaksi`)}
-        ${metric('Transfer', rupiah(summary.transferAmount || 0), `${displayNumber(summary.transferCount || 0)} transaksi`)}
+        ${metric('Transfer + Loket', rupiah(summary.transferAmount || 0), `${displayNumber(summary.transferCount || 0)} transaksi`)}
         ${metric('Online', rupiah(summary.onlineAmount || 0), `${displayNumber(summary.onlineCount || 0)} transaksi`, 'positive')}
         ${metric('Total Pengeluaran', rupiah(summary.expenseTotal || 0), `${displayNumber(summary.expenseCount || 0)} transaksi`, 'negative')}
         ${metric('Selisih', rupiah(profit), periodLabel(state.period), profit >= 0 ? 'positive' : 'negative')}
@@ -13048,6 +13306,82 @@ function genieWifiOptionLabel(network = {}) {
   return `${network.band || 'WiFi'} - ${network.ssid || '-'} (${status}, ${clients})`;
 }
 
+function genieClientRows(row = {}) {
+  return Array.isArray(row.connectedClients) ? row.connectedClients : [];
+}
+
+function genieClientTypeKey(value = '') {
+  const text = String(value || '').toLowerCase();
+  if (text.includes('5')) return '5G';
+  if (text.includes('lan') || text.includes('eth')) return 'LAN';
+  return '2.4G';
+}
+
+function genieClientBadgeClass(type = '') {
+  const key = genieClientTypeKey(type);
+  if (key === '5G') return 'wifi5';
+  if (key === 'LAN') return 'lan';
+  return 'wifi24';
+}
+
+function genieClientCountByType(rows = [], type = '') {
+  const key = genieClientTypeKey(type);
+  return rows.filter((row) => genieClientTypeKey(row.type) === key).length;
+}
+
+function genieClientCounts(row = {}) {
+  const rows = genieClientRows(row);
+  const count24 = Math.max(Number(row.wifiClients24 || 0), genieClientCountByType(rows, '2.4G'));
+  const count5 = Math.max(Number(row.wifiClients5 || 0), genieClientCountByType(rows, '5G'));
+  const countLan = Math.max(Number(row.lanClients || 0), genieClientCountByType(rows, 'LAN'));
+  const total = Math.max(Number(row.clientsTotal || row.wifiClientsTotal || 0), rows.length, count24 + count5 + countLan);
+  return { count24, count5, countLan, total };
+}
+
+function openGenieClientsModal(row = {}) {
+  const rows = genieClientRows(row);
+  const counts = genieClientCounts(row);
+  openModal('Client Terkoneksi', `
+    <div class="genie-client-detail">
+      <div class="notice">
+        <strong>${escapeHtml(row.username || genieDeviceLabel(row))}</strong>
+        <span>${escapeHtml(row.serialNumber || row.productClass || '-')}</span>
+      </div>
+      <div class="client-summary-strip">
+        <span>2.4G ${displayNumber(counts.count24)}</span>
+        <span>5G ${displayNumber(counts.count5)}</span>
+        <span>LAN ${displayNumber(counts.countLan)}</span>
+      </div>
+      ${rows.length ? `
+        <div class="detail-table-wrap">
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>No</th>
+                <th>Koneksi</th>
+                <th>Nama / Device</th>
+                <th>IP Address</th>
+                <th>MAC</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((client, index) => `
+                <tr>
+                  <td>${displayNumber(index + 1)}</td>
+                  <td><span class="client-type-badge ${genieClientBadgeClass(client.type)}">${escapeHtml(genieClientTypeKey(client.type))}</span></td>
+                  <td>${escapeHtml(client.name || '-')}</td>
+                  <td>${escapeHtml(client.ipAddress || '-')}</td>
+                  <td>${escapeHtml(client.macAddress || '-')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : '<p class="empty-detail">Detail client belum terbaca dari GenieACS.</p>'}
+    </div>
+  `, async () => {});
+}
+
 function genieAcsPaginationControls(pagination = {}) {
   const page = Number(pagination.page || 1);
   const totalPages = Number(pagination.totalPages || 1);
@@ -13114,7 +13448,7 @@ function openGenieWifiModal(row = {}) {
     </label>
     <label class="field">
       <span>Password</span>
-      <input name="password" id="genieWifiPasswordInput" type="password" minlength="8" maxlength="63" value="${escapeHtml(firstNetwork.password || '')}" autocomplete="new-password">
+      <input name="password" id="genieWifiPasswordInput" type="password" minlength="8" maxlength="63" value="${escapeHtml(firstNetwork.password || '')}" autocomplete="new-password" placeholder="Kosongkan jika tidak diganti">
     </label>
     <label class="field checkbox-field">
       <input name="usePassword" id="genieWifiUsePassword" type="checkbox" value="true" ${firstNetwork.securityEnabled || firstNetwork.password ? 'checked' : ''}>
@@ -13155,19 +13489,56 @@ function openGenieWifiModal(row = {}) {
     if (usePassword) usePassword.checked = option.dataset.passwordEnabled === 'true';
     if (passwordInput && usePassword) {
       passwordInput.disabled = !usePassword.checked;
-      passwordInput.required = usePassword.checked;
+      passwordInput.required = false;
     }
   };
   select?.addEventListener('change', syncWifiForm);
   usePassword?.addEventListener('change', () => {
     if (!passwordInput) return;
     passwordInput.disabled = !usePassword.checked;
-    passwordInput.required = usePassword.checked;
+    passwordInput.required = false;
   });
   showPassword?.addEventListener('change', () => {
     if (passwordInput) passwordInput.type = showPassword.checked ? 'text' : 'password';
   });
   syncWifiForm();
+}
+
+function openGeniePppoeModal(row = {}) {
+  openModal('Edit PPPoE', `
+    <label class="field full">
+      <span>Perangkat</span>
+      <input value="${escapeHtml(genieDeviceLabel(row))}" readonly>
+    </label>
+    <label class="field full">
+      <span>Username PPPoE</span>
+      <input name="username" type="text" value="${escapeHtml(row.username || '')}" autocomplete="off" required>
+    </label>
+    <label class="field full">
+      <span>Password PPPoE</span>
+      <input name="password" type="text" autocomplete="off" placeholder="Kosongkan jika tidak diganti">
+    </label>
+    <input name="usernameParameter" type="hidden" value="${escapeHtml(row.usernameParameter || '')}">
+    <div class="notice field full">
+      Password tidak ditampilkan dari GenieACS. Isi password hanya jika ingin mengganti password PPPoE.
+    </div>
+    <div class="modal-actions field full">
+      <button class="button" type="submit">Simpan PPPoE</button>
+    </div>
+  `, async (payload) => {
+    const username = String(payload.username || '').trim();
+    if (!username) throw new Error('Username PPPoE wajib diisi');
+    await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/pppoe`, {
+      method: 'POST',
+      body: JSON.stringify({
+        username,
+        password: payload.password,
+        usernameParameter: payload.usernameParameter || row.usernameParameter
+      })
+    });
+    setToast('Perintah ubah PPPoE dikirim');
+    renderGenieAcs({ refresh: true });
+  });
 }
 
 async function openGenieAcsSettingsModal() {
@@ -13348,7 +13719,14 @@ async function renderGenieAcs(options = {}) {
                   <td>${displayNumber(startNo + index)}</td>
                   <td>${genieStatusBadge(row)}</td>
                   <td class="genieacs-primary-cell" title="${escapeHtml(row.username || '-')}">
-                    <strong>${escapeHtml(row.username || '-')}</strong>
+                    <div class="genieacs-pppoe-cell">
+                      <strong>${escapeHtml(row.username || '-')}</strong>
+                      ${writeAllowed ? `
+                        <button class="cell-icon-button" type="button" data-genie-pppoe="${escapeHtml(row.id)}" title="Edit PPPoE" aria-label="Edit PPPoE ${escapeHtml(row.username || row.serialNumber || '')}">
+                          <span class="edit-icon" aria-hidden="true"></span>
+                        </button>
+                      ` : ''}
+                    </div>
                   </td>
                   <td class="genieacs-nowrap" title="${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}">${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}</td>
                   <td class="genieacs-truncate" title="${escapeHtml(row.nasName || row.nasIpAddress || '-')}">${nasActiveBadge(row.nasName || row.nasIpAddress || '-')}</td>
@@ -13357,7 +13735,9 @@ async function renderGenieAcs(options = {}) {
                   <td class="genieacs-nowrap"><strong>${escapeHtml(row.rxPowerText || '-')}</strong></td>
                   <td class="genieacs-nowrap">${escapeHtml(row.temperatureText || '-')}</td>
                   <td class="genieacs-number-cell">
-                    <strong>${displayNumber(row.wifiClientsTotal || 0)}</strong>
+                    <button class="genieacs-client-button" type="button" data-genie-clients="${index}" title="Lihat client terkoneksi">
+                      ${displayNumber(row.wifiClientsTotal || row.clientsTotal || 0)}
+                    </button>
                   </td>
                   <td class="genieacs-nowrap" title="${escapeHtml(lastActive)}">${escapeHtml(lastActive)}</td>
                   <td>
@@ -13480,6 +13860,18 @@ async function renderGenieAcs(options = {}) {
     button.addEventListener('click', () => {
       const row = rows.find((item) => item.id === button.dataset.genieWifi);
       if (row) openGenieWifiModal(row);
+    });
+  });
+  app.querySelectorAll('[data-genie-clients]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const row = rows[Number(button.dataset.genieClients || -1)];
+      if (row) openGenieClientsModal(row);
+    });
+  });
+  app.querySelectorAll('[data-genie-pppoe]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const row = rows.find((item) => item.id === button.dataset.geniePppoe);
+      if (row) openGeniePppoeModal(row);
     });
   });
   updateGenieSelection();
@@ -14394,7 +14786,6 @@ function openManualInvoiceModal() {
   const renderMemberStep = () => `
     <div class="manual-invoice-toolbar">
       <input class="control" id="manualInvoiceSearch" value="${escapeHtml(wizard.search)}" placeholder="Cari nama, user ID, WhatsApp" autocomplete="off">
-      <button class="ghost-button compact" type="button" data-manual-invoice-search>Cari</button>
     </div>
     ${wizard.loading ? '<div class="empty">Memuat member...</div>' : ''}
     ${wizard.error ? `<div class="notice error">${escapeHtml(wizard.error)}</div>` : ''}
@@ -14456,7 +14847,7 @@ function openManualInvoiceModal() {
       const result = loadMembers();
       Promise.resolve(result).finally(() => focusSearchAfterRender('#manualInvoiceSearch', next));
     };
-    modalBody.querySelector('[data-manual-invoice-search]')?.addEventListener('click', () => applyManualInvoiceSearch(true));
+    bindSearchClearButton(searchInput, () => applyManualInvoiceSearch(true));
     searchInput?.addEventListener('input', () => {
       window.clearTimeout(manualInvoiceSearchTimer);
       manualInvoiceSearchTimer = window.setTimeout(() => applyManualInvoiceSearch(false), LIVE_SEARCH_DEBOUNCE_MS);
@@ -14883,10 +15274,94 @@ function usageMonthlyBarChart(rows = []) {
             const height = Math.max(0, (box.top + box.plotHeight) - y);
             const x = box.left + (step * index) + ((step - barWidth) / 2);
             const tooltip = `${periodLabel(row.period)}\nUpload: ${row.upload || statisticsCompactBytes(row.inputOctets || 0)}\nDownload: ${row.download || statisticsCompactBytes(row.outputOctets || 0)}\nTotal: ${row.totalUsageText || statisticsCompactBytes(value)}`;
-            return `<rect class="statistics-bar voucher" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${height.toFixed(2)}" rx="5"><title>${escapeHtml(tooltip)}</title></rect>`;
+            const hitWidth = Math.max(28, barWidth + 12);
+            const hitX = x + (barWidth / 2) - (hitWidth / 2);
+            return `
+              <rect class="statistics-bar voucher" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${height.toFixed(2)}" rx="5" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+              <rect class="statistics-hit-rect" fill="transparent" pointer-events="all" x="${hitX.toFixed(2)}" y="${box.top}" width="${hitWidth.toFixed(2)}" height="${box.plotHeight}" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+            `;
           }).join('')}
           ${statisticsMonthAxisMarkup(chartRows, box)}
         </svg>
+      </div>
+    </div>
+  `;
+}
+
+function usageDailyDateLabel(value = '') {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return text || '-';
+  return `${match[3]}/${match[2]}`;
+}
+
+function usageDailyGridMarkup(range = {}, box = {}) {
+  return (range.ticks || []).map((value) => {
+    const y = statisticsChartPoint(value, range, box);
+    return `<line class="statistics-grid-line" x1="0" x2="${box.width - box.right}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}"></line>`;
+  }).join('');
+}
+
+function usageDailyFixedAxisMarkup(range = {}, box = {}, formatter = statisticsCompactBytes) {
+  return (range.ticks || []).map((value) => {
+    const y = statisticsChartPoint(value, range, box);
+    return `<span style="top:${y.toFixed(2)}px">${escapeHtml(formatter(value))}</span>`;
+  }).join('');
+}
+
+function usageDailyBarChart(rows = []) {
+  const chartRows = (Array.isArray(rows) ? rows : []).slice(-7);
+  if (!chartRows.length) {
+    return '<div class="empty compact">Aktivitas usage 7 hari terakhir belum tersedia.</div>';
+  }
+  const box = { width: 320, height: 116, right: 0, top: 8, plotHeight: 96 };
+  const range = statisticsChartRange(chartRows.map((row) => row.totalOctets), {
+    zeroBase: true,
+    minPadding: 1024 * 1024,
+    stepBase: 1024 * 1024
+  });
+  const plotWidth = box.width - box.right;
+  const step = chartRows.length ? plotWidth / chartRows.length : plotWidth;
+  const barWidth = Math.max(10, Math.min(24, step * 0.52));
+  return `
+    <div class="statistics-chart-card usage-daily-chart">
+      <div class="statistics-chart-head">
+        <div>
+          <h3>Aktivitas 7 Hari Terakhir</h3>
+          <span>Total usage harian dari FreeRADIUS.</span>
+        </div>
+        <div class="statistics-legend compact">
+          <span class="voucher">Total usage</span>
+        </div>
+      </div>
+      <div class="usage-daily-chart-frame">
+        <div class="usage-daily-fixed-axis" aria-hidden="true">
+          ${usageDailyFixedAxisMarkup(range, box, statisticsCompactBytes)}
+        </div>
+        <div class="statistics-svg-wrap usage-daily-svg-wrap">
+          <svg viewBox="0 0 ${box.width} ${box.height}" preserveAspectRatio="none" role="img" aria-label="Aktivitas usage 7 hari terakhir">
+          ${usageDailyGridMarkup(range, box)}
+          ${chartRows.map((row, index) => {
+            const value = Number(row.totalOctets || 0);
+            const y = statisticsChartPoint(value, range, box);
+            const height = Math.max(0, (box.top + box.plotHeight) - y);
+            const x = (step * index) + ((step - barWidth) / 2);
+            const tooltip = `${dateText(row.date)}\nUpload: ${row.upload || statisticsCompactBytes(row.inputOctets || 0)}\nDownload: ${row.download || statisticsCompactBytes(row.outputOctets || 0)}\nTotal: ${row.totalUsageText || statisticsCompactBytes(value)}\nSession: ${displayNumber(row.sessionCount || 0)}`;
+            const hitWidth = Math.max(34, barWidth + 14);
+            const hitX = x + (barWidth / 2) - (hitWidth / 2);
+            return `
+              <rect class="statistics-bar voucher" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${height.toFixed(2)}" rx="5" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+              <rect class="statistics-hit-rect" fill="transparent" pointer-events="all" x="${hitX.toFixed(2)}" y="${box.top}" width="${hitWidth.toFixed(2)}" height="${box.plotHeight}" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+            `;
+          }).join('')}
+          </svg>
+          <div class="usage-daily-date-grid">
+            ${chartRows.map((row) => {
+              const tooltip = `${dateText(row.date)}\nUpload: ${row.upload || statisticsCompactBytes(row.inputOctets || 0)}\nDownload: ${row.download || statisticsCompactBytes(row.outputOctets || 0)}\nTotal: ${row.totalUsageText || statisticsCompactBytes(row.totalOctets || 0)}\nSession: ${displayNumber(row.sessionCount || 0)}`;
+              return `<span ${chartTooltipAttr(tooltip)}>${escapeHtml(usageDailyDateLabel(row.date))}</span>`;
+            }).join('')}
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -14917,8 +15392,9 @@ function usageDetailPanel(usage = {}) {
       </div>
     </div>
     ${usage.error ? `<div class="notice warning"><strong>Usage belum lengkap</strong><span>${escapeHtml(usage.error)}</span></div>` : ''}
-    ${usageMonthlyBarChart(usage.monthlyRows || [])}
-    ${usage.monthlyError ? `<div class="notice warning"><strong>History usage belum lengkap</strong><span>${escapeHtml(usage.monthlyError)}</span></div>` : ''}
+    ${usageDailyBarChart(usage.dailyRows || [])}
+    ${usage.dailyError ? `<div class="notice warning"><strong>History usage belum lengkap</strong><span>${escapeHtml(usage.dailyError)}</span></div>` : ''}
+    ${usage.retentionText ? `<div class="muted usage-retention-note">${escapeHtml(usage.retentionText)}</div>` : ''}
   `;
 }
 
@@ -16745,10 +17221,6 @@ async function renderUsers(options = {}) {
       </section>
 
       <form class="user-filter-bar" id="userFilterForm">
-        <label class="user-search-field">
-          <span class="sr-only">Cari user</span>
-          <input class="control" id="userSearchInput" value="${escapeHtml(state.userSearch)}" placeholder="Cari nama, username, NIK, kontak, atau NAS" autocomplete="off">
-        </label>
         <select class="control" id="userRoleFilter" aria-label="Filter role user">
           <option value="all">Semua role</option>
           ${state.roles.map((role) => `<option value="${escapeHtml(role.value)}" ${state.userRole === role.value ? 'selected' : ''}>${escapeHtml(role.label)}</option>`).join('')}
@@ -16758,8 +17230,11 @@ async function renderUsers(options = {}) {
           <option value="active" ${state.userStatus === 'active' ? 'selected' : ''}>Aktif</option>
           <option value="inactive" ${state.userStatus === 'inactive' ? 'selected' : ''}>Nonaktif</option>
         </select>
-        <button class="ghost-button" type="submit">Cari</button>
-        <button class="ghost-button" id="resetUserFilters" type="button">Reset</button>
+        <button class="ghost-button" id="resetUserFilters" type="button">Reset Filter</button>
+        <label class="user-search-field">
+          <span class="sr-only">Cari user</span>
+          <input class="control" id="userSearchInput" value="${escapeHtml(state.userSearch)}" placeholder="Cari nama, username, NIK, kontak, atau NAS" autocomplete="off">
+        </label>
       </form>
 
       <div class="table-wrap user-table-wrap">
@@ -16838,7 +17313,8 @@ async function renderUsers(options = {}) {
     state.userPage = 1;
     renderUsers({ focusSearch: true });
   });
-  bindLiveTextSearch(document.getElementById('userSearchInput'), {
+  const userSearchInput = document.getElementById('userSearchInput');
+  bindLiveTextSearch(userSearchInput, {
     getValue: () => state.userSearch,
     setValue: (value) => {
       state.userSearch = value;
@@ -16846,6 +17322,11 @@ async function renderUsers(options = {}) {
     },
     handler: () => renderUsers({ focusSearch: true }),
     refocusSelector: '#userSearchInput'
+  });
+  bindSearchClearButton(userSearchInput, () => {
+    state.userSearch = '';
+    state.userPage = 1;
+    renderUsers({ focusSearch: true });
   });
   document.getElementById('userRoleFilter')?.addEventListener('change', (event) => {
     state.userRole = event.target.value || 'all';
@@ -17367,7 +17848,7 @@ function waMessageTransientError(message = {}) {
   const error = String(message.lastError || '').trim();
   if (!error) return '';
   if (/session status is not as expected|try again later|restart the session|scan_qr_code|starting|stopped|failed/i.test(error)) {
-    return 'Menunggu WAHA siap atau perlu scan ulang.';
+    return 'Menunggu Whatsapp Gateway siap atau perlu scan ulang.';
   }
   return error;
 }
@@ -17381,7 +17862,7 @@ function wahaFriendlyMessage(message = '') {
   const text = String(message || '').trim();
   if (!text) return '';
   if (/session status is not as expected|try again later|restart the session|scan_qr_code|starting|stopped|failed/i.test(text)) {
-    return 'Session WAHA sedang disiapkan. Klik Tampilkan QR lagi beberapa detik lagi, lalu scan jika QR muncul.';
+    return 'Session Whatsapp Gateway sedang disiapkan. Klik Tampilkan QR lagi beberapa detik lagi, lalu scan jika QR muncul.';
   }
   return text;
 }
@@ -17546,7 +18027,7 @@ function wahaQrImage(qr = {}) {
   if (qr.connected) {
     return `
       <div class="notice positive">
-        <strong>WAHA terhubung</strong>
+        <strong>Whatsapp Gateway terhubung</strong>
         <span>${escapeHtml(wahaFriendlyMessage(qr.message) || 'Session sudah aktif dan siap mengirim pesan.')}</span>
       </div>
     `;
@@ -17555,16 +18036,16 @@ function wahaQrImage(qr = {}) {
   const mime = qr.mimetype || qr.mime || 'image/png';
   if (data) {
     const src = String(data).startsWith('data:') ? data : `data:${mime};base64,${data}`;
-    return `<img class="wa-qr-image" src="${escapeHtml(src)}" alt="QR WAHA">`;
+    return `<img class="wa-qr-image" src="${escapeHtml(src)}" alt="QR Whatsapp Gateway">`;
   }
   const raw = qr.value || qr.raw || '';
   if (raw) {
     const rawText = String(raw).trim();
     if (rawText.startsWith('data:image/')) {
-      return `<img class="wa-qr-image" src="${escapeHtml(rawText)}" alt="QR WAHA">`;
+      return `<img class="wa-qr-image" src="${escapeHtml(rawText)}" alt="QR Whatsapp Gateway">`;
     }
     if (/^[A-Za-z0-9+/=\s]{200,}$/.test(rawText)) {
-      return `<img class="wa-qr-image" src="data:image/png;base64,${escapeHtml(rawText.replace(/\s+/g, ''))}" alt="QR WAHA">`;
+      return `<img class="wa-qr-image" src="data:image/png;base64,${escapeHtml(rawText.replace(/\s+/g, ''))}" alt="QR Whatsapp Gateway">`;
     }
     return `<pre class="code-block">${escapeHtml(rawText)}</pre>`;
   }
@@ -17672,7 +18153,7 @@ function openWahaQrModal(qr = {}, onConnected = null) {
     if (polling) return;
     polling = true;
     try {
-      updateQrStatus('Menunggu scan dari WhatsApp...');
+      updateQrStatus(qr.connected ? 'Memastikan Whatsapp Gateway tetap online...' : 'Mengecek koneksi Whatsapp Gateway...');
       const result = await api('/api/wa-gateway/waha/status', { timeoutMs: 7000 });
       if (!wahaIsOnline(result.status || {})) return;
       if (pollTimer) {
@@ -17696,7 +18177,7 @@ function openWahaQrModal(qr = {}, onConnected = null) {
   openModal('Whatsapp Gateway', `
     <div class="stack compact-stack">
       <div class="wa-qr-box">${wahaQrImage(qr)}</div>
-      <div class="notice" data-waha-qr-status><strong>Menunggu scan dari WhatsApp...</strong></div>
+      <div class="notice ${qr.connected ? 'positive' : ''}" data-waha-qr-status><strong>${qr.connected ? 'Whatsapp Gateway terhubung.' : 'Menunggu scan dari WhatsApp...'}</strong></div>
       <div class="modal-actions">
         <button class="button" value="cancel" type="submit">Tutup</button>
       </div>
@@ -18140,14 +18621,18 @@ async function renderWaGateway() {
         const result = await api('/api/wa-gateway/waha/logout', { method: 'POST', body: JSON.stringify({}) });
         if (resultEl) resultEl.innerHTML = `<div class="notice"><strong>Gateway logout</strong><span>${escapeHtml(wahaStatusLabel(result.status) || 'Session dihentikan')}</span></div>`;
       } else {
-        button.textContent = 'Memuat QR...';
-        if (resultEl) resultEl.innerHTML = '<div class="empty compact">Mengambil QR gateway...</div>';
+        button.textContent = 'Reconnect...';
+        if (resultEl) resultEl.innerHTML = '<div class="empty compact">Mencoba reconnect Whatsapp Gateway...</div>';
         const result = await api('/api/wa-gateway/waha/qr');
         openWahaQrModal(result.qr || {}, () => {
           loadWahaStatus({ force: true });
           refreshTopWaStatus();
         });
-        if (resultEl) resultEl.innerHTML = '<div class="notice"><strong>QR ditampilkan</strong><span>Scan QR dari popup Whatsapp Gateway.</span></div>';
+        if (resultEl) {
+          resultEl.innerHTML = result.qr?.connected
+            ? '<div class="notice positive"><strong>Gateway terhubung</strong><span>Session berhasil aktif tanpa scan ulang.</span></div>'
+            : '<div class="notice"><strong>QR ditampilkan</strong><span>Scan QR dari popup Whatsapp Gateway.</span></div>';
+        }
       }
       await loadWahaStatus({ force: true });
       await refreshTopWaStatus();
@@ -19344,6 +19829,7 @@ async function render(options = {}) {
     else if (state.view === 'reportsTransactions') await renderReportsTransactions(renderOptions);
     else if (state.view === 'reportsFinanceRecap') await renderReportsFinanceRecap();
     else if (state.view === 'reportsInventoryStock') await renderReportsInventoryStock();
+    else if (state.view === 'activity') await renderActivity(renderOptions);
     else if (state.view === 'waGateway') await renderWaGateway();
     else if (state.view === 'paymentGateway') await renderPaymentGateway();
     else if (state.view === 'inventory') await renderInventory();
@@ -19624,6 +20110,121 @@ function onMediaQueryChange(query, handler) {
     query.addListener(handler);
   }
 }
+
+let activeChartTooltipTimer = null;
+let chartTooltipShownAt = 0;
+
+function ensureChartTooltip() {
+  let tooltip = document.getElementById('chartTouchTooltip');
+  const openDialog = document.querySelector('dialog[open]');
+  const host = openDialog || document.body;
+  if (tooltip) {
+    if (tooltip.parentNode !== host) host.appendChild(tooltip);
+    return tooltip;
+  }
+  tooltip = document.createElement('div');
+  tooltip.id = 'chartTouchTooltip';
+  tooltip.className = 'chart-touch-tooltip';
+  tooltip.hidden = true;
+  host.appendChild(tooltip);
+  return tooltip;
+}
+
+function hideChartTooltip() {
+  if (Date.now() - chartTooltipShownAt < 350) return;
+  const tooltip = document.getElementById('chartTouchTooltip');
+  if (tooltip) tooltip.hidden = true;
+  clearTimeout(activeChartTooltipTimer);
+  activeChartTooltipTimer = null;
+}
+
+function chartTooltipTarget(node) {
+  let current = node && currentNode(node);
+  while (current && current !== document) {
+    if (typeof current.getAttribute === 'function' && current.getAttribute('data-chart-tooltip')) return current;
+    current = currentNode(current.parentNode || current.host);
+  }
+  return null;
+}
+
+function chartTooltipTargetFromEvent(event) {
+  const direct = chartTooltipTarget(event?.target);
+  if (direct) return direct;
+  const path = typeof event?.composedPath === 'function' ? event.composedPath() : [];
+  for (const node of path) {
+    const target = chartTooltipTarget(node);
+    if (target) return target;
+  }
+  return null;
+}
+
+function currentNode(node) {
+  return node && node.nodeType === 3 ? node.parentNode : node;
+}
+
+function showChartTooltip(target, event = null) {
+  const text = String(target?.getAttribute('data-chart-tooltip') || '').trim();
+  if (!text) return;
+  const tooltip = ensureChartTooltip();
+  tooltip.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+  tooltip.hidden = false;
+
+  const rect = target.getBoundingClientRect();
+  const pointerX = Number(event?.clientX);
+  const pointerY = Number(event?.clientY);
+  const x = Number.isFinite(pointerX) ? pointerX : rect.left + (rect.width / 2);
+  const y = Number.isFinite(pointerY) ? pointerY : rect.top;
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const margin = 10;
+  const left = Math.max(margin, Math.min(window.innerWidth - tooltipRect.width - margin, x - (tooltipRect.width / 2)));
+  const hasTopRoom = y - tooltipRect.height - 12 >= margin;
+  const preferredTop = hasTopRoom ? y - tooltipRect.height - 12 : y + 16;
+  const top = Math.max(margin, Math.min(window.innerHeight - tooltipRect.height - margin, preferredTop));
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+  chartTooltipShownAt = Date.now();
+
+  clearTimeout(activeChartTooltipTimer);
+  activeChartTooltipTimer = setTimeout(hideChartTooltip, 6500);
+}
+
+document.addEventListener('pointerdown', (event) => {
+  const target = chartTooltipTargetFromEvent(event);
+  if (target) {
+    showChartTooltip(target, event);
+    return;
+  }
+  hideChartTooltip();
+});
+
+document.addEventListener('touchstart', (event) => {
+  const target = chartTooltipTargetFromEvent(event);
+  if (!target) return;
+  const touch = event.touches && event.touches[0] ? event.touches[0] : event;
+  showChartTooltip(target, touch);
+}, { passive: true });
+
+document.addEventListener('click', (event) => {
+  const target = chartTooltipTargetFromEvent(event);
+  if (target) {
+    showChartTooltip(target, event);
+    return;
+  }
+  hideChartTooltip();
+});
+
+document.addEventListener('mouseover', (event) => {
+  const target = chartTooltipTargetFromEvent(event);
+  if (target) showChartTooltip(target, event);
+});
+
+document.addEventListener('focusin', (event) => {
+  const target = chartTooltipTargetFromEvent(event);
+  if (target) showChartTooltip(target, null);
+});
+
+window.addEventListener('scroll', hideChartTooltip, { passive: true });
+document.addEventListener('scroll', hideChartTooltip, { passive: true, capture: true });
 
 onMediaQueryChange(mobileMenuQuery, () => {
   setMenuOpen(false);

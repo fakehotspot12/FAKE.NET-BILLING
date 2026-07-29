@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.7] - 2026-07-30
+
+### Changed
+
+- Chart usage 7 hari di WifiKu dan Member dibuat lebih ringkas: label nilai bawah dihapus, tanggal tetap tampil di graph, dan detail nilai muncul saat disentuh/diklik.
+- Kolom Total Active di menu GenieACS sekarang bisa dibuka untuk melihat detail client 2.4G, 5G, dan LAN lengkap dengan nama perangkat, IP, dan MAC.
+
+### Fixed
+
+- Nama perangkat client yang sedang konek dari GenieACS kini digabung dari data AssociatedDevice dan Hosts.Host berdasarkan MAC/IP agar tidak kosong di WifiKu.
+- Tooltip chart pada mobile kini memakai target sentuh khusus dan tetap muncul di atas dialog/pop-up.
+
 ## [2.11.6] - 2026-07-29
 
 ### Fixed

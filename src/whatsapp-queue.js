@@ -112,6 +112,16 @@ class WhatsAppQueue {
     };
   }
 
+  async cleanFailedJobs(graceMs = 0, limit = 1000) {
+    if (!this.queue) return 0;
+    const cleaned = await this.queue.clean(
+      Math.max(0, Number(graceMs) || 0),
+      Math.max(1, Number(limit) || 1000),
+      'failed'
+    );
+    return Array.isArray(cleaned) ? cleaned.length : 0;
+  }
+
   async close() {
     const tasks = [];
     if (this.worker) tasks.push(this.worker.close(true));

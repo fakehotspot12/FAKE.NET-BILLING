@@ -156,6 +156,61 @@ test('WAHA provider response ID is normalized and ACK advances to read', () => {
   assert.ok(data.waMessages[0].readAt);
 });
 
+test('WAJS/WebJS provider response ID and ACK string statuses are normalized', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.sender = 'default';
+  const providerMessageId = serverInternals.wahaProviderMessageId({
+    message: {
+      id: {
+        remoteJid: '6281234567890@c.us',
+        fromMe: true,
+        id: 'WEBJSAABBCCDDEEFF001122334455'
+      }
+    }
+  });
+  data.waMessages.push({
+    id: 'wa-webjs-ack',
+    providerMessageId,
+    status: 'sent',
+    sentAt: '2026-07-19T00:00:00.000Z'
+  });
+
+  const result = serverInternals.applyWahaAckEvent(data, {
+    event: 'message_ack',
+    session: 'default',
+    payload: {
+      message: { id: { _serialized: providerMessageId } },
+      ack: 'DELIVERED'
+    }
+  });
+
+  assert.equal(providerMessageId.includes('WEBJSAABBCCDDEEFF001122334455'), true);
+  assert.equal(result.matched, true);
+  assert.equal(data.waMessages[0].status, 'delivered');
+  assert.ok(data.waMessages[0].deliveredAt);
+});
+
+test('temporary Whatsapp Gateway session errors are treated as retryable', () => {
+  assert.equal(serverInternals.isTransientWaGatewayError({
+    status: 422,
+    message: 'Session status is not as expected. Try again later or restart the session'
+  }), true);
+  assert.equal(serverInternals.isTransientWaGatewayError({
+    message: 'fetch failed'
+  }), true);
+  assert.equal(serverInternals.isTransientWaGatewayError({
+    status: 400,
+    message: 'Nomor WhatsApp kosong'
+  }), false);
+});
+
+test('WAJS/WebJS connection states are recognized as online or QR-required', () => {
+  assert.equal(serverInternals.wahaIsConnected({ engine: { state: 'CONNECTED' } }), true);
+  assert.equal(serverInternals.wahaIsConnected({ status: 'OPEN' }), true);
+  assert.equal(serverInternals.wahaNeedsQr({ status: 'SCAN_QR_CODE' }), true);
+  assert.equal(serverInternals.wahaNeedsQr({ status: 'UNPAIRED' }), true);
+});
+
 test('WAHA webhook signature only accepts the raw body HMAC', () => {
   const raw = JSON.stringify({ event: 'message.ack', payload: { id: 'message-1', ack: 2 } });
   const secret = 'test-webhook-secret';
@@ -195,4 +250,24 @@ test('enabling Whatsapp recovers only relevant invoice drafts automatically', ()
   assert.equal(data.waMessages[0].deliveryMode, 'transactional');
   assert.equal(data.waMessages[0].queueRevision, 1);
   assert.equal(data.waMessages[1].status, 'draft');
+});
+
+test('enabling Whatsapp recovers voucher delivery drafts automatically', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  data.waMessages.push({
+    id: 'wa-voucher-draft',
+    status: 'draft',
+    type: 'voucherIssued',
+    phone: '081234567899',
+    text: 'Voucher berhasil',
+    queueRevision: 0
+  });
+
+  const recovered = serverInternals.recoverRelevantWaGatewayDrafts(data);
+
+  assert.deepEqual(recovered.map((message) => message.id), ['wa-voucher-draft']);
+  assert.equal(data.waMessages[0].status, 'queued');
+  assert.equal(data.waMessages[0].deliveryMode, 'transactional');
+  assert.equal(data.waMessages[0].queueRevision, 1);
 });

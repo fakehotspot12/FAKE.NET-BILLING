@@ -959,6 +959,156 @@ function sortByDateDesc(items, field = 'createdAt') {
   return [...items].sort((a, b) => String(b[field] || '').localeCompare(String(a[field] || '')));
 }
 
+const TECHNICAL_ACTIVITY_ROLES = new Set(['technician', 'noc']);
+const TECHNICAL_ACTIVITY_TYPES = new Set(['inventory', 'asset', 'network']);
+const TECHNICAL_ACTIVITY_KEYWORDS = [
+  'inventory',
+  'inventaris',
+  'stok',
+  'stock',
+  'barang',
+  'asset',
+  'aset',
+  'network',
+  'perangkat',
+  'monitoring',
+  'site',
+  'snmp',
+  'genieacs',
+  'onu',
+  'olt',
+  'radius',
+  'freeradius',
+  'ppp',
+  'dhcp',
+  'hotspot',
+  'mikrotik',
+  'session',
+  'coa',
+  'profile',
+  'template',
+  'member',
+  'pelanggan',
+  'contact',
+  'lokasi',
+  'alamat'
+];
+const SENSITIVE_ACTIVITY_KEYWORDS = [
+  'invoice',
+  'tagihan',
+  'bayar',
+  'pembayaran',
+  'payment',
+  'paid',
+  'unpaid',
+  'kas',
+  'income',
+  'pemasukan',
+  'expense',
+  'pengeluaran',
+  'xendit',
+  'tripay',
+  'gateway',
+  'withdraw',
+  'saldo',
+  'fee',
+  'qris',
+  'virtual account',
+  'whatsapp',
+  'broadcast',
+  'reminder',
+  'voucher online'
+];
+const ACTIVITY_CATEGORY_KEYS = new Set(['billing', 'payment', 'radius', 'member', 'inventory', 'asset', 'wa', 'settings', 'finance']);
+
+function activityScopeText(item = {}) {
+  const meta = item.meta && typeof item.meta === 'object' ? JSON.stringify(item.meta) : '';
+  return `${item.type || ''} ${item.message || ''} ${meta}`.toLowerCase();
+}
+
+function isTechnicalActivityVisible(item = {}) {
+  const text = activityScopeText(item);
+  if (!text.trim()) return false;
+  if (SENSITIVE_ACTIVITY_KEYWORDS.some((keyword) => text.includes(keyword))) {
+    return false;
+  }
+  const type = String(item.type || '').trim().toLowerCase();
+  if (TECHNICAL_ACTIVITY_TYPES.has(type)) {
+    return true;
+  }
+  return TECHNICAL_ACTIVITY_KEYWORDS.some((keyword) => text.includes(keyword));
+}
+
+function activityRowsForUser(user = {}, activity = []) {
+  const role = String(user.role || '').trim().toLowerCase();
+  if (!TECHNICAL_ACTIVITY_ROLES.has(role)) {
+    return activity;
+  }
+  return activity.filter(isTechnicalActivityVisible);
+}
+
+function activityMatchesCategory(item = {}, category = 'all') {
+  const key = String(category || 'all').trim().toLowerCase();
+  if (key === 'all') return true;
+  const type = String(item.type || '').trim().toLowerCase();
+  const text = activityScopeText(item);
+  if (key === 'billing') return ['invoice'].includes(type) || /\b(invoice|billing|tagihan|isolir|terminated|rollback)\b/.test(text);
+  if (key === 'payment') return ['payment'].includes(type) || /\b(payment|pembayaran|bayar|paid|qris|virtual account|gerai|transfer|tunai)\b/.test(text);
+  if (key === 'radius') return /\b(radius|freeradius|ppp|dhcp|hotspot|session|coa|profile|template|voucher|mikrotik)\b/.test(text);
+  if (key === 'member') return ['customer'].includes(type) || /\b(member|pelanggan|contact|lokasi|alamat|ktp)\b/.test(text);
+  if (key === 'inventory') return ['inventory'].includes(type) || /\b(inventory|inventaris|stok|stock|barang)\b/.test(text);
+  if (key === 'asset') return ['asset', 'network'].includes(type) || /\b(asset|aset|perangkat)\b/.test(text);
+  if (key === 'wa') return /\b(wa|whatsapp|broadcast|reminder|pesan)\b/.test(text);
+  if (key === 'settings') return ['settings', 'user'].includes(type) || /\b(setting|pengaturan|user|update|backup|restore|aktivasi)\b/.test(text);
+  if (key === 'finance') return ['income', 'expense', 'xendit'].includes(type) || /\b(pemasukan|pengeluaran|kas|xendit|tripay|withdraw|saldo)\b/.test(text);
+  return type === key;
+}
+
+function monthEndIso(period = currentPeriod()) {
+  const [year, month] = String(period || currentPeriod()).split('-').map(Number);
+  const nextYear = month >= 12 ? year + 1 : year;
+  const nextMonth = month >= 12 ? 1 : month + 1;
+  return addDaysIso(`${String(nextYear || 1970).padStart(4, '0')}-${String(nextMonth || 1).padStart(2, '0')}-01`, -1);
+}
+
+function activityDateKey(item = {}, settings = {}) {
+  const raw = String(item.at || item.createdAt || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    const date = new Date(raw);
+    if (!Number.isNaN(date.getTime())) {
+      const parts = localDateParts(date, appTimeZone(settings || {}));
+      return `${parts.year}-${parts.month}-${parts.day}`;
+    }
+    return raw.slice(0, 10);
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = localDateParts(date, appTimeZone(settings || {}));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function activityDateRangeFromQuery(url, settings = {}) {
+  const today = localTodayIso();
+  const range = String(url.searchParams.get('range') || 'all').trim().toLowerCase();
+  const fromParam = String(url.searchParams.get('from') || '').trim();
+  const toParam = String(url.searchParams.get('to') || '').trim();
+  const validDate = (value = '') => /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (range === 'today') return { from: today, to: today };
+  if (range === 'week') return { from: addDaysIso(today, -6), to: today };
+  if (range === 'month') return { from: `${today.slice(0, 7)}-01`, to: monthEndIso(today.slice(0, 7)) };
+  if (range === 'custom') {
+    const from = validDate(fromParam) ? fromParam : today;
+    const to = validDate(toParam) ? toParam : from;
+    return from <= to ? { from, to } : { from: to, to: from };
+  }
+  if (validDate(fromParam) || validDate(toParam)) {
+    const from = validDate(fromParam) ? fromParam : '0000-01-01';
+    const to = validDate(toParam) ? toParam : '9999-12-31';
+    return from <= to ? { from, to } : { from: to, to: from };
+  }
+  return { from: '', to: '' };
+}
+
 function parseLocalTransactionTime(value) {
   if (value instanceof Date) {
     const timestamp = value.getTime();
@@ -2633,10 +2783,39 @@ async function radiusUsageMonthlyHistoryForUsername(username = '', period = curr
   };
 }
 
+async function radiusUsageDailyHistoryForUsername(username = '', referenceDate = localTodayIso(), days = 7) {
+  const cleanUsername = String(username || '').trim();
+  const safeDays = Math.max(1, Math.min(31, Math.trunc(Number(days || 7))));
+  if (!cleanUsername) {
+    return {
+      ok: true,
+      source: 'freeradius-radacct',
+      referenceDate,
+      days: safeDays,
+      rows: []
+    };
+  }
+  const payload = await freeradiusSessions.dailyUsageByUsername(cleanUsername, referenceDate, { days: safeDays });
+  return {
+    ok: payload.ok !== false,
+    source: payload.source || 'freeradius-radacct',
+    referenceDate: payload.referenceDate || referenceDate,
+    days: payload.days || safeDays,
+    rows: payload.rows || [],
+    error: payload.error || ''
+  };
+}
+
 async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPeriod()) {
   const radiusUser = radiusUserForCustomer(data, customer) || {};
   const username = radiusUser.username || customer.username || '';
-  const usage = await radiusUsageDetailForUsername(username, period, 40);
+  const [usage, dailyUsage] = await Promise.all([
+    radiusUsageDetailForUsername(username, period, 40),
+    radiusUsageDailyHistoryForUsername(username, localTodayIso(), 7)
+  ]);
+  usage.dailyRows = dailyUsage.rows || [];
+  usage.dailyError = dailyUsage.error || '';
+  usage.dailyReferenceDate = dailyUsage.referenceDate || localTodayIso();
   let device = null;
   let genieError = '';
   if (genieAcs.configured(data.settings || {})) {
@@ -8848,7 +9027,7 @@ function paymentCategoryForRecord(record = {}, fallbackMethod = '') {
     || record.payment_method
     || ''
   ).trim().toLowerCase();
-  if (rawMethod.includes('loket')) return 'cash';
+  if (rawMethod.includes('loket')) return 'transfer';
   const explicit = normalizePaymentCategory(
     record.paymentCategory
     || record.payment_category
@@ -10850,12 +11029,27 @@ function verifyWahaWebhookSignature(headers = {}, raw = '', secret = wahaWebhook
 function wahaProviderMessageId(payload = {}) {
   if (typeof payload === 'string') return payload.trim();
   if (!payload || typeof payload !== 'object') return '';
-  const direct = [payload.providerMessageId, payload.messageId, payload._serialized]
+  const direct = [
+    payload.providerMessageId,
+    payload.messageId,
+    payload._serialized,
+    payload.message?._serialized,
+    payload.message?.id?._serialized,
+    payload.message?.key?._serialized,
+    payload.data?.id,
+    payload.data?._serialized
+  ]
     .find((value) => typeof value === 'string' && value.trim());
   if (direct) return direct.trim();
   const idValue = payload.id;
   if (typeof idValue === 'string' && idValue.trim()) return idValue.trim();
-  const key = payload.key || (idValue && typeof idValue === 'object' ? idValue : null) || payload._data?.key || payload._data?.id;
+  const key = payload.key
+    || payload.message?.key
+    || payload.message?.id
+    || payload.data?.key
+    || (idValue && typeof idValue === 'object' ? idValue : null)
+    || payload._data?.key
+    || payload._data?.id;
   if (!key) return '';
   if (typeof key === 'string') return key.trim();
   if (typeof key._serialized === 'string' && key._serialized.trim()) return key._serialized.trim();
@@ -10877,16 +11071,17 @@ function wahaMessageIdsEqual(left = '', right = '') {
 
 function wahaAckStatus(payload = {}) {
   const ack = Number(payload.ack);
-  const name = String(payload.ackName || '').trim().toUpperCase();
+  const name = String(payload.ackName || payload.ack || payload.status || '').trim().toUpperCase();
   if (ack >= 3 || ['READ', 'PLAYED'].includes(name)) return 'read';
-  if (ack === 2 || name === 'DEVICE') return 'delivered';
-  if (ack === 1 || name === 'SERVER') return 'sent';
-  if (ack < 0 || name === 'ERROR') return 'failed';
+  if (ack === 2 || ['DEVICE', 'DELIVERED'].includes(name)) return 'delivered';
+  if (ack === 1 || ['SERVER', 'SENT'].includes(name)) return 'sent';
+  if (ack < 0 || ['ERROR', 'FAILED'].includes(name)) return 'failed';
   return '';
 }
 
 function applyWahaAckEvent(data = {}, event = {}) {
-  if (String(event.event || '').trim().toLowerCase() !== 'message.ack') {
+  const eventName = String(event.event || event.type || event.name || '').trim().toLowerCase().replace(/[:_]/g, '.');
+  if (!['message.ack', 'message.acknowledgement', 'message.status'].includes(eventName)) {
     return { matched: false, ignored: true, reason: 'unsupported-event' };
   }
   const expectedSession = wahaSessionName(data.settings?.waGateway || {});
@@ -11021,17 +11216,22 @@ async function wahaDeleteSession(settings = {}) {
 
 function wahaStatusText(status = {}) {
   if (!status || typeof status !== 'object') return '';
-  return String(status.status || status.state || status.engine?.state || '').trim().toUpperCase();
+  return String(status.status || status.state || status.engine?.state || status.connection || '').trim().toUpperCase();
 }
 
 function wahaIsConnected(status = {}) {
   const state = wahaStatusText(status);
-  return ['WORKING', 'CONNECTED', 'READY'].includes(state);
+  return ['WORKING', 'CONNECTED', 'READY', 'ONLINE', 'OPEN'].includes(state);
 }
 
 function wahaNeedsStart(status = {}) {
   const state = wahaStatusText(status);
-  return ['FAILED', 'STOPPED', 'DISCONNECTED', 'OFFLINE'].includes(state);
+  return ['FAILED', 'STOPPED', 'DISCONNECTED', 'OFFLINE', 'CLOSED', 'CLOSE', 'UNPAIRED', 'UNLAUNCHED'].includes(state);
+}
+
+function wahaNeedsQr(status = {}) {
+  const state = wahaStatusText(status);
+  return ['SCAN_QR_CODE', 'UNPAIRED'].includes(state);
 }
 
 function waitMs(duration = 0) {
@@ -11042,9 +11242,49 @@ function wahaFriendlyMessage(message = '') {
   const text = String(message || '').trim();
   if (!text) return '';
   if (/session status is not as expected|try again later|restart the session|scan_qr_code|starting|stopped|failed/i.test(text)) {
-    return 'Session WAHA sedang disiapkan. Klik Tampilkan QR lagi beberapa detik lagi, lalu scan jika QR muncul.';
+    return 'Session Whatsapp Gateway sedang disiapkan. Klik Tampilkan QR lagi beberapa detik lagi, lalu scan jika QR muncul.';
   }
   return text;
+}
+
+function transientWaGatewayError(message = 'Whatsapp Gateway belum siap', details = {}) {
+  const error = new Error(message);
+  error.transientWaGateway = true;
+  Object.assign(error, details);
+  return error;
+}
+
+function isTransientWaGatewayError(error = {}) {
+  if (error.transientWaGateway === true) return true;
+  const status = Number(error.status || error.code || 0);
+  if ([408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+  const text = [
+    error.message,
+    error.payload && JSON.stringify(error.payload),
+    error.cause && (error.cause.message || error.cause.code)
+  ].filter(Boolean).join(' ');
+  return /session status is not as expected|try again later|restart the session|scan_qr_code|starting|stopped|disconnected|offline|timeout|abort|econnrefused|fetch failed|socket hang up|temporar/i.test(text);
+}
+
+async function ensureWahaSessionReady(settings = {}) {
+  let status;
+  try {
+    status = await wahaSessionStatus(settings, { timeoutMs: Math.min(5000, WA_GATEWAY_HTTP_TIMEOUT_MS) });
+  } catch (error) {
+    throw transientWaGatewayError(error.message || 'Whatsapp Gateway tidak bisa diakses', {
+      status: error.status,
+      payload: error.payload
+    });
+  }
+  if (wahaIsConnected(status)) return status;
+  if (wahaNeedsStart(status)) {
+    await wahaStartSession(settings).catch(() => null);
+    await waitMs(1000);
+    status = await wahaSessionStatus(settings, { timeoutMs: Math.min(5000, WA_GATEWAY_HTTP_TIMEOUT_MS) }).catch(() => status);
+    if (wahaIsConnected(status)) return status;
+  }
+  const state = wahaStatusText(status) || 'UNKNOWN';
+  throw transientWaGatewayError(`Whatsapp Gateway belum online (${state})`, { payload: status });
 }
 
 async function wahaStartSession(settings = {}) {
@@ -11072,6 +11312,48 @@ async function wahaStartSession(settings = {}) {
     }
     throw error;
   }
+}
+
+async function pollWahaConnected(settings = {}, initialStatus = null, options = {}) {
+  let status = initialStatus;
+  const attempts = Math.max(1, Number(options.attempts || 8) || 8);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (status && wahaIsConnected(status)) return status;
+    await waitMs(attempt < 2 ? 700 : 1200);
+    status = await wahaSessionStatus(settings, { timeoutMs: Math.min(5000, WA_GATEWAY_HTTP_TIMEOUT_MS) }).catch(() => status);
+  }
+  return status;
+}
+
+async function wahaReconnectSession(settings = {}, options = {}) {
+  let status = await wahaSessionStatus(settings, { timeoutMs: Math.min(5000, WA_GATEWAY_HTTP_TIMEOUT_MS) }).catch(() => null);
+  if (status && wahaIsConnected(status)) {
+    return { connected: true, status, reconnected: false, needsQr: false };
+  }
+
+  let started = await wahaStartSession(settings).catch(() => status);
+  status = await pollWahaConnected(settings, started || status, { attempts: options.attempts || 6 });
+  if (status && wahaIsConnected(status)) {
+    return { connected: true, status, reconnected: true, needsQr: false };
+  }
+
+  const state = wahaStatusText(status);
+  if (options.restartStale !== false && !wahaNeedsQr(status) && state !== 'STARTING') {
+    await wahaStopSession(settings).catch(() => null);
+    await waitMs(700);
+    started = await wahaStartSession(settings).catch(() => status);
+    status = await pollWahaConnected(settings, started || status, { attempts: options.restartAttempts || 8 });
+    if (status && wahaIsConnected(status)) {
+      return { connected: true, status, reconnected: true, needsQr: false };
+    }
+  }
+
+  return {
+    connected: false,
+    status,
+    reconnected: false,
+    needsQr: wahaNeedsQr(status)
+  };
 }
 
 async function wahaStopSession(settings = {}) {
@@ -11123,32 +11405,16 @@ async function wahaLogoutSession(settings = {}) {
 
 async function wahaQr(settings = {}) {
   const session = wahaSessionName(settings);
-  let status = await wahaSessionStatus(settings).catch(() => null);
-  const initialState = wahaStatusText(status);
-  if (wahaNeedsStart(status)) {
-    status = await wahaStartSession(settings).catch(() => status);
-  }
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    if (status && wahaIsConnected(status)) {
-      return {
-        connected: true,
-        status,
-        message: 'WAHA sudah terhubung. Klik Logout jika ingin scan ulang perangkat.'
-      };
-    }
-    const state = wahaStatusText(status);
-    if (state === 'SCAN_QR_CODE') break;
-    if (attempt > 0 && wahaNeedsStart(status)) {
-      status = await wahaStartSession(settings).catch(() => status);
-    }
-    await waitMs(attempt < 2 ? 700 : 1200);
-    status = await wahaSessionStatus(settings).catch(() => status);
-  }
-  if (status && wahaIsConnected(status)) {
+  const reconnect = await wahaReconnectSession(settings, { restartStale: true, attempts: 6, restartAttempts: 8 });
+  let status = reconnect.status;
+  if (reconnect.connected) {
     return {
       connected: true,
       status,
-      message: 'WAHA sudah terhubung. Klik Logout jika ingin scan ulang perangkat.'
+      reconnected: reconnect.reconnected,
+      message: reconnect.reconnected
+        ? 'Whatsapp Gateway berhasil reconnect tanpa scan ulang.'
+        : 'Whatsapp Gateway sudah terhubung. Klik Logout jika ingin scan ulang perangkat.'
     };
   }
   const suffixes = [
@@ -11188,6 +11454,7 @@ async function deliverWaMessage(settings = {}, message = {}) {
   }
   const phone = normalizeWaPhone(message.phone);
   if (!phone) throw new Error('Nomor WhatsApp kosong');
+  await ensureWahaSessionReady(settings);
   const payload = await wahaJson(settings, '/api/sendText', {
     method: 'POST',
     body: JSON.stringify({
@@ -11272,20 +11539,36 @@ async function processWaGatewayQueueJob(job) {
       providerMessageId: delivery.providerMessageId || ''
     };
   } catch (error) {
+    const transient = isTransientWaGatewayError(error);
     const attemptNumber = Math.max(1, Number(job.attemptsMade || 0) + 1);
     const maximumAttempts = Math.max(1, Number(job.opts?.attempts || 1));
     const finalAttempt = attemptNumber >= maximumAttempts;
-    const retryDelaySeconds = Math.max(15, Number(waGatewayMessageDelaySeconds(settings, message) || WA_GATEWAY_TRANSACTIONAL_DELAY_SECONDS));
+    const retryDelaySeconds = Math.max(
+      transient ? 60 : 15,
+      Number(waGatewayMessageDelaySeconds(settings, message) || WA_GATEWAY_TRANSACTIONAL_DELAY_SECONDS)
+    );
     await mutate((store) => {
       const current = (store.waMessages || []).find((item) => item.id === messageId);
       if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision) return;
       current.provider = provider;
-      current.status = finalAttempt ? 'failed' : 'queued';
+      current.status = transient ? 'queued' : (finalAttempt ? 'failed' : 'queued');
       current.attempts = Math.max(0, Number(current.attempts) || 0) + 1;
       current.scheduledAt = new Date(Date.now() + retryDelaySeconds * 1000).toISOString();
-      current.lastError = error.message || 'Whatsapp Gateway gagal mengirim';
+      current.lastError = wahaFriendlyMessage(error.message || 'Whatsapp Gateway gagal mengirim');
       current.updatedAt = new Date().toISOString();
+      if (transient) {
+        current.queueRevision = Math.max(0, Number(current.queueRevision) || 0) + 1;
+        current.queueJobId = '';
+        current.enqueuedAt = '';
+      }
     }, { collections: ['waMessages'], includeCore: false });
+    if (transient) {
+      return {
+        retryLater: true,
+        reason: wahaFriendlyMessage(error.message || 'Whatsapp Gateway belum siap'),
+        retryDelaySeconds
+      };
+    }
     throw error;
   }
 }
@@ -11296,6 +11579,13 @@ async function ensureWaGatewayQueue() {
   waGatewayQueueStartPromise = (async () => {
     const queue = new WhatsAppQueue();
     await queue.start(processWaGatewayQueueJob);
+    const cleanedFailed = await queue.cleanFailedJobs(0, 1000).catch((error) => {
+      console.warn(`BullMQ Whatsapp gagal membersihkan job failed lama: ${error.message || error}`);
+      return 0;
+    });
+    if (cleanedFailed) {
+      console.log(`BullMQ Whatsapp membersihkan ${cleanedFailed} job failed lama`);
+    }
     waGatewayQueue = queue;
     console.log('BullMQ Whatsapp worker aktif dengan concurrency 1');
     return queue;
@@ -11337,14 +11627,16 @@ async function waGatewayQueueStatus(timeoutMs = 1500) {
 function waGatewayDraftIsRecoverable(data = {}, message = {}, messages = data.waMessages || []) {
   if (data.settings?.waGateway?.enabled !== true) return false;
   if (String(message.status || '').toLowerCase() !== 'draft') return false;
-  if (!message.invoiceId || !message.phone || !String(message.text || '').trim()) return false;
+  const isVoucherDelivery = ['voucherIssued', 'voucherExpired'].includes(String(message.type || ''));
+  if ((!isVoucherDelivery && !message.invoiceId) || !message.phone || !String(message.text || '').trim()) return false;
   const invoice = (data.invoices || []).find((item) => item.id === message.invoiceId);
-  if (!invoice) return false;
-  const invoiceStatus = invoiceRuntimeStatus(invoice);
-  const relevant = ['paymentPaid', 'accountActive'].includes(message.type)
-    ? invoiceStatus === 'paid'
-    : ['invoiceIssued', 'paymentReminder', 'invoiceOverdue', 'accountSuspend'].includes(message.type)
-      && ['pending', 'overdue'].includes(invoiceStatus);
+  if (!invoice && !isVoucherDelivery) return false;
+  const invoiceStatus = invoice ? invoiceRuntimeStatus(invoice) : '';
+  const relevant = isVoucherDelivery
+    || (['paymentPaid', 'accountActive'].includes(message.type)
+      ? invoiceStatus === 'paid'
+      : ['invoiceIssued', 'paymentReminder', 'invoiceOverdue', 'accountSuspend'].includes(message.type)
+        && ['pending', 'overdue'].includes(invoiceStatus));
   if (!relevant) return false;
   return !messages.some((other) => {
     return other.id !== message.id
@@ -15141,10 +15433,22 @@ async function handleApi(req, res, url) {
     const data = authContext.data;
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
     const type = String(url.searchParams.get('type') || 'all').trim().toLowerCase();
+    const category = String(url.searchParams.get('category') || 'all').trim().toLowerCase();
+    const dateRange = activityDateRangeFromQuery(url, data.settings || {});
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    let activity = Array.isArray(data.activity) ? [...data.activity] : [];
+    let activity = activityRowsForUser(authContext.user, Array.isArray(data.activity) ? [...data.activity] : []);
     if (type !== 'all') {
       activity = activity.filter((item) => String(item.type || '').toLowerCase() === type);
+    }
+    if (category !== 'all') {
+      activity = activity.filter((item) => activityMatchesCategory(item, category));
+    }
+    if (dateRange.from || dateRange.to) {
+      activity = activity.filter((item) => {
+        const key = activityDateKey(item, data.settings || {});
+        if (!key) return false;
+        return (!dateRange.from || key >= dateRange.from) && (!dateRange.to || key <= dateRange.to);
+      });
     }
     if (search) {
       activity = activity.filter((item) => {
@@ -15167,6 +15471,12 @@ async function handleApi(req, res, url) {
         totalPages,
         hasPrev: currentPage > 1,
         hasNext: currentPage < totalPages
+      },
+      filters: {
+        range: String(url.searchParams.get('range') || 'all').trim().toLowerCase(),
+        category: ACTIVITY_CATEGORY_KEYS.has(category) ? category : 'all',
+        from: dateRange.from,
+        to: dateRange.to
       }
     });
     return;
@@ -15855,13 +16165,15 @@ async function handleApi(req, res, url) {
     const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
     const redaman = String(url.searchParams.get('redaman') || 'all').trim().toLowerCase();
     const nas = String(url.searchParams.get('nas') || 'all').trim();
+    const refresh = url.searchParams.get('refresh') === '1';
     try {
       const payload = await genieAcs.listDevices(authContext.data.settings || {}, {
         page: 1,
         limit: 'all',
         search,
         status,
-        redaman
+        redaman,
+        refresh
       });
       const enrichedRows = await enrichGenieAcsRowsWithLocalData(authContext.data, payload.rows || [], currentPeriod());
       const filteredRows = genieAcs.filterRowsByNas(enrichedRows, nas);
@@ -16019,7 +16331,7 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  const genieAcsDeviceActionMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/(refresh|reboot|wifi|wifi-password|wifi-ssid)$/);
+  const genieAcsDeviceActionMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/(refresh|reboot|wifi|wifi-password|wifi-ssid|pppoe)$/);
   if (genieAcsDeviceActionMatch && method === 'POST') {
     const authContext = await requirePermission(req, res, 'genieacs:write');
     if (!authContext) return;
@@ -16037,6 +16349,8 @@ async function handleApi(req, res, url) {
         await genieAcs.setWifiPassword(authContext.data.settings || {}, deviceId, payload.password, payload.parameter);
       } else if (action === 'wifi-ssid') {
         await genieAcs.setWifiSsid(authContext.data.settings || {}, deviceId, payload.ssid, payload.band, payload.parameter);
+      } else if (action === 'pppoe') {
+        await genieAcs.setPppCredentials(authContext.data.settings || {}, deviceId, payload);
       }
       await mutate((store) => {
         addActivity(store, 'monitoring', `GenieACS ${action} dikirim oleh ${authContext.user.name || authContext.user.username}`, {
@@ -17991,9 +18305,10 @@ async function handleApi(req, res, url) {
         ? null
         : await radiusUsageDetailForUsername(usageUsername, period, 40);
       if (usage) {
-        const monthlyUsage = await radiusUsageMonthlyHistoryForUsername(usageUsername, period, 12);
-        usage.monthlyRows = monthlyUsage.rows || [];
-        usage.monthlyError = monthlyUsage.error || '';
+        const dailyUsage = await radiusUsageDailyHistoryForUsername(usageUsername, localTodayIso(), 7);
+        usage.dailyRows = dailyUsage.rows || [];
+        usage.dailyError = dailyUsage.error || '';
+        usage.retentionText = 'Chart hanya memuat ringkasan 7 hari terakhir.';
       }
       sendJson(res, 200, {
         ok: true,
@@ -19640,6 +19955,10 @@ module.exports = {
     runKtpOcr,
     verifyPaymentGatewayCallback,
     verifyWahaWebhookSignature,
+    isTransientWaGatewayError,
+    wahaStatusText,
+    wahaIsConnected,
+    wahaNeedsQr,
     wahaProviderMessageId,
     applyWahaAckEvent,
     filterVoucherReportOrders,
