@@ -910,7 +910,7 @@ function normalizeDevice(device = {}, settings = {}) {
     wifi5: wifiClients5,
     lan: lanClients
   });
-  const clientsTotal = Math.max(clientSummary.total, wifiClients24 + wifiClients5 + lanClients, lanHosts.activeTotal);
+  const clientsTotal = Math.max(clientSummary.total, wifiClients24 + wifiClients5 + lanClients);
   const serial = cleanText(device._deviceId?._SerialNumber)
     || getPathValue(device, 'InternetGatewayDevice.DeviceInfo.SerialNumber')
     || getPathValue(device, 'Device.DeviceInfo.SerialNumber');

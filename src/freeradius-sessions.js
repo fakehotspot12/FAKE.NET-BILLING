@@ -6,6 +6,9 @@ const redisCache = require('./redis-cache');
 const SESSION_CACHE_KEY = process.env.RADIUS_SESSION_CACHE_KEY || 'fakenet:radius:sessions:last';
 const SESSION_CACHE_TTL_SECONDS = Math.max(60, Number(process.env.RADIUS_SESSION_CACHE_TTL_SECONDS || 300) || 300);
 const DEFAULT_SESSION_STALE_SECONDS = 30 * 60;
+const USAGE_DAILY_TABLE = 'fakenet_radius_usage_daily';
+const USAGE_STATE_TABLE = 'fakenet_radius_usage_state';
+const DEFAULT_USAGE_RETENTION_DAYS = 370;
 
 function enabled() {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env.FREERADIUS_SYNC_ENABLED || '').toLowerCase());
@@ -39,6 +42,16 @@ function sessionStaleSeconds() {
 
 function sqlLiteral(value = '') {
   return `'${String(value || '').replace(/'/g, "''")}'`;
+}
+
+function usageTimeZone() {
+  return cleanText(process.env.APP_TIME_ZONE || process.env.TZ || 'Asia/Makassar') || 'Asia/Makassar';
+}
+
+function usageRetentionDays() {
+  const value = Number(process.env.RADIUS_USAGE_RETENTION_DAYS);
+  if (!Number.isFinite(value)) return DEFAULT_USAGE_RETENTION_DAYS;
+  return Math.max(7, Math.min(1460, Math.trunc(value)));
 }
 
 function psqlJson(query) {
@@ -293,21 +306,48 @@ function monthlyUsageQuery(usernames = [], period = normalizedPeriod(), columns 
   const start = `${selectedPeriod}-01 00:00:00`;
   const end = `${nextPeriod(selectedPeriod)}-01 00:00:00`;
   return `
+WITH period_bounds AS (
+  SELECT ${sqlLiteral(start)}::timestamp AS start_at, ${sqlLiteral(end)}::timestamp AS end_at
+),
+session_rows AS (
+  SELECT
+    lower(radacct.username) AS username_key,
+    radacct.username,
+    ${inputExpr} AS input_octets_raw,
+    ${outputExpr} AS output_octets_raw,
+    COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()) AS session_end_at,
+    COALESCE(radacct.acctstoptime, radacct.acctupdatetime, radacct.acctstarttime) AS last_seen_at,
+    GREATEST(
+      COALESCE(NULLIF(radacct.acctsessiontime, 0), 0)::numeric,
+      EXTRACT(EPOCH FROM (COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()) - radacct.acctstarttime)),
+      1
+    ) AS duration_seconds,
+    GREATEST(
+      EXTRACT(EPOCH FROM (
+        LEAST(COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()), period_bounds.end_at)
+        - GREATEST(radacct.acctstarttime, period_bounds.start_at)
+      )),
+      0
+    ) AS overlap_seconds
+  FROM radacct
+  CROSS JOIN period_bounds
+  WHERE lower(radacct.username) IN (${values.map(sqlLiteral).join(',')})
+    AND radacct.acctstarttime < period_bounds.end_at
+    AND COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()) >= period_bounds.start_at
+)
 SELECT COALESCE(json_agg(row_to_json(monthly_usage)), '[]'::json)::text
 FROM (
   SELECT
-    lower(username) AS username_key,
+    username_key,
     min(username) AS username,
-    COALESCE(SUM(${inputExpr}), 0)::bigint AS input_octets,
-    COALESCE(SUM(${outputExpr}), 0)::bigint AS output_octets,
-    COALESCE(SUM(${inputExpr} + ${outputExpr}), 0)::bigint AS total_octets,
+    COALESCE(SUM(ROUND(input_octets_raw::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS input_octets,
+    COALESCE(SUM(ROUND(output_octets_raw::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS output_octets,
+    COALESCE(SUM(ROUND((input_octets_raw + output_octets_raw)::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS total_octets,
     COUNT(*)::bigint AS session_count,
-    to_char(MAX(COALESCE(acctstoptime, acctupdatetime, acctstarttime)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
-  FROM radacct
-  WHERE lower(username) IN (${values.map(sqlLiteral).join(',')})
-    AND acctstarttime >= ${sqlLiteral(start)}
-    AND acctstarttime < ${sqlLiteral(end)}
-  GROUP BY lower(username)
+    to_char(MAX(last_seen_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
+  FROM session_rows
+  WHERE overlap_seconds > 0
+  GROUP BY username_key
 ) monthly_usage`;
 }
 
@@ -324,19 +364,53 @@ function dailyUsageQuery(username = '', referenceDate = normalizedDate(), days =
 WITH days AS (
   SELECT generate_series(${sqlLiteral(startDate)}::date, ${sqlLiteral(endDate)}::date, interval '1 day')::date AS day_key
 ),
+session_rows AS (
+  SELECT
+    radacct.acctstarttime AS session_start_at,
+    COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()) AS session_end_at,
+    COALESCE(radacct.acctstoptime, radacct.acctupdatetime, radacct.acctstarttime) AS last_seen_at,
+    ${inputExpr} AS input_octets_raw,
+    ${outputExpr} AS output_octets_raw,
+    GREATEST(
+      COALESCE(NULLIF(radacct.acctsessiontime, 0), 0)::numeric,
+      EXTRACT(EPOCH FROM (COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()) - radacct.acctstarttime)),
+      1
+    ) AS duration_seconds
+  FROM radacct
+  WHERE lower(radacct.username) = ${sqlLiteral(userKey)}
+    AND radacct.acctstarttime < ${sqlLiteral(`${exclusiveEndDate} 00:00:00`)}::timestamp
+    AND COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()) >= ${sqlLiteral(`${startDate} 00:00:00`)}::timestamp
+),
+daily_overlaps AS (
+  SELECT
+    days.day_key,
+    session_rows.input_octets_raw,
+    session_rows.output_octets_raw,
+    session_rows.last_seen_at,
+    session_rows.duration_seconds,
+    GREATEST(
+      EXTRACT(EPOCH FROM (
+        LEAST(session_rows.session_end_at, (days.day_key + interval '1 day')::timestamp)
+        - GREATEST(session_rows.session_start_at, days.day_key::timestamp)
+      )),
+      0
+    ) AS overlap_seconds
+  FROM days
+  JOIN session_rows
+    ON session_rows.session_start_at < (days.day_key + interval '1 day')::timestamp
+   AND session_rows.session_end_at >= days.day_key::timestamp
+),
 usage_rows AS (
   SELECT
-    acctstarttime::date AS day_key,
-    COALESCE(SUM(${inputExpr}), 0)::bigint AS input_octets,
-    COALESCE(SUM(${outputExpr}), 0)::bigint AS output_octets,
-    COALESCE(SUM(${inputExpr} + ${outputExpr}), 0)::bigint AS total_octets,
+    day_key,
+    COALESCE(SUM(ROUND(input_octets_raw::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS input_octets,
+    COALESCE(SUM(ROUND(output_octets_raw::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS output_octets,
+    COALESCE(SUM(ROUND((input_octets_raw + output_octets_raw)::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS total_octets,
     COUNT(*)::bigint AS session_count,
-    to_char(MAX(COALESCE(acctstoptime, acctupdatetime, acctstarttime)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
-  FROM radacct
-  WHERE lower(username) = ${sqlLiteral(userKey)}
-    AND acctstarttime >= ${sqlLiteral(`${startDate} 00:00:00`)}
-    AND acctstarttime < ${sqlLiteral(`${exclusiveEndDate} 00:00:00`)}
-  GROUP BY acctstarttime::date
+    to_char(MAX(last_seen_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
+  FROM daily_overlaps
+  WHERE overlap_seconds > 0
+  GROUP BY day_key
 )
 SELECT COALESCE(json_agg(row_to_json(daily_usage) ORDER BY daily_usage.day_key), '[]'::json)::text
 FROM (
@@ -349,6 +423,158 @@ FROM (
     COALESCE(usage_rows.last_seen_at, '') AS last_seen_at
   FROM days
   LEFT JOIN usage_rows ON usage_rows.day_key = days.day_key
+  ORDER BY days.day_key
+) daily_usage`;
+}
+
+function usageTablesSql() {
+  return `
+CREATE TABLE IF NOT EXISTS ${USAGE_STATE_TABLE} (
+  session_key text PRIMARY KEY,
+  username text NOT NULL,
+  input_octets bigint NOT NULL DEFAULT 0,
+  output_octets bigint NOT NULL DEFAULT 0,
+  total_octets bigint NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS ${USAGE_DAILY_TABLE} (
+  username text NOT NULL,
+  day date NOT NULL,
+  input_octets bigint NOT NULL DEFAULT 0,
+  output_octets bigint NOT NULL DEFAULT 0,
+  total_octets bigint NOT NULL DEFAULT 0,
+  samples integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (username, day)
+);
+CREATE INDEX IF NOT EXISTS ${USAGE_DAILY_TABLE}_day_idx ON ${USAGE_DAILY_TABLE} (day);
+`;
+}
+
+function recordUsageDeltasQuery(columns = new Set(), options = {}) {
+  const timeZone = sqlLiteral(options.timeZone || usageTimeZone());
+  const retentionDays = usageRetentionDays();
+  const inputExpr = octetExpr('radacct', 'acctinputoctets', 'acctinputgigawords', columns);
+  const outputExpr = octetExpr('radacct', 'acctoutputoctets', 'acctoutputgigawords', columns);
+  return `
+${usageTablesSql()}
+WITH current_sessions AS (
+  SELECT
+    COALESCE(NULLIF(radacct.acctuniqueid, ''), NULLIF(radacct.acctsessionid, ''), radacct.radacctid::text) AS session_key,
+    lower(COALESCE(radacct.username, '')) AS username,
+    GREATEST(${inputExpr}, 0)::bigint AS input_octets,
+    GREATEST(${outputExpr}, 0)::bigint AS output_octets,
+    GREATEST(${inputExpr} + ${outputExpr}, 0)::bigint AS total_octets,
+    COALESCE(radacct.acctupdatetime, radacct.acctstarttime, now()) AS updated_at
+  FROM radacct
+  WHERE radacct.acctstoptime IS NULL
+    AND COALESCE(radacct.username, '') <> ''
+),
+delta_rows AS (
+  SELECT
+    current_sessions.session_key,
+    current_sessions.username,
+    current_sessions.input_octets,
+    current_sessions.output_octets,
+    current_sessions.total_octets,
+    current_sessions.updated_at,
+    GREATEST(current_sessions.input_octets - COALESCE(previous.input_octets, current_sessions.input_octets), 0)::bigint AS delta_input_octets,
+    GREATEST(current_sessions.output_octets - COALESCE(previous.output_octets, current_sessions.output_octets), 0)::bigint AS delta_output_octets,
+    GREATEST(current_sessions.total_octets - COALESCE(previous.total_octets, current_sessions.total_octets), 0)::bigint AS delta_total_octets
+  FROM current_sessions
+  LEFT JOIN ${USAGE_STATE_TABLE} previous ON previous.session_key = current_sessions.session_key
+),
+daily_upsert AS (
+  INSERT INTO ${USAGE_DAILY_TABLE} (
+    username,
+    day,
+    input_octets,
+    output_octets,
+    total_octets,
+    samples,
+    updated_at
+  )
+  SELECT
+    username,
+    (timezone(${timeZone}, updated_at))::date AS day,
+    SUM(delta_input_octets)::bigint AS input_octets,
+    SUM(delta_output_octets)::bigint AS output_octets,
+    SUM(delta_total_octets)::bigint AS total_octets,
+    COUNT(*)::integer AS samples,
+    MAX(updated_at) AS updated_at
+  FROM delta_rows
+  WHERE delta_total_octets > 0
+  GROUP BY username, (timezone(${timeZone}, updated_at))::date
+  ON CONFLICT (username, day) DO UPDATE SET
+    input_octets = ${USAGE_DAILY_TABLE}.input_octets + EXCLUDED.input_octets,
+    output_octets = ${USAGE_DAILY_TABLE}.output_octets + EXCLUDED.output_octets,
+    total_octets = ${USAGE_DAILY_TABLE}.total_octets + EXCLUDED.total_octets,
+    samples = ${USAGE_DAILY_TABLE}.samples + EXCLUDED.samples,
+    updated_at = GREATEST(${USAGE_DAILY_TABLE}.updated_at, EXCLUDED.updated_at)
+  RETURNING 1
+),
+state_upsert AS (
+  INSERT INTO ${USAGE_STATE_TABLE} (
+    session_key,
+    username,
+    input_octets,
+    output_octets,
+    total_octets,
+    updated_at
+  )
+  SELECT session_key, username, input_octets, output_octets, total_octets, updated_at
+  FROM current_sessions
+  ON CONFLICT (session_key) DO UPDATE SET
+    username = EXCLUDED.username,
+    input_octets = EXCLUDED.input_octets,
+    output_octets = EXCLUDED.output_octets,
+    total_octets = EXCLUDED.total_octets,
+    updated_at = GREATEST(${USAGE_STATE_TABLE}.updated_at, EXCLUDED.updated_at)
+  RETURNING 1
+),
+stale_state AS (
+  DELETE FROM ${USAGE_STATE_TABLE}
+  WHERE updated_at < (now() - interval '7 days')
+  RETURNING 1
+),
+stale_daily AS (
+  DELETE FROM ${USAGE_DAILY_TABLE}
+  WHERE day < ((timezone(${timeZone}, now()))::date - (${retentionDays} * interval '1 day'))::date
+  RETURNING 1
+)
+SELECT json_build_object(
+  'sessions', (SELECT COUNT(*) FROM current_sessions),
+  'recorded', (SELECT COUNT(*) FROM daily_upsert),
+  'stateRows', (SELECT COUNT(*) FROM state_upsert),
+  'prunedSessions', (SELECT COUNT(*) FROM stale_state),
+  'prunedDays', (SELECT COUNT(*) FROM stale_daily)
+)::text`;
+}
+
+function recordedDailyUsageQuery(username = '', referenceDate = normalizedDate(), days = 7) {
+  const userKey = cleanText(username).toLowerCase();
+  if (!userKey) return '';
+  const dayCount = Math.max(1, Math.min(31, Math.trunc(Number(days || 7))));
+  const endDate = normalizedDate(referenceDate);
+  const startDate = shiftDate(endDate, -(dayCount - 1));
+  return `
+${usageTablesSql()}
+WITH days AS (
+  SELECT generate_series(${sqlLiteral(startDate)}::date, ${sqlLiteral(endDate)}::date, interval '1 day')::date AS day_key
+)
+SELECT COALESCE(json_agg(row_to_json(daily_usage) ORDER BY daily_usage.day_key), '[]'::json)::text
+FROM (
+  SELECT
+    to_char(days.day_key, 'YYYY-MM-DD') AS day_key,
+    COALESCE(usage_rows.input_octets, 0)::bigint AS input_octets,
+    COALESCE(usage_rows.output_octets, 0)::bigint AS output_octets,
+    COALESCE(usage_rows.total_octets, 0)::bigint AS total_octets,
+    COALESCE(usage_rows.samples, 0)::bigint AS session_count,
+    to_char(usage_rows.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
+  FROM days
+  LEFT JOIN ${USAGE_DAILY_TABLE} usage_rows
+    ON usage_rows.day = days.day_key
+   AND usage_rows.username = ${sqlLiteral(userKey)}
   ORDER BY days.day_key
 ) daily_usage`;
 }
@@ -386,8 +612,8 @@ FROM (
       (${inputExpr} + ${outputExpr}) AS total_octets
     FROM radacct
     WHERE lower(radacct.username) = ${sqlLiteral(userKey)}
-      AND radacct.acctstarttime >= ${sqlLiteral(start)}
-      AND radacct.acctstarttime < ${sqlLiteral(end)}
+      AND radacct.acctstarttime < ${sqlLiteral(end)}::timestamp
+      AND COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()) >= ${sqlLiteral(start)}::timestamp
     ORDER BY radacct.acctstarttime DESC
     LIMIT ${rowLimit}
   ) latest_sessions
@@ -880,12 +1106,23 @@ async function dailyUsageByUsername(username = '', referenceDate = normalizedDat
   }
   try {
     const columns = await radacctColumns();
-    const rows = await psqlJson(dailyUsageQuery(value, selectedDate, days, columns));
+    let rows = [];
+    let source = 'freeradius-usage-delta';
+    try {
+      rows = await psqlJson(recordedDailyUsageQuery(value, selectedDate, days));
+    } catch (error) {
+      rows = [];
+    }
+    const recordedTotal = rows.reduce((sum, row) => sum + numberValue(row.total_octets), 0);
+    if (recordedTotal <= 0) {
+      rows = await psqlJson(dailyUsageQuery(value, selectedDate, days, columns));
+      source = 'freeradius-radacct';
+    }
     return {
       ok: true,
       enabled: true,
       configured: true,
-      source: 'freeradius-radacct',
+      source,
       referenceDate: selectedDate,
       days,
       rows: rows.map(normalizeDailyUsage)
@@ -903,6 +1140,38 @@ async function dailyUsageByUsername(username = '', referenceDate = normalizedDat
   }
 }
 
+async function recordUsageDeltas(options = {}) {
+  if (!enabled()) {
+    return { ok: false, enabled: false, configured: configured(), skipped: true, error: 'FreeRADIUS SQL sync belum aktif' };
+  }
+  if (!configured()) {
+    return { ok: false, enabled: true, configured: false, skipped: true, error: 'FREERADIUS_DATABASE_URL belum diisi' };
+  }
+  try {
+    const columns = await radacctColumns();
+    const result = await psqlJson(recordUsageDeltasQuery(columns, options));
+    return {
+      ok: true,
+      enabled: true,
+      configured: true,
+      source: 'freeradius-usage-delta',
+      sessions: numberValue(result.sessions),
+      recorded: numberValue(result.recorded),
+      stateRows: numberValue(result.stateRows),
+      prunedSessions: numberValue(result.prunedSessions),
+      prunedDays: numberValue(result.prunedDays)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: true,
+      source: 'freeradius-usage-delta',
+      error: error.message || 'Delta usage FreeRADIUS tidak bisa dicatat'
+    };
+  }
+}
+
 module.exports = {
   activeSessions,
   cacheKey: SESSION_CACHE_KEY,
@@ -913,10 +1182,14 @@ module.exports = {
   lastSeenByUsernames,
   dailyUsageByUsername,
   monthlyUsageByUsernames,
+  recordUsageDeltas,
   usageHistoryByUsername,
   __test: {
     closeSupersededSessionsQuery,
     dailyUsageQuery,
+    monthlyUsageQuery,
+    recordedDailyUsageQuery,
+    recordUsageDeltasQuery,
     normalizeSession,
     normalizeDailyUsage,
     normalizeUsageHistory

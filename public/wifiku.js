@@ -2,6 +2,7 @@
 
 const TOKEN_KEY = 'wifikuToken';
 const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const PORTAL_REFRESH_MS = 30000;
 const state = {
   settings: {},
   challengeId: '',
@@ -354,7 +355,8 @@ function openClientDialog() {
         </table>
       </div>`;
   }
-  byId('clientDialog')?.showModal();
+  const dialog = byId('clientDialog');
+  if (dialog && !dialog.open) dialog.showModal();
 }
 
 function openUsageDialog() {
@@ -366,7 +368,8 @@ function openUsageDialog() {
     ${usageDailyBarChart(rows)}
     ${usage.dailyError ? `<div class="empty-detail">${escapeHtml(usage.dailyError)}</div>` : ''}
   `;
-  byId('usageDialog')?.showModal();
+  const dialog = byId('usageDialog');
+  if (dialog && !dialog.open) dialog.showModal();
 }
 
 function billingBadgeClass(status = '') {
@@ -511,6 +514,16 @@ async function loadMe() {
   }
 }
 
+async function refreshPortalRealtime() {
+  if (!state.token || document.hidden) return;
+  const usageOpen = byId('usageDialog')?.open === true;
+  const clientOpen = byId('clientDialog')?.open === true;
+  const ok = await loadMe();
+  if (!ok) return;
+  if (usageOpen) openUsageDialog();
+  if (clientOpen) openClientDialog();
+}
+
 byId('periodInput').value = todayPeriod();
 
 byId('phoneForm').addEventListener('submit', async (event) => {
@@ -571,6 +584,7 @@ byId('otpForm').addEventListener('submit', async (event) => {
 });
 
 byId('periodInput').addEventListener('change', () => loadMe());
+setInterval(refreshPortalRealtime, PORTAL_REFRESH_MS);
 
 byId('accountMenuButton').addEventListener('click', () => {
   const menu = byId('accountMenu');

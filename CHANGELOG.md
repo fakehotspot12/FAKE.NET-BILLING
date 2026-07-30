@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.8] - 2026-07-30
+
+### Changed
+
+- Usage PPPoE harian kini dicatat sebagai delta counter nyata dari FreeRADIUS melalui Radius Connector agar grafik WifiKu/Member bergerak realtime ke depan.
+- WifiKu otomatis refresh ringan tiap 30 detik saat pelanggan sedang login dan tab browser aktif.
+
+### Fixed
+
+- Total client aktif GenieACS/WifiKu tidak lagi membesar karena data `Hosts.Host` stale; angka mengikuti detail aktif WiFi/LAN yang benar-benar terbaca.
+- Popup usage/client WifiKu dapat diperbarui saat masih terbuka tanpa error `showModal`.
+
 ## [2.11.7] - 2026-07-30
 
 ### Changed

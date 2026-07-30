@@ -4,11 +4,13 @@ const freeradiusSessions = require('./freeradius-sessions');
 const redisCache = require('./redis-cache');
 
 const INTERVAL_MS = Math.max(5000, Number(process.env.RADIUS_CONNECTOR_INTERVAL_MS || 15000) || 15000);
+const USAGE_RECORD_INTERVAL_MS = Math.max(15000, Number(process.env.RADIUS_USAGE_RECORD_INTERVAL_MS || 30000) || 30000);
 const LIMIT = Math.max(100, Math.min(5000, Number(process.env.RADIUS_CONNECTOR_LIMIT || 3000) || 3000));
 const HEARTBEAT_KEY = process.env.RADIUS_CONNECTOR_HEARTBEAT_KEY || 'fakenet:radius:connector:heartbeat';
 let timer = null;
 let running = false;
 let stopping = false;
+let lastUsageRecordAt = 0;
 
 async function heartbeat(payload = {}) {
   if (!redisCache.enabled()) return;
@@ -36,17 +38,28 @@ async function poll(reason = 'interval') {
     });
     const rows = Array.isArray(result.rows) ? result.rows : [];
     const suppressedDuplicates = rows.reduce((sum, row) => sum + Number(row.suppressedDuplicateCount || 0), 0);
+    let usageRecord = null;
+    const now = Date.now();
+    if (result.ok && now - lastUsageRecordAt >= USAGE_RECORD_INTERVAL_MS) {
+      usageRecord = await freeradiusSessions.recordUsageDeltas();
+      lastUsageRecordAt = now;
+      if (!usageRecord.ok) {
+        console.error(`Pencatatan delta usage gagal: ${usageRecord.error || 'FreeRADIUS tidak terbaca'}`);
+      }
+    }
     await heartbeat({
       ok: result.ok === true,
       reason,
       source: result.source || '',
       rows: rows.length,
       suppressedDuplicates,
+      usageRecorded: usageRecord?.recorded || 0,
       error: result.error || ''
     });
     if (result.ok) {
       const cleanupNote = cleanup.closed ? `, ${cleanup.closed} session stale ditutup` : '';
-      console.log(`Radius connector OK ${rows.length} session dari ${result.source}${suppressedDuplicates ? `, ${suppressedDuplicates} duplicate disembunyikan` : ''}${cleanupNote}`);
+      const usageNote = usageRecord?.ok ? `, delta usage ${usageRecord.recorded} user/hari` : '';
+      console.log(`Radius connector OK ${rows.length} session dari ${result.source}${suppressedDuplicates ? `, ${suppressedDuplicates} duplicate disembunyikan` : ''}${cleanupNote}${usageNote}`);
     } else {
       console.error(`Radius connector gagal: ${result.error || 'FreeRADIUS tidak terbaca'}`);
     }

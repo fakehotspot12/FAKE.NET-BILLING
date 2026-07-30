@@ -200,6 +200,60 @@ test('fills connected WiFi client names from host table by MAC address', () => {
   assert.equal(device.connectedClients[0].name, 'iPhone Kinoy');
 });
 
+test('does not inflate active client total from stale host table entries', () => {
+  const hosts = {};
+  for (let index = 1; index <= 30; index += 1) {
+    hosts[index] = {
+      Active: { _value: '1' },
+      IPAddress: { _value: `192.168.100.${index}` },
+      MACAddress: { _value: `AA:BB:CC:00:00:${String(index).padStart(2, '0')}` },
+      HostName: { _value: `Client ${index}` },
+      Layer1Interface: { _value: 'WLAN' }
+    };
+  }
+  hosts[30].Layer1Interface = { _value: 'Ethernet' };
+
+  const device = genieAcs.normalizeDevice({
+    _id: 'stale-hosts',
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'Rumah-2G' },
+              TotalAssociations: { _value: '5' },
+              AssociatedDevice: {
+                1: { AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:01' }, AssociatedDeviceIPAddress: { _value: '192.168.100.1' } },
+                2: { AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:02' }, AssociatedDeviceIPAddress: { _value: '192.168.100.2' } },
+                3: { AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:03' }, AssociatedDeviceIPAddress: { _value: '192.168.100.3' } },
+                4: { AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:04' }, AssociatedDeviceIPAddress: { _value: '192.168.100.4' } },
+                5: { AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:05' }, AssociatedDeviceIPAddress: { _value: '192.168.100.5' } }
+              }
+            },
+            5: {
+              SSID: { _value: 'Rumah-5G' },
+              TotalAssociations: { _value: '3' },
+              AssociatedDevice: {
+                1: { AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:06' }, AssociatedDeviceIPAddress: { _value: '192.168.100.6' } },
+                2: { AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:07' }, AssociatedDeviceIPAddress: { _value: '192.168.100.7' } },
+                3: { AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:00:00:08' }, AssociatedDeviceIPAddress: { _value: '192.168.100.8' } }
+              }
+            }
+          },
+          Hosts: { Host: hosts }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.hostClientsTotal, 30);
+  assert.equal(device.wifiClients24, 5);
+  assert.equal(device.wifiClients5, 3);
+  assert.equal(device.lanClients, 1);
+  assert.equal(device.connectedClients.length, 9);
+  assert.equal(device.clientsTotal, 9);
+});
+
 test('uses built-in GenieACS parameters and normalizes ZTE RX power', () => {
   const device = genieAcs.normalizeDevice({
     _id: 'zte-1',

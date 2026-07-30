@@ -315,3 +315,19 @@ test('session NAS addresses are normalized before matching a configured NAS', ()
   assert.equal(history.nasIpAddress, '2001:db8::1');
   assert.equal(history.framedIpAddress, '2001:db8::10');
 });
+
+test('daily usage can be read from recorded radius delta snapshots', () => {
+  const recordQuery = freeradiusSessions.__test.recordUsageDeltasQuery(new Set(['acctinputgigawords', 'acctoutputgigawords']), {
+    timeZone: 'Asia/Makassar'
+  });
+  const dailyQuery = freeradiusSessions.__test.recordedDailyUsageQuery('pelanggan@fake.net', '2026-07-30', 7);
+
+  assert.match(recordQuery, /CREATE TABLE IF NOT EXISTS fakenet_radius_usage_daily/);
+  assert.match(recordQuery, /CREATE TABLE IF NOT EXISTS fakenet_radius_usage_state/);
+  assert.match(recordQuery, /ON CONFLICT \(username, day\) DO UPDATE SET/);
+  assert.match(recordQuery, /delta_total_octets > 0/);
+  assert.match(recordQuery, /timezone\('Asia\/Makassar', updated_at\)/);
+  assert.match(dailyQuery, /LEFT JOIN fakenet_radius_usage_daily usage_rows/);
+  assert.match(dailyQuery, /usage_rows\.username = 'pelanggan@fake.net'/);
+  assert.match(dailyQuery, /generate_series\('2026-07-24'::date, '2026-07-30'::date/);
+});
