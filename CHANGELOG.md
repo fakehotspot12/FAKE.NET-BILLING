@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.11] - 2026-07-30
+
+### Fixed
+
+- Installer GenieACS kini menunggu UI dan NBI siap sebelum bootstrap agar instalasi tidak berhenti dengan error `fetch failed`.
+- Bootstrap GenieACS diberi retry dan tidak mematikan proses instalasi jika Virtual Parameters belum bisa dipasang pada percobaan awal.
+
 ## [2.11.10] - 2026-07-30
 
 ### Changed

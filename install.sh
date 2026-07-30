@@ -700,7 +700,18 @@ bootstrap_genieacs() {
   [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   load_genieacs_env
-  node "$APP_DIR/deploy/genieacs/bootstrap.js"
+  local attempt bootstrap_status
+  for attempt in $(seq 1 "${GENIEACS_BOOTSTRAP_ATTEMPTS:-3}"); do
+    set +e
+    node "$APP_DIR/deploy/genieacs/bootstrap.js"
+    bootstrap_status=$?
+    set -e
+    [ "$bootstrap_status" -eq 0 ] && return 0
+    echo "Peringatan: bootstrap GenieACS belum berhasil (percobaan ${attempt})." >&2
+    sleep 5
+  done
+  echo "Peringatan: bootstrap GenieACS dilewati sementara. Billing tetap berjalan; ulangi repair/update setelah GenieACS UI/NBI siap jika Virtual Parameters belum masuk." >&2
+  return 0
 }
 
 verify_genieacs_health() {
@@ -710,7 +721,7 @@ verify_genieacs_health() {
   local ui_port nbi_port attempt ui_status nbi_status
   ui_port="${GENIEACS_UI_PORT:-7568}"
   nbi_port="${GENIEACS_NBI_PORT:-7557}"
-  for attempt in $(seq 1 60); do
+  for attempt in $(seq 1 "${GENIEACS_HEALTH_ATTEMPTS:-120}"); do
     ui_status="$(curl -sS --max-time 2 "http://127.0.0.1:${ui_port}/status" 2>/dev/null || true)"
     nbi_status="$(curl -sS --max-time 2 "http://127.0.0.1:${nbi_port}/devices/?limit=1" 2>/dev/null || true)"
     if [ "$ui_status" = "OK" ] && [[ "$nbi_status" == \[* ]]; then
@@ -719,7 +730,7 @@ verify_genieacs_health() {
     fi
     sleep 1
   done
-  echo "Health check GenieACS gagal setelah 60 detik." >&2
+  echo "Health check GenieACS gagal setelah ${GENIEACS_HEALTH_ATTEMPTS:-120} detik." >&2
   return 1
 }
 
@@ -980,8 +991,8 @@ install_systemd() {
   mapfile -t app_units < <(managed_app_units)
   systemctl enable fakenet-billing-stack.target "${app_units[@]}" >/dev/null 2>&1 || true
   systemctl restart "${app_units[@]}"
-  bootstrap_genieacs
   verify_genieacs_health
+  bootstrap_genieacs
 }
 
 write_openrc_service() {
@@ -1113,10 +1124,10 @@ install_openrc_genieacs() {
   write_openrc_genieacs_service fakenet-billing-genieacs-nbi genieacs-nbi
   write_openrc_genieacs_service fakenet-billing-genieacs-fs genieacs-fs
   write_openrc_genieacs_service fakenet-billing-genieacs-ui genieacs-ui
+  verify_genieacs_health
   if [ "$run_bootstrap" = "1" ]; then
     bootstrap_genieacs
   fi
-  verify_genieacs_health
 }
 
 install_openrc() {
@@ -1177,6 +1188,7 @@ repair_install() {
       systemctl enable "${GENIEACS_UNITS[@]}" >/dev/null 2>&1 || true
       systemctl restart "${GENIEACS_UNITS[@]}"
       verify_genieacs_health
+      bootstrap_genieacs
     fi
   elif command -v rc-service >/dev/null 2>&1; then
     write_openrc_service fakenet-billing "src/server.js"

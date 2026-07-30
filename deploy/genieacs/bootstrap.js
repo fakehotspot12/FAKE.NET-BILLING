@@ -43,6 +43,20 @@ async function waitForUi() {
   throw lastError || new Error('GenieACS UI belum siap');
 }
 
+async function waitForNbi() {
+  let lastError = null;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      const devices = await request(`${nbiBase}/devices/?limit=1`);
+      if (Array.isArray(devices)) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw lastError || new Error('GenieACS NBI belum siap');
+}
+
 async function login(username, password) {
   const token = await request(`${uiBase}/login`, {
     method: 'POST',
@@ -112,6 +126,7 @@ async function installVirtualParameters(token) {
 
 async function main() {
   await waitForUi();
+  await waitForNbi();
   const token = await bootstrapUser();
   await uiPut(token, 'config/cwmp.auth', {
     value: `AUTH(${JSON.stringify(cwmpUsername)}, ${JSON.stringify(cwmpPassword)})`
