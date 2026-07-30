@@ -14316,6 +14316,27 @@ function storePaymentCheckout(target = {}, checkout = {}, params = {}) {
   return target.paymentCheckout;
 }
 
+async function enrichPaymentCheckoutQr(checkout = {}) {
+  const next = { ...(checkout || {}) };
+  const qrString = String(next.qrString || '').trim();
+  if (!String(next.qrUrl || '').trim() && qrString) {
+    try {
+      next.qrUrl = await QRCode.toDataURL(qrString, {
+        errorCorrectionLevel: 'M',
+        margin: 1,
+        width: 420,
+        color: {
+          dark: '#111827',
+          light: '#FFFFFF'
+        }
+      });
+    } catch {
+      // Payment link remains available if QR image generation fails.
+    }
+  }
+  return next;
+}
+
 function updatePaymentCheckoutStatus(target = {}, payment = {}, status = '') {
   const checkout = target?.paymentCheckout;
   if (!checkout || typeof checkout !== 'object') return;
@@ -14409,7 +14430,8 @@ async function createTripayCheckout(data = {}, params = {}) {
     throw new Error(body.message || body.error || `Tripay HTTP ${response.status}`);
   }
   const trx = body.data && typeof body.data === 'object' ? body.data : body;
-  return {
+  const qrString = trx.qr_string || trx.qrString || '';
+  const checkout = {
     ok: true,
     provider: 'tripay',
     method: method || 'Semua metode tersedia',
@@ -14423,10 +14445,11 @@ async function createTripayCheckout(data = {}, params = {}) {
     checkoutUrl: trx.checkout_url || trx.payment_url || trx.paymentUrl || '',
     paymentUrl: trx.checkout_url || trx.payment_url || trx.paymentUrl || '',
     qrUrl: trx.qr_url || trx.qrUrl || '',
-    qrString: trx.qr_string || trx.qrString || '',
+    qrString,
     expiredAt: trx.expired_time || trx.expiredAt || payload.expired_time,
     ttlMinutes
   };
+  return enrichPaymentCheckoutQr(checkout);
 }
 
 async function createPaymentGatewayCheckout(data = {}, params = {}) {
@@ -14449,7 +14472,7 @@ async function createOrReusePaymentGatewayCheckout(data = {}, params = {}) {
     method: String(params.method || '').trim().toUpperCase()
   };
   const reusable = reusablePaymentCheckout(paymentCheckoutTarget(data, normalized), normalized);
-  if (reusable) return reusable;
+  if (reusable) return enrichPaymentCheckoutQr(reusable);
 
   const lockKey = [provider, normalized.kind, normalized.reference, normalized.method, normalized.amount]
     .map((value) => String(value || '').trim().toLowerCase())
@@ -14459,8 +14482,8 @@ async function createOrReusePaymentGatewayCheckout(data = {}, params = {}) {
   const pending = (async () => {
     const fresh = await loadStore();
     const latest = reusablePaymentCheckout(paymentCheckoutTarget(fresh, normalized), normalized);
-    if (latest) return latest;
-    const checkout = await createPaymentGatewayCheckout(fresh, normalized);
+    if (latest) return enrichPaymentCheckoutQr(latest);
+    const checkout = await enrichPaymentCheckoutQr(await createPaymentGatewayCheckout(fresh, normalized));
     const collection = String(normalized.kind || '').toLowerCase().includes('voucher') ? 'hotspotVoucherOrders' : 'invoices';
     const saved = await mutate((store) => {
       const target = paymentCheckoutTarget(store, normalized);
@@ -14470,7 +14493,7 @@ async function createOrReusePaymentGatewayCheckout(data = {}, params = {}) {
       const paymentCheckout = storePaymentCheckout(target, checkout, normalized);
       return { ok: true, ...paymentCheckout, reused: false };
     }, { collections: [collection], includeCore: false });
-    return saved.result;
+    return enrichPaymentCheckoutQr(saved.result);
   })();
   paymentGatewayCheckoutLocks.set(lockKey, pending);
   try {

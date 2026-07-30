@@ -3483,6 +3483,7 @@ function safeLogoUrl(value) {
 function safePublicUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
+  if (raw.length <= 2 * 1024 * 1024 && /^data:image\/(?:png|gif|jpe?g|webp|svg\+xml);base64,/i.test(raw)) return raw.replace(/\s+/g, '');
   if (raw.startsWith('/') && !raw.startsWith('//')) return raw.slice(0, 200);
   try {
     const parsed = new URL(raw);

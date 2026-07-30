@@ -57,6 +57,12 @@ function safeHttpUrl(value = '') {
   }
 }
 
+function safeQrImageUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (/^data:image\/(?:png|gif|jpe?g|webp|svg\+xml);base64,/i.test(raw)) return raw;
+  return safeHttpUrl(raw);
+}
+
 function voucherReturnStorageKey() {
   const nas = currentNasValue() || 'default';
   return `fakenet-voucher-return:${nas}`;
@@ -394,7 +400,7 @@ function voucherOrderIsPayable(order = {}) {
 function renderVoucherCheckout(order = {}, checkout = {}) {
   const qrBox = byId('os_qris_img');
   const instruction = byId('os_instruksi_pembayaran');
-  const qrUrl = safeHttpUrl(checkout.qrUrl || '');
+  const qrUrl = safeQrImageUrl(checkout.qrUrl || '');
   const checkoutUrl = safeHttpUrl(checkout.checkoutUrl || checkout.paymentUrl || '');
   const baseText = order.amountText || rupiah(order.amount);
   const feeText = order.adminFeeText || rupiah(order.adminFee || 0);

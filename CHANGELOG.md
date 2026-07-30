@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.29] - 2026-07-31
+
+### Fixed
+
+- QRIS pembelian voucher Hotspot di login page/status order tetap tampil walaupun payment gateway hanya mengirim payload `qr_string` tanpa URL gambar QR.
+- Cache script halaman voucher diperbarui agar browser pelanggan langsung mengambil perbaikan QR terbaru.
+
 ## [2.11.28] - 2026-07-31
 
 ### Changed
