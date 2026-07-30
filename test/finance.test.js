@@ -5913,15 +5913,39 @@ test('technician hotspot write scope only accepts manual free users', () => {
   }), false);
 });
 
-test('reseller NAS lock does not hide hotspot profiles when generating vouchers', async () => {
+test('reseller NAS lock only shows hotspot profiles for the locked NAS or All', async () => {
   const data = createDefaultStore();
-  data.radiusProfiles.push({
-    id: 'profile-voucher-3000',
-    serviceType: 'hotspot',
-    name: 'V-3000',
-    price: 3000,
-    active: true
-  });
+  data.monitoringTargets.push(
+    { id: 'nas-site-1', name: 'SITE-1', host: '10.0.0.1', radius: { enabled: true, name: 'SITE-1', address: '10.0.0.1' } },
+    { id: 'nas-site-2', name: 'SITE-2', host: '10.0.0.2', radius: { enabled: true, name: 'SITE-2', address: '10.0.0.2' } }
+  );
+  data.radiusProfiles.push(
+    {
+      id: 'profile-all',
+      serviceType: 'hotspot',
+      name: 'V-All',
+      price: 3000,
+      active: true
+    },
+    {
+      id: 'profile-site-1',
+      serviceType: 'hotspot',
+      name: 'V-Site-1',
+      price: 3000,
+      active: true
+    },
+    {
+      id: 'profile-site-2',
+      serviceType: 'hotspot',
+      name: 'V-Site-2',
+      price: 3000,
+      active: true
+    }
+  );
+  data.settings.hotspotVoucherOnline.packages = {
+    'profile-site-1': { enabled: true, nasId: 'nas-site-1' },
+    'profile-site-2': { enabled: true, nasId: 'nas-site-2' }
+  };
 
   const payload = await serverInternals.radiusPayloadLocal(data, 'hotspot', {
     tab: 'profiles',
@@ -5934,8 +5958,7 @@ test('reseller NAS lock does not hide hotspot profiles when generating vouchers'
     }
   });
 
-  assert.equal(payload.rows.length, 1);
-  assert.equal(payload.rows[0].name, 'V-3000');
+  assert.deepEqual(payload.rows.map((row) => row.name), ['V-All', 'V-Site-1']);
 });
 
 test('radius PPP-DHCP and Hotspot users are sorted by newest created date first', async () => {
@@ -6461,8 +6484,8 @@ test('payment gateway report normalizes billing and voucher references without l
   assert.equal(monthlyReport.summary.netReceivedAmount, 150750);
 });
 
-test('Tunai - Loket remains grouped as cash', () => {
-  assert.equal(serverInternals.paymentCategoryForRecord({}, 'Tunai - Loket'), 'cash');
+test('Tunai - Loket is grouped with manual transfer reports', () => {
+  assert.equal(serverInternals.paymentCategoryForRecord({}, 'Tunai - Loket'), 'transfer');
 });
 
 test('hotspot summary keeps offline count scoped to usable hotspot vouchers', () => {
@@ -6981,7 +7004,7 @@ test('public paid invoice uses actual manual payment without adding gateway fee'
   assert.equal(publicInvoice.adminFee, 0);
   assert.equal(publicInvoice.gatewayAmount, 165000);
   assert.equal(publicInvoice.paymentMethod, 'Loket');
-  assert.equal(publicInvoice.paymentCategory, 'cash');
+  assert.equal(publicInvoice.paymentCategory, 'transfer');
 });
 
 test('Tripay monthly checkout keeps flat customer fee while retail cashier takes its share', () => {

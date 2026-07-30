@@ -3328,37 +3328,46 @@ function radiusUserNas(data = {}, user = {}, profile = {}, session = null) {
 }
 
 function radiusProfileRowsLocal(data = {}, serviceType = 'pppoe') {
+  const hotspotPackages = data.settings?.hotspotVoucherOnline?.packages || {};
   return (data.radiusProfiles || [])
     .filter((profile) => profile.serviceType === serviceType)
-    .map((profile) => ({
-      id: profile.id,
-      name: profile.name,
-      group: profile.groupName || profile.name || (serviceType === 'hotspot' ? 'Hotspot' : 'PPP-DHCP'),
-      groupName: profile.groupName || profile.name || '',
-      useMikrotikProfile: profile.useMikrotikProfile === true || (Boolean(profile.mikrotikGroup) && !profile.rateLimit),
-      mikrotikGroup: profile.mikrotikGroup || '',
-      queueType: profile.queueType || '',
-      queueGroup: freeradius.queueCarrierGroupName(profile),
-      queueRouterValue: freeradius.queueTypeRouterValue(profile),
-      price: profile.price || 0,
-      rateLimit: profile.rateLimit || '',
-      burstLimit: profile.burstLimit || '',
-      burstThreshold: profile.burstThreshold || '',
-      burstTime: profile.burstTime || '',
-      minRate: profile.minRate || '',
-      priority: profile.priority || 8,
-      validity: profile.validity || '',
-      validitySeconds: profile.validitySeconds || 0,
-      quota: profile.quota || '',
-      quotaBytes: profile.quotaBytes || 0,
-      sharedUsers: profile.sharedUsers || 1,
-      expiredMode: profile.expiredMode || 'none',
-      triggerCoa: true,
-      rateLimitText: freeradius.mikrotikRateLimit(profile),
-      status: profile.active === false ? 'disabled' : 'active',
-      note: profile.note || '',
-      updatedAt: profile.updatedAt || profile.createdAt || ''
-    }))
+    .map((profile) => {
+      const online = serviceType === 'hotspot' && hotspotPackages[profile.id] && typeof hotspotPackages[profile.id] === 'object'
+        ? hotspotPackages[profile.id]
+        : {};
+      const onlineNas = online.nasId ? radiusFindNas(data, online.nasId) : null;
+      return {
+        id: profile.id,
+        name: profile.name,
+        group: profile.groupName || profile.name || (serviceType === 'hotspot' ? 'Hotspot' : 'PPP-DHCP'),
+        groupName: profile.groupName || profile.name || '',
+        useMikrotikProfile: profile.useMikrotikProfile === true || (Boolean(profile.mikrotikGroup) && !profile.rateLimit),
+        mikrotikGroup: profile.mikrotikGroup || '',
+        queueType: profile.queueType || '',
+        queueGroup: freeradius.queueCarrierGroupName(profile),
+        queueRouterValue: freeradius.queueTypeRouterValue(profile),
+        price: profile.price || 0,
+        rateLimit: profile.rateLimit || '',
+        burstLimit: profile.burstLimit || '',
+        burstThreshold: profile.burstThreshold || '',
+        burstTime: profile.burstTime || '',
+        minRate: profile.minRate || '',
+        priority: profile.priority || 8,
+        validity: profile.validity || '',
+        validitySeconds: profile.validitySeconds || 0,
+        quota: profile.quota || '',
+        quotaBytes: profile.quotaBytes || 0,
+        sharedUsers: profile.sharedUsers || 1,
+        expiredMode: profile.expiredMode || 'none',
+        triggerCoa: true,
+        rateLimitText: freeradius.mikrotikRateLimit(profile),
+        status: profile.active === false ? 'disabled' : 'active',
+        onlineNasId: online.nasId || '',
+        onlineNasName: onlineNas?.name || '',
+        note: profile.note || '',
+        updatedAt: profile.updatedAt || profile.createdAt || ''
+      };
+    })
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'id', {
       numeric: true,
       sensitivity: 'base'
@@ -3936,6 +3945,9 @@ async function radiusPayloadLocal(data = {}, section = 'ppp-dhcp', query = {}) {
   }
   if (section === 'hotspot' && ['users', 'sessions'].includes(tab) && query.viewer) {
     rows = rows.filter((row) => resellerHotspotVoucherRowVisible(row, query.viewer));
+  }
+  if (section === 'hotspot' && tab === 'profiles' && query.viewer) {
+    rows = rows.filter((row) => resellerHotspotProfileRowVisible(data, row, query.viewer));
   }
   const filterQuery = ['users', 'sessions'].includes(tab)
     ? query
@@ -4895,6 +4907,7 @@ function randomVoucherCode(length = 6, mode = 'mixed') {
 function generateHotspotVouchers(data = {}, payload = {}, actor = {}) {
   const profile = radiusFindProfile(data, payload.profileId || payload.profile, 'hotspot');
   if (!profile) throw new Error('Profile Hotspot wajib dipilih');
+  requireResellerHotspotProfileAccess(data, payload, actor);
   const nas = radiusFindNas(data, payload.nasId || payload.nas || payload.routerNas);
   const count = Math.max(1, Math.min(500, Math.trunc(Number(payload.count || 1)) || 1));
   const length = Math.max(3, Math.min(32, Math.trunc(Number(payload.nameLength || 6)) || 6));
@@ -5536,6 +5549,44 @@ function applyResellerVoucherNasLock(data = {}, payload = {}, user = {}) {
   next.nas = nas.id;
   next.routerNas = nas.id;
   return next;
+}
+
+function hotspotProfileOnlineNasId(data = {}, profile = {}) {
+  const profileId = String(profile.id || '').trim();
+  const packages = data.settings?.hotspotVoucherOnline?.packages || {};
+  const online = profileId && packages[profileId] && typeof packages[profileId] === 'object'
+    ? packages[profileId]
+    : {};
+  return String(profile.online?.nasId || profile.onlineNasId || profile.nasId || online.nasId || '').trim();
+}
+
+function resellerHotspotProfileAllowed(data = {}, profile = {}, nas = null) {
+  if (!nas) return true;
+  const profileNasId = hotspotProfileOnlineNasId(data, profile);
+  const allowed = [nas.id, nas.name, nas.address, nas.ipAddress]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return !profileNasId || allowed.includes(profileNasId);
+}
+
+function resellerHotspotProfileRowVisible(data = {}, row = {}, user = {}) {
+  if (String(user.role || '') !== 'reseller_voucher') return true;
+  if (!userLockedNasId(user)) return true;
+  const nas = resolveUserLockedNas(data, user);
+  if (!nas) return false;
+  const profile = radiusFindProfile(data, row.id || row.name || row.profileId || row.profile, 'hotspot') || row;
+  return resellerHotspotProfileAllowed(data, profile, nas);
+}
+
+function requireResellerHotspotProfileAccess(data = {}, payload = {}, user = {}) {
+  if (String(user.role || '') !== 'reseller_voucher') return;
+  const nas = requireResellerLockedNas(data, user);
+  if (!nas) return;
+  const profile = radiusFindProfile(data, payload.profileId || payload.profile, 'hotspot');
+  if (!profile) return;
+  if (!resellerHotspotProfileAllowed(data, profile, nas)) {
+    throw new Error('Profile Hotspot tidak sesuai NAS reseller');
+  }
 }
 
 function resellerHotspotVoucherRowVisible(row = {}, user = {}) {
@@ -6544,6 +6595,83 @@ function sortMonitoringMembersByNameAsc(members = []) {
   });
 }
 
+function monitoringMemberSummaryFromRows(rows = []) {
+  return {
+    total: rows.length,
+    prepaidFixed: rows.filter((row) => row.paymentType === 'prepaid' && row.billingPeriod === 'fixed').length,
+    prepaidRenewal: rows.filter((row) => row.paymentType === 'prepaid' && row.billingPeriod === 'renewal').length,
+    postpaidFixed: rows.filter((row) => row.paymentType === 'postpaid' && row.billingPeriod === 'fixed').length,
+    postpaidCycle: rows.filter((row) => row.paymentType === 'postpaid' && row.billingPeriod === 'cycle').length
+  };
+}
+
+function monitoringMemberNasOptions(data = {}, members = []) {
+  const options = new Map();
+  for (const nas of radiusNasRowsLocal(data)) {
+    const value = String(nas.id || nas.name || '').trim();
+    const label = String(nas.name || nas.id || '').trim();
+    if (value && label) options.set(value, { value, label });
+  }
+  for (const member of members) {
+    const value = String(member.nasId || member.nasName || member.siteName || '').trim();
+    const label = String(member.nasName || member.siteName || member.nasId || '').trim();
+    if (value && label && !options.has(value)) options.set(value, { value, label });
+  }
+  return [...options.values()].sort((left, right) => String(left.label).localeCompare(String(right.label), 'id', {
+    numeric: true,
+    sensitivity: 'base'
+  }));
+}
+
+function monitoringMemberMatchesNas(member = {}, selectedNas = '') {
+  const filter = String(selectedNas || '').trim().toLowerCase();
+  if (!filter || filter === 'all') return true;
+  return [
+    member.nasId,
+    member.nasName,
+    member.nas,
+    member.siteName
+  ].some((value) => String(value || '').trim().toLowerCase() === filter);
+}
+
+function reportNasRowCandidates(row = {}) {
+  return [
+    row.nasId,
+    row.nasName,
+    row.nas,
+    row.siteId,
+    row.siteName,
+    row.site
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
+function reportNasOptions(data = {}, rows = []) {
+  const options = new Map();
+  for (const nas of radiusNasRowsLocal(data)) {
+    const value = String(nas.id || nas.name || '').trim();
+    const label = String(nas.name || nas.id || '').trim();
+    if (value && label) options.set(value.toLowerCase(), { value, label });
+  }
+  for (const row of rows || []) {
+    const candidates = reportNasRowCandidates(row);
+    const value = candidates[0] || '';
+    const label = String(row.nasName || row.siteName || row.nas || row.site || value || '').trim();
+    if (value && label && !options.has(value.toLowerCase())) {
+      options.set(value.toLowerCase(), { value, label });
+    }
+  }
+  return [...options.values()].sort((left, right) => String(left.label).localeCompare(String(right.label), 'id', {
+    numeric: true,
+    sensitivity: 'base'
+  }));
+}
+
+function reportMatchesNas(row = {}, selectedNas = '') {
+  const filter = String(selectedNas || '').trim().toLowerCase();
+  if (!filter || filter === 'all') return true;
+  return reportNasRowCandidates(row).some((value) => value.toLowerCase() === filter);
+}
+
 function localMonitoringMemberRows(data = {}, query = {}) {
   const status = String(query.status || 'all').trim().toLowerCase();
   const paymentType = String(query.paymentType || 'all').trim().toLowerCase();
@@ -6553,6 +6681,7 @@ function localMonitoringMemberRows(data = {}, query = {}) {
   const dateFrom = safeDateKey(query.from || query.dateFrom || '');
   const dateTo = safeDateKey(query.to || query.dateTo || '');
   const creator = String(query.creator || 'all').trim().toLowerCase();
+  const selectedNas = String(query.nas || query.site || 'all').trim().toLowerCase();
   const search = String(query.search || '').trim().toLowerCase();
   const sort = String(query.sort || 'created_desc').trim().toLowerCase();
   const resolver = radiusStatusResolver(data);
@@ -6568,6 +6697,9 @@ function localMonitoringMemberRows(data = {}, query = {}) {
     const registeredAt = customer.activeDate || customer.installedAt || customer.createdAt || radiusUser.activeDate || radiusUser.createdAt || '';
     const registeredDate = safeDateKey(registeredAt);
     const serviceType = String(radiusUser.serviceType || customer.serviceType || 'pppoe').trim().toLowerCase();
+    const nas = radiusFindNas(data, radiusUser.nasId || customer.nasId || radiusUser.nasName || radiusUser.nas || customer.nas || customer.siteName || customer.site) || {};
+    const nasId = nas.id || radiusUser.nasId || customer.nasId || '';
+    const nasName = nas.name || radiusUser.nasName || radiusUser.nas || customer.nas || customer.siteName || customer.site || '';
     const normalizedStatus = resolver.statusForCustomer(customer);
     const createdByName = customer.createdByName || radiusUser.createdByName || '';
     const createdByUsername = customer.createdByUsername || radiusUser.createdByUsername || '';
@@ -6593,6 +6725,10 @@ function localMonitoringMemberRows(data = {}, query = {}) {
       status: normalizedStatus,
       paymentType: memberPaymentType,
       billingPeriod: memberBillingPeriod,
+      nasId,
+      nasName,
+      nas: nasName,
+      siteName: nasName || customer.siteName || customer.site || '',
       activeDate: customer.activeDate || customer.createdAt || '',
       registeredAt,
       registeredDate,
@@ -6621,6 +6757,7 @@ function localMonitoringMemberRows(data = {}, query = {}) {
     return member;
   });
 
+  const nasOptions = monitoringMemberNasOptions(data, members);
   const creatorMap = new Map();
   for (const member of members) {
     if (!creatorMap.has(member.creatorKey)) {
@@ -6661,6 +6798,9 @@ function localMonitoringMemberRows(data = {}, query = {}) {
   if (creator !== 'all') {
     members = members.filter((member) => member.creatorKey === creator);
   }
+  if (selectedNas && selectedNas !== 'all') {
+    members = members.filter((member) => monitoringMemberMatchesNas(member, selectedNas));
+  }
   if (search) {
     members = members.filter((member) => [
       member.fullName,
@@ -6685,7 +6825,7 @@ function localMonitoringMemberRows(data = {}, query = {}) {
     ? sortMonitoringMembersByNameAsc(members)
     : sortMonitoringMembersByCreatedDesc(members);
 
-  return { members, creators, summary: localMemberSummaryRows(data) };
+  return { members, creators, nasOptions, summary: monitoringMemberSummaryFromRows(members) };
 }
 
 async function fetchDashboardMemberGroup(settings = {}, status = '') {
@@ -9138,11 +9278,24 @@ function periodDailyRows(period = currentPeriod(), groups = new Map()) {
 }
 
 function monthlyBillingDailyRows(data = {}, period = currentPeriod(), options = {}) {
-  const groups = options.includeExpenses === false ? new Map() : periodExpenseDailyGroups(data, period);
+  const selectedNas = String(options.nas || options.site || 'all').trim();
+  const scopedNas = selectedNas && selectedNas.toLowerCase() !== 'all';
+  const groups = options.includeExpenses === false || scopedNas ? new Map() : periodExpenseDailyGroups(data, period);
   const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
+  const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const payments = Array.isArray(options.payments) ? options.payments : activePayments(data);
   for (const payment of payments) {
     const invoice = invoices.get(payment.invoiceId) || {};
+    const customer = customers.get(payment.customerId || invoice.customerId) || {};
+    const site = localBillingSite(data, customer, invoice);
+    if (scopedNas && !reportMatchesNas({
+      ...invoice,
+      ...customer,
+      siteId: site.id,
+      siteName: site.name,
+      nasId: site.id,
+      nasName: site.name
+    }, selectedNas)) continue;
     const date = paymentDateKey(payment, invoice);
     if (date.slice(0, 7) !== period) continue;
     const method = paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod);
@@ -9653,15 +9806,20 @@ function statisticsActivePppCustomerCountAtMonthEnd(data = {}, period = currentP
   return customerKeys.size;
 }
 
-async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
+async function reportStatisticsPayload(data = {}, period = currentPeriod(), options = {}) {
   const selectedPeriod = normalizePeriod(period);
+  const selectedNas = String(options.nas || options.site || 'all').trim();
+  const scopedNas = selectedNas && selectedNas.toLowerCase() !== 'all';
   const cacheKey = runtimeCacheKey('report-statistics', [
     selectedPeriod,
+    selectedNas.toLowerCase(),
     runtimeDataSignature(data, [
       'radiusUsers',
       'radiusRemovedRecords',
       'radiusVoucherRecords',
       'radiusProfiles',
+      'radiusNas',
+      'monitoringTargets',
       'customers',
       'invoices',
       'payments',
@@ -9694,6 +9852,9 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       const customer = customersById.get(String(user.customerId || '').trim())
         || customersByRadiusUserId.get(String(user.id || '').trim())
         || null;
+      const nas = radiusFindNas(data, user.nasId || customer?.nasId || user.nasName || user.nas || customer?.nas || customer?.siteName || customer?.site) || {};
+      const nasId = nas.id || user.nasId || customer?.nasId || '';
+      const nasName = nas.name || user.nasName || user.nas || customer?.nas || customer?.siteName || customer?.site || '';
       const installDate = customer
         ? String(customer.activeDate || user.activeDate || customer.createdAt || user.createdAt || '').slice(0, 10)
         : '';
@@ -9705,9 +9866,14 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
         customer,
         installDate,
         status,
+        nasId,
+        nasName,
+        siteId: nasId,
+        siteName: nasName,
         customerKey: String(customer?.id || customer?.code || '').trim()
       };
-    });
+    })
+    .filter((row) => !scopedNas || reportMatchesNas(row, selectedNas));
   const addRow = (date = '', field = '', amount = 1) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return;
     const rowPeriod = date.slice(0, 7);
@@ -9773,6 +9939,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
     const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
     if (type !== 'pppoe') continue;
     if (!String(record.customerId || record.memberCode || '').trim()) continue;
+    if (scopedNas && !reportMatchesNas(record, selectedNas)) continue;
     const removedDate = String(record.removedAt || '').slice(0, 10);
     if (monthPeriodSet.has(removedDate.slice(0, 7))) {
       const key = statisticsRecordKey('removed', record);
@@ -9794,8 +9961,19 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   }
 
   const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
+  const paymentCustomers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   for (const payment of activePayments(data)) {
     const invoice = invoices.get(payment.invoiceId) || {};
+    const customer = paymentCustomers.get(payment.customerId || invoice.customerId) || {};
+    const site = localBillingSite(data, customer, invoice);
+    if (scopedNas && !reportMatchesNas({
+      ...invoice,
+      ...customer,
+      siteId: site.id,
+      siteName: site.name,
+      nasId: site.id,
+      nasName: site.name
+    }, selectedNas)) continue;
     const date = paymentDateKey(payment, invoice);
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     const category = paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod);
@@ -9805,6 +9983,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   for (const income of data.externalIncomes || []) {
     const status = String(income.status || 'active').toLowerCase();
     if (['cancelled', 'canceled', 'void', 'batal'].includes(status)) continue;
+    if (scopedNas && !reportMatchesNas(income, selectedNas)) continue;
     const date = String(income.date || income.createdAt || '').slice(0, 10);
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     const category = paymentCategoryForRecord(income, income.paymentMethod || income.method);
@@ -9812,6 +9991,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   }
 
   for (const expense of data.expenses || []) {
+    if (scopedNas && !reportMatchesNas(expense, selectedNas)) continue;
     const date = String(expense.date || expense.createdAt || '').slice(0, 10);
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     addExpenseRow(date, Number(expense.amount || 0));
@@ -9821,6 +10001,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   for (const monthPeriod of monthPeriods) {
     const voucherOrders = await paidVoucherOrdersForReport(data, monthPeriod, firstOnlineByUsername);
     for (const order of voucherOrders) {
+      if (scopedNas && !reportMatchesNas(order, selectedNas)) continue;
       const date = timestampLocalDateKey(order.date || order.paidAt || order.updatedAt || order.createdAt);
       if (date.slice(0, 7) !== monthPeriod) continue;
       addRow(date, 'voucherBuyerCount', 1);
@@ -9841,6 +10022,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
       if (row.customerKey) customerKeys.add(row.customerKey);
     }
     for (const record of data.radiusRemovedRecords || []) {
+      if (scopedNas && !reportMatchesNas(record, selectedNas)) continue;
       if (!statisticsRemovedPppCustomerActiveAtMonthEnd(record, rowPeriod)) continue;
       const key = String(record.customerId || record.memberCode || '').trim();
       if (key) customerKeys.add(key);
@@ -9892,6 +10074,8 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod()) {
   const payload = {
     ok: true,
     period: selectedPeriod,
+    nas: selectedNas,
+    nasOptions: reportNasOptions(data),
     summary,
     monthlyRows,
     dailyRows,
@@ -15560,7 +15744,9 @@ async function handleApi(req, res, url) {
       return;
     }
     const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
-    const payload = await reportStatisticsPayload(authContext.data, period);
+    const payload = await reportStatisticsPayload(authContext.data, period, {
+      nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all'
+    });
     sendJson(res, 200, payload);
     return;
   }
@@ -15636,6 +15822,7 @@ async function handleApi(req, res, url) {
     const data = authContext.data;
     const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
     const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
+    const selectedNas = String(url.searchParams.get('nas') || url.searchParams.get('site') || 'all').trim();
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
     const collectorReport = userIsCollector(authContext.user);
@@ -15644,19 +15831,21 @@ async function handleApi(req, res, url) {
       .filter((payment) => paymentPeriodKey(payment) === period)
       .map((payment) => String(payment.invoiceId || ''))
       .filter(Boolean));
-    let invoices = localBillingInvoiceRows(data, period).filter((invoice) => invoice.status !== 'cancelled');
+    const baseInvoices = localBillingInvoiceRows(data, period).filter((invoice) => invoice.status !== 'cancelled');
+    const nasOptions = reportNasOptions(data, baseInvoices);
+    let allPeriodInvoices = [...baseInvoices];
     if (collectorReport) {
-      invoices = invoices.filter((invoice) => periodPaymentInvoiceIds.has(String(invoice.invoiceId || invoice.id || '')));
+      allPeriodInvoices = allPeriodInvoices.filter((invoice) => periodPaymentInvoiceIds.has(String(invoice.invoiceId || invoice.id || '')));
     }
+    if (selectedNas && selectedNas.toLowerCase() !== 'all') {
+      allPeriodInvoices = allPeriodInvoices.filter((invoice) => reportMatchesNas(invoice, selectedNas));
+    }
+    let invoices = [...allPeriodInvoices];
     if (status !== 'all') {
       invoices = invoices.filter((invoice) => invoice.status === status || (status === 'unpaid' && ['unpaid', 'pending'].includes(invoice.status)));
     }
     invoices = filterSearch(invoices, search, ['invoiceNo', 'externalId', 'customerName', 'username', 'phone', 'address', 'packageName', 'item', 'siteName', 'status']);
     invoices.sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')) || String(a.customerName || '').localeCompare(String(b.customerName || '')));
-    let allPeriodInvoices = localBillingInvoiceRows(data, period).filter((invoice) => invoice.status !== 'cancelled');
-    if (collectorReport) {
-      allPeriodInvoices = allPeriodInvoices.filter((invoice) => periodPaymentInvoiceIds.has(String(invoice.invoiceId || invoice.id || '')));
-    }
     const summary = {
       totalCount: allPeriodInvoices.length,
       totalAmount: allPeriodInvoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
@@ -15673,12 +15862,15 @@ async function handleApi(req, res, url) {
       ok: true,
       period,
       status,
+      nas: selectedNas,
       search,
       summary,
       collector: collectorReport ? { scoped: true, name: authContext.user.name || '', username: authContext.user.username || '' } : null,
+      nasOptions,
       dailyRows: monthlyBillingDailyRows(data, period, {
         payments: collectorReport ? reportPayments : undefined,
-        includeExpenses: !collectorReport
+        includeExpenses: !collectorReport,
+        nas: selectedNas
       }),
       invoices: invoices.slice(offset, offset + limit),
       pagination,
@@ -15761,6 +15953,7 @@ async function handleApi(req, res, url) {
     const data = authContext.data;
     const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
     const methodFilter = String(url.searchParams.get('method') || 'all').trim().toLowerCase();
+    const selectedNas = String(url.searchParams.get('nas') || url.searchParams.get('site') || 'all').trim();
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
     const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
@@ -15769,6 +15962,7 @@ async function handleApi(req, res, url) {
       .map((payment) => {
         const invoice = invoices.get(payment.invoiceId) || {};
         const customer = customers.get(payment.customerId || invoice.customerId) || {};
+        const site = localBillingSite(data, customer, invoice);
         const invoiceNo = displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id || payment.invoiceId || payment.id);
         return {
           id: `billing-${payment.id}`,
@@ -15789,7 +15983,11 @@ async function handleApi(req, res, url) {
           description: payment.notes || customer.name || invoice.customerName || '',
           type: 'Pembayaran',
           admin: payment.admin || payment.createdBy || payment.createdByName || 'Sistem',
-          notes: payment.notes || invoice.notes || ''
+          notes: payment.notes || invoice.notes || '',
+          nasId: site.id || customer.nasId || invoice.nasId || '',
+          nasName: site.name || customer.nasName || invoice.siteName || '',
+          siteId: site.id || '',
+          siteName: site.name || invoice.siteName || ''
         };
       })
       .filter((transaction) => timestampLocalDateKey(transaction.paidAt).slice(0, 7) === period);
@@ -15814,7 +16012,11 @@ async function handleApi(req, res, url) {
       type: 'Voucher',
       admin: order.resellerName || order.createdByName || order.paidByName || 'Sistem',
       notes: order.reference || '',
-      paymentGatewayReference: order.reference || ''
+      paymentGatewayReference: order.reference || '',
+      nasId: order.nasId || '',
+      nasName: order.nasName || '',
+      siteId: order.nasId || '',
+      siteName: order.nasName || ''
       }));
     const voucherReferences = new Set(voucherTransactions.map((transaction) => String(transaction.invoiceNo || '').trim()).filter(Boolean));
     const billingReferences = new Set(billingTransactions.flatMap((transaction) => [
@@ -15855,9 +16057,16 @@ async function handleApi(req, res, url) {
         type: 'Online',
         admin: row.paidByName || row.provider || 'Payment Gateway',
         notes: row.externalId || '',
-        paymentGatewayReference: row.reference || row.invoiceNo || ''
+        paymentGatewayReference: row.reference || row.invoiceNo || '',
+        nasId: row.nasId || '',
+        nasName: row.nasName || row.siteName || '',
+        siteId: row.nasId || row.siteId || '',
+        siteName: row.nasName || row.siteName || ''
       }));
     let transactions = billingTransactions.concat(voucherTransactions, paymentGatewayTransactions);
+    if (selectedNas && selectedNas.toLowerCase() !== 'all') {
+      transactions = transactions.filter((transaction) => reportMatchesNas(transaction, selectedNas));
+    }
     if (methodFilter !== 'all') {
       transactions = transactions.filter((transaction) => {
         const group = transaction.paymentCategory || paymentCategoryForRecord(transaction, transaction.method);
@@ -15886,8 +16095,10 @@ async function handleApi(req, res, url) {
       ok: true,
       period,
       method: methodFilter,
+      nas: selectedNas,
       search,
       summary,
+      nasOptions: reportNasOptions(data, transactions),
       transactions: transactions.slice(offset, offset + limit),
       pagination,
       checkedAt: new Date().toISOString()
@@ -16856,10 +17067,16 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/monitoring/customers') {
     const authContext = await requirePermission(req, res, 'monitoring:read');
     if (!authContext) return;
+    const forceRefresh = truthyQuery(url.searchParams.get('refresh'));
     try {
       const [snmpPayload, sessionPayload] = await Promise.all([
-        operations.mikrotikCustomerSummary(authContext.data.monitoringTargets || []),
-        freeradiusSessions.activeSessions({ limit: 5000, allowCache: false }).catch((error) => ({
+        operations.mikrotikCustomerSummary(authContext.data.monitoringTargets || [], { forceRefresh }),
+        freeradiusSessions.activeSessions({
+          limit: 5000,
+          preferCache: !forceRefresh,
+          allowCache: true,
+          maxCacheAgeSeconds: forceRefresh ? 0 : 20
+        }).catch((error) => ({
           ok: false,
           source: 'freeradius-radacct',
           rows: [],
@@ -17467,6 +17684,9 @@ async function handleApi(req, res, url) {
         if (method === 'POST') {
           requireRadiusUserProfile(store, lockedPayload, 'hotspot', 'Hotspot');
         }
+        if (method !== 'DELETE') {
+          requireResellerHotspotProfileAccess(store, lockedPayload, authContext.user);
+        }
         const next = method === 'POST'
           ? freeradius.addRadiusUser(store, radiusUserPayload(lockedPayload, 'hotspot', store), authContext.user)
           : method === 'PUT'
@@ -17513,6 +17733,10 @@ async function handleApi(req, res, url) {
   if (radiusHotspotProfileMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
     const authContext = await requirePermission(req, res, 'radius:write');
     if (!authContext) return;
+    if (String(authContext.user.role || '') === 'reseller_voucher') {
+      forbidden(res);
+      return;
+    }
     const id = radiusHotspotProfileMatch[1] ? decodeURIComponent(radiusHotspotProfileMatch[1]) : '';
     const payload = method === 'DELETE' ? {} : await readBody(req);
     if (method !== 'POST' && !id) {
@@ -17552,6 +17776,10 @@ async function handleApi(req, res, url) {
   if (radiusHotspotTemplateMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
     const authContext = await requirePermission(req, res, 'radius:write');
     if (!authContext) return;
+    if (String(authContext.user.role || '') === 'reseller_voucher') {
+      forbidden(res);
+      return;
+    }
     const id = radiusHotspotTemplateMatch[1] ? decodeURIComponent(radiusHotspotTemplateMatch[1]) : '';
     const payload = method === 'DELETE' ? {} : await readBody(req);
     if (method !== 'POST' && !id) {
@@ -18108,6 +18336,7 @@ async function handleApi(req, res, url) {
       from: url.searchParams.get('from') || '',
       to: url.searchParams.get('to') || '',
       creator: url.searchParams.get('creator') || 'all',
+      nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all',
       search: url.searchParams.get('search') || '',
       sort: 'az'
     });
@@ -18119,6 +18348,7 @@ async function handleApi(req, res, url) {
       username: member.internet || member.username || '',
       whatsapp: member.whatsapp || member.phone || '',
       alamat: member.address || '',
+      nas: member.nasName || member.nas || member.siteName || '',
       paket: member.packageName || '',
       tipe_pembayaran: member.paymentType || '',
       periode_billing: member.billingPeriod || '',
@@ -18142,7 +18372,7 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     if (standaloneMode(authContext.data)) {
       const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-      const { members, creators, summary } = localMonitoringMemberRows(authContext.data, {
+      const { members, creators, nasOptions, summary } = localMonitoringMemberRows(authContext.data, {
         status: url.searchParams.get('status') || 'all',
         paymentType: url.searchParams.get('paymentType') || 'all',
         billingPeriod: url.searchParams.get('billingPeriod') || 'all',
@@ -18151,6 +18381,7 @@ async function handleApi(req, res, url) {
         from: url.searchParams.get('from') || '',
         to: url.searchParams.get('to') || '',
         creator: url.searchParams.get('creator') || 'all',
+        nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all',
         search: url.searchParams.get('search') || '',
         sort: url.searchParams.get('sort') || 'created_desc'
       });
@@ -18163,6 +18394,7 @@ async function handleApi(req, res, url) {
         source: 'local',
         members: members.slice(offset, offset + limit),
         creators,
+        nasOptions,
         summary,
         pagination: {
           page: currentPage,

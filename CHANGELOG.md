@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.15] - 2026-07-30
+
+### Changed
+
+- Dashboard memakai mode sembunyi angka secara default, dengan tombol mata khusus role admin, owner, finance, dan sekretaris.
+- Filter bulan Dashboard di desktop diposisikan di kanan, sementara tampilan mobile tetap full-width agar tidak keluar layar.
+- Nilai dashboard yang disembunyikan memakai masker tetap agar jumlah digit nominal dan jumlah user tidak terbaca.
+
 ## [2.11.14] - 2026-07-30
 
 ### Fixed

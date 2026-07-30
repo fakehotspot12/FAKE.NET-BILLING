@@ -22,8 +22,12 @@ const IP_NET_TO_MEDIA_PHYS_ADDRESS_OID = '1.3.6.1.2.1.4.22.1.2';
 const IP_NET_TO_MEDIA_NET_ADDRESS_OID = '1.3.6.1.2.1.4.22.1.3';
 const dashboardTrafficSamples = new Map();
 const routerDashboardSummaryCache = new Map();
+const customerSummaryCache = new Map();
 const ROUTER_DASHBOARD_CACHE_MS = 15000;
 const ROUTER_DASHBOARD_REDIS_TTL_SECONDS = Math.max(5, Number(process.env.ROUTER_DASHBOARD_REDIS_TTL_SECONDS || 15) || 15);
+const CUSTOMER_SUMMARY_CACHE_MS = Math.max(5000, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_CACHE_MS || 20000) || 20000);
+const CUSTOMER_SUMMARY_REDIS_TTL_SECONDS = Math.max(5, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_REDIS_TTL_SECONDS || 20) || 20);
+const CUSTOMER_SUMMARY_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_CONCURRENCY || 3) || 3));
 
 function cleanText(value) {
   return String(value || '').trim();
@@ -1206,6 +1210,58 @@ async function setRouterDashboardRedisCache(signature = '', payload = null) {
   }
 }
 
+function customerSummaryRedisKey(signature = '') {
+  const digest = crypto.createHash('sha1').update(String(signature || '')).digest('hex');
+  return `fakenet:runtime:customer-summary:${digest}`;
+}
+
+async function getCustomerSummaryRedisCache(signature = '') {
+  if (!redisCache.enabled() || !signature) return null;
+  try {
+    const raw = await redisCache.get(customerSummaryRedisKey(signature));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function setCustomerSummaryRedisCache(signature = '', payload = null) {
+  if (!redisCache.enabled() || !signature || !payload) return;
+  try {
+    await redisCache.set(customerSummaryRedisKey(signature), JSON.stringify(payload), CUSTOMER_SUMMARY_REDIS_TTL_SECONDS);
+  } catch {
+    // Redis cache is optional; SNMP polling still works without it.
+  }
+}
+
+function monitoringTargetSignature(targets = []) {
+  return (targets || []).map((target) => [
+    target.id,
+    target.name,
+    target.host,
+    target.port || 161,
+    target.snmpVersion,
+    target.community,
+    target.timeoutMs || 5000,
+    target.updatedAt || ''
+  ].map((value) => cleanText(value)).join(':')).join('|');
+}
+
+async function mapWithConcurrency(items = [], concurrency = 3, iterator = async (item) => item) {
+  const rows = Array.isArray(items) ? items : [];
+  const results = new Array(rows.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), rows.length) }, async () => {
+    while (nextIndex < rows.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await iterator(rows[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function routerDashboardSummary(targets = []) {
   const activeTargets = (targets || [])
     .filter((target) => target && target.status !== 'inactive' && cleanText(target.host))
@@ -1256,15 +1312,27 @@ async function routerDashboardSummary(targets = []) {
   return payload;
 }
 
-async function mikrotikCustomerSummary(targets = []) {
+async function mikrotikCustomerSummary(targets = [], options = {}) {
   const activeTargets = (targets || [])
     .filter((target) => target && target.status !== 'inactive' && cleanText(target.host));
-  const sites = [];
-
-  for (const target of activeTargets) {
-    sites.push(await checkMikrotikCustomerTarget(target));
+  const cacheKey = monitoringTargetSignature(activeTargets);
+  const forceRefresh = options.forceRefresh === true || options.refresh === true;
+  if (!forceRefresh) {
+    const cached = customerSummaryCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return structuredClone(cached.value);
+    }
+    const redisCached = await getCustomerSummaryRedisCache(cacheKey);
+    if (redisCached) {
+      customerSummaryCache.set(cacheKey, {
+        expiresAt: Date.now() + CUSTOMER_SUMMARY_CACHE_MS,
+        value: structuredClone(redisCached)
+      });
+      return structuredClone(redisCached);
+    }
   }
 
+  const sites = await mapWithConcurrency(activeTargets, CUSTOMER_SUMMARY_CONCURRENCY, (target) => checkMikrotikCustomerTarget(target));
   const summary = sites.reduce((totals, site) => {
     totals.online += Number(site.online || 0);
     totals.totalCustomerInterfaces += Number(site.totalCustomerInterfaces || 0);
@@ -1284,7 +1352,7 @@ async function mikrotikCustomerSummary(targets = []) {
     downCount: 0
   });
 
-  return {
+  const payload = {
     ok: sites.some((site) => site.status === 'up'),
     source: 'mikrotik-snmp',
     summary: {
@@ -1297,6 +1365,15 @@ async function mikrotikCustomerSummary(targets = []) {
     },
     sites
   };
+  customerSummaryCache.set(cacheKey, {
+    expiresAt: Date.now() + CUSTOMER_SUMMARY_CACHE_MS,
+    value: structuredClone(payload)
+  });
+  while (customerSummaryCache.size > 8) {
+    customerSummaryCache.delete(customerSummaryCache.keys().next().value);
+  }
+  await setCustomerSummaryRedisCache(cacheKey, payload);
+  return payload;
 }
 
 module.exports = {
