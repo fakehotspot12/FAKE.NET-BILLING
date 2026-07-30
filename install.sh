@@ -515,6 +515,19 @@ ensure_genieacs_mongodb_image_env() {
   replace_or_append_env "$GENIEACS_ENV_FILE" GENIEACS_MONGODB_IMAGE "$normalized"
 }
 
+ensure_wa_gateway_env_defaults() {
+  local file="/etc/fakenet-billing.env" send_interval timeout
+  [ -f "$file" ] || return 0
+  send_interval="$(read_env_value_raw "$file" WA_GATEWAY_SEND_INTERVAL_MS || true)"
+  if ! [[ "$send_interval" =~ ^[0-9]+$ ]] || [ "$send_interval" -lt 30000 ]; then
+    replace_or_append_env "$file" WA_GATEWAY_SEND_INTERVAL_MS 30000
+  fi
+  timeout="$(read_env_value_raw "$file" WA_GATEWAY_HTTP_TIMEOUT_MS || true)"
+  if ! [[ "$timeout" =~ ^[0-9]+$ ]] || [ "$timeout" -lt 15000 ]; then
+    replace_or_append_env "$file" WA_GATEWAY_HTTP_TIMEOUT_MS 15000
+  fi
+}
+
 install_env() {
   local app_db_password radius_db_password waha_api_key waha_password waha_webhook_secret genieacs_jwt_secret
   if [ ! -f /etc/fakenet-billing.env ]; then
@@ -531,6 +544,7 @@ install_env() {
     sed -i "s/CHANGE_ME_RADIUS_DB_PASSWORD/$radius_db_password/g" /etc/fakenet-billing.env
     replace_or_append_env /etc/fakenet-billing.env RADIUS_DATABASE_PASSWORD "$radius_db_password"
   fi
+  ensure_wa_gateway_env_defaults
 
   if [ -n "${FAKENET_LICENSE_PUBLIC_KEY:-}" ] && ! grep -q '^LICENSE_PUBLIC_KEY=' /etc/fakenet-billing.env; then
     local escaped_public_key
