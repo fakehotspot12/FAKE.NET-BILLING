@@ -2,6 +2,20 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.28] - 2026-07-31
+
+### Changed
+
+- Dashboard NAS Status/Traffic mencache index interface SNMP terpilih, sehingga refresh berikutnya cukup membaca counter traffic dan tidak mengulang SNMP walk ratusan interface setiap interval.
+- Pembacaan interface dashboard diberi fallback ke `ifDescr` jika `ifName` tidak tersedia, supaya nama interface tidak mudah kosong pada perangkat tertentu.
+
+## [2.11.27] - 2026-07-31
+
+### Changed
+
+- Dashboard NAS Status/Traffic kini membaca cache cepat dan refresh SNMP berjalan di background, sehingga Dashboard tidak lagi tertahan ketika SNMP lambat.
+- Polling NAS dibuat satu jalur dengan concurrency rendah dan anti dobel request agar tidak membebani CPU/router.
+
 ## [2.11.26] - 2026-07-31
 
 ### Fixed

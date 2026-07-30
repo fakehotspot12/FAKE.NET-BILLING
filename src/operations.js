@@ -21,10 +21,21 @@ const IF_OUT_OCTETS_OID = '1.3.6.1.2.1.2.2.1.16';
 const IP_NET_TO_MEDIA_PHYS_ADDRESS_OID = '1.3.6.1.2.1.4.22.1.2';
 const IP_NET_TO_MEDIA_NET_ADDRESS_OID = '1.3.6.1.2.1.4.22.1.3';
 const dashboardTrafficSamples = new Map();
+const dashboardInterfaceResolutionCache = new Map();
 const routerDashboardSummaryCache = new Map();
+const routerDashboardRefreshPromises = new Map();
 const customerSummaryCache = new Map();
-const ROUTER_DASHBOARD_CACHE_MS = 15000;
-const ROUTER_DASHBOARD_REDIS_TTL_SECONDS = Math.max(5, Number(process.env.ROUTER_DASHBOARD_REDIS_TTL_SECONDS || 15) || 15);
+const ROUTER_DASHBOARD_CACHE_MS = Math.max(3000, Number(process.env.ROUTER_DASHBOARD_CACHE_MS || 10000) || 10000);
+const ROUTER_DASHBOARD_STALE_MS = Math.max(30000, Number(process.env.ROUTER_DASHBOARD_STALE_MS || 180000) || 180000);
+const ROUTER_DASHBOARD_REDIS_TTL_SECONDS = Math.max(
+  Math.ceil(ROUTER_DASHBOARD_STALE_MS / 1000),
+  Number(process.env.ROUTER_DASHBOARD_REDIS_TTL_SECONDS || 180) || 180
+);
+const ROUTER_DASHBOARD_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.ROUTER_DASHBOARD_CONCURRENCY || 2) || 2));
+const ROUTER_DASHBOARD_INTERFACE_CACHE_MS = Math.max(
+  60000,
+  Number(process.env.ROUTER_DASHBOARD_INTERFACE_CACHE_MS || 300000) || 300000
+);
 const CUSTOMER_SUMMARY_CACHE_MS = Math.max(5000, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_CACHE_MS || 20000) || 20000);
 const CUSTOMER_SUMMARY_REDIS_TTL_SECONDS = Math.max(5, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_REDIS_TTL_SECONDS || 20) || 20);
 const CUSTOMER_SUMMARY_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_CONCURRENCY || 3) || 3));
@@ -214,14 +225,27 @@ function resolveDashboardInterface(target = {}, interfaces = []) {
     || interfaces[0];
 }
 
+function usefulSnmpIndexedRows(rows = []) {
+  return (rows || []).filter((row) => {
+    const value = cleanText(row.value).toLowerCase();
+    return row.index && row.value && !value.includes('no such') && !value.includes('end of mib');
+  });
+}
+
 async function readDashboardInterfaceList(target = {}) {
   const timeoutMs = Math.max(2500, Math.min(4000, Number(target.dashboardSnmpTimeoutMs || target.timeoutMs || 3000) || 3000));
   let rows = [];
   try {
-    rows = await readSnmpIndexedValues(target, IF_NAME_OID, { timeoutMs });
+    rows = usefulSnmpIndexedRows(await readSnmpIndexedValues(target, IF_NAME_OID, { timeoutMs }));
   } catch (error) {
     if (error?.killed) return [];
-    rows = await readSnmpIndexedValues(target, IF_DESCR_OID, { timeoutMs });
+  }
+  if (!rows.length) {
+    try {
+      rows = usefulSnmpIndexedRows(await readSnmpIndexedValues(target, IF_DESCR_OID, { timeoutMs }));
+    } catch {
+      rows = [];
+    }
   }
   return rows
     .filter((row) => row.index && row.value)
@@ -230,6 +254,61 @@ async function readDashboardInterfaceList(target = {}) {
       name: row.value,
       value: row.value
     }));
+}
+
+function dashboardInterfaceCacheKey(target = {}) {
+  return [
+    target.id,
+    target.host,
+    target.port || 161,
+    target.snmpVersion,
+    target.community,
+    target.dashboardInterface || target.trafficInterface,
+    target.updatedAt || ''
+  ].map((value) => cleanText(value)).join(':');
+}
+
+function selectedDashboardInterfaceLabel(target = {}) {
+  return cleanText(target.dashboardInterface || target.trafficInterface || target.interfaceName);
+}
+
+async function dashboardInterfaceInfo(target = {}) {
+  const selected = selectedDashboardInterfaceLabel(target);
+  if (/^\d+$/.test(selected)) {
+    return {
+      selectedInterface: { index: selected, name: selected, value: selected },
+      interfaceCount: 0,
+      fromCache: true
+    };
+  }
+
+  const cacheKey = dashboardInterfaceCacheKey(target);
+  const cached = dashboardInterfaceResolutionCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      selectedInterface: cached.selectedInterface,
+      interfaceCount: cached.interfaceCount,
+      fromCache: true
+    };
+  }
+
+  const interfaces = await readDashboardInterfaceList(target);
+  const selectedInterface = resolveDashboardInterface(target, interfaces);
+  if (selectedInterface) {
+    dashboardInterfaceResolutionCache.set(cacheKey, {
+      selectedInterface,
+      interfaceCount: interfaces.length,
+      expiresAt: Date.now() + ROUTER_DASHBOARD_INTERFACE_CACHE_MS
+    });
+  }
+  while (dashboardInterfaceResolutionCache.size > 64) {
+    dashboardInterfaceResolutionCache.delete(dashboardInterfaceResolutionCache.keys().next().value);
+  }
+  return {
+    selectedInterface,
+    interfaceCount: interfaces.length,
+    fromCache: false
+  };
 }
 
 function dashboardSnmpError(error) {
@@ -1142,12 +1221,12 @@ async function checkRouterDashboardTarget(target = {}) {
       throw new Error(descrResult.reason?.message || identityResult.reason?.message || 'SNMP router tidak merespons');
     }
     const routerInfo = parseRouterOsInfo(sysDescr, versionValue, target);
-    let interfaces = [];
+    let interfaceInfo = { selectedInterface: null, interfaceCount: 0, fromCache: false };
     let selectedInterface = null;
     let traffic = { inputOctets: 0, outputOctets: 0, counterMode: '' };
     try {
-      interfaces = await readDashboardInterfaceList(target);
-      selectedInterface = resolveDashboardInterface(target, interfaces);
+      interfaceInfo = await dashboardInterfaceInfo(target);
+      selectedInterface = interfaceInfo.selectedInterface;
       if (selectedInterface) {
         traffic = await readTrafficOctets(target, selectedInterface.index);
       }
@@ -1167,8 +1246,8 @@ async function checkRouterDashboardTarget(target = {}) {
       description: routerInfo.description,
       selectedInterface: cleanText(target.dashboardInterface || target.trafficInterface),
       selectedInterfaceIndex: selectedInterface?.index || '',
-      selectedInterfaceName: selectedInterface?.name || '',
-      interfaceCount: interfaces.length,
+      selectedInterfaceName: selectedInterface?.name || selectedDashboardInterfaceLabel(target),
+      interfaceCount: interfaceInfo.interfaceCount || 0,
       uploadBps: rates.uploadBps,
       downloadBps: rates.downloadBps,
       counterMode: traffic.counterMode,
@@ -1208,6 +1287,130 @@ async function setRouterDashboardRedisCache(signature = '', payload = null) {
   } catch {
     // Redis cache is optional; SNMP polling still works without it.
   }
+}
+
+function routerDashboardTargets(targets = []) {
+  return (targets || [])
+    .filter((target) => target && target.status !== 'inactive' && cleanText(target.host))
+    .slice(0, 20);
+}
+
+function routerDashboardCacheKey(activeTargets = []) {
+  return (activeTargets || []).map((target) => [
+    target.id,
+    target.name,
+    target.host,
+    target.port || 161,
+    target.snmpVersion,
+    target.community,
+    target.dashboardInterface || target.trafficInterface,
+    target.timeoutMs || 3000,
+    target.updatedAt || ''
+  ].map((value) => cleanText(value)).join(':')).join('|');
+}
+
+function routerDashboardCacheAgeMs(payload = {}) {
+  const generatedAt = Date.parse(payload.summary?.generatedAt || payload.generatedAt || '');
+  if (!Number.isFinite(generatedAt)) return 0;
+  return Math.max(0, Date.now() - generatedAt);
+}
+
+function routerDashboardPayload(activeTargets = [], routers = [], options = {}) {
+  const payload = {
+    ok: routers.some((router) => router.status === 'up'),
+    source: 'mikrotik-snmp',
+    routers,
+    summary: {
+      total: routers.length,
+      upCount: routers.filter((router) => router.status === 'up').length,
+      downCount: routers.filter((router) => router.status !== 'up' && router.status !== 'checking').length,
+      checkingCount: routers.filter((router) => router.status === 'checking').length,
+      generatedAt: options.generatedAt || nowIso()
+    }
+  };
+  if (!routers.length && activeTargets.length) {
+    payload.summary.total = activeTargets.length;
+  }
+  return payload;
+}
+
+function routerDashboardPlaceholder(activeTargets = []) {
+  return routerDashboardPayload(activeTargets, activeTargets.map((target) => ({
+    id: target.id,
+    name: target.name,
+    host: target.host,
+    location: target.location || '',
+    status: 'checking',
+    snmpStatus: 'checking',
+    identity: '',
+    routerosType: target.radius?.type || 'RouterOS',
+    routerosVersion: '',
+    description: '',
+    selectedInterface: cleanText(target.dashboardInterface || target.trafficInterface),
+    selectedInterfaceIndex: '',
+    selectedInterfaceName: cleanText(target.dashboardInterface || target.trafficInterface),
+    interfaceCount: 0,
+    uploadBps: 0,
+    downloadBps: 0,
+    uploadText: '',
+    downloadText: '',
+    counterMode: '',
+    rateSampled: false,
+    latencyMs: 0,
+    checkedAt: nowIso(),
+    error: ''
+  })));
+}
+
+function decorateRouterDashboardPayload(payload = {}, options = {}) {
+  const next = structuredClone(payload || {});
+  const cacheAgeMs = routerDashboardCacheAgeMs(next);
+  const summary = next.summary || {};
+  next.cached = Boolean(options.cached);
+  next.stale = Boolean(options.stale);
+  next.refreshing = Boolean(options.refreshing);
+  next.cacheAgeMs = cacheAgeMs;
+  next.summary = {
+    ...summary,
+    cached: next.cached,
+    stale: next.stale,
+    refreshing: next.refreshing,
+    cacheAgeMs
+  };
+  return next;
+}
+
+async function setRouterDashboardCache(cacheKey = '', payload = null) {
+  if (!cacheKey || !payload) return;
+  routerDashboardSummaryCache.set(cacheKey, {
+    expiresAt: Date.now() + ROUTER_DASHBOARD_CACHE_MS,
+    staleAt: Date.now() + ROUTER_DASHBOARD_STALE_MS,
+    value: structuredClone(payload)
+  });
+  while (routerDashboardSummaryCache.size > 8) {
+    routerDashboardSummaryCache.delete(routerDashboardSummaryCache.keys().next().value);
+  }
+  await setRouterDashboardRedisCache(cacheKey, payload);
+}
+
+async function refreshRouterDashboardSummary(activeTargets = [], cacheKey = '') {
+  if (routerDashboardRefreshPromises.has(cacheKey)) {
+    return routerDashboardRefreshPromises.get(cacheKey);
+  }
+  const promise = (async () => {
+    const routers = await mapWithConcurrency(
+      activeTargets,
+      ROUTER_DASHBOARD_CONCURRENCY,
+      (target) => checkRouterDashboardTarget(target)
+    );
+    const payload = routerDashboardPayload(activeTargets, routers);
+    await setRouterDashboardCache(cacheKey, payload);
+    return payload;
+  })().finally(() => {
+    routerDashboardRefreshPromises.delete(cacheKey);
+  });
+  routerDashboardRefreshPromises.set(cacheKey, promise);
+  return promise;
 }
 
 function customerSummaryRedisKey(signature = '') {
@@ -1262,54 +1465,81 @@ async function mapWithConcurrency(items = [], concurrency = 3, iterator = async 
   return results;
 }
 
-async function routerDashboardSummary(targets = []) {
-  const activeTargets = (targets || [])
-    .filter((target) => target && target.status !== 'inactive' && cleanText(target.host))
-    .slice(0, 20);
-  const cacheKey = activeTargets.map((target) => [
-    target.id,
-    target.name,
-    target.host,
-    target.port || 161,
-    target.snmpVersion,
-    target.community,
-    target.dashboardInterface || target.trafficInterface,
-    target.timeoutMs || 3000,
-    target.updatedAt || ''
-  ].map((value) => cleanText(value)).join(':')).join('|');
-  const cached = routerDashboardSummaryCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return structuredClone(cached.value);
-  }
-  const redisCached = await getRouterDashboardRedisCache(cacheKey);
-  if (redisCached) {
-    routerDashboardSummaryCache.set(cacheKey, {
-      expiresAt: Date.now() + ROUTER_DASHBOARD_CACHE_MS,
-      value: structuredClone(redisCached)
+async function routerDashboardSummary(targets = [], options = {}) {
+  const activeTargets = routerDashboardTargets(targets);
+  const cacheKey = routerDashboardCacheKey(activeTargets);
+  const allowStale = options.allowStale === true;
+  const refreshInBackground = options.refreshInBackground === true;
+  const forceRefresh = options.forceRefresh === true || options.force === true;
+  if (!activeTargets.length) {
+    return decorateRouterDashboardPayload(routerDashboardPayload(activeTargets, []), {
+      cached: false,
+      stale: false,
+      refreshing: false
     });
-    return structuredClone(redisCached);
   }
-  const routers = await Promise.all(activeTargets.map((target) => checkRouterDashboardTarget(target)));
-  const payload = {
-    ok: routers.some((router) => router.status === 'up'),
-    source: 'mikrotik-snmp',
-    routers,
-    summary: {
-      total: routers.length,
-      upCount: routers.filter((router) => router.status === 'up').length,
-      downCount: routers.filter((router) => router.status !== 'up').length,
-      generatedAt: nowIso()
+  const cached = routerDashboardSummaryCache.get(cacheKey);
+  if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
+    return decorateRouterDashboardPayload(cached.value, {
+      cached: true,
+      stale: false,
+      refreshing: routerDashboardRefreshPromises.has(cacheKey)
+    });
+  }
+  if (!forceRefresh && allowStale && cached && cached.staleAt > Date.now()) {
+    if (refreshInBackground) {
+      refreshRouterDashboardSummary(activeTargets, cacheKey).catch(() => null);
     }
-  };
-  routerDashboardSummaryCache.set(cacheKey, {
-    expiresAt: Date.now() + ROUTER_DASHBOARD_CACHE_MS,
-    value: structuredClone(payload)
-  });
-  while (routerDashboardSummaryCache.size > 8) {
-    routerDashboardSummaryCache.delete(routerDashboardSummaryCache.keys().next().value);
+    return decorateRouterDashboardPayload(cached.value, {
+      cached: true,
+      stale: true,
+      refreshing: refreshInBackground || routerDashboardRefreshPromises.has(cacheKey)
+    });
   }
-  await setRouterDashboardRedisCache(cacheKey, payload);
-  return payload;
+  if (!forceRefresh) {
+    const redisCached = await getRouterDashboardRedisCache(cacheKey);
+    if (redisCached) {
+      const ageMs = routerDashboardCacheAgeMs(redisCached);
+      const fresh = ageMs <= ROUTER_DASHBOARD_CACHE_MS;
+      const stale = ageMs <= ROUTER_DASHBOARD_STALE_MS;
+      routerDashboardSummaryCache.set(cacheKey, {
+        expiresAt: Date.now() + Math.max(0, ROUTER_DASHBOARD_CACHE_MS - ageMs),
+        staleAt: Date.now() + Math.max(0, ROUTER_DASHBOARD_STALE_MS - ageMs),
+        value: structuredClone(redisCached)
+      });
+      if (fresh) {
+        return decorateRouterDashboardPayload(redisCached, {
+          cached: true,
+          stale: false,
+          refreshing: routerDashboardRefreshPromises.has(cacheKey)
+        });
+      }
+      if (allowStale && stale) {
+        if (refreshInBackground) {
+          refreshRouterDashboardSummary(activeTargets, cacheKey).catch(() => null);
+        }
+        return decorateRouterDashboardPayload(redisCached, {
+          cached: true,
+          stale: true,
+          refreshing: refreshInBackground || routerDashboardRefreshPromises.has(cacheKey)
+        });
+      }
+    }
+  }
+  if (allowStale && refreshInBackground) {
+    refreshRouterDashboardSummary(activeTargets, cacheKey).catch(() => null);
+    return decorateRouterDashboardPayload(routerDashboardPlaceholder(activeTargets), {
+      cached: false,
+      stale: true,
+      refreshing: true
+    });
+  }
+  const payload = await refreshRouterDashboardSummary(activeTargets, cacheKey);
+  return decorateRouterDashboardPayload(payload, {
+    cached: false,
+    stale: false,
+    refreshing: false
+  });
 }
 
 async function mikrotikCustomerSummary(targets = [], options = {}) {

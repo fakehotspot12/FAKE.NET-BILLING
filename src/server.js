@@ -80,6 +80,10 @@ let activeAppTimeZone = DEFAULT_APP_TIME_ZONE;
 const APP_MODE = String(process.env.APP_MODE || 'standalone').toLowerCase();
 const BILLING_SOURCE = String(process.env.BILLING_SOURCE || (APP_MODE === 'standalone' ? 'local' : 'radboox')).toLowerCase();
 const MIGRATION_MODE = ['1', 'true', 'yes', 'on'].includes(String(process.env.MIGRATION_MODE || '').toLowerCase());
+const ROUTER_DASHBOARD_BACKGROUND_INTERVAL_MS = Math.max(
+  5000,
+  Math.min(60000, Number(process.env.ROUTER_DASHBOARD_BACKGROUND_INTERVAL_MS || 10000) || 10000)
+);
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const UPLOAD_ROOT = path.join(APP_ROOT, 'data', 'uploads');
@@ -14155,6 +14159,44 @@ function startPaymentGatewayHistorySync() {
   console.log(`Tripay auto-sync aktif setiap ${Math.round(PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS / 1000)} detik`);
 }
 
+let routerDashboardBackgroundRunning = false;
+let routerDashboardBackgroundTimer = null;
+
+async function warmRouterDashboardCache(reason = 'interval') {
+  if (routerDashboardBackgroundRunning) {
+    return { skipped: true, reason: 'already-running' };
+  }
+  routerDashboardBackgroundRunning = true;
+  try {
+    const data = await loadStore();
+    const targets = data.monitoringTargets || [];
+    if (!targets.length) return { skipped: true, reason: 'no-targets' };
+    const payload = await operations.routerDashboardSummary(targets, { forceRefresh: true });
+    return {
+      ok: payload.ok,
+      total: payload.summary?.total || 0,
+      upCount: payload.summary?.upCount || 0,
+      downCount: payload.summary?.downCount || 0,
+      reason
+    };
+  } finally {
+    routerDashboardBackgroundRunning = false;
+  }
+}
+
+function startRouterDashboardBackgroundPolling() {
+  const run = (reason) => {
+    warmRouterDashboardCache(reason).catch((error) => {
+      console.error(`NAS Dashboard cache gagal: ${error.message || error}`);
+    });
+  };
+  const initialTimer = setTimeout(() => run('startup'), 3_000);
+  initialTimer.unref?.();
+  routerDashboardBackgroundTimer = setInterval(() => run('interval'), ROUTER_DASHBOARD_BACKGROUND_INTERVAL_MS);
+  routerDashboardBackgroundTimer.unref?.();
+  console.log(`NAS Dashboard cache aktif setiap ${Math.round(ROUTER_DASHBOARD_BACKGROUND_INTERVAL_MS / 1000)} detik`);
+}
+
 async function paymentGatewayChannels(data = {}, options = {}) {
   const settings = data.settings?.paymentGateway || {};
   if (settings.enabled !== true) throw new Error('Payment Gateway belum aktif');
@@ -15597,7 +15639,12 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'dashboard:read');
     if (!authContext) return;
     try {
-      const payload = await operations.routerDashboardSummary(authContext.data.monitoringTargets || []);
+      const forceRefresh = truthyQuery(url.searchParams.get('force'));
+      const payload = await operations.routerDashboardSummary(authContext.data.monitoringTargets || [], {
+        forceRefresh,
+        allowStale: !forceRefresh,
+        refreshInBackground: !forceRefresh
+      });
       sendJson(res, 200, payload);
     } catch (error) {
       sendJson(res, 200, {
@@ -20194,6 +20241,7 @@ if (require.main === module) {
       startStandaloneBillingAutomation();
       startWaGatewaySender();
       startPaymentGatewayHistorySync();
+      startRouterDashboardBackgroundPolling();
       imageCleanupTimer = setInterval(() => {
         runImageCleanup().catch((error) => console.error(`Pembersihan upload gagal: ${error.message || error}`));
       }, IMAGE_ORPHAN_CLEANUP_INTERVAL_MS);
@@ -20213,6 +20261,7 @@ if (require.main === module) {
     if (waGatewaySenderTimer) clearInterval(waGatewaySenderTimer);
     if (billingAutomationTimer) clearInterval(billingAutomationTimer);
     if (paymentGatewayHistorySyncTimer) clearInterval(paymentGatewayHistorySyncTimer);
+    if (routerDashboardBackgroundTimer) clearInterval(routerDashboardBackgroundTimer);
     if (imageCleanupTimer) clearInterval(imageCleanupTimer);
     server.close();
     await waGatewayQueue?.close().catch((error) => {

@@ -2804,7 +2804,9 @@ function dashboardRouterNasMarkup(payload = {}) {
   const totalDownload = visibleRouters.reduce((sum, router) => sum + Number(router.downloadBps || 0), 0);
   const visibleUpCount = visibleRouters.filter((router) => router.status === 'up').length;
   const visibleDownCount = visibleRouters.length - visibleUpCount;
-  const isOnline = visibleRouters.length > 0 && visibleDownCount === 0;
+  const isChecking = visibleRouters.length > 0 && visibleRouters.every((router) => router.status === 'checking');
+  const isOnline = visibleRouters.length > 0 && !isChecking && visibleDownCount === 0;
+  const statusLabel = isChecking ? 'Memuat' : (isOnline ? 'Online' : 'Offline');
   const primaryRouter = visibleRouters[0] || routers[0] || {};
   const title = primaryRouter.name || primaryRouter.identity || primaryRouter.host || 'NAS';
   const subTitle = primaryRouter.identity || primaryRouter.host || '-';
@@ -2826,7 +2828,7 @@ function dashboardRouterNasMarkup(payload = {}) {
               <strong data-router-detail="title">${escapeHtml(title)}</strong>
               <span data-router-detail="subtitle">${escapeHtml(subTitle)}</span>
             </div>
-            <span class="badge ${isOnline ? 'active' : 'inactive'}" data-router-detail="status">${isOnline ? 'Online' : 'Offline'}</span>
+            <span class="badge ${isChecking ? 'pending' : (isOnline ? 'active' : 'inactive')}" data-router-detail="status">${escapeHtml(statusLabel)}</span>
           </div>
           <canvas class="router-nas-chart" id="routerNasChart" width="320" height="76"></canvas>
           <div class="router-chart-legend">
@@ -3026,7 +3028,9 @@ function updateDashboardRouterNasDom(payload = {}) {
   const totalDownload = visibleRouters.reduce((sum, router) => sum + Number(router.downloadBps || 0), 0);
   const visibleUpCount = visibleRouters.filter((router) => router.status === 'up').length;
   const visibleDownCount = visibleRouters.length - visibleUpCount;
-  const isOnline = visibleRouters.length > 0 && visibleDownCount === 0;
+  const isChecking = visibleRouters.length > 0 && visibleRouters.every((router) => router.status === 'checking');
+  const isOnline = visibleRouters.length > 0 && !isChecking && visibleDownCount === 0;
+  const statusLabel = isChecking ? 'Memuat' : (isOnline ? 'Online' : 'Offline');
   const primaryRouter = visibleRouters[0] || routers[0] || {};
   const title = primaryRouter.name || primaryRouter.identity || primaryRouter.host || 'NAS';
   const subTitle = primaryRouter.identity || primaryRouter.host || '-';
@@ -3036,11 +3040,12 @@ function updateDashboardRouterNasDom(payload = {}) {
   };
   setText('[data-router-detail="title"]', title);
   setText('[data-router-detail="subtitle"]', subTitle);
-  setText('[data-router-detail="status"]', isOnline ? 'Online' : 'Offline');
+  setText('[data-router-detail="status"]', statusLabel);
   const statusBadge = document.querySelector('[data-router-detail="status"]');
   if (statusBadge) {
     statusBadge.classList.toggle('active', isOnline);
-    statusBadge.classList.toggle('inactive', !isOnline);
+    statusBadge.classList.toggle('pending', isChecking);
+    statusBadge.classList.toggle('inactive', !isOnline && !isChecking);
   }
   setText('[data-router-rate="upload"]', mbpsText(totalUpload));
   setText('[data-router-rate="download"]', mbpsText(totalDownload));
@@ -3089,7 +3094,7 @@ async function loadDashboardRouterNas(options = {}) {
     initialContainer.innerHTML = dashboardRouterNasLoadingMarkup();
   }
   try {
-    const payload = await api('/api/dashboard/router-nas');
+    const payload = await api(`/api/dashboard/router-nas${options.force ? '?force=1' : ''}`);
     if (requestId !== dashboardRouterNasRequestId && !options.force) return;
     const container = activeContainer();
     if (!container) return;
