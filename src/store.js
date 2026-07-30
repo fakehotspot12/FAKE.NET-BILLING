@@ -137,9 +137,9 @@ function createDefaultStore() {
       billing: {
         postpaidDueDay: 10,
         fixedInvoiceAdvanceDays: 7,
-        suspendGraceDays: 5,
+        suspendGraceDays: 0,
         autoTerminateAfterDays: 0,
-        notificationBeforeDueDays: 1,
+        notificationBeforeDueDays: 0,
         notificationSendTime: '08:00',
         autoSuspendTime: '13:30',
         invoiceNumberFormat: 'XXXXXX',

@@ -2,11 +2,16 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.13] - 2026-07-30
+
+### Fixed
+
+- Default hari reminder dan grace isolir billing dikembalikan agar tetap ditentukan dari pengaturan masing-masing usaha, bukan dipaksa mengikuti contoh server lain.
+
 ## [2.11.12] - 2026-07-30
 
 ### Changed
 
-- Default billing install baru mengikuti pola aman: reminder H-1 dan isolir H+5, sementara jam kirim invoice/reminder dan jam isolir tetap dapat ditentukan masing-masing usaha dari pengaturan.
 - Installer/repair menormalkan konfigurasi relay Whatsapp Gateway yang terlalu agresif menjadi minimal 30 detik dan timeout 15 detik agar pesan transaksi tidak mudah pending.
 
 ## [2.11.11] - 2026-07-30
