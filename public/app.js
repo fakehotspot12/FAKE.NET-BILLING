@@ -318,6 +318,7 @@ let voucherDataTimer = null;
 let voucherDataRevision = '';
 let dashboardRouterNasTimer = null;
 let dashboardRouterNasLoading = false;
+let dashboardRouterNasRequestId = 0;
 let dashboardRouterNasPayload = null;
 let dashboardRouterNasHistory = {};
 let dashboardRouterNasSelected = '';
@@ -2965,7 +2966,11 @@ function drawRouterSparkline(canvas, points = []) {
 function renderDashboardRouterNasCharts() {
   const canvas = document.getElementById('routerNasChart');
   if (!canvas || !dashboardRouterNasPayload) return;
-  drawRouterSparkline(canvas, dashboardRouterChartPoints(dashboardRouterNasPayload));
+  try {
+    drawRouterSparkline(canvas, dashboardRouterChartPoints(dashboardRouterNasPayload));
+  } catch {
+    // Chart canvas is decorative; keep the NAS status/rate card visible if drawing fails.
+  }
 }
 
 function mountDashboardRouterNasShell() {
@@ -3065,18 +3070,29 @@ function scheduleDashboardRouterNas() {
 }
 
 async function loadDashboardRouterNas(options = {}) {
-  const container = document.getElementById('dashboardRouterNas');
-  if (!container || dashboardRouterNasLoading) return;
+  const activeContainer = () => document.getElementById('dashboardRouterNas');
+  const initialContainer = activeContainer();
+  if (!initialContainer) return;
+  if (dashboardRouterNasLoading && !options.force) {
+    if (!dashboardRouterNasPayload && !initialContainer.querySelector('.router-nas-widget')) {
+      initialContainer.innerHTML = dashboardRouterNasLoadingMarkup();
+    }
+    return;
+  }
   if (document.hidden && !options.force) {
     scheduleDashboardRouterNas();
     return;
   }
+  const requestId = ++dashboardRouterNasRequestId;
   dashboardRouterNasLoading = true;
   if (!options.silent && !dashboardRouterNasPayload) {
-    container.innerHTML = dashboardRouterNasLoadingMarkup();
+    initialContainer.innerHTML = dashboardRouterNasLoadingMarkup();
   }
   try {
     const payload = await api('/api/dashboard/router-nas');
+    if (requestId !== dashboardRouterNasRequestId && !options.force) return;
+    const container = activeContainer();
+    if (!container) return;
     dashboardRouterNasPayload = payload;
     rememberDashboardRouterNasHistory(payload);
     if (options.silent && container.querySelector('.router-nas-widget')) {
@@ -3091,7 +3107,8 @@ async function loadDashboardRouterNas(options = {}) {
     }
     renderDashboardRouterNasCharts();
   } catch (error) {
-    if (!options.silent || !dashboardRouterNasPayload) {
+    const container = activeContainer();
+    if (container && (!options.silent || !dashboardRouterNasPayload)) {
       container.innerHTML = `<section class="notice warning router-nas-widget">${escapeHtml(error.message || 'Router NAS belum bisa dibaca')}</section>`;
     }
   } finally {

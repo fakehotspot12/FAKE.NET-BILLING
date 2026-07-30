@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.26] - 2026-07-31
+
+### Fixed
+
+- NAS Status/Traffic di Dashboard tetap tampil setelah reload atau update walaupun request SNMP sebelumnya masih berjalan.
+- Slot NAS Status dibuat eksplisit di grid dashboard agar tidak kolaps di desktop maupun mobile.
+
 ## [2.11.25] - 2026-07-31
 
 ### Fixed

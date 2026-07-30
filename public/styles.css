@@ -3010,6 +3010,13 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+#dashboardRouterNas {
+  align-self: stretch;
+  display: grid;
+  min-width: 0;
+  width: 100%;
+}
+
 .dashboard-member-card {
   display: grid;
   gap: 6px;
