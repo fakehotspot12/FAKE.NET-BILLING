@@ -33,6 +33,23 @@ function rupiah(value) {
   return `Rp ${Math.round(Number(value || 0)).toLocaleString('id-ID')}`;
 }
 
+function voucherPhoneDigits(value = '') {
+  return String(value || '').trim().replace(/^'/, '').replace(/\D/g, '');
+}
+
+function validVoucherWhatsapp(value = '') {
+  const digits = voucherPhoneDigits(value);
+  if (!digits) return false;
+  const normalized = digits.startsWith('62')
+    ? digits
+    : digits.startsWith('0')
+      ? `62${digits.slice(1)}`
+      : digits.startsWith('8')
+        ? `62${digits}`
+        : digits;
+  return /^628\d{7,12}$/.test(normalized);
+}
+
 function pageUrl(file, params = {}) {
   const url = new URL(file, window.location.href);
   const current = new URLSearchParams(window.location.search);
@@ -338,12 +355,16 @@ async function initBuyPage() {
       if (button) button.disabled = true;
       setResponse('');
       try {
+        const whatsapp = byId('v_whatsapp')?.value || '';
+        if (!validVoucherWhatsapp(whatsapp)) {
+          throw new Error('Nomor WhatsApp tidak valid. Gunakan format 08xxxxxxxxxx.');
+        }
         const result = await api('/api/public/hotspot-voucher-orders', {
           method: 'POST',
           body: JSON.stringify({
             profileId: item.id,
             buyerName: byId('v_nama')?.value || '',
-            whatsapp: byId('v_whatsapp')?.value || '',
+            whatsapp,
             paymentMethod: byId('v_rek')?.value || 'qris',
             nasId: item.nasId || storefront?.nasContext?.id || '',
             quantity: 1

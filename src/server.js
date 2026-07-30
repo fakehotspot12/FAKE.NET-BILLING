@@ -8904,8 +8904,12 @@ function createHotspotVoucherOrder(data = {}, payload = {}) {
   if (online.enabled !== true) throw new Error('Paket voucher tidak dijual online');
   const quantity = clampInteger(payload.quantity, 1, Math.max(1, Number(online.maxPerOrder || 1)), 1);
   const buyerName = String(payload.buyerName || payload.name || '').trim().slice(0, 80) || 'Pembeli Voucher';
-  const whatsapp = normalizeLocalPhone(payload.whatsapp || payload.phone || '');
+  const whatsappInput = payload.whatsapp || payload.phone || '';
+  const whatsapp = normalizeLocalPhone(whatsappInput);
   if (settings.requireWhatsapp !== false && !whatsapp) throw new Error('Nomor WhatsApp wajib diisi');
+  if (whatsapp && !isValidIndonesianWaPhone(whatsapp)) {
+    throw new Error('Nomor WhatsApp tidak valid. Gunakan format 08xxxxxxxxxx.');
+  }
   const price = Math.max(0, Math.round(Number(profile.price || 0)));
   if (price <= 0) throw new Error('Harga profile Hotspot belum diisi');
   const baseAmount = price * quantity;
@@ -10580,6 +10584,11 @@ function normalizeWaPhone(phone = '') {
   if (digits.startsWith('0')) return `62${digits.slice(1)}`;
   if (digits.startsWith('8')) return `62${digits}`;
   return digits;
+}
+
+function isValidIndonesianWaPhone(phone = '') {
+  const normalized = normalizeWaPhone(phone);
+  return /^628\d{7,12}$/.test(normalized);
 }
 
 const WA_TEMPLATE_ALIASES = {
@@ -13747,7 +13756,7 @@ async function tripayPaymentChannelRows(settings = {}, apiKey = '') {
       try {
         body = bodyText ? JSON.parse(bodyText) : {};
       } catch {
-        body = { message: bodyText };
+        body = { message: paymentGatewayReadableError(bodyText, response, 'Tripay channel gagal') };
       }
       if (!response.ok || body.success === false) {
         throw new Error(body.message || body.error || `Tripay channel HTTP ${response.status}`);
@@ -14260,6 +14269,17 @@ function paymentCheckoutExpiryIso(value = '', fallbackMinutes = 60) {
   return new Date(Date.now() + (Math.max(5, Number(fallbackMinutes || 60)) * 60_000)).toISOString();
 }
 
+function paymentGatewayReadableError(bodyText = '', response = {}, fallback = 'Payment Gateway sedang bermasalah') {
+  const raw = String(bodyText || '').trim();
+  const status = Number(response?.status || 0);
+  if (!raw) return status ? `${fallback} (HTTP ${status})` : fallback;
+  if (/<\/?[a-z][\s\S]*>/i.test(raw) || /<!doctype\s+html/i.test(raw)) {
+    if (status >= 500) return 'Payment Gateway sedang mengembalikan Server Error. Coba lagi beberapa saat.';
+    return status ? `${fallback} (HTTP ${status})` : fallback;
+  }
+  return raw.replace(/\s+/g, ' ').slice(0, 300);
+}
+
 function paymentCheckoutMethodMatches(storedMethod = '', requestedMethod = '', kind = '') {
   const stored = String(storedMethod || '').trim().toUpperCase();
   const requested = String(requestedMethod || '').trim().toUpperCase();
@@ -14389,6 +14409,11 @@ async function createTripayCheckout(data = {}, params = {}) {
   });
   const amount = amountBreakdown.gatewayAmount;
   const ttlMinutes = tripayCheckoutTtlMinutes(settings, method);
+  const customerPhoneInput = String(params.customerPhone || '').trim();
+  const customerPhone = normalizeWaPhone(customerPhoneInput);
+  if (customerPhoneInput && !isValidIndonesianWaPhone(customerPhoneInput)) {
+    throw new Error('Nomor WhatsApp pelanggan tidak valid. Perbaiki nomor kontak terlebih dahulu.');
+  }
   const signature = crypto.createHmac('sha256', privateKey)
     .update(`${merchantCode}${merchantRef}${amount}`)
     .digest('hex');
@@ -14397,7 +14422,7 @@ async function createTripayCheckout(data = {}, params = {}) {
     amount,
     customer_name: String(params.customerName || 'Pelanggan').trim() || 'Pelanggan',
     customer_email: String(params.customerEmail || '').trim() || 'customer@example.com',
-    customer_phone: normalizeWaPhone(params.customerPhone || ''),
+    customer_phone: customerPhone,
     order_items: [{
       sku: merchantRef,
       name: String(params.itemName || params.description || merchantRef).trim() || merchantRef,
@@ -14424,10 +14449,10 @@ async function createTripayCheckout(data = {}, params = {}) {
   try {
     body = bodyText ? JSON.parse(bodyText) : {};
   } catch {
-    body = { message: bodyText };
+    body = { message: paymentGatewayReadableError(bodyText, response, 'Tripay checkout gagal') };
   }
   if (!response.ok || body.success === false) {
-    throw new Error(body.message || body.error || `Tripay HTTP ${response.status}`);
+    throw new Error(body.message || body.error || `Tripay checkout HTTP ${response.status}`);
   }
   const trx = body.data && typeof body.data === 'object' ? body.data : body;
   const qrString = trx.qr_string || trx.qrString || '';

@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.30] - 2026-07-31
+
+### Fixed
+
+- Pembelian voucher Hotspot menolak nomor WhatsApp tidak valid sebelum order dibuat, sehingga Tripay tidak lagi menerima nomor pendek seperti `0852`.
+- Error HTML dari Tripay kini diringkas menjadi pesan gateway yang jelas, bukan ditampilkan mentah di halaman voucher atau invoice.
+
 ## [2.11.29] - 2026-07-31
 
 ### Fixed
