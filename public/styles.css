@@ -5070,6 +5070,32 @@ dialog:has(.app-update-progress) {
   line-height: 1.35;
 }
 
+.cell-map-link {
+  align-items: center;
+  color: var(--blue);
+  display: inline-flex;
+  gap: 4px;
+  font-weight: 800;
+  text-decoration: none;
+  width: fit-content;
+}
+
+.cell-map-link::before {
+  background: currentColor;
+  content: "";
+  flex: 0 0 auto;
+  height: 13px;
+  width: 13px;
+  -webkit-mask: var(--icon-location-sync) center / contain no-repeat;
+  mask: var(--icon-location-sync) center / contain no-repeat;
+}
+
+.cell-map-link:hover,
+.cell-map-link:focus-visible {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
 .member-id-line {
   display: grid;
   gap: 1px;

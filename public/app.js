@@ -15128,6 +15128,92 @@ function memberKtpPhotoUrl(member = {}, fallbackId = '') {
   return `/api/monitoring/member-ktp-photo?memberId=${encodeURIComponent(id)}${version ? `&v=${encodeURIComponent(version)}` : ''}`;
 }
 
+function customerLocationTitle(record = {}) {
+  return record.customerName || record.fullName || record.name || record.userId || record.accountId || record.username || record.internet || '-';
+}
+
+function customerLocationMeta(record = {}) {
+  return [record.accountId || record.userId || '', record.username || record.internet || '', record.phone || record.whatsapp || '']
+    .filter(Boolean)
+    .join(' / ') || '-';
+}
+
+function customerLocationModalBody(record = {}) {
+  const title = customerLocationTitle(record);
+  const meta = customerLocationMeta(record);
+  const address = record.address || '-';
+  const latitude = String(record.latitude || record.memberLatitude || '').trim();
+  const longitude = String(record.longitude || record.memberLongitude || '').trim();
+  const accuracy = String(record.locationAccuracy || record.memberLocationAccuracy || '').trim();
+  const coordinate = [latitude, longitude].filter(Boolean).join(', ') || '-';
+  const mapUrl = memberLocationUrl(record);
+  const latitudeNumber = Number(latitude);
+  const longitudeNumber = Number(longitude);
+  const hasCoordinate = Number.isFinite(latitudeNumber) && Number.isFinite(longitudeNumber) && latitudeNumber !== 0 && longitudeNumber !== 0;
+  const photoUrl = memberHousePhotoUrl(record);
+  return `
+    <div class="member-edit-card member-detail-modal customer-location-modal">
+      <div class="member-edit-hero">
+        <div class="member-edit-avatar">${escapeHtml(String(title).slice(0, 1).toUpperCase() || 'P')}</div>
+        <div class="member-edit-title">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(meta)}</span>
+        </div>
+      </div>
+      <div class="member-contact-preview-grid">
+        <div class="member-map-preview">
+          <div class="member-map-preview-head">
+            <strong>Lokasi Pelanggan</strong>
+            ${mapUrl ? `<a class="ghost-button compact button-link" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener">Google Maps</a>` : ''}
+          </div>
+          <span>Alamat</span>
+          <p>${escapeHtml(address)}</p>
+          <span>Koordinat</span>
+          <em>${escapeHtml(coordinate)}${accuracy ? `, akurasi ${escapeHtml(accuracy)}m` : ''}</em>
+          ${hasCoordinate ? '<div class="member-leaflet-map" id="customerLocationLeafletMap"></div>' : '<div class="empty compact">Koordinat lokasi belum tersedia.</div>'}
+        </div>
+        <div class="member-house-photo-card">
+          <strong>Foto Rumah</strong>
+          ${photoUrl
+            ? `<img class="member-house-photo-large" src="${escapeHtml(photoUrl)}" alt="Foto rumah ${escapeHtml(title)}">`
+            : '<div class="empty compact">Foto rumah belum tersedia.</div>'}
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" data-close-modal type="button">Tutup</button>
+      </div>
+    </div>
+  `;
+}
+
+function initCustomerLocationMap(record = {}) {
+  const mapEl = modalBody.querySelector('#customerLocationLeafletMap');
+  if (!mapEl || mapEl._customerLocationMap) return;
+  const latitude = Number(record.latitude || record.memberLatitude || 0);
+  const longitude = Number(record.longitude || record.memberLongitude || 0);
+  const hasPoint = Number.isFinite(latitude) && Number.isFinite(longitude) && latitude !== 0 && longitude !== 0;
+  if (!hasPoint) return;
+  if (!window.L) {
+    ensureLeafletLoaded().then((loaded) => {
+      if (loaded) initCustomerLocationMap(record);
+    });
+    return;
+  }
+  const map = window.L.map(mapEl, { zoomControl: true }).setView([latitude, longitude], 17);
+  mapEl._customerLocationMap = map;
+  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  window.L.marker([latitude, longitude]).addTo(map);
+  window.setTimeout(() => map.invalidateSize(), 80);
+}
+
+function openCustomerLocationModal(record = {}) {
+  openModal('Lokasi Pelanggan', customerLocationModalBody(record), async () => {});
+  initCustomerLocationMap(record);
+}
+
 function memberEditHeader(member = {}, detail = {}) {
   const contactText = detail.whatsapp || member.whatsapp || member.phone || '-';
   const displayId = memberDisplayId({ ...member, ...detail });
@@ -16116,7 +16202,7 @@ async function renderMonitoringMembers(options = {}) {
           <div class="cell-stack">
             <strong class="cell-title" title="${escapeHtml(contactText)}">${escapeHtml(contactText)}</strong>
             ${member.address ? `<span class="cell-subline clamp-2" title="${escapeHtml(member.address)}">${escapeHtml(member.address)}</span>` : '<span class="cell-subline">-</span>'}
-            ${mapUrl ? `<a class="cell-subline" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener">Buka peta</a>` : ''}
+            <a class="cell-subline cell-map-link" href="${escapeHtml(mapUrl || '#')}" data-member-location="${index}">Lihat Peta</a>
           </div>
         </td>
         <td>
@@ -16289,6 +16375,13 @@ async function renderMonitoringMembers(options = {}) {
   }, (page) => {
     state.monitoringMemberPage = page;
   }, renderMonitoringMembers, 10);
+  app.querySelectorAll('[data-member-location]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const member = members[Number(link.dataset.memberLocation || -1)];
+      if (member) openCustomerLocationModal(member);
+    });
+  });
   app.querySelectorAll('[data-member-contact]').forEach((button) => {
     button.addEventListener('click', async () => {
       try {
@@ -16389,6 +16482,7 @@ async function renderMonitoringBilling(options = {}) {
       ? `${invoice.accountId} / ${invoice.username}`
       : (invoice.accountId || invoice.username || '-');
     const address = invoice.address || '';
+    const mapUrl = memberLocationUrl(invoice);
     const invoiceItem = invoice.item || invoice.subscribe || '';
     const invoiceLabel = billingInvoiceNo(invoice) || '-';
     return `
@@ -16407,6 +16501,7 @@ async function renderMonitoringBilling(options = {}) {
           <div class="cell-stack">
             <strong class="cell-title" title="${escapeHtml(invoice.phone || '-')}">${escapeHtml(invoice.phone || '-')}</strong>
             ${address ? `<span class="cell-subline clamp-2" title="${escapeHtml(address)}">${escapeHtml(address)}</span>` : '<span class="cell-subline">-</span>'}
+            <a class="cell-subline cell-map-link" href="${escapeHtml(mapUrl || '#')}" data-billing-location="${index}">Lihat Peta</a>
           </div>
         </td>
         <td>
@@ -16646,6 +16741,13 @@ async function renderMonitoringBilling(options = {}) {
   }, (page) => {
     state.monitoringBillingPage = page;
   }, renderMonitoringBilling, 10);
+  app.querySelectorAll('[data-billing-location]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const invoice = invoices[Number(link.dataset.billingLocation || -1)];
+      if (invoice) openCustomerLocationModal(invoice);
+    });
+  });
   app.querySelectorAll('[data-billing-reminder]').forEach((button) => {
     button.addEventListener('click', async () => {
       const invoice = invoices[Number(button.dataset.billingReminder || -1)];

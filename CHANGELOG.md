@@ -2,6 +2,17 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.10] - 2026-07-30
+
+### Changed
+
+- Monitoring Member dan Monitoring Tagihan Pelanggan sekarang menampilkan tombol `Lihat Peta` berikon di bawah alamat pelanggan.
+
+### Fixed
+
+- Popup lokasi pelanggan tetap bisa dibuka walau koordinat atau foto rumah belum tersedia, sehingga data kosong mudah terlihat untuk ditindaklanjuti.
+- Data lokasi dan foto rumah member ikut dibawa ke daftar tagihan pelanggan agar collector bisa membuka detail lokasi tanpa masuk ke edit contact.
+
 ## [2.11.9] - 2026-07-30
 
 ### Changed
