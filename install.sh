@@ -7,6 +7,7 @@ NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-18}"
 NODE_SETUP_MAJOR="${NODE_SETUP_MAJOR:-20}"
 GENIEACS_VERSION="${GENIEACS_VERSION:-1.2.16}"
 GENIEACS_ENV_FILE="${GENIEACS_ENV_FILE:-/etc/fakenet-billing-genieacs.env}"
+GENIEACS_MONGODB_IMAGE_DEFAULT="${GENIEACS_MONGODB_IMAGE_DEFAULT:-docker.io/library/mongo:7}"
 
 GENIEACS_UNITS=(
   fakenet-billing-genieacs-mongodb.service
@@ -392,6 +393,21 @@ install_genieacs_runtime() {
     echo "Binary GenieACS sudah tersedia. Instal paket genieacs global dilewati."
     return 0
   fi
+  local pm
+  pm="$(detect_pm)"
+  if [ "$pm" = "apt" ] && command -v apt-cache >/dev/null 2>&1 && apt-cache show genieacs >/dev/null 2>&1; then
+    echo "Paket GenieACS tersedia di apt repository; mencoba instal via apt terlebih dahulu."
+    local apt_status
+    set +e
+    DEBIAN_FRONTEND=noninteractive apt-get install -y genieacs
+    apt_status=$?
+    set -e
+    if [ "$apt_status" -eq 0 ] && genieacs_commands_available; then
+      echo "GenieACS berhasil dipasang dari apt repository."
+      return 0
+    fi
+    echo "Paket apt GenieACS tidak tersedia/lengkap di OS ini; lanjut fallback instal via npm." >&2
+  fi
   local npm_timeout_seconds install_status
   local -a timeout_command
   npm_timeout_seconds="${FAKENET_NPM_INSTALL_TIMEOUT_SECONDS:-600}"
@@ -425,9 +441,12 @@ install_genieacs_runtime() {
 ensure_genieacs_mongodb_image() {
   [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
+  ensure_genieacs_mongodb_image_env
   load_genieacs_env
-  docker image inspect "${GENIEACS_MONGODB_IMAGE:-mongo:7}" >/dev/null 2>&1 \
-    || docker pull "${GENIEACS_MONGODB_IMAGE:-mongo:7}"
+  local image
+  image="$(normalize_genieacs_mongodb_image "${GENIEACS_MONGODB_IMAGE:-}")"
+  replace_or_append_env "$GENIEACS_ENV_FILE" GENIEACS_MONGODB_IMAGE "$image"
+  docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
 }
 
 verify_billing_health() {
@@ -460,6 +479,40 @@ replace_or_append_env() {
 append_env_if_missing() {
   local file="$1" key="$2" value="$3"
   grep -q "^${key}=" "$file" || printf '%s=%s\n' "$key" "$value" >> "$file"
+}
+
+read_env_value_raw() {
+  local file="$1" key="$2" line value
+  [ -f "$file" ] || return 1
+  line="$(grep -m1 "^${key}=" "$file" 2>/dev/null || true)"
+  [ -n "$line" ] || return 1
+  value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s\n' "$value"
+}
+
+normalize_genieacs_mongodb_image() {
+  local raw
+  raw="$(printf '%s' "${1:-}" | tr -s '[:space:]' ' ' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  case "$raw" in
+    ""|"mongo"|"mongo:7"|"docker.io mongo:7"|"docker.io/mongo:7"|"library/mongo"|"library/mongo:7")
+      printf '%s\n' "$GENIEACS_MONGODB_IMAGE_DEFAULT"
+      ;;
+    *)
+      printf '%s\n' "$raw"
+      ;;
+  esac
+}
+
+ensure_genieacs_mongodb_image_env() {
+  [ -f "$GENIEACS_ENV_FILE" ] || return 0
+  local current normalized
+  current="$(read_env_value_raw "$GENIEACS_ENV_FILE" GENIEACS_MONGODB_IMAGE || true)"
+  normalized="$(normalize_genieacs_mongodb_image "$current")"
+  replace_or_append_env "$GENIEACS_ENV_FILE" GENIEACS_MONGODB_IMAGE "$normalized"
 }
 
 install_env() {
@@ -521,6 +574,7 @@ install_env() {
     append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_CWMP_AUTH_USERNAME admin
     append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_CWMP_AUTH_PASSWORD 1sampai10
     replace_or_append_env "$GENIEACS_ENV_FILE" GENIEACS_NBI_INTERFACE 127.0.0.1
+    ensure_genieacs_mongodb_image_env
     chmod 600 "$GENIEACS_ENV_FILE"
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_ENABLED 1
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_BASE_URL http://127.0.0.1:7557
@@ -560,6 +614,7 @@ load_billing_env() {
 
 load_genieacs_env() {
   [ -f "$GENIEACS_ENV_FILE" ] || return 1
+  ensure_genieacs_mongodb_image_env
   set -a
   # shellcheck disable=SC1090
   . "$GENIEACS_ENV_FILE"
@@ -998,7 +1053,7 @@ description="MongoDB for FAKE.NET Billing GenieACS"
 supervisor=supervise-daemon
 command="/usr/bin/docker"
 [ -f /etc/fakenet-billing-genieacs.env ] && . /etc/fakenet-billing-genieacs.env
-command_args="run --name fakenet-billing-genieacs-mongodb --rm -p 127.0.0.1:27017:27017 -v /opt/fakenet-billing-genieacs/mongodb:/data/db ${GENIEACS_MONGODB_IMAGE:-mongo:7}"
+command_args="run --name fakenet-billing-genieacs-mongodb --rm -p 127.0.0.1:27017:27017 -v /opt/fakenet-billing-genieacs/mongodb:/data/db ${GENIEACS_MONGODB_IMAGE:-docker.io/library/mongo:7}"
 pidfile="/run/fakenet-billing-genieacs-mongodb.pid"
 output_log="/var/log/fakenet-billing/genieacs-mongodb.log"
 error_log="/var/log/fakenet-billing/genieacs-mongodb.err"
@@ -1149,11 +1204,23 @@ repair_install() {
   echo "Repair selesai."
 }
 
+has_uninstall_arg() {
+  local needle="$1" arg
+  shift || true
+  for arg in "$@"; do
+    [ "$arg" = "$needle" ] && return 0
+  done
+  return 1
+}
+
 confirm_uninstall() {
-  if [ "${FAKENET_UNINSTALL_CONFIRM:-}" = "YES" ] || [ "${1:-}" = "--yes" ]; then
+  if [ "${FAKENET_UNINSTALL_CONFIRM:-}" = "YES" ] || has_uninstall_arg "--yes" "$@"; then
     return 0
   fi
   echo "PERINGATAN: uninstall total akan menghapus aplikasi, service, env, database Billing/Radius, data GenieACS lokal, log, backup, dan session WAHA."
+  if [ "${FAKENET_PURGE_DEPENDENCIES:-}" = "YES" ] || has_uninstall_arg "--purge-deps" "$@"; then
+    echo "Mode purge dependency aktif: paket OS pendukung seperti PostgreSQL, Redis, FreeRADIUS, Docker, Node.js, SNMP tools, dan Tesseract juga akan dicabut."
+  fi
   echo "License key lama tetap bisa dipakai lagi jika install ulang di mesin/HWID yang sama."
   printf 'Ketik HAPUS untuk lanjut: '
   read -r answer
@@ -1197,8 +1264,40 @@ cleanup_bullmq_redis() {
   done < <(redis-cli -u "$redis_url" --scan --pattern "${prefix}:*" 2>/dev/null || true)
 }
 
+purge_dependency_packages() {
+  if [ "${FAKENET_PURGE_DEPENDENCIES:-}" != "YES" ] && ! has_uninstall_arg "--purge-deps" "$@"; then
+    echo "Paket OS pendukung tidak dihapus. Jalankan uninstall dengan --purge-deps jika mesin khusus untuk billing dan ingin bersih total."
+    return 0
+  fi
+
+  local pm
+  pm="$(detect_pm)"
+  echo "Menghapus paket OS pendukung installer billing..."
+  case "$pm" in
+    apt)
+      DEBIAN_FRONTEND=noninteractive apt-get purge -y \
+        postgresql postgresql-client redis-server freeradius freeradius-postgresql freeradius-utils snmp docker.io tesseract-ocr nodejs npm \
+        >/dev/null 2>&1 || true
+      DEBIAN_FRONTEND=noninteractive apt-get autoremove -y >/dev/null 2>&1 || true
+      ;;
+    dnf|yum)
+      "$pm" remove -y \
+        postgresql-server postgresql redis freeradius freeradius-postgresql freeradius-utils net-snmp-utils docker moby-engine docker-ce tesseract nodejs npm \
+        >/dev/null 2>&1 || true
+      ;;
+    apk)
+      apk del \
+        nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker tesseract-ocr freeradius-utils net-snmp-tools net-snmp \
+        >/dev/null 2>&1 || true
+      ;;
+    *)
+      echo "Package manager tidak dikenali; paket OS pendukung tidak dicabut otomatis." >&2
+      ;;
+  esac
+}
+
 uninstall_total() {
-  confirm_uninstall "${1:-}"
+  confirm_uninstall "$@"
 
   local app_db app_user radius_db radius_user service radius_unit
   if [ -f /etc/fakenet-billing.env ]; then
@@ -1254,16 +1353,20 @@ uninstall_total() {
     /var/log/fakenet-billing \
     /var/backups/fakenet-billing \
     /usr/local/bin/fakenet-billing-stack \
-    /usr/local/bin/fakenet-billing-update
+    /usr/local/bin/fakenet-billing-update \
+    /usr/local/bin/fakenet-billing-uninstall
 
-  echo "Uninstall total selesai. Paket OS seperti PostgreSQL, Redis, FreeRADIUS, Docker, Node.js tidak dihapus karena bisa dipakai aplikasi lain."
+  purge_dependency_packages "$@"
+
+  echo "Uninstall total selesai."
 }
 
 main() {
   need_root
   case "${1:-install}" in
     uninstall|--uninstall)
-      uninstall_total "${2:-}"
+      shift || true
+      uninstall_total "$@"
       return 0
       ;;
     repair|--repair)
@@ -1277,7 +1380,7 @@ main() {
     install|"")
       ;;
     *)
-      echo "Usage: bash install.sh [install|repair|uninstall] [--yes]" >&2
+      echo "Usage: bash install.sh [install|repair|uninstall] [--yes] [--purge-deps]" >&2
       exit 2
       ;;
   esac

@@ -310,8 +310,9 @@ Minimal setara Ubuntu 22.04:
 - Redis sebagai cache dan backend antrean BullMQ
 - FreeRADIUS dan FreeRADIUS utilities untuk CoA/kick session
 - SNMP client tools untuk monitoring NAS dan pelanggan online
-- Docker untuk WAHA
-- GenieACS 1.2.16 dan MongoDB 7; dipasang otomatis oleh installer
+- Docker untuk WAHA dan MongoDB GenieACS bawaan
+- GenieACS 1.2.16; jika paket `genieacs` tersedia dari apt repository OS maka dipakai lebih dulu, jika tidak tersedia installer fallback ke npm global
+- MongoDB 7 untuk GenieACS bawaan; dijalankan lewat container lokal dan hanya bind ke `127.0.0.1`
 - Git, curl, rsync, tar, gzip, procps, dan iproute
 
 ### Spesifikasi Minimal dan Rekomendasi
@@ -370,7 +371,7 @@ Default install ke:
 
 Yang dikerjakan otomatis oleh `install.sh`:
 
-- Install paket OS yang dibutuhkan: Node.js 18+, npm, PostgreSQL, Redis, FreeRADIUS, FreeRADIUS utilities, SNMP tools, Docker, Git, curl, rsync, tar, gzip, procps, dan iproute.
+- Install paket OS yang dibutuhkan: Node.js 18+, npm, PostgreSQL, Redis, FreeRADIUS, FreeRADIUS utilities, SNMP tools, Docker, Git, curl, rsync, tar, gzip, procps, iproute, dan Tesseract OCR.
 - Jika Node.js bawaan distro terlalu lama, installer mencoba memasang Node.js 20 dari repository NodeSource.
 - Copy source aplikasi ke `/opt/fakenet-billing` tanpa membawa data runtime.
 - Install dependency Node dari `package-lock.json`.
@@ -384,7 +385,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Membuat schema FreeRADIUS dasar: `nas`, `radcheck`, `radreply`, `radusergroup`, `radgroupcheck`, `radgroupreply`, dan `radacct`.
 - Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS, termasuk `read_clients = yes` agar Site/NAS dari aplikasi dibaca sebagai client Radius.
 - Memasang service Billing, Isolir, Voucher, WifiKu, Radius Connector, dan WAHA.
-- Memasang GenieACS CWMP/NBI/FS/UI, MongoDB persisten, akun awal, autentikasi Inform, serta Virtual Parameters redaman dan suhu jika belum ada GenieACS existing yang terdeteksi.
+- Memasang GenieACS CWMP/NBI/FS/UI, MongoDB persisten, akun awal, autentikasi Inform, serta Virtual Parameters redaman dan suhu jika belum ada GenieACS existing yang terdeteksi. Pada Ubuntu/Debian, installer mencoba paket apt `genieacs` lebih dulu jika tersedia, lalu fallback ke npm jika tidak tersedia.
 - Mengunci GenieACS NBI dan MongoDB ke localhost agar API/database tidak terbuka ke jaringan.
 - Memasang command stack `fakenet-billing-stack`.
 - Menyesuaikan unit systemd atau OpenRC sesuai distro yang dipakai.
@@ -570,7 +571,7 @@ Jika `fakenet-billing-stack update` masih gagal, cek poin berikut:
 
 ## Uninstall Total
 
-Gunakan uninstall total jika ingin menghapus aplikasi dari mesin yang sama, misalnya sebelum install ulang dari awal. Perintah ini menghapus service aplikasi, source di `/opt/fakenet-billing`, env, database aplikasi, database Radius, data GenieACS lokal, session WAHA, log, backup, dan command helper `fakenet-billing-stack`/`fakenet-billing-update`.
+Gunakan uninstall total jika ingin menghapus aplikasi dari mesin yang sama, misalnya sebelum install ulang dari awal. Perintah ini menghapus service aplikasi, source di `/opt/fakenet-billing`, wrapper `uninstall.sh` yang ikut terpasang di folder aplikasi, env, database aplikasi, database Radius, data GenieACS lokal, session WAHA, log, backup, dan command helper `fakenet-billing-stack`/`fakenet-billing-update`.
 
 ```bash
 cd /root/FAKE.NET-BILLING
@@ -596,6 +597,18 @@ sudo bash /opt/fakenet-billing/uninstall.sh
 sudo bash /opt/fakenet-billing/uninstall.sh --yes
 ```
 
+Jika mesin tersebut memang khusus untuk FAKE.NET Billing dan ingin ikut mencabut paket OS pendukung yang dipasang installer, gunakan mode purge dependency:
+
+```bash
+sudo bash install.sh uninstall --purge-deps
+```
+
+Atau non-interaktif:
+
+```bash
+sudo FAKENET_UNINSTALL_CONFIRM=YES bash install.sh uninstall --purge-deps
+```
+
 Yang dihapus:
 
 - `/opt/fakenet-billing`
@@ -609,10 +622,10 @@ Yang dihapus:
 - Database PostgreSQL `fakenet_billing` dan `radius`
 - Role PostgreSQL aplikasi dan Radius
 - Service `fakenet-billing*`
-- Helper `/usr/local/bin/fakenet-billing-stack` dan `/usr/local/bin/fakenet-billing-update`
+- Helper `/usr/local/bin/fakenet-billing-stack`, `/usr/local/bin/fakenet-billing-update`, dan `/usr/local/bin/fakenet-billing-uninstall` jika ada
 - Seluruh key antrean Redis dengan prefix khusus `fakenet-billing:bullmq`; key Redis aplikasi lain tidak disentuh
 
-Paket OS seperti PostgreSQL, Redis, FreeRADIUS, SNMP tools, Docker, Node.js, Git, dan curl tidak dihapus karena bisa dipakai aplikasi lain.
+Paket OS seperti PostgreSQL, Redis, FreeRADIUS, SNMP tools, Docker, Node.js, Git, dan curl tidak dihapus pada uninstall normal karena bisa dipakai aplikasi lain. Paket pendukung seperti PostgreSQL, Redis, FreeRADIUS, Docker, Node.js/npm, SNMP tools, dan Tesseract baru dicabut jika memakai `--purge-deps`.
 
 ## Backup dan Restore
 

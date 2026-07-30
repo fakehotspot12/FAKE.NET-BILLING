@@ -2,6 +2,19 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.9] - 2026-07-30
+
+### Changed
+
+- Installer GenieACS di Ubuntu/Debian mencoba paket apt `genieacs` lebih dulu jika tersedia, lalu fallback ke npm global jika paket OS tidak ada atau tidak lengkap.
+- Image MongoDB GenieACS bawaan dinormalisasi ke `docker.io/library/mongo:7` agar instalasi tidak gagal ketika env lama berisi format image yang salah.
+- Uninstall total menampilkan mode `--purge-deps` untuk mencabut paket OS pendukung pada mesin khusus billing, sementara uninstall normal tetap aman untuk server yang berbagi service.
+
+### Fixed
+
+- Repair/update GenieACS kini membersihkan nilai `GENIEACS_MONGODB_IMAGE` yang rusak sebelum env di-load sehingga tidak berhenti karena format seperti `docker.io mongo:7`.
+- Unit MongoDB GenieACS systemd/OpenRC memiliki default image yang valid meskipun env belum lengkap.
+
 ## [2.11.8] - 2026-07-30
 
 ### Changed
