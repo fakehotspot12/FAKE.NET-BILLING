@@ -2,6 +2,78 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.25] - 2026-07-31
+
+### Fixed
+
+- Halaman login tidak lagi menampilkan kilasan Dashboard/sidebar sebelum pengecekan sesi selesai.
+
+## [2.11.24] - 2026-07-31
+
+### Fixed
+
+- Chart NAS Traffic di Dashboard memakai auto-scale per NAS dengan pembulatan unit bps/Kbps/Mbps/Gbps agar garis tidak terlihat jomplang saat traffic kecil atau ada lonjakan besar.
+- Kotak NAS Status di Dashboard dibuat mengisi kolomnya secara penuh dan lebih sejajar dengan kotak PPP-DHCP/Hotspot.
+
+## [2.11.23] - 2026-07-31
+
+### Fixed
+
+- Header popup bayar QR di mobile kini membungkus teks nama pelanggan dan paket secara penuh, tanpa terpotong menjadi titik-titik.
+
+## [2.11.22] - 2026-07-31
+
+### Changed
+
+- Header popup bayar QR kini menampilkan nama pelanggan dan paket pada baris pertama, lalu nomor invoice dan jatuh tempo pada baris kedua.
+- Informasi panjang `Internet : username - paket - jatuh tempo` di bawah total bayar QR dihapus agar popup lebih bersih.
+
+## [2.11.21] - 2026-07-31
+
+### Changed
+
+- Popup bayar QR mempertahankan nama pelanggan dan nomor invoice di header, lalu menampilkan paket serta jatuh tempo secara ringkas di bawah total bayar.
+- Tabel detail pada popup bayar QR dihapus agar tampilan lebih presisi di desktop dan mobile.
+
+## [2.11.20] - 2026-07-31
+
+### Fixed
+
+- Posisi popup/dialog dibuat fixed-center terhadap viewport agar tetap presisi ketika halaman digeser.
+- Toast di atas popup kini ikut viewport saat scroll, sehingga peringatan tetap terlihat di desktop dan mobile.
+
+## [2.11.19] - 2026-07-31
+
+### Fixed
+
+- Notifikasi peringatan/toast kini tampil di atas popup ketika dialog terbuka, sehingga tidak lagi tertutup layer modal atau jatuh terlalu bawah pada desktop.
+- Panel lonceng notifikasi otomatis ditutup saat popup dibuka agar tidak tertinggal di belakang modal.
+
+## [2.11.18] - 2026-07-31
+
+### Fixed
+
+- Popup bayar QR di Monitoring Tagihan Pelanggan diringkas agar detail invoice tidak tampil ganda dan tetap presisi di desktop maupun mobile.
+- Tombol bayar QR otomatis terkunci ketika Payment Gateway belum aktif, sehingga admin tidak membuka popup yang pasti gagal.
+
+## [2.11.17] - 2026-07-30
+
+### Added
+
+- Monitoring Tagihan Pelanggan kini memiliki tombol `QR` untuk menampilkan QRIS invoice langsung dari aplikasi, sehingga pelanggan bisa scan saat ditagih di lokasi.
+- Popup QR memantau status pembayaran otomatis dan menutup sendiri saat invoice sudah lunas, lalu daftar tagihan direfresh.
+
+### Changed
+
+- Invoice yang sudah lunas via pembayaran online menampilkan status aksi `Lunas` terkunci dan rollback tetap terkunci.
+
+## [2.11.16] - 2026-07-30
+
+### Added
+
+- Upload Foto Rumah dan Foto KTP di wizard tambah member serta edit contact member kini menyediakan pilihan `Pilih File` dan `Kamera`.
+- Tombol kamera memakai kamera belakang perangkat mobile bila browser mendukung `capture`, sementara alur kompresi, penyimpanan, dan OCR KTP tetap memakai endpoint lama.
+
 ## [2.11.15] - 2026-07-30
 
 ### Changed

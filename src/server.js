@@ -17954,6 +17954,7 @@ async function handleApi(req, res, url) {
         ok: true,
         source: 'local',
         revision: localBillingRevision(authContext.data, period),
+        paymentGatewayEnabled: authContext.data.settings?.paymentGateway?.enabled === true,
         sites: local.sites.length ? local.sites : billingSites,
         summary: local.summary,
         invoices: local.rows.slice(offset, offset + limit),
@@ -18083,6 +18084,107 @@ async function handleApi(req, res, url) {
       sendJson(res, 502, {
         ok: false,
         error: error.message || 'Reminder WA Radboox gagal dikirim'
+      });
+    }
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/monitoring/billing-qr-checkout') {
+    const authContext = await requirePermission(req, res, 'invoices:manage');
+    if (!authContext) return;
+    if (!standaloneMode(authContext.data)) {
+      sendJson(res, 501, {
+        ok: false,
+        error: 'Bayar QR hanya tersedia pada billing standalone'
+      });
+      return;
+    }
+    const payload = await readBody(req);
+    const invoiceNo = String(payload.invoiceNo || payload.externalId || payload.invoiceId || '').trim();
+    if (!invoiceNo) {
+      badRequest(res, 'Nomor invoice tidak tersedia');
+      return;
+    }
+    try {
+      const invoice = (authContext.data.invoices || []).find((item) => {
+        return item.id === invoiceNo
+          || item.externalId === invoiceNo
+          || item.invoiceNo === invoiceNo
+          || displayBillingInvoiceNo(item.externalId || item.invoiceNo || item.id) === invoiceNo;
+      });
+      if (!invoice) {
+        badRequest(res, 'Invoice tidak ditemukan');
+        return;
+      }
+      const publicInvoice = publicPaymentGatewayInvoicePayload(authContext.data, invoice);
+      if (publicInvoice.status === 'paid') {
+        sendJson(res, 200, {
+          ok: true,
+          paid: true,
+          invoice: publicInvoice,
+          message: 'Invoice sudah lunas'
+        });
+        return;
+      }
+      if (!['pending', 'overdue', 'unpaid'].includes(publicInvoice.status)) {
+        badRequest(res, publicInvoice.status === 'cancelled' ? 'Invoice sudah dibatalkan' : 'Invoice belum bisa dibayar');
+        return;
+      }
+      if (authContext.data.settings?.paymentGateway?.enabled !== true) {
+        badRequest(res, 'Payment Gateway belum aktif');
+        return;
+      }
+      const channels = await paymentGatewayChannels(authContext.data, {
+        kind: 'monthly-package',
+        amount: publicInvoice.gatewayAmount,
+        baseAmount: publicInvoice.amount,
+        adminFee: publicInvoice.adminFee
+      });
+      const qris = firstTripayQrisChannel(channels);
+      if (!qris?.code) {
+        badRequest(res, 'Channel QRIS payment gateway belum aktif');
+        return;
+      }
+      const customer = customerForInvoice(authContext.data, invoice);
+      const checkout = await createOrReusePaymentGatewayCheckout(authContext.data, {
+        kind: 'monthly-package',
+        reference: publicInvoice.reference,
+        method: qris.code,
+        amount: publicInvoice.gatewayAmount,
+        baseAmount: publicInvoice.amount,
+        adminFee: publicInvoice.adminFee,
+        customerName: publicInvoice.customerName || 'Pelanggan',
+        customerEmail: customer.email || '',
+        customerPhone: publicInvoice.phone || '',
+        itemName: `Tagihan ${publicInvoice.packageName || publicInvoice.period || publicInvoice.invoiceNo}`.trim(),
+        returnUrl: publicInvoice.paymentGatewayLink
+      });
+      await mutate((data) => {
+        addActivity(data, 'payment', `QR payment invoice ${publicInvoice.invoiceNo} disiapkan oleh ${authContext.user.name || authContext.user.username}`, {
+          action: 'billing-qr-checkout',
+          invoiceId: invoice.id,
+          invoiceNo: publicInvoice.invoiceNo,
+          customerName: publicInvoice.customerName || '',
+          method: checkout.method || qris.code,
+          actorName: authContext.user.name || authContext.user.username || '',
+          actorUsername: authContext.user.username || ''
+        });
+        return true;
+      }, { collections: ['activity'], includeCore: false });
+      sendJson(res, 200, {
+        ok: true,
+        invoice: publicInvoice,
+        channel: {
+          code: qris.code,
+          name: qris.name || qris.code,
+          group: qris.group || ''
+        },
+        checkout
+      });
+    } catch (error) {
+      sendJson(res, 400, {
+        ok: false,
+        error: error.message || 'QR payment gateway gagal dibuat'
       });
     }
     return;

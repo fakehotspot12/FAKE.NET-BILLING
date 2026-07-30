@@ -1102,11 +1102,27 @@ function openActivityDetail(item = {}) {
   `, async () => {});
 }
 
+function mountToastLayer() {
+  if (!toastEl) return;
+  const modalOpen = Boolean(modal?.open);
+  toastEl.classList.toggle('is-modal-toast', modalOpen);
+  if (modalOpen && toastEl.parentElement !== modal) {
+    modal.appendChild(toastEl);
+  } else if (!modalOpen && toastEl.parentElement !== document.body) {
+    document.body.insertBefore(toastEl, modal || null);
+  }
+}
+
 function setToast(message) {
+  if (!toastEl) return;
+  mountToastLayer();
   toastEl.textContent = message;
   toastEl.classList.add('is-visible');
   window.clearTimeout(setToast.timer);
-  setToast.timer = window.setTimeout(() => toastEl.classList.remove('is-visible'), 2600);
+  setToast.timer = window.setTimeout(() => {
+    toastEl.classList.remove('is-visible');
+    if (!modal?.open) mountToastLayer();
+  }, 2600);
 }
 
 function preferredTheme() {
@@ -2008,6 +2024,7 @@ function setPeriod(period) {
 
 function configureShell() {
   const loggedIn = Boolean(state.auth);
+  document.body.classList.remove('is-loading-auth');
   document.body.classList.toggle('is-login', !loggedIn);
   document.body.classList.toggle('is-authenticated', loggedIn);
   document.body.classList.toggle('is-dashboard-view', loggedIn && state.view === 'dashboard');
@@ -2190,6 +2207,10 @@ function formData(form) {
 }
 
 function openModal(title, body, onSubmit) {
+  if (notificationPanel) {
+    notificationPanel.hidden = true;
+    notificationButton?.setAttribute('aria-expanded', 'false');
+  }
   modalTitle.textContent = title;
   modalBody.innerHTML = body;
   const form = modal.querySelector('.modal-frame');
@@ -2230,6 +2251,10 @@ function openModal(title, body, onSubmit) {
   modal.showModal();
 }
 
+modal?.addEventListener('close', () => {
+  window.setTimeout(mountToastLayer, 0);
+});
+
 function metric(label, value, sub, tone = '') {
   const protectValue = state.view === 'dashboard';
   const valueText = String(value ?? '');
@@ -2259,6 +2284,21 @@ function mbpsText(value) {
 
 function mbpsAxisText(value) {
   return bitRateText(value);
+}
+
+function niceBitRateCeil(value) {
+  const number = Math.max(1, Number(value || 0));
+  const exponent = Math.floor(Math.log10(number));
+  const base = 10 ** exponent;
+  const fraction = number / base;
+  const niceFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  return niceFraction * base;
+}
+
+function routerTrafficChartMax(points = []) {
+  const rawMax = Math.max(0, ...points.flatMap((point) => [Number(point.upload || 0), Number(point.download || 0)]));
+  if (rawMax <= 0) return 1000;
+  return niceBitRateCeil(rawMax * 1.18);
 }
 
 function dashboardNavigationAttributes(view = '', action = '') {
@@ -2850,17 +2890,18 @@ function drawRouterSparkline(canvas, points = []) {
   const blue = themeColor('--blue', '#2b8bd9');
   ctx.fillStyle = surface;
   ctx.fillRect(0, 0, width, height);
-  const max = Math.max(1, ...points.flatMap((point) => [point.upload || 0, point.download || 0]));
-  const axisWidth = 58;
-  const rightPad = 8;
-  const topPad = 11;
-  const bottomPad = 10;
+  const chartPoints = points.length ? points : [{ upload: 0, download: 0 }];
+  const max = routerTrafficChartMax(chartPoints);
+  const axisWidth = mobileMenuQuery.matches ? 44 : 50;
+  const rightPad = 7;
+  const topPad = 8;
+  const bottomPad = 8;
   const plotLeft = axisWidth;
   const plotRight = width - rightPad;
   const plotWidth = Math.max(1, plotRight - plotLeft);
   const plotHeight = Math.max(1, height - topPad - bottomPad);
   const axisValues = [max, max / 2, 0];
-  ctx.font = '10px Inter, system-ui, sans-serif';
+  ctx.font = `${mobileMenuQuery.matches ? 9 : 10}px Inter, system-ui, sans-serif`;
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
   axisValues.forEach((value, index) => {
@@ -2874,11 +2915,27 @@ function drawRouterSparkline(canvas, points = []) {
     ctx.fillStyle = muted;
     ctx.fillText(mbpsAxisText(value), axisWidth - 6, y);
   });
+  const area = ctx.createLinearGradient(0, topPad, 0, topPad + plotHeight);
+  area.addColorStop(0, 'rgba(43, 139, 217, 0.20)');
+  area.addColorStop(1, 'rgba(43, 139, 217, 0.02)');
+  ctx.fillStyle = area;
+  ctx.beginPath();
+  chartPoints.forEach((point, index, list) => {
+    const x = list.length <= 1 ? plotRight : plotLeft + (index / (list.length - 1)) * plotWidth;
+    const y = topPad + plotHeight - (Number(point.download || 0) / max) * plotHeight;
+    if (index === 0) ctx.moveTo(x, topPad + plotHeight);
+    ctx.lineTo(x, y);
+    if (index === list.length - 1) ctx.lineTo(x, topPad + plotHeight);
+  });
+  ctx.closePath();
+  ctx.fill();
   const plot = (field, color) => {
     ctx.strokeStyle = color;
-    ctx.lineWidth = mobileMenuQuery.matches ? 1.5 : 1.75;
+    ctx.lineWidth = mobileMenuQuery.matches ? 1.7 : 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    (points.length ? points : [{ upload: 0, download: 0 }]).forEach((point, index, list) => {
+    chartPoints.forEach((point, index, list) => {
       const x = list.length <= 1 ? plotRight : plotLeft + (index / (list.length - 1)) * plotWidth;
       const y = topPad + plotHeight - (Number(point[field] || 0) / max) * plotHeight;
       if (index === 0) ctx.moveTo(x, y);
@@ -2888,6 +2945,21 @@ function drawRouterSparkline(canvas, points = []) {
   };
   plot('download', blue);
   plot('upload', primary);
+  const latest = chartPoints[chartPoints.length - 1] || {};
+  const drawDot = (field, color) => {
+    const value = Number(latest[field] || 0);
+    const x = chartPoints.length <= 1 ? plotRight : plotRight;
+    const y = topPad + plotHeight - (value / max) * plotHeight;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, mobileMenuQuery.matches ? 2.3 : 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = surface;
+    ctx.lineWidth = 1.25;
+    ctx.stroke();
+  };
+  drawDot('download', blue);
+  drawDot('upload', primary);
 }
 
 function renderDashboardRouterNasCharts() {
@@ -10346,6 +10418,26 @@ function bindRadiusPager(kind, setPage, renderer, setLimit = null) {
 function bindPasswordPeek() {
 }
 
+function bindPhotoInputTriggers(root = document) {
+  root.querySelectorAll('[data-file-trigger]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.disabled) return;
+      const targetId = button.dataset.fileTrigger || '';
+      if (!targetId) return;
+      const input = root.querySelector(`#${targetId}`);
+      if (!input) return;
+      const mode = button.dataset.fileMode || 'gallery';
+      if (mode === 'camera') {
+        input.setAttribute('capture', 'environment');
+      } else {
+        input.removeAttribute('capture');
+      }
+      input.value = '';
+      input.click();
+    });
+  });
+}
+
 function radiusNasIpForRow(row = {}, nasOptions = []) {
   const match = nasOptions.find((option) => [option.label, option.value, option.ip].includes(row.nas || row.site));
   return match ? match.ip : '';
@@ -10372,7 +10464,11 @@ function radiusMemberFieldsMarkup(options = {}) {
       </label>
       <label class="field full member-ktp-upload-field">
         <span>Foto KTP</span>
-        <input name="memberKtpPhotoUpload" type="file" accept="image/png,image/jpeg,image/webp" data-member-field disabled>
+        <div class="photo-upload-actions">
+          <button class="ghost-button compact" type="button" data-file-trigger="radiusMemberKtpPhotoUpload" data-file-mode="gallery" data-member-photo-control disabled><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Pilih File</button>
+          <button class="ghost-button compact primary" type="button" data-file-trigger="radiusMemberKtpPhotoUpload" data-file-mode="camera" data-member-photo-control disabled><i class="fa-solid fa-camera" aria-hidden="true"></i> Kamera</button>
+        </div>
+        <input class="sr-only member-photo-file-input" id="radiusMemberKtpPhotoUpload" name="memberKtpPhotoUpload" type="file" accept="image/png,image/jpeg,image/webp" data-member-field disabled>
         <input name="memberKtpPhoto" type="hidden" value="" data-member-field disabled>
         <div class="ktp-upload-preview">
           <img class="member-ktp-photo-preview" id="radiusKtpPhotoPreview" alt="Preview foto KTP" hidden>
@@ -10409,7 +10505,11 @@ function radiusMemberFieldsMarkup(options = {}) {
       </div>
       <label class="field full">
         <span>Foto Rumah</span>
-        <input name="memberHousePhoto" type="file" accept="image/png,image/jpeg,image/webp" data-member-field disabled>
+        <div class="photo-upload-actions">
+          <button class="ghost-button compact" type="button" data-file-trigger="radiusMemberHousePhotoUpload" data-file-mode="gallery" data-member-photo-control disabled><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Pilih File</button>
+          <button class="ghost-button compact primary" type="button" data-file-trigger="radiusMemberHousePhotoUpload" data-file-mode="camera" data-member-photo-control disabled><i class="fa-solid fa-camera" aria-hidden="true"></i> Kamera</button>
+        </div>
+        <input class="sr-only member-photo-file-input" id="radiusMemberHousePhotoUpload" name="memberHousePhoto" type="file" accept="image/png,image/jpeg,image/webp" data-member-field disabled>
         <img class="house-photo-preview" id="radiusHousePhotoPreview" alt="Preview foto rumah" hidden>
       </label>
     </section>
@@ -11365,6 +11465,9 @@ function bindRadiusMemberFields(options = {}) {
     modalBody.querySelectorAll('[data-member-addon-control]').forEach((control) => {
       control.disabled = !checkbox.checked;
     });
+    modalBody.querySelectorAll('[data-member-photo-control]').forEach((control) => {
+      control.disabled = !checkbox.checked;
+    });
     if (activeDateInput) activeDateInput.disabled = !checkbox.checked;
     activeDatePicker?.querySelectorAll('button').forEach((button) => {
       button.disabled = !checkbox.checked;
@@ -11390,6 +11493,7 @@ function bindRadiusMemberFields(options = {}) {
   const form = modal.querySelector('.modal-frame');
   if (form) form._radiusMemberSync = sync;
   checkbox.addEventListener('change', sync);
+  bindPhotoInputTriggers(modalBody);
   usernameInput?.addEventListener('input', () => {
     if (!checkbox.checked) return;
     if (nameInput && (!nameInput.value || nameInput.dataset.autoFilled === '1')) {
@@ -14391,6 +14495,10 @@ function billingPayAllowed(invoice = {}) {
   return Boolean(can('invoices:manage') && billingInvoiceNo(invoice) && ['unpaid', 'pending', 'overdue'].includes(status) && Number(invoice.amount || 0) > 0);
 }
 
+function billingQrPaymentAllowed(invoice = {}, standaloneBilling = true, paymentGatewayEnabled = true) {
+  return Boolean(standaloneBilling && paymentGatewayEnabled && billingPayAllowed(invoice));
+}
+
 function billingCancelAllowed(invoice = {}) {
   const status = String(invoice.status || '').toLowerCase();
   const role = String(state.auth?.role || '').toLowerCase();
@@ -14425,7 +14533,7 @@ function billingReceiptAllowed(invoice = {}) {
   return Boolean(billingInvoiceNo(invoice) && status === 'paid');
 }
 
-function billingActionButtons(invoice = {}, index = 0) {
+function billingActionButtons(invoice = {}, index = 0, standaloneBilling = true, paymentGatewayEnabled = true) {
   const invoiceLabel = billingInvoiceNo(invoice) || '-';
   const buttons = [];
   if (billingReminderAllowed(invoice)) {
@@ -14441,6 +14549,28 @@ function billingActionButtons(invoice = {}, index = 0) {
       <button class="billing-action-button pay" type="button" data-billing-pay="${index}" title="Bayar invoice" aria-label="Bayar invoice ${escapeHtml(invoiceLabel)}">
         <span class="billing-action-icon pay" aria-hidden="true"></span>
         <span>Bayar</span>
+      </button>
+    `);
+  }
+  if (billingQrPaymentAllowed(invoice, standaloneBilling, paymentGatewayEnabled)) {
+    buttons.push(`
+      <button class="billing-action-button qris" type="button" data-billing-qr-pay="${index}" title="Bayar QRIS" aria-label="Bayar QRIS invoice ${escapeHtml(invoiceLabel)}">
+        <span class="billing-action-icon qris" aria-hidden="true"></span>
+        <span>QR</span>
+      </button>
+    `);
+  } else if (standaloneBilling && billingPayAllowed(invoice) && !paymentGatewayEnabled) {
+    buttons.push(`
+      <button class="billing-action-button qris is-locked" type="button" disabled title="Payment Gateway belum aktif" aria-label="Bayar QRIS invoice ${escapeHtml(invoiceLabel)} terkunci karena Payment Gateway belum aktif">
+        <span class="billing-action-icon qris" aria-hidden="true"></span>
+        <span>QR</span>
+      </button>
+    `);
+  } else if (standaloneBilling && can('invoices:manage') && String(invoice.status || '').toLowerCase() === 'paid' && billingOnlinePayment(invoice)) {
+    buttons.push(`
+      <button class="billing-action-button qris is-locked" type="button" disabled title="Pembayaran online lunas" aria-label="Pembayaran online invoice ${escapeHtml(invoiceLabel)} lunas">
+        <span class="billing-action-icon qris" aria-hidden="true"></span>
+        <span>Lunas</span>
       </button>
     `);
   }
@@ -14653,6 +14783,143 @@ function openBillingPayModal(invoice = {}) {
       }
     }
   });
+}
+
+function billingQrImageSrc(checkout = {}) {
+  const qrUrl = safePublicUrl(checkout.qrUrl || checkout.qr_url || '');
+  if (qrUrl) return qrUrl;
+  const qrText = String(checkout.qrString || checkout.qr_string || checkout.checkoutUrl || checkout.paymentUrl || '').trim();
+  return qrText ? `/api/tools/qr?size=360&text=${encodeURIComponent(qrText)}` : '';
+}
+
+function billingQrPackageLabel(invoice = {}) {
+  const raw = String(invoice.packageName || invoice.package || invoice.profile || invoice.item || invoice.subscribe || '').trim();
+  if (!raw) return '-';
+  const normalized = raw
+    .replace(/^paket\s+bulanan\s+internet\s*:\s*/i, '')
+    .replace(/^internet\s*:\s*/i, '')
+    .trim();
+  const parts = normalized.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
+  const packagePart = parts.find((part) => /^paket\b/i.test(part));
+  return packagePart || parts.at(-1) || normalized || '-';
+}
+
+function renderBillingQrCheckout(payload = {}) {
+  const invoice = payload.invoice || {};
+  const checkout = payload.checkout || {};
+  const qrSrc = billingQrImageSrc(checkout);
+  const checkoutUrl = safePublicUrl(checkout.checkoutUrl || checkout.paymentUrl || '');
+  const expiresAt = checkout.expiresAt || checkout.expiredAt || '';
+  const customerName = billingActionCustomerName(invoice);
+  const packageLabel = billingQrPackageLabel(invoice);
+  const invoiceLabel = billingInvoiceNo(invoice) || invoice.reference || '-';
+  const dueDateLabel = dateText(invoice.dueDate || invoice.invoiceDate) || '-';
+  return `
+    <div class="billing-qr-pay-box">
+      <div class="billing-qr-pay-summary">
+        <strong>${escapeHtml(`${customerName} - ${packageLabel}`)}</strong>
+        <span>${escapeHtml(`${invoiceLabel} - ${dueDateLabel}`)}</span>
+      </div>
+      ${qrSrc ? `
+        <img class="billing-qr-pay-image" src="${escapeHtml(qrSrc)}" alt="QRIS invoice ${escapeHtml(invoice.invoiceNo || invoice.reference || '')}">
+      ` : `
+        <div class="notice warning">
+          <strong>QR belum tersedia</strong>
+          <span>Payment Gateway belum mengembalikan QRIS. Gunakan tombol buka pembayaran.</span>
+        </div>
+      `}
+      <div class="billing-qr-pay-total">
+        <span>Total Bayar</span>
+        <strong>${escapeHtml(invoice.gatewayAmountText || rupiah(invoice.gatewayAmount || invoice.amount || 0))}</strong>
+      </div>
+      <p class="billing-qr-pay-note">Scan QR ini dari HP pelanggan. Status lunas dicek otomatis, dan pelanggan isolir akan aktif kembali setelah callback pembayaran diterima.</p>
+      <span class="billing-qr-pay-expiry">Berlaku sampai: ${escapeHtml(expiresAt ? dateTimeText(expiresAt) : '-')}</span>
+      <div class="modal-actions">
+        ${checkoutUrl ? `<a class="ghost-button" href="${escapeHtml(checkoutUrl)}" target="_blank" rel="noopener">Buka Link</a>` : ''}
+        <button class="button" type="button" data-billing-qr-refresh>Status Pembayaran</button>
+      </div>
+    </div>
+  `;
+}
+
+function openBillingQrPayModal(invoice = {}) {
+  const invoiceNo = billingInvoiceNo(invoice);
+  if (!invoiceNo) {
+    setToast('Nomor invoice tidak tersedia');
+    return;
+  }
+  let pollTimer = null;
+  let closed = false;
+  const cleanup = () => {
+    closed = true;
+    if (pollTimer) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+  const checkStatus = async (silent = false) => {
+    try {
+      const payload = await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(invoiceNo)}`, { timeoutMs: 12000 });
+      const latest = payload.invoice || {};
+      if (String(latest.status || '').toLowerCase() === 'paid') {
+        cleanup();
+        setToast('Invoice sudah lunas');
+        if (modal.open) modal.close();
+        await renderMonitoringBilling({ refresh: true });
+        return true;
+      }
+      if (!silent) setToast('Pembayaran belum masuk');
+    } catch (error) {
+      if (!silent) setToast(error.message || 'Status pembayaran gagal dicek');
+    }
+    return false;
+  };
+  openModal('Bayar QR Invoice', `
+    <div class="manual-invoice-wizard billing-qr-pay-modal">
+      <div id="billingQrPayContent" class="billing-qr-pay-loading">
+        <div class="empty">Menyiapkan QRIS payment gateway...</div>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" value="cancel" type="submit">Tutup</button>
+      </div>
+    </div>
+  `, async () => {});
+  modal.addEventListener('close', cleanup, { once: true });
+
+  (async () => {
+    const content = modalBody.querySelector('#billingQrPayContent');
+    try {
+      const payload = await api('/api/monitoring/billing-qr-checkout', {
+        method: 'POST',
+        body: JSON.stringify({
+          invoiceNo,
+          customerName: billingActionCustomerName(invoice)
+        }),
+        timeoutMs: 20000
+      });
+      if (payload.paid) {
+        cleanup();
+        setToast(payload.message || 'Invoice sudah lunas');
+        if (modal.open) modal.close();
+        await renderMonitoringBilling({ refresh: true });
+        return;
+      }
+      if (content) content.innerHTML = renderBillingQrCheckout(payload);
+      modalBody.querySelector('[data-billing-qr-refresh]')?.addEventListener('click', () => checkStatus(false));
+      pollTimer = window.setInterval(() => {
+        if (!closed) checkStatus(true);
+      }, 5000);
+    } catch (error) {
+      if (content) {
+        content.innerHTML = `
+          <section class="notice error">
+            <strong>QR payment gagal disiapkan</strong>
+            <span>${escapeHtml(error.message || 'Payment gateway belum mengembalikan QR')}</span>
+          </section>
+        `;
+      }
+    }
+  })();
 }
 
 function openBillingDiscountModal(invoice = {}) {
@@ -15742,7 +16009,13 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
           <div class="member-house-photo-card">
             <strong>Foto Rumah</strong>
             ${photoUrl ? `<img class="member-house-photo-large" id="memberHousePhotoPreview" src="${escapeHtml(photoUrl)}" alt="Foto rumah ${escapeHtml(memberTitle(member))}">` : '<div class="empty compact" id="memberHousePhotoEmpty">Foto rumah belum tersedia.</div><img class="member-house-photo-large" id="memberHousePhotoPreview" alt="Preview foto rumah" hidden>'}
-            ${editable ? '<input name="housePhotoUpload" id="memberHousePhotoUpload" type="file" accept="image/png,image/jpeg,image/webp">' : ''}
+            ${editable ? `
+              <div class="photo-upload-actions">
+                <button class="ghost-button compact" type="button" data-file-trigger="memberHousePhotoUpload" data-file-mode="gallery"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Pilih File</button>
+                <button class="ghost-button compact primary" type="button" data-file-trigger="memberHousePhotoUpload" data-file-mode="camera"><i class="fa-solid fa-camera" aria-hidden="true"></i> Kamera</button>
+              </div>
+              <input class="sr-only member-photo-file-input" name="housePhotoUpload" id="memberHousePhotoUpload" type="file" accept="image/png,image/jpeg,image/webp">
+            ` : ''}
           </div>
           <div class="member-ktp-photo-card">
             <div class="member-photo-card-head">
@@ -15750,7 +16023,15 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
               ${editable && ktpPhotoUrl ? '<button class="ghost-button compact danger" id="memberRemoveKtpPhoto" type="button">Hapus</button>' : ''}
             </div>
             ${ktpPhotoUrl ? `<img class="member-ktp-photo-large" id="memberKtpPhotoPreview" src="${escapeHtml(ktpPhotoUrl)}" alt="Foto KTP ${escapeHtml(memberTitle(member))}">` : '<div class="empty compact" id="memberKtpPhotoEmpty">Foto KTP belum tersedia.</div><img class="member-ktp-photo-large" id="memberKtpPhotoPreview" alt="Preview foto KTP" hidden>'}
-            ${editable ? '<input id="memberKtpPhotoUpload" type="file" accept="image/png,image/jpeg,image/webp"><input id="memberKtpPhotoValue" type="hidden" value=""><p class="muted" id="memberKtpUploadStatus">Upload KTP akan mencoba membaca Nomor KTP dan nama otomatis.</p>' : ''}
+            ${editable ? `
+              <div class="photo-upload-actions">
+                <button class="ghost-button compact" type="button" data-file-trigger="memberKtpPhotoUpload" data-file-mode="gallery"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Pilih File</button>
+                <button class="ghost-button compact primary" type="button" data-file-trigger="memberKtpPhotoUpload" data-file-mode="camera"><i class="fa-solid fa-camera" aria-hidden="true"></i> Kamera</button>
+              </div>
+              <input class="sr-only member-photo-file-input" id="memberKtpPhotoUpload" type="file" accept="image/png,image/jpeg,image/webp">
+              <input id="memberKtpPhotoValue" type="hidden" value="">
+              <p class="muted" id="memberKtpUploadStatus">Upload KTP akan mencoba membaca Nomor KTP dan nama otomatis.</p>
+            ` : ''}
           </div>
         </div>
       </section>
@@ -15987,6 +16268,7 @@ function bindMemberDetailModal(detail = {}) {
   tabButtons.forEach((button) => {
     button.addEventListener('click', () => activate(button.dataset.memberDetailTab || 'contact'));
   });
+  bindPhotoInputTriggers(modalBody);
   const upload = modalBody.querySelector('#memberHousePhotoUpload');
   upload?.addEventListener('change', async () => {
     try {
@@ -16655,6 +16937,7 @@ async function renderMonitoringBilling(options = {}) {
   const sites = Array.isArray(payload.sites) ? payload.sites : [];
   const pagination = payload.pagination || { page: 1, totalPages: 1, total: invoices.length, limit: state.monitoringBillingLimit };
   const standaloneBilling = payload.source === 'local';
+  const paymentGatewayEnabled = payload.paymentGatewayEnabled === true;
   state.monitoringBillingPage = Number(pagination.page || 1);
   state.monitoringBillingLimit = pagerLimitValue(pagination.limit || state.monitoringBillingLimit || 10, 10);
   const selectedSite = sites.find((site) => site.id === state.monitoringBillingSite);
@@ -16716,7 +16999,7 @@ async function renderMonitoringBilling(options = {}) {
         <td class="amount nowrap">${rupiah(invoice.amount)}</td>
         <td class="billing-status-cell"><span class="badge ${displayedStatusBadge}">${escapeHtml(displayedStatus)}</span></td>
         <td class="billing-action-cell">
-          ${billingActionButtons(invoice, index)}
+          ${billingActionButtons(invoice, index, standaloneBilling, paymentGatewayEnabled)}
         </td>
       </tr>
     `;
@@ -16986,6 +17269,16 @@ async function renderMonitoringBilling(options = {}) {
         return;
       }
       openBillingPayModal(invoice);
+    });
+  });
+  app.querySelectorAll('[data-billing-qr-pay]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const invoice = invoices[Number(button.dataset.billingQrPay || -1)];
+      if (!invoice) {
+        setToast('Nomor invoice tidak tersedia');
+        return;
+      }
+      openBillingQrPayModal(invoice);
     });
   });
   app.querySelectorAll('[data-billing-discount]').forEach((button) => {
