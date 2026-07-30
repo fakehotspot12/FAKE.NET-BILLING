@@ -105,6 +105,53 @@ load_env_file() {
   fi
 }
 
+systemd_unit_exists() {
+  systemctl list-unit-files "$1" --no-legend >/dev/null 2>&1
+}
+
+cleanup_obsolete_worker_runtime() {
+  local backup_dir changed file
+  changed=0
+
+  if command -v systemctl >/dev/null 2>&1; then
+    backup_dir="$BACKUP_DIR/systemd-obsolete-$(date +%Y%m%d%H%M%S)"
+
+    if systemd_unit_exists fakenet-billing-worker.service; then
+      mkdir -p "$backup_dir"
+      systemctl stop fakenet-billing-worker.service >/dev/null 2>&1 || true
+      systemctl disable fakenet-billing-worker.service >/dev/null 2>&1 || true
+      [ ! -f /etc/systemd/system/fakenet-billing-worker.service ] || cp -a /etc/systemd/system/fakenet-billing-worker.service "$backup_dir/" || true
+      [ ! -d /etc/systemd/system/fakenet-billing-worker.service.d ] || cp -a /etc/systemd/system/fakenet-billing-worker.service.d "$backup_dir/" || true
+      rm -f /etc/systemd/system/fakenet-billing-worker.service
+      rm -rf /etc/systemd/system/fakenet-billing-worker.service.d
+      changed=1
+    fi
+
+    for file in /etc/systemd/system/fakenet-billing.service.d/*.conf; do
+      [ -f "$file" ] || continue
+      if grep -q 'FAKENET_ENGINE_ROLE' "$file"; then
+        mkdir -p "$backup_dir"
+        cp -a "$file" "$backup_dir/" || true
+        rm -f "$file"
+        changed=1
+      fi
+    done
+
+    if [ "$changed" -eq 1 ]; then
+      echo "Runtime worker Whatsapp lama dinonaktifkan; queue berjalan di service utama."
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      systemctl reset-failed fakenet-billing-worker.service >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if command -v rc-service >/dev/null 2>&1 && [ -e /etc/init.d/fakenet-billing-worker ]; then
+    rc-service fakenet-billing-worker stop >/dev/null 2>&1 || true
+    rc-update del fakenet-billing-worker default >/dev/null 2>&1 || true
+    rm -f /etc/init.d/fakenet-billing-worker
+    echo "Runtime worker Whatsapp lama OpenRC dinonaktifkan; queue berjalan di service utama."
+  fi
+}
+
 database_url_for_name() {
   local explicit_url="$1" db_name="$2" db_user="$3" db_password="$4"
   if [ -n "$explicit_url" ]; then
@@ -310,6 +357,8 @@ if [ -f "$APP_DIR/install.sh" ]; then
   fi
   APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair || true
 fi
+
+cleanup_obsolete_worker_runtime
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true

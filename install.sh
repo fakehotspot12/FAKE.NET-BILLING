@@ -639,6 +639,49 @@ systemd_unit_exists() {
   systemctl list-unit-files "$1" --no-legend >/dev/null 2>&1
 }
 
+cleanup_obsolete_worker_runtime() {
+  local backup_dir changed file
+  changed=0
+
+  if command -v systemctl >/dev/null 2>&1; then
+    backup_dir="/var/backups/fakenet-billing/systemd-obsolete-$(date +%Y%m%d%H%M%S)"
+
+    if systemd_unit_exists fakenet-billing-worker.service; then
+      mkdir -p "$backup_dir"
+      systemctl stop fakenet-billing-worker.service >/dev/null 2>&1 || true
+      systemctl disable fakenet-billing-worker.service >/dev/null 2>&1 || true
+      [ ! -f /etc/systemd/system/fakenet-billing-worker.service ] || cp -a /etc/systemd/system/fakenet-billing-worker.service "$backup_dir/" || true
+      [ ! -d /etc/systemd/system/fakenet-billing-worker.service.d ] || cp -a /etc/systemd/system/fakenet-billing-worker.service.d "$backup_dir/" || true
+      rm -f /etc/systemd/system/fakenet-billing-worker.service
+      rm -rf /etc/systemd/system/fakenet-billing-worker.service.d
+      changed=1
+    fi
+
+    for file in /etc/systemd/system/fakenet-billing.service.d/*.conf; do
+      [ -f "$file" ] || continue
+      if grep -q 'FAKENET_ENGINE_ROLE' "$file"; then
+        mkdir -p "$backup_dir"
+        cp -a "$file" "$backup_dir/" || true
+        rm -f "$file"
+        changed=1
+      fi
+    done
+
+    if [ "$changed" -eq 1 ]; then
+      echo "Runtime worker Whatsapp lama dinonaktifkan; queue berjalan di service utama."
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      systemctl reset-failed fakenet-billing-worker.service >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if command -v rc-service >/dev/null 2>&1 && [ -e /etc/init.d/fakenet-billing-worker ]; then
+    rc-service fakenet-billing-worker stop >/dev/null 2>&1 || true
+    rc-update del fakenet-billing-worker default >/dev/null 2>&1 || true
+    rm -f /etc/init.d/fakenet-billing-worker
+    echo "Runtime worker Whatsapp lama OpenRC dinonaktifkan; queue berjalan di service utama."
+  fi
+}
+
 resolve_systemd_group() {
   local unit
   for unit in "$@"; do
@@ -994,6 +1037,7 @@ install_systemd() {
   for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
     install_systemd_unit_file "$unit"
   done
+  cleanup_obsolete_worker_runtime
   systemctl daemon-reload
   init_postgres_cluster
   start_systemd_base_units
@@ -1191,6 +1235,7 @@ repair_install() {
     for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
       install_systemd_unit_file "$unit"
     done
+    cleanup_obsolete_worker_runtime
     systemctl daemon-reload >/dev/null 2>&1 || true
     if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
       local docker_unit

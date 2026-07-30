@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.14] - 2026-07-30
+
+### Fixed
+
+- Installer dan updater kini menonaktifkan runtime worker Whatsapp lama yang terpisah, sehingga queue Whatsapp berjalan di service utama seperti konfigurasi produksi dan pesan baru tidak tertahan di status pending akibat cache beda proses.
+
 ## [2.11.13] - 2026-07-30
 
 ### Fixed
