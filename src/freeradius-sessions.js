@@ -7,8 +7,11 @@ const SESSION_CACHE_KEY = process.env.RADIUS_SESSION_CACHE_KEY || 'fakenet:radiu
 const SESSION_CACHE_TTL_SECONDS = Math.max(60, Number(process.env.RADIUS_SESSION_CACHE_TTL_SECONDS || 300) || 300);
 const DEFAULT_SESSION_STALE_SECONDS = 30 * 60;
 const USAGE_DAILY_TABLE = 'fakenet_radius_usage_daily';
+const USAGE_15M_TABLE = 'fakenet_radius_usage_15m';
 const USAGE_STATE_TABLE = 'fakenet_radius_usage_state';
 const DEFAULT_USAGE_RETENTION_DAYS = 370;
+const DEFAULT_USAGE_15M_RETENTION_HOURS = 72;
+const DEFAULT_USAGE_DAILY_VIEW_DAYS = 31;
 
 function enabled() {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env.FREERADIUS_SYNC_ENABLED || '').toLowerCase());
@@ -51,7 +54,13 @@ function usageTimeZone() {
 function usageRetentionDays() {
   const value = Number(process.env.RADIUS_USAGE_RETENTION_DAYS);
   if (!Number.isFinite(value)) return DEFAULT_USAGE_RETENTION_DAYS;
-  return Math.max(7, Math.min(1460, Math.trunc(value)));
+  return Math.max(DEFAULT_USAGE_DAILY_VIEW_DAYS, Math.min(1460, Math.trunc(value)));
+}
+
+function usageIntervalRetentionHours() {
+  const value = Number(process.env.RADIUS_USAGE_15M_RETENTION_HOURS);
+  if (!Number.isFinite(value)) return DEFAULT_USAGE_15M_RETENTION_HOURS;
+  return Math.max(24, Math.min(168, Math.trunc(value)));
 }
 
 function psqlJson(query) {
@@ -282,6 +291,12 @@ function nextPeriod(period = normalizedPeriod()) {
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+function shiftPeriod(period = normalizedPeriod(), months = 0) {
+  const [year, month] = normalizedPeriod(period).split('-').map(Number);
+  const date = new Date(Date.UTC(year || 1970, (month || 1) - 1 + Math.trunc(Number(months) || 0), 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
 function normalizedDate(value = '') {
   const text = cleanText(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
@@ -448,12 +463,24 @@ CREATE TABLE IF NOT EXISTS ${USAGE_DAILY_TABLE} (
   PRIMARY KEY (username, day)
 );
 CREATE INDEX IF NOT EXISTS ${USAGE_DAILY_TABLE}_day_idx ON ${USAGE_DAILY_TABLE} (day);
+CREATE TABLE IF NOT EXISTS ${USAGE_15M_TABLE} (
+  username text NOT NULL,
+  bucket_at timestamp NOT NULL,
+  input_octets bigint NOT NULL DEFAULT 0,
+  output_octets bigint NOT NULL DEFAULT 0,
+  total_octets bigint NOT NULL DEFAULT 0,
+  samples integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (username, bucket_at)
+);
+CREATE INDEX IF NOT EXISTS ${USAGE_15M_TABLE}_bucket_idx ON ${USAGE_15M_TABLE} (bucket_at);
 `;
 }
 
 function recordUsageDeltasQuery(columns = new Set(), options = {}) {
   const timeZone = sqlLiteral(options.timeZone || usageTimeZone());
   const retentionDays = usageRetentionDays();
+  const intervalRetentionHours = usageIntervalRetentionHours();
   const inputExpr = octetExpr('radacct', 'acctinputoctets', 'acctinputgigawords', columns);
   const outputExpr = octetExpr('radacct', 'acctoutputoctets', 'acctoutputgigawords', columns);
   return `
@@ -513,6 +540,37 @@ daily_upsert AS (
     updated_at = GREATEST(${USAGE_DAILY_TABLE}.updated_at, EXCLUDED.updated_at)
   RETURNING 1
 ),
+interval_upsert AS (
+  INSERT INTO ${USAGE_15M_TABLE} (
+    username,
+    bucket_at,
+    input_octets,
+    output_octets,
+    total_octets,
+    samples,
+    updated_at
+  )
+  SELECT
+    username,
+    date_trunc('hour', timezone(${timeZone}, updated_at))
+      + ((floor(extract(minute from timezone(${timeZone}, updated_at)) / 15)::int * 15) * interval '1 minute') AS bucket_at,
+    SUM(delta_input_octets)::bigint AS input_octets,
+    SUM(delta_output_octets)::bigint AS output_octets,
+    SUM(delta_total_octets)::bigint AS total_octets,
+    COUNT(*)::integer AS samples,
+    MAX(updated_at) AS updated_at
+  FROM delta_rows
+  WHERE delta_total_octets > 0
+  GROUP BY username, date_trunc('hour', timezone(${timeZone}, updated_at))
+      + ((floor(extract(minute from timezone(${timeZone}, updated_at)) / 15)::int * 15) * interval '1 minute')
+  ON CONFLICT (username, bucket_at) DO UPDATE SET
+    input_octets = ${USAGE_15M_TABLE}.input_octets + EXCLUDED.input_octets,
+    output_octets = ${USAGE_15M_TABLE}.output_octets + EXCLUDED.output_octets,
+    total_octets = ${USAGE_15M_TABLE}.total_octets + EXCLUDED.total_octets,
+    samples = ${USAGE_15M_TABLE}.samples + EXCLUDED.samples,
+    updated_at = GREATEST(${USAGE_15M_TABLE}.updated_at, EXCLUDED.updated_at)
+  RETURNING 1
+),
 state_upsert AS (
   INSERT INTO ${USAGE_STATE_TABLE} (
     session_key,
@@ -541,13 +599,20 @@ stale_daily AS (
   DELETE FROM ${USAGE_DAILY_TABLE}
   WHERE day < ((timezone(${timeZone}, now()))::date - (${retentionDays} * interval '1 day'))::date
   RETURNING 1
+),
+stale_interval AS (
+  DELETE FROM ${USAGE_15M_TABLE}
+  WHERE bucket_at < (timezone(${timeZone}, now()) - (${intervalRetentionHours} * interval '1 hour'))
+  RETURNING 1
 )
 SELECT json_build_object(
   'sessions', (SELECT COUNT(*) FROM current_sessions),
   'recorded', (SELECT COUNT(*) FROM daily_upsert),
+  'recordedIntervals', (SELECT COUNT(*) FROM interval_upsert),
   'stateRows', (SELECT COUNT(*) FROM state_upsert),
   'prunedSessions', (SELECT COUNT(*) FROM stale_state),
-  'prunedDays', (SELECT COUNT(*) FROM stale_daily)
+  'prunedDays', (SELECT COUNT(*) FROM stale_daily),
+  'prunedIntervals', (SELECT COUNT(*) FROM stale_interval)
 )::text`;
 }
 
@@ -577,6 +642,168 @@ FROM (
    AND usage_rows.username = ${sqlLiteral(userKey)}
   ORDER BY days.day_key
 ) daily_usage`;
+}
+
+function recordedMonthlyUsageQuery(username = '', period = normalizedPeriod(), months = 12) {
+  const userKey = cleanText(username).toLowerCase();
+  if (!userKey) return '';
+  const selectedPeriod = normalizedPeriod(period);
+  const monthCount = Math.max(1, Math.min(24, Math.trunc(Number(months || 12))));
+  const startPeriod = shiftPeriod(selectedPeriod, -(monthCount - 1));
+  return `
+${usageTablesSql()}
+WITH months AS (
+  SELECT generate_series(${sqlLiteral(`${startPeriod}-01`)}::date, ${sqlLiteral(`${selectedPeriod}-01`)}::date, interval '1 month')::date AS month_key
+),
+usage_rows AS (
+  SELECT
+    date_trunc('month', day)::date AS month_key,
+    SUM(input_octets)::bigint AS input_octets,
+    SUM(output_octets)::bigint AS output_octets,
+    SUM(total_octets)::bigint AS total_octets,
+    SUM(samples)::bigint AS session_count,
+    to_char(MAX(updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
+  FROM ${USAGE_DAILY_TABLE}
+  WHERE username = ${sqlLiteral(userKey)}
+    AND day >= ${sqlLiteral(`${startPeriod}-01`)}::date
+    AND day < (${sqlLiteral(`${selectedPeriod}-01`)}::date + interval '1 month')
+  GROUP BY date_trunc('month', day)::date
+)
+SELECT COALESCE(json_agg(row_to_json(monthly_usage) ORDER BY monthly_usage.period), '[]'::json)::text
+FROM (
+  SELECT
+    to_char(months.month_key, 'YYYY-MM') AS period,
+    COALESCE(usage_rows.input_octets, 0)::bigint AS input_octets,
+    COALESCE(usage_rows.output_octets, 0)::bigint AS output_octets,
+    COALESCE(usage_rows.total_octets, 0)::bigint AS total_octets,
+    COALESCE(usage_rows.session_count, 0)::bigint AS session_count,
+    COALESCE(usage_rows.last_seen_at, '') AS last_seen_at
+  FROM months
+  LEFT JOIN usage_rows ON usage_rows.month_key = months.month_key
+  ORDER BY months.month_key
+) monthly_usage`;
+}
+
+function recordedIntervalUsageQuery(username = '', options = {}) {
+  const userKey = cleanText(username).toLowerCase();
+  if (!userKey) return '';
+  const hours = Math.max(1, Math.min(72, Math.trunc(Number(options.hours || 24))));
+  const intervalMinutes = Math.max(5, Math.min(60, Math.trunc(Number(options.intervalMinutes || 15))));
+  const bucketCount = Math.max(1, Math.min(288, Math.ceil((hours * 60) / intervalMinutes)));
+  const timeZone = sqlLiteral(options.timeZone || usageTimeZone());
+  return `
+${usageTablesSql()}
+WITH bounds AS (
+  SELECT date_trunc('hour', timezone(${timeZone}, now()))
+    + ((floor(extract(minute from timezone(${timeZone}, now())) / ${intervalMinutes})::int * ${intervalMinutes}) * interval '1 minute') AS end_bucket
+),
+buckets AS (
+  SELECT generate_series(
+    (SELECT end_bucket FROM bounds) - ((${bucketCount - 1}) * interval '${intervalMinutes} minutes'),
+    (SELECT end_bucket FROM bounds),
+    interval '${intervalMinutes} minutes'
+  ) AS bucket_at
+)
+SELECT COALESCE(json_agg(row_to_json(interval_usage) ORDER BY interval_usage.bucket_at), '[]'::json)::text
+FROM (
+  SELECT
+    to_char(buckets.bucket_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS bucket_at,
+    COALESCE(usage_rows.input_octets, 0)::bigint AS input_octets,
+    COALESCE(usage_rows.output_octets, 0)::bigint AS output_octets,
+    COALESCE(usage_rows.total_octets, 0)::bigint AS total_octets,
+    COALESCE(usage_rows.samples, 0)::bigint AS session_count,
+    to_char(usage_rows.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
+  FROM buckets
+  LEFT JOIN ${USAGE_15M_TABLE} usage_rows
+    ON usage_rows.bucket_at = buckets.bucket_at
+   AND usage_rows.username = ${sqlLiteral(userKey)}
+  ORDER BY buckets.bucket_at
+) interval_usage`;
+}
+
+function intervalUsageQuery(username = '', options = {}, columns = new Set()) {
+  const userKey = cleanText(username).toLowerCase();
+  if (!userKey) return '';
+  const hours = Math.max(1, Math.min(72, Math.trunc(Number(options.hours || 24))));
+  const intervalMinutes = Math.max(5, Math.min(60, Math.trunc(Number(options.intervalMinutes || 15))));
+  const bucketCount = Math.max(1, Math.min(288, Math.ceil((hours * 60) / intervalMinutes)));
+  const timeZone = sqlLiteral(options.timeZone || usageTimeZone());
+  const inputExpr = octetExpr('radacct', 'acctinputoctets', 'acctinputgigawords', columns);
+  const outputExpr = octetExpr('radacct', 'acctoutputoctets', 'acctoutputgigawords', columns);
+  return `
+WITH bounds AS (
+  SELECT date_trunc('hour', timezone(${timeZone}, now()))
+    + ((floor(extract(minute from timezone(${timeZone}, now())) / ${intervalMinutes})::int * ${intervalMinutes}) * interval '1 minute') AS end_bucket
+),
+buckets AS (
+  SELECT generate_series(
+    (SELECT end_bucket FROM bounds) - ((${bucketCount - 1}) * interval '${intervalMinutes} minutes'),
+    (SELECT end_bucket FROM bounds),
+    interval '${intervalMinutes} minutes'
+  ) AS bucket_at
+),
+session_rows AS (
+  SELECT
+    timezone(${timeZone}, radacct.acctstarttime) AS session_start_at,
+    timezone(${timeZone}, COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now())) AS session_end_at,
+    COALESCE(radacct.acctstoptime, radacct.acctupdatetime, radacct.acctstarttime) AS last_seen_at,
+    ${inputExpr} AS input_octets_raw,
+    ${outputExpr} AS output_octets_raw,
+    GREATEST(
+      COALESCE(NULLIF(radacct.acctsessiontime, 0), 0)::numeric,
+      EXTRACT(EPOCH FROM (COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now()) - radacct.acctstarttime)),
+      1
+    ) AS duration_seconds
+  FROM radacct
+  CROSS JOIN bounds
+  WHERE lower(radacct.username) = ${sqlLiteral(userKey)}
+    AND timezone(${timeZone}, radacct.acctstarttime) < (bounds.end_bucket + interval '${intervalMinutes} minutes')
+    AND timezone(${timeZone}, COALESCE(radacct.acctstoptime, radacct.acctupdatetime, now())) >= (bounds.end_bucket - ((${bucketCount - 1}) * interval '${intervalMinutes} minutes'))
+),
+interval_overlaps AS (
+  SELECT
+    buckets.bucket_at,
+    session_rows.input_octets_raw,
+    session_rows.output_octets_raw,
+    session_rows.last_seen_at,
+    session_rows.duration_seconds,
+    GREATEST(
+      EXTRACT(EPOCH FROM (
+        LEAST(session_rows.session_end_at, buckets.bucket_at + interval '${intervalMinutes} minutes')
+        - GREATEST(session_rows.session_start_at, buckets.bucket_at)
+      )),
+      0
+    ) AS overlap_seconds
+  FROM buckets
+  JOIN session_rows
+    ON session_rows.session_start_at < (buckets.bucket_at + interval '${intervalMinutes} minutes')
+   AND session_rows.session_end_at >= buckets.bucket_at
+),
+usage_rows AS (
+  SELECT
+    bucket_at,
+    COALESCE(SUM(ROUND(input_octets_raw::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS input_octets,
+    COALESCE(SUM(ROUND(output_octets_raw::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS output_octets,
+    COALESCE(SUM(ROUND((input_octets_raw + output_octets_raw)::numeric * LEAST(1::numeric, overlap_seconds / duration_seconds))), 0)::bigint AS total_octets,
+    COUNT(*)::bigint AS session_count,
+    to_char(MAX(last_seen_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen_at
+  FROM interval_overlaps
+  WHERE overlap_seconds > 0
+  GROUP BY bucket_at
+)
+SELECT COALESCE(json_agg(row_to_json(interval_usage) ORDER BY interval_usage.bucket_at), '[]'::json)::text
+FROM (
+  SELECT
+    to_char(buckets.bucket_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS bucket_at,
+    COALESCE(usage_rows.input_octets, 0)::bigint AS input_octets,
+    COALESCE(usage_rows.output_octets, 0)::bigint AS output_octets,
+    COALESCE(usage_rows.total_octets, 0)::bigint AS total_octets,
+    COALESCE(usage_rows.session_count, 0)::bigint AS session_count,
+    COALESCE(usage_rows.last_seen_at, '') AS last_seen_at
+  FROM buckets
+  LEFT JOIN usage_rows ON usage_rows.bucket_at = buckets.bucket_at
+  ORDER BY buckets.bucket_at
+) interval_usage`;
 }
 
 function usageHistoryQuery(username = '', period = normalizedPeriod(), limit = 40, columns = new Set()) {
@@ -756,6 +983,23 @@ function normalizeDailyUsage(row = {}) {
   const totalOctets = numberValue(row.total_octets);
   return {
     date: cleanText(row.day_key),
+    inputOctets,
+    outputOctets,
+    totalOctets,
+    upload: formatBytes(inputOctets),
+    download: formatBytes(outputOctets),
+    totalUsageText: formatBytes(totalOctets),
+    sessionCount: numberValue(row.session_count),
+    lastSeenAt: cleanText(row.last_seen_at)
+  };
+}
+
+function normalizeIntervalUsage(row = {}) {
+  const inputOctets = numberValue(row.input_octets);
+  const outputOctets = numberValue(row.output_octets);
+  const totalOctets = numberValue(row.total_octets);
+  return {
+    bucketAt: cleanText(row.bucket_at),
     inputOctets,
     outputOctets,
     totalOctets,
@@ -1012,6 +1256,81 @@ async function monthlyUsageByUsernames(usernames = [], period = normalizedPeriod
   }
 }
 
+async function monthlyUsageHistoryByUsername(username = '', period = normalizedPeriod(), options = {}) {
+  const value = cleanText(username);
+  const selectedPeriod = normalizedPeriod(period);
+  const months = Math.max(1, Math.min(24, Math.trunc(Number(options.months || 12))));
+  const periods = Array.from({ length: months }, (_, index) => shiftPeriod(selectedPeriod, index - (months - 1)));
+  if (!value) {
+    return {
+      ok: true,
+      enabled: enabled(),
+      configured: configured(),
+      source: 'freeradius-usage-delta',
+      period: selectedPeriod,
+      months,
+      rows: periods.map((item) => ({ period: item, inputOctets: 0, outputOctets: 0, totalOctets: 0, upload: '0 B', download: '0 B', totalUsageText: '0 B', sessionCount: 0, lastSeenAt: '' }))
+    };
+  }
+  if (!enabled()) {
+    return {
+      ok: false,
+      enabled: false,
+      configured: configured(),
+      source: 'freeradius-usage-delta',
+      period: selectedPeriod,
+      months,
+      rows: [],
+      error: 'FreeRADIUS SQL sync belum aktif'
+    };
+  }
+  if (!configured()) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: false,
+      source: 'freeradius-usage-delta',
+      period: selectedPeriod,
+      months,
+      rows: [],
+      error: 'FREERADIUS_DATABASE_URL belum diisi'
+    };
+  }
+  try {
+    const rows = await psqlJson(recordedMonthlyUsageQuery(value, selectedPeriod, months));
+    return {
+      ok: true,
+      enabled: true,
+      configured: true,
+      source: 'freeradius-usage-delta',
+      period: selectedPeriod,
+      months,
+      rows: rows.map((row) => ({
+        period: cleanText(row.period),
+        inputOctets: numberValue(row.input_octets),
+        outputOctets: numberValue(row.output_octets),
+        totalOctets: numberValue(row.total_octets),
+        upload: formatBytes(row.input_octets),
+        download: formatBytes(row.output_octets),
+        totalUsageText: formatBytes(row.total_octets),
+        sessionCount: numberValue(row.session_count),
+        lastSeenAt: cleanText(row.last_seen_at)
+      }))
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: true,
+      source: 'freeradius-usage-delta',
+      period: selectedPeriod,
+      months,
+      rows: [],
+      error: error.message || 'History pemakaian bulanan FreeRADIUS tidak bisa dibaca'
+    };
+  }
+}
+
 async function usageHistoryByUsername(username = '', period = normalizedPeriod(), options = {}) {
   const value = cleanText(username);
   if (!value) {
@@ -1140,6 +1459,80 @@ async function dailyUsageByUsername(username = '', referenceDate = normalizedDat
   }
 }
 
+async function intervalUsageByUsername(username = '', options = {}) {
+  const value = cleanText(username);
+  const hours = Math.max(1, Math.min(72, Math.trunc(Number(options.hours || 24))));
+  const intervalMinutes = Math.max(5, Math.min(60, Math.trunc(Number(options.intervalMinutes || 15))));
+  if (!value) {
+    return {
+      ok: true,
+      enabled: enabled(),
+      configured: configured(),
+      source: 'freeradius-usage-delta',
+      hours,
+      intervalMinutes,
+      rows: []
+    };
+  }
+  if (!enabled()) {
+    return {
+      ok: false,
+      enabled: false,
+      configured: configured(),
+      hours,
+      intervalMinutes,
+      rows: [],
+      error: 'FreeRADIUS SQL sync belum aktif'
+    };
+  }
+  if (!configured()) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: false,
+      hours,
+      intervalMinutes,
+      rows: [],
+      error: 'FREERADIUS_DATABASE_URL belum diisi'
+    };
+  }
+  try {
+    let rows = [];
+    let source = 'freeradius-usage-delta';
+    try {
+      rows = await psqlJson(recordedIntervalUsageQuery(value, { hours, intervalMinutes }));
+    } catch (error) {
+      rows = [];
+    }
+    const recordedTotal = rows.reduce((sum, row) => sum + numberValue(row.total_octets), 0);
+    if (recordedTotal <= 0) {
+      const columns = await radacctColumns();
+      rows = await psqlJson(intervalUsageQuery(value, { hours, intervalMinutes }, columns));
+      source = 'freeradius-radacct';
+    }
+    return {
+      ok: true,
+      enabled: true,
+      configured: true,
+      source,
+      hours,
+      intervalMinutes,
+      rows: rows.map(normalizeIntervalUsage)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      enabled: true,
+      configured: true,
+      source: 'freeradius-usage-delta',
+      hours,
+      intervalMinutes,
+      rows: [],
+      error: error.message || 'Traffic 24 jam FreeRADIUS tidak bisa dibaca'
+    };
+  }
+}
+
 async function recordUsageDeltas(options = {}) {
   if (!enabled()) {
     return { ok: false, enabled: false, configured: configured(), skipped: true, error: 'FreeRADIUS SQL sync belum aktif' };
@@ -1157,9 +1550,11 @@ async function recordUsageDeltas(options = {}) {
       source: 'freeradius-usage-delta',
       sessions: numberValue(result.sessions),
       recorded: numberValue(result.recorded),
+      recordedIntervals: numberValue(result.recordedIntervals),
       stateRows: numberValue(result.stateRows),
       prunedSessions: numberValue(result.prunedSessions),
-      prunedDays: numberValue(result.prunedDays)
+      prunedDays: numberValue(result.prunedDays),
+      prunedIntervals: numberValue(result.prunedIntervals)
     };
   } catch (error) {
     return {
@@ -1181,6 +1576,8 @@ module.exports = {
   firstOnlineByUsernames,
   lastSeenByUsernames,
   dailyUsageByUsername,
+  intervalUsageByUsername,
+  monthlyUsageHistoryByUsername,
   monthlyUsageByUsernames,
   recordUsageDeltas,
   usageHistoryByUsername,
@@ -1188,10 +1585,14 @@ module.exports = {
     closeSupersededSessionsQuery,
     dailyUsageQuery,
     monthlyUsageQuery,
+    recordedMonthlyUsageQuery,
     recordedDailyUsageQuery,
+    recordedIntervalUsageQuery,
+    intervalUsageQuery,
     recordUsageDeltasQuery,
     normalizeSession,
     normalizeDailyUsage,
+    normalizeIntervalUsage,
     normalizeUsageHistory
   }
 };

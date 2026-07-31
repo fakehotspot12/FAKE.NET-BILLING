@@ -6,7 +6,7 @@
     <title>Pembayaran Invoice - __FAKENET_META_TITLE__</title>
     __FAKENET_META_TAGS__
     <link id="appFavicon" rel="icon" href="__FAKENET_META_ICON__">
-    <link rel="stylesheet" href="/payment-invoice.css?v=fakenet-billing-__FAKENET_APP_VERSION__">
+    <link rel="stylesheet" href="/payment-invoice.css?v=fakenet-billing-__FAKENET_APP_VERSION__-checkout-page-v6">
   </head>
   <body>
     <main class="payment-page">
@@ -83,25 +83,24 @@
         </section>
 
         <section id="methodBox" class="method-box" hidden>
-          <label>
-            <span>Metode Pembayaran</span>
-            <select id="paymentMethodSelect" disabled>
-              <option value="">Memuat channel pembayaran...</option>
-            </select>
-          </label>
+          <div class="method-box-head">
+            <span>Pembayaran Online</span>
+            <strong id="methodBoxTitle">Pilih Metode Pembayaran</strong>
+          </div>
+          <div id="pendingCheckoutBox" class="pending-checkout" hidden></div>
+          <select id="paymentMethodSelect" class="payment-method-native" disabled aria-label="Metode pembayaran">
+            <option value="">Memuat channel pembayaran...</option>
+          </select>
+          <div id="paymentMethodList" class="payment-method-list" role="listbox" aria-label="Daftar metode pembayaran" hidden></div>
           <small id="paymentMethodHelp">Pilih metode pembayaran yang tersedia dari Tripay.</small>
         </section>
 
-        <button id="payButton" class="payment-button" type="button">Bayar Sekarang</button>
+        <button id="payButton" class="payment-button" type="button">Pilih Metode Pembayaran</button>
         <button id="refreshButton" class="secondary-button" type="button">Refresh Status</button>
 
-        <section id="checkoutBox" class="checkout-box" hidden>
-          <strong>Checkout Payment Gateway</strong>
-          <p id="checkoutText"></p>
-          <a id="checkoutLink" class="payment-link" href="#" target="_blank" rel="noopener">Buka Payment Gateway</a>
-        </section>
+        <section id="checkoutBox" class="checkout-modal" hidden></section>
       </section>
     </main>
-    <script src="/payment-invoice.js?v=fakenet-billing-__FAKENET_APP_VERSION__" defer></script>
+    <script src="/payment-invoice.js?v=fakenet-billing-__FAKENET_APP_VERSION__-checkout-page-v6" defer></script>
   </body>
 </html>

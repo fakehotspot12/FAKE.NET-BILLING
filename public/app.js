@@ -199,10 +199,11 @@ const state = {
   monitoringServicesSite: 'all',
   monitoringBillingPage: 1,
   monitoringBillingLimit: 10,
-  monitoringBillingStatus: 'overdue',
+  monitoringBillingStatus: 'collectible',
   monitoringBillingCustomerStatus: 'all',
   monitoringBillingSite: 'all',
   monitoringBillingPeriod: todayInput().slice(0, 7),
+  monitoringBillingScope: 'collectible',
   monitoringBillingKeepPreset: false,
   dashboardValuesHidden: storedDashboardPrivacyHidden(),
   radiusPppTab: 'users',
@@ -1719,10 +1720,11 @@ function openNotificationTarget(action) {
   }
   if (action === 'monitoringBilling') {
     state.search = '';
-    state.monitoringBillingStatus = 'overdue';
+    state.monitoringBillingStatus = 'collectible';
     state.monitoringBillingCustomerStatus = 'all';
     state.monitoringBillingSite = 'all';
     state.monitoringBillingPeriod = todayInput().slice(0, 7);
+    state.monitoringBillingScope = 'collectible';
     state.monitoringBillingKeepPreset = true;
     state.monitoringBillingPage = 1;
     setView('monitoringBilling');
@@ -2132,10 +2134,11 @@ function setView(view, options = {}) {
     state.monitoringServicesSite = 'all';
     state.monitoringBillingPage = 1;
     if (enteringMonitoringBilling && !state.monitoringBillingKeepPreset) {
-      state.monitoringBillingStatus = 'overdue';
+      state.monitoringBillingStatus = 'collectible';
       state.monitoringBillingCustomerStatus = 'all';
       state.monitoringBillingSite = 'all';
       state.monitoringBillingPeriod = todayInput().slice(0, 7);
+      state.monitoringBillingScope = 'collectible';
     }
     state.monitoringBillingKeepPreset = false;
     state.radiusPppPage = 1;
@@ -2207,6 +2210,70 @@ function formData(form) {
   return data;
 }
 
+function enhanceTableTopScrollbars(root = document) {
+  const scope = root || document;
+  const wrappers = [...scope.querySelectorAll('.table-wrap, .detail-table-wrap')]
+    .filter((wrapper) => !wrapper.classList.contains('no-top-scroll'));
+  wrappers.forEach((wrapper) => {
+    if (!wrapper.isConnected) return;
+    let topScroll = wrapper.previousElementSibling;
+    if (!topScroll?.classList?.contains('table-top-scroll')) {
+      topScroll = document.createElement('div');
+      topScroll.className = 'table-top-scroll';
+      topScroll.setAttribute('aria-hidden', 'true');
+      topScroll.innerHTML = '<div></div>';
+      wrapper.parentNode?.insertBefore(topScroll, wrapper);
+    }
+    wrapper.classList.add('has-top-scrollbar');
+    const inner = topScroll.firstElementChild;
+    const update = () => {
+      if (!inner) return;
+      const width = Math.max(wrapper.scrollWidth, wrapper.clientWidth);
+      inner.style.width = `${width}px`;
+      topScroll.hidden = wrapper.scrollWidth <= wrapper.clientWidth + 2;
+      topScroll.scrollLeft = wrapper.scrollLeft;
+    };
+    if (topScroll.dataset.topScrollBound !== 'true') {
+      topScroll.addEventListener('scroll', () => {
+        let syncing = topScroll.dataset.syncing === 'true' || wrapper.dataset.syncing === 'true';
+        if (syncing) return;
+        topScroll.dataset.syncing = 'true';
+        wrapper.scrollLeft = topScroll.scrollLeft;
+        requestAnimationFrame(() => { topScroll.dataset.syncing = 'false'; });
+      }, { passive: true });
+      topScroll.dataset.topScrollBound = 'true';
+    }
+    if (wrapper.dataset.topScrollReady !== 'true') {
+      wrapper.addEventListener('scroll', () => {
+        let syncing = topScroll.dataset.syncing === 'true' || wrapper.dataset.syncing === 'true';
+        if (syncing) return;
+        wrapper.dataset.syncing = 'true';
+        topScroll.scrollLeft = wrapper.scrollLeft;
+        requestAnimationFrame(() => { wrapper.dataset.syncing = 'false'; });
+      }, { passive: true });
+      if (window.ResizeObserver) {
+        const observer = new ResizeObserver(update);
+        observer.observe(wrapper);
+        wrapper.querySelectorAll('table').forEach((table) => observer.observe(table));
+      }
+      wrapper.dataset.topScrollReady = 'true';
+    }
+    update();
+  });
+}
+
+function scheduleTableTopScrollbars(root = document) {
+  const scope = root || document;
+  const run = () => enhanceTableTopScrollbars(scope);
+  requestAnimationFrame(() => {
+    run();
+    requestAnimationFrame(run);
+  });
+  window.setTimeout(run, 80);
+  window.setTimeout(run, 250);
+  window.setTimeout(run, 600);
+}
+
 function openModal(title, body, onSubmit) {
   if (notificationPanel) {
     notificationPanel.hidden = true;
@@ -2215,6 +2282,8 @@ function openModal(title, body, onSubmit) {
   modalTitle.textContent = title;
   modalBody.innerHTML = body;
   const form = modal.querySelector('.modal-frame');
+  modalBody.scrollTop = 0;
+  form.scrollTop = 0;
   modal.querySelectorAll('[value="cancel"], [data-close-modal]').forEach((button) => {
     button.type = 'button';
     button.formNoValidate = true;
@@ -2250,6 +2319,11 @@ function openModal(title, body, onSubmit) {
     }
   };
   modal.showModal();
+  requestAnimationFrame(() => {
+    modalBody.scrollTop = 0;
+    form.scrollTop = 0;
+    scheduleTableTopScrollbars(modalBody);
+  });
 }
 
 modal?.addEventListener('close', () => {
@@ -2438,12 +2512,13 @@ function dashboardRadbillCard(label, value, sub = '', tone = 'neutral', icon = '
   `;
 }
 
-function applyDashboardMonitoringBillingPreset(status = 'all', customerStatus = 'all') {
+function applyDashboardMonitoringBillingPreset(status = 'all', customerStatus = 'all', scope = 'month') {
   const period = normalizedPeriod(state.period || todayInput().slice(0, 7));
   state.monitoringBillingStatus = status;
   state.monitoringBillingCustomerStatus = customerStatus;
   state.monitoringBillingSite = 'all';
   state.monitoringBillingPeriod = period;
+  state.monitoringBillingScope = scope;
   state.monitoringBillingPage = 1;
   state.monitoringBillingKeepPreset = true;
   state.search = '';
@@ -2468,13 +2543,13 @@ function applyDashboardViewAction(action = '', view = '') {
     state.search = '';
   }
   if (action === 'billing-paid') {
-    applyDashboardMonitoringBillingPreset('paid', 'all');
+    applyDashboardMonitoringBillingPreset('paid', 'all', 'month');
   } else if (action === 'billing-all') {
-    applyDashboardMonitoringBillingPreset('all', 'all');
+    applyDashboardMonitoringBillingPreset('all', 'all', 'month');
   } else if (action === 'billing-unpaid') {
-    applyDashboardMonitoringBillingPreset('unpaid', 'all');
+    applyDashboardMonitoringBillingPreset('collectible', 'all', 'collectible');
   } else if (action === 'billing-overdue') {
-    applyDashboardMonitoringBillingPreset('overdue', 'all');
+    applyDashboardMonitoringBillingPreset('overdue', 'all', 'collectible');
   }
 }
 
@@ -3160,6 +3235,7 @@ function bindLiveTextSearch(input, options = {}) {
     setValue(next);
     const result = handler({ silent: true, liveSearch: true });
     Promise.resolve(result).finally(() => {
+      if (state.view === viewAtBind) scheduleTableTopScrollbars(app);
       if (refocus && state.view === viewAtBind) {
         focusSearchAfterRender(refocusSelector, next);
       }
@@ -3236,7 +3312,10 @@ function bindSearch(handler) {
     search.value = '';
     state.search = '';
     const result = handler({ silent: true, liveSearch: true });
-    Promise.resolve(result).finally(() => focusSearchAfterRender('#searchInput', ''));
+    Promise.resolve(result).finally(() => {
+      scheduleTableTopScrollbars(app);
+      focusSearchAfterRender('#searchInput', '');
+    });
   };
   bindSearchClearButton(search, reset);
 }
@@ -4711,6 +4790,13 @@ function statisticsCompactBytes(value = 0) {
   return `${bytes.toFixed(precision).replace('.', ',')} ${units[unit]}`;
 }
 
+function statisticsCompactMbps(value = 0) {
+  const number = Math.max(0, Number(value || 0));
+  if (number >= 1000) return `${(number / 1000).toFixed(number >= 10000 ? 0 : 1).replace('.', ',')} Gbps`;
+  const precision = number >= 100 ? 0 : number >= 10 ? 1 : 2;
+  return `${number.toFixed(precision).replace('.', ',')} Mbps`;
+}
+
 function statisticsMax(rows = [], keys = []) {
   return Math.max(1, ...rows.map((row) => Math.max(...keys.map((key) => Number(row[key] || 0)))));
 }
@@ -4745,6 +4831,14 @@ function statisticsChartPoint(value = 0, range = {}, box = {}) {
 
 function statisticsLinePath(points = []) {
   return points.map((point, index) => `${index ? 'L' : 'M'}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ');
+}
+
+function statisticsAreaPath(points = [], baselineY = 0) {
+  if (!points.length) return '';
+  const line = statisticsLinePath(points);
+  const first = points[0];
+  const last = points[points.length - 1];
+  return `${line} L${last.x.toFixed(2)} ${baselineY.toFixed(2)} L${first.x.toFixed(2)} ${baselineY.toFixed(2)} Z`;
 }
 
 function statisticsAxisMarkup(range = {}, box = {}, formatter = displayNumber) {
@@ -8249,10 +8343,13 @@ function radiusStatusLabel(status) {
     disabled: 'Disable',
     pending: 'Belum Bayar',
     suspend: 'Isolir',
+    isolir: 'Isolir',
     suspended: 'Isolir',
     isolated: 'Isolir',
-    terminate: 'Terminate',
-    terminated: 'Terminate',
+    terminate: 'Terminated',
+    terminated: 'Terminated',
+    removed: 'Cabut',
+    cabut: 'Cabut',
     expired: 'Expired'
   };
   return labels[normalized] || status || '-';
@@ -8261,9 +8358,18 @@ function radiusStatusLabel(status) {
 function radiusStatusBadge(status) {
   const normalized = String(status || '').toLowerCase();
   if (['active', 'online', 'up', 'connected'].includes(normalized)) return 'active';
-  if (['suspend', 'suspended', 'isolated', 'expired', 'pending'].includes(normalized)) return 'pending';
-  if (['inactive', 'disabled', 'down', 'terminate', 'terminated'].includes(normalized)) return 'inactive';
+  if (['suspend', 'isolir', 'suspended', 'isolated', 'expired', 'pending'].includes(normalized)) return 'pending';
+  if (['inactive', 'disabled', 'down', 'terminate', 'terminated', 'removed', 'cabut'].includes(normalized)) return 'inactive';
   return '';
+}
+
+function internetAccessTypeLabel(internet = {}) {
+  const raw = String(internet.accessType || internet.serviceType || '').trim();
+  const normalized = raw.toLowerCase();
+  if (normalized === 'dhcp') return 'DHCP';
+  if (['pppoe', 'ppp', 'ppp-dhcp'].includes(normalized)) return 'PPPoE';
+  if (normalized === 'hotspot') return 'Hotspot';
+  return raw || '-';
 }
 
 function expiredModeLabel(mode = 'none') {
@@ -15391,6 +15497,7 @@ function openManualInvoiceModal() {
         }
         state.monitoringBillingStatus = 'all';
         state.monitoringBillingCustomerStatus = 'all';
+        state.monitoringBillingScope = 'month';
         setToast(invoicePeriod
           ? `${result.message || 'Invoice manual dibuat'} - periode ${periodLabel(invoicePeriod)}`
           : (result.message || 'Invoice manual dibuat'));
@@ -15825,7 +15932,7 @@ function usageMonthlyBarChart(rows = []) {
     <div class="statistics-chart-card usage-monthly-chart">
       <div class="statistics-chart-head">
         <div>
-          <h3>History Pemakaian Bulanan</h3>
+          <h3>Pemakaian Bulanan</h3>
           <span>Total upload/download 12 bulan terakhir.</span>
         </div>
         <div class="statistics-legend compact">
@@ -15862,6 +15969,15 @@ function usageDailyDateLabel(value = '') {
   return `${match[3]}/${match[2]}`;
 }
 
+function usageIntervalTimeLabel(value = '') {
+  const text = String(value || '').trim();
+  const match = text.match(/T(\d{2}):(\d{2})/);
+  if (match) return `${match[1]}:${match[2]}`;
+  const date = new Date(text);
+  if (!Number.isFinite(date.getTime())) return text.slice(11, 16) || '-';
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 function usageDailyGridMarkup(range = {}, box = {}) {
   return (range.ticks || []).map((value) => {
     const y = statisticsChartPoint(value, range, box);
@@ -15874,6 +15990,84 @@ function usageDailyFixedAxisMarkup(range = {}, box = {}, formatter = statisticsC
     const y = statisticsChartPoint(value, range, box);
     return `<span style="top:${y.toFixed(2)}px">${escapeHtml(formatter(value))}</span>`;
   }).join('');
+}
+
+function usageIntervalLineChart(rows = [], intervalMinutes = 15) {
+  const chartRows = (Array.isArray(rows) ? rows : []).slice(-96);
+  if (!chartRows.length) {
+    return '<div class="empty compact">Traffic 24 jam terakhir belum tersedia.</div>';
+  }
+  const seconds = Math.max(60, Number(intervalMinutes || 15) * 60);
+  const trafficRows = chartRows.map((row) => {
+    const inputOctets = Number(row.inputOctets || 0);
+    const outputOctets = Number(row.outputOctets || 0);
+    return {
+      ...row,
+      inputMbps: (inputOctets * 8) / seconds / 1000000,
+      outputMbps: (outputOctets * 8) / seconds / 1000000
+    };
+  });
+  const box = { width: 360, height: 132, right: 8, top: 12, plotHeight: 94 };
+  const range = statisticsChartRange(trafficRows.flatMap((row) => [row.inputMbps, row.outputMbps]), {
+    zeroBase: true,
+    minPadding: 0.05,
+    stepBase: 0.1
+  });
+  const plotWidth = box.width - box.right;
+  const step = trafficRows.length > 1 ? plotWidth / (trafficRows.length - 1) : plotWidth;
+  const baselineY = box.top + box.plotHeight;
+  const uploadPoints = trafficRows.map((row, index) => ({
+    x: step * index,
+    y: statisticsChartPoint(row.inputMbps || 0, range, box),
+    row
+  }));
+  const downloadPoints = trafficRows.map((row, index) => ({
+    x: step * index,
+    y: statisticsChartPoint(row.outputMbps || 0, range, box),
+    row
+  }));
+  const tickIndexes = [...new Set([0, Math.floor((trafficRows.length - 1) / 3), Math.floor((trafficRows.length - 1) * 2 / 3), trafficRows.length - 1])]
+    .filter((index) => index >= 0 && index < trafficRows.length);
+  return `
+    <div class="statistics-chart-card usage-interval-chart">
+      <div class="statistics-chart-head">
+        <div>
+          <h3>Traffic 24 Jam Terakhir</h3>
+          <span>Rata-rata upload/download per ${displayNumber(intervalMinutes || 15)} menit dalam Mbps.</span>
+        </div>
+        <div class="statistics-legend compact usage-legend usage-traffic-legend">
+          <span><i class="upload" aria-hidden="true"></i>Upload</span>
+          <span><i class="download" aria-hidden="true"></i>Download</span>
+        </div>
+      </div>
+      <div class="usage-daily-chart-frame usage-interval-chart-frame">
+        <div class="usage-daily-fixed-axis" aria-hidden="true">
+          ${usageDailyFixedAxisMarkup(range, box, statisticsCompactMbps)}
+        </div>
+        <div class="statistics-svg-wrap usage-daily-svg-wrap usage-interval-svg-wrap">
+          <svg viewBox="0 0 ${box.width} ${box.height}" preserveAspectRatio="none" role="img" aria-label="Traffic 24 jam terakhir">
+            ${usageDailyGridMarkup(range, box)}
+            <path class="usage-area upload" d="${statisticsAreaPath(uploadPoints, baselineY)}"></path>
+            <path class="usage-area download" d="${statisticsAreaPath(downloadPoints, baselineY)}"></path>
+            <path class="usage-line upload" d="${statisticsLinePath(uploadPoints)}"></path>
+            <path class="usage-line download" d="${statisticsLinePath(downloadPoints)}"></path>
+            ${trafficRows.map((row, index) => {
+              const x = step * index;
+              const uploadY = statisticsChartPoint(row.inputMbps || 0, range, box);
+              const downloadY = statisticsChartPoint(row.outputMbps || 0, range, box);
+              const tooltip = `${usageIntervalTimeLabel(row.bucketAt)}\nUpload: ${statisticsCompactMbps(row.inputMbps || 0)}\nDownload: ${statisticsCompactMbps(row.outputMbps || 0)}\nTotal usage: ${row.totalUsageText || statisticsCompactBytes(row.totalOctets || 0)}`;
+              return `
+                <rect class="statistics-hit-rect" fill="transparent" pointer-events="all" x="${Math.max(0, x - 8).toFixed(2)}" y="${box.top}" width="16" height="${box.plotHeight}" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></rect>
+              `;
+            }).join('')}
+          </svg>
+          <div class="usage-interval-time-grid">
+            ${tickIndexes.map((index) => `<span>${escapeHtml(usageIntervalTimeLabel(trafficRows[index]?.bucketAt))}</span>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function usageDailyBarChart(rows = []) {
@@ -15894,7 +16088,7 @@ function usageDailyBarChart(rows = []) {
     <div class="statistics-chart-card usage-daily-chart">
       <div class="statistics-chart-head">
         <div>
-          <h3>Aktivitas 7 Hari Terakhir</h3>
+          <h3>Pemakaian 7 Hari Terakhir</h3>
           <span>Total usage harian dari FreeRADIUS.</span>
         </div>
         <div class="statistics-legend compact">
@@ -15913,7 +16107,7 @@ function usageDailyBarChart(rows = []) {
             const y = statisticsChartPoint(value, range, box);
             const height = Math.max(0, (box.top + box.plotHeight) - y);
             const x = (step * index) + ((step - barWidth) / 2);
-            const tooltip = `${dateText(row.date)}\nUpload: ${row.upload || statisticsCompactBytes(row.inputOctets || 0)}\nDownload: ${row.download || statisticsCompactBytes(row.outputOctets || 0)}\nTotal: ${row.totalUsageText || statisticsCompactBytes(value)}\nSession: ${displayNumber(row.sessionCount || 0)}`;
+            const tooltip = `${dateText(row.date)}\nUpload: ${row.upload || statisticsCompactBytes(row.inputOctets || 0)}\nDownload: ${row.download || statisticsCompactBytes(row.outputOctets || 0)}\nTotal: ${row.totalUsageText || statisticsCompactBytes(value)}`;
             const hitWidth = Math.max(34, barWidth + 14);
             const hitX = x + (barWidth / 2) - (hitWidth / 2);
             return `
@@ -15924,7 +16118,7 @@ function usageDailyBarChart(rows = []) {
           </svg>
           <div class="usage-daily-date-grid">
             ${chartRows.map((row) => {
-              const tooltip = `${dateText(row.date)}\nUpload: ${row.upload || statisticsCompactBytes(row.inputOctets || 0)}\nDownload: ${row.download || statisticsCompactBytes(row.outputOctets || 0)}\nTotal: ${row.totalUsageText || statisticsCompactBytes(row.totalOctets || 0)}\nSession: ${displayNumber(row.sessionCount || 0)}`;
+              const tooltip = `${dateText(row.date)}\nUpload: ${row.upload || statisticsCompactBytes(row.inputOctets || 0)}\nDownload: ${row.download || statisticsCompactBytes(row.outputOctets || 0)}\nTotal: ${row.totalUsageText || statisticsCompactBytes(row.totalOctets || 0)}`;
               return `<span ${chartTooltipAttr(tooltip)}>${escapeHtml(usageDailyDateLabel(row.date))}</span>`;
             }).join('')}
           </div>
@@ -15935,6 +16129,12 @@ function usageDailyBarChart(rows = []) {
 }
 
 function usageDetailPanel(usage = {}) {
+  const dailyRows = Array.isArray(usage.dailyRows) ? usage.dailyRows : [];
+  const activeDailyRows = dailyRows.filter((row) => Number(row.totalOctets || 0) > 0);
+  const averageDailyOctets = activeDailyRows.length
+    ? activeDailyRows.reduce((sum, row) => sum + Number(row.totalOctets || 0), 0) / activeDailyRows.length
+    : 0;
+  const peakDailyOctets = dailyRows.reduce((max, row) => Math.max(max, Number(row.totalOctets || 0)), 0);
   return `
     <div class="usage-summary-grid">
       <div>
@@ -15950,17 +16150,19 @@ function usageDetailPanel(usage = {}) {
         <strong>${escapeHtml(usage.download || '0 B')}</strong>
       </div>
       <div>
-        <span>Session</span>
-        <strong>${displayNumber(usage.sessionCount || 0)}</strong>
+        <span>Rata-rata 7 Hari</span>
+        <strong>${escapeHtml(statisticsCompactBytes(averageDailyOctets))}</strong>
       </div>
       <div>
-        <span>Terakhir Aktif</span>
-        <strong>${escapeHtml(usage.lastSeenAt ? dateTimeText(usage.lastSeenAt) : '-')}</strong>
+        <span>Puncak Harian</span>
+        <strong>${escapeHtml(statisticsCompactBytes(peakDailyOctets))}</strong>
       </div>
     </div>
     ${usage.error ? `<div class="notice warning"><strong>Usage belum lengkap</strong><span>${escapeHtml(usage.error)}</span></div>` : ''}
     ${usageDailyBarChart(usage.dailyRows || [])}
     ${usage.dailyError ? `<div class="notice warning"><strong>History usage belum lengkap</strong><span>${escapeHtml(usage.dailyError)}</span></div>` : ''}
+    ${usageIntervalLineChart(usage.intervalRows || [], usage.intervalMinutes || 15)}
+    ${usage.intervalError ? `<div class="notice warning"><strong>Traffic 24 jam belum lengkap</strong><span>${escapeHtml(usage.intervalError)}</span></div>` : ''}
     ${usage.retentionText ? `<div class="muted usage-retention-note">${escapeHtml(usage.retentionText)}</div>` : ''}
   `;
 }
@@ -16082,7 +16284,7 @@ function contactModalBody(member = {}, contact = {}, editable = false, detail = 
         </div>
         ${memberReadonlyRows([
           ['Username', internet.username || member.username || member.internet],
-          ['Type', internet.accessType || internet.serviceType],
+          ['Type', internetAccessTypeLabel(internet)],
           ['Profile', internet.profile || member.packageName],
           ['NAS', internet.nas || member.siteName],
           ['IP Address', internet.ipAddress],
@@ -16289,6 +16491,9 @@ function bindMemberDetailModal(detail = {}) {
     if (tab === 'contact') {
       window.setTimeout(initMemberContactMap, 60);
     }
+    modalBody.scrollTop = 0;
+    modal.querySelector('.modal-frame').scrollTop = 0;
+    scheduleTableTopScrollbars(modalBody);
   };
   tabButtons.forEach((button) => {
     button.addEventListener('click', () => activate(button.dataset.memberDetailTab || 'contact'));
@@ -16945,11 +17150,16 @@ async function renderMonitoringBilling(options = {}) {
   const billingPeriod = normalizedPeriod(state.monitoringBillingPeriod || state.period || todayInput().slice(0, 7));
   state.monitoringBillingPeriod = billingPeriod;
   saveMonitoringBillingPeriod(billingPeriod);
+  const billingScope = ['month', 'arrears', 'collectible'].includes(String(state.monitoringBillingScope || '').toLowerCase())
+    ? String(state.monitoringBillingScope || '').toLowerCase()
+    : 'collectible';
+  state.monitoringBillingScope = billingScope;
   const params = queryString({
     status: state.monitoringBillingStatus,
     customerStatus: state.monitoringBillingCustomerStatus,
     site: state.monitoringBillingSite,
     period: billingPeriod,
+    scope: billingScope,
     search: state.search,
     page: state.monitoringBillingPage,
     limit: state.monitoringBillingLimit,
@@ -16965,6 +17175,9 @@ async function renderMonitoringBilling(options = {}) {
   const paymentGatewayEnabled = payload.paymentGatewayEnabled === true;
   state.monitoringBillingPage = Number(pagination.page || 1);
   state.monitoringBillingLimit = pagerLimitValue(pagination.limit || state.monitoringBillingLimit || 10, 10);
+  const billingScopeLabel = billingScope === 'month'
+    ? `Periode ${periodLabel(billingPeriod)}`
+    : (billingScope === 'arrears' ? `Tunggakan s/d ${periodLabel(billingPeriod)}` : `Berjalan + tunggakan s/d ${periodLabel(billingPeriod)}`);
   const selectedSite = sites.find((site) => site.id === state.monitoringBillingSite);
   const customerStatusLabels = {
     all: 'Tagihan sesuai filter',
@@ -17041,13 +17254,18 @@ async function renderMonitoringBilling(options = {}) {
 
       <section class="metrics">
         ${metric('Sudah Bayar', billingPaidMetric(summary), `Periode ${periodLabel(billingPeriod)}`, 'positive')}
-        ${metric('Belum Bayar', billingCountAmountMetric(summary.unpaid, summary.unpaidAmount), `Periode ${periodLabel(billingPeriod)}`, 'warning-card')}
-        ${metric('Lewat Tempo', billingCountAmountMetric(summary.overdue, summary.overdueAmount), 'Perlu ditagih', 'negative')}
+        ${metric('Belum Bayar', billingCountAmountMetric(summary.unpaid, summary.unpaidAmount), billingScopeLabel, 'warning-card')}
+        ${metric('Lewat Tempo', billingCountAmountMetric(summary.overdue, summary.overdueAmount), billingScopeLabel, 'negative')}
         ${metric('Hasil Filter', billingFilteredMetric(summary), filterLabel)}
       </section>
 
       <div class="toolbar">
         <div class="filters">
+          <select class="control" id="billingScopeFilter" aria-label="Mode periode tagihan">
+            <option value="collectible" ${billingScope === 'collectible' ? 'selected' : ''}>Berjalan + Tunggakan</option>
+            <option value="month" ${billingScope === 'month' ? 'selected' : ''}>Bulan dipilih</option>
+            <option value="arrears" ${billingScope === 'arrears' ? 'selected' : ''}>Semua tunggakan</option>
+          </select>
           <input class="control month-picker-control" id="billingPeriodFilter" type="month" value="${escapeHtml(billingPeriod)}" aria-label="Filter bulan tagihan">
           <select class="control" id="billingSiteFilter" aria-label="Filter NAS">
             <option value="all" ${state.monitoringBillingSite === 'all' ? 'selected' : ''}>Semua NAS</option>
@@ -17060,6 +17278,7 @@ async function renderMonitoringBilling(options = {}) {
             <option value="terminate" ${state.monitoringBillingCustomerStatus === 'terminate' ? 'selected' : ''}>Terminated</option>
           </select>
           <select class="control" id="billingStatusFilter" aria-label="Filter status tagihan">
+            <option value="collectible" ${state.monitoringBillingStatus === 'collectible' ? 'selected' : ''}>Perlu ditagih</option>
             <option value="all" ${state.monitoringBillingStatus === 'all' ? 'selected' : ''}>Semua tagihan</option>
             <option value="unpaid" ${state.monitoringBillingStatus === 'unpaid' ? 'selected' : ''}>Belum bayar</option>
             <option value="overdue" ${state.monitoringBillingStatus === 'overdue' ? 'selected' : ''}>Lewat tempo</option>
@@ -17086,7 +17305,7 @@ async function renderMonitoringBilling(options = {}) {
         </div>
       ` : ''}
 
-      <div class="table-wrap">
+      <div class="table-wrap billing-table-wrap">
         <table class="billing-table">
           <colgroup>
             <col class="billing-col-check">
@@ -17127,6 +17346,11 @@ async function renderMonitoringBilling(options = {}) {
   document.getElementById('billingPeriodFilter')?.addEventListener('change', (event) => {
     state.monitoringBillingPeriod = normalizedPeriod(event.target.value || todayInput().slice(0, 7));
     saveMonitoringBillingPeriod(state.monitoringBillingPeriod);
+    state.monitoringBillingPage = 1;
+    renderMonitoringBilling();
+  });
+  document.getElementById('billingScopeFilter')?.addEventListener('change', (event) => {
+    state.monitoringBillingScope = event.target.value || 'collectible';
     state.monitoringBillingPage = 1;
     renderMonitoringBilling();
   });
@@ -17349,6 +17573,7 @@ async function renderMonitoringBilling(options = {}) {
     });
   });
   updateBillingBatchButtons();
+  scheduleTableTopScrollbars(app);
   scheduleMonitoringBillingRefresh();
 }
 
@@ -17364,7 +17589,8 @@ function scheduleMonitoringBillingRefresh() {
     }
     try {
       const period = normalizedPeriod(state.monitoringBillingPeriod || state.period || todayInput().slice(0, 7));
-      const payload = await api(`/api/monitoring/billing-revision?${queryString({ period })}`);
+      const scope = state.monitoringBillingScope || 'collectible';
+      const payload = await api(`/api/monitoring/billing-revision?${queryString({ period, scope })}`);
       const revision = String(payload.revision || '');
       if (revision && monitoringBillingRevision && revision !== monitoringBillingRevision) {
         monitoringBillingRevision = revision;
@@ -20453,6 +20679,7 @@ async function render(options = {}) {
     else if (state.view === 'users') await renderUsers();
     else if (state.view === 'settings') await renderSettings();
     else if (!renderIsStale(renderToken)) app.innerHTML = empty('Halaman tidak tersedia');
+    if (!renderIsStale(renderToken)) scheduleTableTopScrollbars(app);
   } catch (error) {
     if (renderIsStale(renderToken) || error.name === 'AbortError') return;
     app.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;

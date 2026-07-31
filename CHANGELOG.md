@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.36] - 2026-08-01
+
+### Changed
+
+- `Monitoring > Tagihan Pelanggan` sekarang default ke mode `Berjalan + Tunggakan` dengan status `Perlu ditagih`, sehingga sisa invoice bulan sebelumnya tetap tampil ketika masuk bulan baru.
+- Kartu Dashboard `Unpaid` dan `Overdue` diselaraskan dengan data tagihan yang perlu ditindaklanjuti, sementara `Total Invoice` dan `Paid` tetap berbasis periode bulan terpilih.
+- Scroll tabel horizontal dipusatkan di scrollbar atas dan dipasang ulang setelah pencarian/render ulang agar scrollbar bawah tidak muncul kembali.
+
 ## [2.11.35] - 2026-07-31
 
 ### Changed

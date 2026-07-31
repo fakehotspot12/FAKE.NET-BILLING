@@ -2762,6 +2762,17 @@ async function radiusUsageMonthlyHistoryForUsername(username = '', period = curr
       rows: periods.map((item) => ({ period: item, inputOctets: 0, outputOctets: 0, totalOctets: 0, upload: '0 B', download: '0 B', totalUsageText: '0 B', sessionCount: 0, lastSeenAt: '' }))
     };
   }
+  const recorded = await freeradiusSessions.monthlyUsageHistoryByUsername(cleanUsername, selectedPeriod, { months });
+  const recordedTotal = (recorded.rows || []).reduce((sum, row) => sum + Number(row.totalOctets || 0), 0);
+  if (recorded.ok !== false && recordedTotal > 0) {
+    return {
+      ok: true,
+      source: recorded.source || 'freeradius-usage-delta',
+      period: selectedPeriod,
+      rows: recorded.rows || [],
+      error: ''
+    };
+  }
   const results = await Promise.all(periods.map(async (item) => {
     const payload = await freeradiusSessions.monthlyUsageByUsernames([cleanUsername], item);
     const usage = usageRowForUsername(payload, cleanUsername);
@@ -2807,6 +2818,33 @@ async function radiusUsageDailyHistoryForUsername(username = '', referenceDate =
     source: payload.source || 'freeradius-radacct',
     referenceDate: payload.referenceDate || referenceDate,
     days: payload.days || safeDays,
+    rows: payload.rows || [],
+    error: payload.error || ''
+  };
+}
+
+async function radiusUsageIntervalHistoryForUsername(username = '', hours = 24, intervalMinutes = 15) {
+  const cleanUsername = String(username || '').trim();
+  const safeHours = Math.max(1, Math.min(72, Math.trunc(Number(hours || 24))));
+  const safeInterval = Math.max(5, Math.min(60, Math.trunc(Number(intervalMinutes || 15))));
+  if (!cleanUsername) {
+    return {
+      ok: true,
+      source: 'freeradius-usage-delta',
+      hours: safeHours,
+      intervalMinutes: safeInterval,
+      rows: []
+    };
+  }
+  const payload = await freeradiusSessions.intervalUsageByUsername(cleanUsername, {
+    hours: safeHours,
+    intervalMinutes: safeInterval
+  });
+  return {
+    ok: payload.ok !== false,
+    source: payload.source || 'freeradius-usage-delta',
+    hours: payload.hours || safeHours,
+    intervalMinutes: payload.intervalMinutes || safeInterval,
     rows: payload.rows || [],
     error: payload.error || ''
   };
@@ -3000,10 +3038,48 @@ function invoiceCoverageText(invoice = {}) {
   return periods.length > 1 ? `${periods[0]} s/d ${periods[periods.length - 1]}` : periods[0];
 }
 
-function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
+function billingMonitorScope(value = 'collectible') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['month', 'period', 'selected', 'selected-period'].includes(normalized)) return 'month';
+  if (['arrears', 'tunggakan', 'all-arrears'].includes(normalized)) return 'arrears';
+  return 'collectible';
+}
+
+function invoicePrimaryPeriod(invoice = {}, fallbackPeriod = currentPeriod()) {
+  const coveredPeriods = invoiceCoveredPeriods(invoice);
+  if (coveredPeriods.length) return coveredPeriods[0];
+  const raw = String(invoice.period || invoiceIssuePeriodKeyFast(invoice) || fallbackPeriod || '').trim();
+  return /^\d{4}-\d{2}/.test(raw) ? normalizePeriod(raw.slice(0, 7)) : normalizePeriod(fallbackPeriod);
+}
+
+function invoiceNeedsCollection(invoice = {}) {
+  return ['pending', 'overdue'].includes(invoiceRuntimeStatus(invoice));
+}
+
+function billingMonitorInvoiceIncluded(invoice = {}, selectedPeriod = currentPeriod(), scope = 'collectible') {
+  const normalizedPeriod = normalizePeriod(selectedPeriod || currentPeriod());
+  const normalizedScope = billingMonitorScope(scope);
+  const inSelectedPeriod = invoiceCoversPeriod(invoice, normalizedPeriod);
+  if (normalizedScope === 'month') return inSelectedPeriod;
+  const needsCollection = invoiceNeedsCollection(invoice);
+  const invoicePeriod = invoicePrimaryPeriod(invoice, normalizedPeriod);
+  const duePeriod = /^\d{4}-\d{2}/.test(String(invoice.dueDate || ''))
+    ? String(invoice.dueDate).slice(0, 7)
+    : invoicePeriod;
+  const dueBySelectedPeriod = invoicePeriod <= normalizedPeriod || duePeriod <= normalizedPeriod;
+  if (normalizedScope === 'arrears') return needsCollection && dueBySelectedPeriod;
+  if (!needsCollection) return inSelectedPeriod;
+  return inSelectedPeriod || dueBySelectedPeriod;
+}
+
+function localBillingInvoiceRows(data = {}, period = currentPeriod(), options = {}) {
   const selectedPeriod = normalizePeriod(period);
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const resolver = radiusStatusResolver(data);
+  const includeInvoice = typeof options.includeInvoice === 'function'
+    ? options.includeInvoice
+    : (invoice) => invoiceCoversPeriod(invoice, selectedPeriod);
+  const keepInvoicePeriod = options.keepInvoicePeriod === true;
   const paymentsByInvoice = new Map();
   for (const payment of activePayments(data)) {
     const invoiceId = String(payment.invoiceId || '');
@@ -3014,7 +3090,7 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
     }
   }
   return (data.invoices || [])
-    .filter((invoice) => invoiceCoversPeriod(invoice, selectedPeriod))
+    .filter((invoice) => includeInvoice(invoice, selectedPeriod))
     .map((invoice) => {
       const customer = customers.get(invoice.customerId) || {};
       const payment = paymentsByInvoice.get(invoice.id) || {};
@@ -3026,9 +3102,11 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
       const paymentCategory = paymentCategoryForRecord({ ...invoice, ...payment }, invoice.paymentMethod || payment.method || '');
       const addOns = invoiceBillingAddons(invoice, customer);
       const addOnsTotal = billingAddonsTotal(addOns);
+      const rowPeriod = keepInvoicePeriod ? invoicePrimaryPeriod(invoice, selectedPeriod) : selectedPeriod;
       return {
         ...invoice,
-        period: selectedPeriod,
+        period: rowPeriod,
+        filterPeriod: selectedPeriod,
         originalPeriod: invoice.period || '',
         coverageText: invoiceCoverageText(invoice),
         invoiceId: invoice.id,
@@ -3097,18 +3175,26 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod()) {
 }
 
 function localBillingMonitorPayload(data = {}, query = {}) {
-  const period = query.period || currentPeriod();
+  const period = normalizePeriod(query.period || currentPeriod());
+  const scope = billingMonitorScope(query.scope || query.periodScope || 'collectible');
   const selectedStatus = String(query.status || 'all').toLowerCase();
   const selectedCustomerStatus = String(query.customerStatus || 'all').toLowerCase();
   const selectedSite = String(query.site || 'all');
   const search = String(query.search || '').trim().toLowerCase();
   const sites = localBillingSites(data);
-  const allRows = localBillingInvoiceRows(data, period).filter((invoice) => invoice.status !== 'cancelled');
-  const periodRows = [...allRows];
+  const allRows = localBillingInvoiceRows(data, period, {
+    includeInvoice: (invoice) => billingMonitorInvoiceIncluded(invoice, period, scope),
+    keepInvoicePeriod: scope !== 'month'
+  }).filter((invoice) => invoice.status !== 'cancelled');
+  const periodRows = localBillingInvoiceRows(data, period).filter((invoice) => invoice.status !== 'cancelled');
+  const summaryRows = scope === 'month' ? periodRows : allRows;
   let rows = [...allRows];
 
   if (selectedStatus !== 'all') {
-    rows = rows.filter((invoice) => invoice.status === selectedStatus || (selectedStatus === 'unpaid' && invoice.status === 'pending'));
+    rows = rows.filter((invoice) => {
+      if (selectedStatus === 'collectible') return ['unpaid', 'pending', 'overdue'].includes(invoice.status);
+      return invoice.status === selectedStatus || (selectedStatus === 'unpaid' && invoice.status === 'pending');
+    });
   }
   if (selectedCustomerStatus !== 'all') {
     rows = rows.filter((invoice) => invoice.customerStatus === selectedCustomerStatus);
@@ -3130,9 +3216,10 @@ function localBillingMonitorPayload(data = {}, query = {}) {
   }
 
   const paidRows = periodRows.filter((invoice) => invoice.status === 'paid');
-  const unpaidRows = periodRows.filter((invoice) => ['unpaid', 'pending'].includes(invoice.status));
-  const overdueRows = periodRows.filter((invoice) => invoice.status === 'overdue');
+  const unpaidRows = summaryRows.filter((invoice) => ['unpaid', 'pending'].includes(invoice.status));
+  const overdueRows = summaryRows.filter((invoice) => invoice.status === 'overdue');
   const summary = {
+    scope,
     total: periodRows.length,
     totalAmount: periodRows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
     paid: paidRows.length,
@@ -3156,10 +3243,11 @@ function localBillingMonitorPayload(data = {}, query = {}) {
   };
 }
 
-function localBillingRevision(data = {}, period = currentPeriod()) {
+function localBillingRevision(data = {}, period = currentPeriod(), options = {}) {
   const selectedPeriod = normalizePeriod(period || currentPeriod());
+  const scope = billingMonitorScope(options.scope || options.periodScope || 'month');
   const invoices = (data.invoices || [])
-    .filter((invoice) => normalizePeriod(invoice.period || selectedPeriod) === selectedPeriod)
+    .filter((invoice) => billingMonitorInvoiceIncluded(invoice, selectedPeriod, scope))
     .map((invoice) => ({
       id: invoice.id || '',
       status: invoice.status || '',
@@ -3245,6 +3333,7 @@ function radiusUiStatus(status = '') {
   if (['isolated', 'isolir', 'suspend', 'suspended'].includes(normalized)) return 'suspend';
   if (['disabled', 'inactive'].includes(normalized)) return 'disabled';
   if (['terminate', 'terminated'].includes(normalized)) return 'terminate';
+  if (['removed', 'cabut'].includes(normalized)) return 'removed';
   return 'active';
 }
 
@@ -3282,6 +3371,21 @@ function radiusActiveSessionMap(sessions = []) {
   return map;
 }
 
+async function activeRadiusSessionForUsername(username = '') {
+  const key = radiusSessionUsername(username);
+  if (!key) return null;
+  try {
+    const payload = await freeradiusSessions.activeSessions({
+      limit: 5000,
+      preferCache: true,
+      maxCacheAgeSeconds: 60
+    });
+    return radiusActiveSessionMap(payload.rows || []).get(key) || null;
+  } catch {
+    return null;
+  }
+}
+
 function radiusUserByUsername(data = {}) {
   const map = new Map();
   for (const user of data.radiusUsers || []) {
@@ -3293,12 +3397,15 @@ function radiusUserByUsername(data = {}) {
 
 function radiusSessionServiceType(data = {}, session = {}, user = null) {
   const userServiceType = String(user?.serviceType || '').trim().toLowerCase();
+  const userAccessType = String(user?.accessType || '').trim().toLowerCase();
+  if (userAccessType === 'dhcp' || userServiceType === 'dhcp') return 'dhcp';
   if (['pppoe', 'ppp', 'ppp-dhcp'].includes(userServiceType)) return 'pppoe';
   if (userServiceType === 'hotspot') return 'hotspot';
   if (userServiceType) return userServiceType;
   const framedProtocol = String(session.framedProtocol || '').trim().toLowerCase();
   const serviceType = String(session.serviceType || '').trim().toLowerCase();
   const nasPortType = String(session.nasPortType || '').trim().toLowerCase();
+  if (serviceType.includes('dhcp') || nasPortType.includes('dhcp')) return 'dhcp';
   if (framedProtocol === 'ppp' || serviceType === 'framed-user' || nasPortType.includes('ppp')) return 'pppoe';
   return 'hotspot';
 }
@@ -9130,6 +9237,11 @@ function fulfillHotspotVoucherOrder(data = {}, value = '', payment = {}, actor =
   const order = findHotspotVoucherOrder(data, value);
   if (!order) throw new Error('Order voucher tidak ditemukan');
   if (order.status === 'paid' && order.vouchers?.length) {
+    closePaymentCheckoutsAfterPaid(order, payment, actor, 'Order voucher sudah lunas');
+    markPaymentGatewayPendingRows(data, order.reference || '', {
+      status: 'closed',
+      reason: 'Order voucher sudah lunas'
+    });
     const transactionExists = (data.paymentGatewayTransactions || []).some((row) => (
       (row.voucherOrderId === order.id || row.reference === order.reference)
       && ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase())
@@ -9188,6 +9300,12 @@ function fulfillHotspotVoucherOrder(data = {}, value = '', payment = {}, actor =
   order.voucherBatchId = generated.batchId;
   order.voucherUserIds = vouchers.map((voucher) => voucher.id);
   order.vouchers = vouchers;
+  closePaymentCheckoutsAfterPaid(order, payment, actor, 'Order voucher sudah lunas');
+  markPaymentGatewayPendingRows(data, order.reference || '', {
+    status: 'closed',
+    reason: 'Order voucher sudah lunas',
+    exceptExternalReference: payment.externalId || ''
+  });
   upsertPaidHotspotVoucherPaymentGatewayTransaction(data, order);
   queueHotspotVoucherWa(data, order, vouchers, actor);
   return { order, vouchers, reused: false };
@@ -10338,6 +10456,8 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     }
     if (runtimeStatus === 'cancelled') continue;
     const amount = Number(invoice.amount || 0);
+    const customer = customers.get(invoice.customerId) || {};
+    const customerStatus = normalizeCustomerStatusLocal(resolver.statusForInvoice(invoice, customer));
     const invoiceDashboardPeriod = String(invoice.period || '').slice(0, 7) || invoiceIssuePeriodKeyFast(invoice);
     if (invoiceDashboardPeriod === selectedPeriod) {
       summary.monthlyInvoiceCount += 1;
@@ -10349,12 +10469,10 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
         summary.monthlyPaidCount += 1;
         summary.monthlyPaidAmount += Number(paidPayment?.amount ?? amount);
       }
-      const rowStatus = runtimeStatus === 'pending' ? 'unpaid' : runtimeStatus;
-      if (!['unpaid', 'pending', 'overdue'].includes(String(rowStatus || '').toLowerCase())) continue;
+    }
+    if (invoiceNeedsCollection(invoice) && billingMonitorInvoiceIncluded(invoice, selectedPeriod, 'collectible')) {
       summary.totalUnpaidCount += 1;
       summary.totalUnpaidAmount += amount;
-      const customer = customers.get(invoice.customerId) || {};
-      const customerStatus = normalizeCustomerStatusLocal(resolver.statusForInvoice(invoice, customer));
       if (runtimeStatus === 'overdue' || customerStatus === 'isolated' || customerStatus === 'terminate') {
         summary.overdueCount += 1;
         summary.overdueAmount += amount;
@@ -12214,6 +12332,8 @@ function paymentGatewayReportPayload(data = {}, query = {}) {
       transactionKindLabel: paymentGatewayTransactionKindLabel(transactionKind)
     };
   }).filter((row) => {
+    const rowStatus = String(row.status || '').trim().toLowerCase();
+    if (['closed', 'replaced'].includes(rowStatus)) return false;
     const date = String(row.date || row.createdAt || '').slice(0, 10);
     if (from && date && date < from) return false;
     if (to && date && date > to) return false;
@@ -13437,14 +13557,22 @@ function updateInvoiceManualDiscount(data = {}, invoice = {}, payload = {}, acto
 function billingInvoicePaymentCheckoutValidForCallback(invoice = {}, payment = {}) {
   const checkout = invoice.paymentCheckout;
   if (!checkout || typeof checkout !== 'object') return true;
-  if (checkout.invalidatedAt) return false;
   const externalReference = String(payment.externalId || payment.externalReference || '').trim();
   const storedReference = String(checkout.externalReference || '').trim();
+  if (checkout.invalidatedAt) {
+    if (externalReference && paymentCheckoutHistoryRows(invoice).some((item) => paymentCheckoutExternalMatches(item, externalReference))) {
+      return true;
+    }
+    return payment.trustedHistory === true && paymentGatewayHistoryMatchesInvoice(invoice, payment);
+  }
   if (externalReference && storedReference && externalReference !== storedReference) {
+    if (paymentCheckoutHistoryRows(invoice).some((item) => paymentCheckoutExternalMatches(item, externalReference))) {
+      return true;
+    }
     if (payment.trustedHistory === true && paymentGatewayHistoryMatchesInvoice(invoice, payment)) {
       return true;
     }
-    return false;
+    return true;
   }
   return true;
 }
@@ -13748,6 +13876,12 @@ function fulfillBillingInvoicePaymentGateway(data = {}, value = '', payment = {}
     adminFee: gatewayBreakdown.adminFee,
     cashierFee: checkoutBreakdown.cashierFee
   }, actor);
+  closePaymentCheckoutsAfterPaid(paid || invoice, payment, actor, 'Invoice sudah lunas');
+  markPaymentGatewayPendingRows(data, displayBillingInvoiceNo((paid || invoice).externalId || (paid || invoice).invoiceNo || (paid || invoice).id), {
+    status: 'closed',
+    reason: 'Invoice sudah lunas',
+    exceptExternalReference: payment.externalId || ''
+  });
   return { invoice: paid || invoice, status: 'paid', transaction, activatedUser, reused: wasPaid || Boolean(existingPayment) };
 }
 
@@ -13909,7 +14043,8 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
       : 'Semua metode tersedia',
     paymentCategory,
     paymentProvider: latestPayment.provider || invoice.paymentProvider || data.settings?.paymentGateway?.provider || 'tripay',
-    paymentGatewayLink: invoicePaymentGatewayLink(data, invoice)
+    paymentGatewayLink: invoicePaymentGatewayLink(data, invoice),
+    paymentCheckout: invoiceStatus === 'paid' ? null : publicPaymentCheckoutPayload(invoice.paymentCheckout)
   };
 }
 
@@ -14170,6 +14305,20 @@ function upsertTripayHistoryTransaction(data = {}, row = {}) {
       && ['paid', 'settled', 'success'].includes(String(item.status || '').toLowerCase());
   }));
   const kind = tripayHistoryTransactionKind(data, row);
+  let normalizedStatus = tripayHistoryStatus(row.status);
+  if (['pending', 'waiting', 'unpaid'].includes(normalizedStatus)) {
+    const target = voucherOrder || invoice;
+    const targetPaid = voucherOrder
+      ? String(voucherOrder.status || '').toLowerCase() === 'paid'
+      : invoice
+        ? invoiceRuntimeStatus(invoice) === 'paid'
+        : false;
+    if (targetPaid) {
+      normalizedStatus = 'closed';
+    } else if (target && !paymentCheckoutActiveForGatewayRow(target, externalReference)) {
+      normalizedStatus = 'replaced';
+    }
+  }
   const createdAt = tripayTimestampIso(row.created_at || row.createdAt) || existing?.createdAt || new Date().toISOString();
   const paidAt = tripayTimestampIso(row.paid_at || row.paidAt);
   const providerFee = Math.max(0, Math.round(Number(row.total_fee ?? row.totalFee ?? row.fee_merchant ?? row.feeMerchant ?? 0) || 0));
@@ -14204,7 +14353,7 @@ function upsertTripayHistoryTransaction(data = {}, row = {}) {
     feeMerchant: Math.max(0, Math.round(Number(row.fee_merchant ?? row.feeMerchant ?? 0) || 0)),
     feeCustomer: Math.max(0, Math.round(Number(row.fee_customer ?? row.feeCustomer ?? 0) || 0)),
     amountReceived,
-    status: tripayHistoryStatus(row.status),
+    status: normalizedStatus,
     externalId: externalReference || existing?.externalId || '',
     providerReference: externalReference || existing?.providerReference || '',
     paidAt: paidAt || existing?.paidAt || '',
@@ -14577,6 +14726,89 @@ function reusablePaymentCheckout(target = {}, params = {}) {
   return { ok: true, ...checkout, reused: true };
 }
 
+function paymentCheckoutHistoryRows(target = {}) {
+  return Array.isArray(target?.paymentCheckoutHistory) ? target.paymentCheckoutHistory : [];
+}
+
+function paymentCheckoutExternalMatches(checkout = {}, externalReference = '') {
+  const external = String(externalReference || '').trim();
+  if (!external || !checkout || typeof checkout !== 'object') return false;
+  return [checkout.externalReference, checkout.providerReference, checkout.gatewayReference]
+    .some((value) => String(value || '').trim() === external);
+}
+
+function paymentCheckoutActiveForGatewayRow(target = {}, externalReference = '') {
+  const checkout = target?.paymentCheckout;
+  if (!checkout || typeof checkout !== 'object') return false;
+  const status = String(checkout.status || 'pending').trim().toLowerCase();
+  const expiresAt = Date.parse(checkout.expiresAt || '');
+  if (status !== 'pending' || checkout.invalidatedAt || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+  const external = String(externalReference || '').trim();
+  return !external || paymentCheckoutExternalMatches(checkout, external);
+}
+
+function archivePaymentCheckout(target = {}, checkout = {}, status = 'replaced', reason = '', actor = {}) {
+  if (!target || !checkout || typeof checkout !== 'object') return null;
+  const now = new Date().toISOString();
+  const archived = {
+    ...checkout,
+    status,
+    invalidatedAt: checkout.invalidatedAt || now,
+    invalidatedReason: reason || checkout.invalidatedReason || status,
+    invalidatedByName: actor.name || actor.username || checkout.invalidatedByName || '',
+    invalidatedByUsername: actor.username || checkout.invalidatedByUsername || '',
+    archivedAt: now
+  };
+  const currentHistory = paymentCheckoutHistoryRows(target);
+  const external = String(archived.externalReference || '').trim();
+  const checkoutId = String(archived.checkoutId || '').trim();
+  const filtered = currentHistory.filter((item) => {
+    if (checkoutId && String(item.checkoutId || '').trim() === checkoutId) return false;
+    if (external && String(item.externalReference || '').trim() === external) return false;
+    return true;
+  });
+  target.paymentCheckoutHistory = [archived, ...filtered].slice(0, 12);
+  return archived;
+}
+
+function invalidatePaymentCheckout(target = {}, actor = {}, status = 'replaced', reason = '') {
+  const checkout = target?.paymentCheckout;
+  if (!checkout || typeof checkout !== 'object') return null;
+  const now = new Date().toISOString();
+  checkout.status = status;
+  checkout.invalidatedAt = checkout.invalidatedAt || now;
+  checkout.invalidatedReason = reason || checkout.invalidatedReason || status;
+  checkout.invalidatedByName = actor.name || actor.username || checkout.invalidatedByName || '';
+  checkout.invalidatedByUsername = actor.username || checkout.invalidatedByUsername || '';
+  checkout.updatedAt = now;
+  return archivePaymentCheckout(target, checkout, status, reason, actor);
+}
+
+function markPaymentGatewayPendingRows(data = {}, reference = '', options = {}) {
+  const normalizedReference = String(reference || '').trim();
+  if (!normalizedReference) return 0;
+  const status = String(options.status || 'replaced').trim().toLowerCase();
+  const reason = String(options.reason || '').trim();
+  const exceptExternalReference = String(options.exceptExternalReference || '').trim();
+  const now = new Date().toISOString();
+  data.paymentGatewayTransactions = Array.isArray(data.paymentGatewayTransactions) ? data.paymentGatewayTransactions : [];
+  let changed = 0;
+  for (const row of data.paymentGatewayTransactions) {
+    const rowReference = String(row.reference || row.invoiceNo || row.merchantReference || '').trim();
+    if (rowReference !== normalizedReference) continue;
+    const rowStatus = String(row.status || '').trim().toLowerCase();
+    if (!['pending', 'waiting', 'unpaid'].includes(rowStatus)) continue;
+    const external = String(row.externalId || row.providerReference || row.gatewayReference || '').trim();
+    if (exceptExternalReference && external && external === exceptExternalReference) continue;
+    row.status = status;
+    row.closedReason = reason || status;
+    row.closedAt = now;
+    row.updatedAt = now;
+    changed += 1;
+  }
+  return changed;
+}
+
 function paymentCheckoutTarget(data = {}, params = {}) {
   const reference = String(params.reference || '').trim();
   if (String(params.kind || '').toLowerCase().includes('voucher')) {
@@ -14587,15 +14819,22 @@ function paymentCheckoutTarget(data = {}, params = {}) {
 
 function storePaymentCheckout(target = {}, checkout = {}, params = {}) {
   const ttlMinutes = Math.max(5, Number(checkout.ttlMinutes || params.ttlMinutes || 60) || 60);
+  if (target.paymentCheckout && typeof target.paymentCheckout === 'object') {
+    archivePaymentCheckout(target, target.paymentCheckout, 'replaced', 'Metode pembayaran diganti', params.actor || {});
+  }
   target.paymentCheckout = {
+    checkoutId: createId('pco'),
     provider: String(checkout.provider || params.provider || 'tripay').trim().toLowerCase(),
     method: String(checkout.method || params.method || '').trim().toUpperCase(),
+    paymentName: String(checkout.paymentName || checkout.payment_name || '').trim(),
+    payCode: String(checkout.payCode || checkout.pay_code || checkout.paymentCode || '').trim(),
     reference: String(params.reference || checkout.reference || '').trim(),
     externalReference: String(checkout.externalReference || '').trim(),
     amount: Math.max(0, Math.round(Number(checkout.amount || params.amount || 0) || 0)),
     requestedAmount: Math.max(0, Math.round(Number(params.amount || checkout.amount || 0) || 0)),
     checkoutUrl: String(checkout.checkoutUrl || '').trim(),
-    paymentUrl: String(checkout.paymentUrl || '').trim(),
+    paymentUrl: String(checkout.paymentUrl || checkout.payUrl || '').trim(),
+    payUrl: String(checkout.payUrl || '').trim(),
     qrUrl: String(checkout.qrUrl || '').trim(),
     qrString: String(checkout.qrString || '').trim(),
     status: 'pending',
@@ -14630,13 +14869,81 @@ async function enrichPaymentCheckoutQr(checkout = {}) {
 function updatePaymentCheckoutStatus(target = {}, payment = {}, status = '') {
   const checkout = target?.paymentCheckout;
   if (!checkout || typeof checkout !== 'object') return;
-  if (checkout.invalidatedAt) return;
   const externalReference = String(payment.externalId || payment.externalReference || '').trim();
   const storedReference = String(checkout.externalReference || '').trim();
   const normalizedStatus = normalizePaymentStatus(status || payment.status || 'pending');
-  if (externalReference && storedReference && externalReference !== storedReference) return;
-  checkout.status = normalizedStatus;
-  checkout.updatedAt = new Date().toISOString();
+  const now = new Date().toISOString();
+  if (!externalReference || !storedReference || externalReference === storedReference) {
+    checkout.status = normalizedStatus;
+    checkout.updatedAt = now;
+    return;
+  }
+  const history = paymentCheckoutHistoryRows(target);
+  const archived = history.find((item) => paymentCheckoutExternalMatches(item, externalReference));
+  if (archived) {
+    archived.status = normalizedStatus;
+    archived.updatedAt = now;
+  }
+}
+
+function closePaymentCheckoutsAfterPaid(target = {}, payment = {}, actor = {}, reason = 'Pembayaran sudah lunas') {
+  if (!target || typeof target !== 'object') return;
+  const now = new Date().toISOString();
+  const externalReference = String(payment.externalId || payment.externalReference || '').trim();
+  const checkout = target.paymentCheckout;
+  if (checkout && typeof checkout === 'object') {
+    const matchesPaid = !externalReference || paymentCheckoutExternalMatches(checkout, externalReference);
+    checkout.status = matchesPaid ? 'paid' : 'closed';
+    checkout.closedAt = now;
+    checkout.closedReason = matchesPaid ? 'Dibayar' : reason;
+    checkout.updatedAt = now;
+    checkout.invalidatedAt = checkout.invalidatedAt || now;
+    checkout.invalidatedReason = checkout.closedReason;
+    checkout.invalidatedByName = actor.name || actor.username || checkout.invalidatedByName || '';
+    checkout.invalidatedByUsername = actor.username || checkout.invalidatedByUsername || '';
+    archivePaymentCheckout(target, checkout, checkout.status, checkout.closedReason, actor);
+  }
+  target.paymentCheckoutHistory = paymentCheckoutHistoryRows(target).map((item) => {
+    if (!item || typeof item !== 'object') return item;
+    const itemStatus = String(item.status || 'pending').trim().toLowerCase();
+    if (!['pending', 'waiting', 'unpaid', 'replaced'].includes(itemStatus)) return item;
+    const matchesPaid = externalReference && paymentCheckoutExternalMatches(item, externalReference);
+    return {
+      ...item,
+      status: matchesPaid ? 'paid' : 'closed',
+      closedAt: item.closedAt || now,
+      closedReason: matchesPaid ? 'Dibayar' : reason,
+      updatedAt: now
+    };
+  }).slice(0, 12);
+}
+
+function publicPaymentCheckoutPayload(checkout = {}) {
+  if (!checkout || typeof checkout !== 'object') return null;
+  const status = String(checkout.status || 'pending').trim().toLowerCase();
+  const expiresAtMs = Date.parse(checkout.expiresAt || '');
+  if (checkout.invalidatedAt || status !== 'pending' || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now() + 90_000) {
+    return null;
+  }
+  return {
+    provider: String(checkout.provider || 'tripay').trim().toLowerCase(),
+    method: String(checkout.method || '').trim().toUpperCase(),
+    paymentName: String(checkout.paymentName || '').trim(),
+    payCode: String(checkout.payCode || '').trim(),
+    reference: String(checkout.reference || '').trim(),
+    externalReference: String(checkout.externalReference || '').trim(),
+    amount: Math.max(0, Math.round(Number(checkout.amount || 0) || 0)),
+    customerAmount: Math.max(0, Math.round(Number(checkout.customerAmount || 0) || 0)),
+    adminFee: Math.max(0, Math.round(Number(checkout.adminFee || 0) || 0)),
+    checkoutUrl: String(checkout.checkoutUrl || '').trim(),
+    paymentUrl: String(checkout.paymentUrl || checkout.payUrl || '').trim(),
+    payUrl: String(checkout.payUrl || '').trim(),
+    qrUrl: String(checkout.qrUrl || '').trim(),
+    qrString: String(checkout.qrString || '').trim(),
+    status,
+    createdAt: checkout.createdAt || '',
+    expiresAt: checkout.expiresAt || ''
+  };
 }
 
 async function createTripayCheckout(data = {}, params = {}) {
@@ -14730,6 +15037,8 @@ async function createTripayCheckout(data = {}, params = {}) {
     ok: true,
     provider: 'tripay',
     method: method || 'Semua metode tersedia',
+    paymentName: trx.payment_name || trx.paymentName || '',
+    payCode: trx.pay_code || trx.payCode || '',
     reference: merchantRef,
     externalReference: trx.reference || '',
     amount,
@@ -14737,8 +15046,9 @@ async function createTripayCheckout(data = {}, params = {}) {
     adminFee: amountBreakdown.configuredAdminFee,
     checkoutAdminFee: amountBreakdown.checkoutAdminFee,
     cashierFee: amountBreakdown.cashierFee,
-    checkoutUrl: trx.checkout_url || trx.payment_url || trx.paymentUrl || '',
-    paymentUrl: trx.checkout_url || trx.payment_url || trx.paymentUrl || '',
+    checkoutUrl: trx.checkout_url || trx.payment_url || trx.paymentUrl || trx.pay_url || trx.payUrl || '',
+    paymentUrl: trx.pay_url || trx.payUrl || trx.checkout_url || trx.payment_url || trx.paymentUrl || '',
+    payUrl: trx.pay_url || trx.payUrl || '',
     qrUrl: trx.qr_url || trx.qrUrl || '',
     qrString,
     expiredAt: trx.expired_time || trx.expiredAt || payload.expired_time,
@@ -14786,8 +15096,13 @@ async function createOrReusePaymentGatewayCheckout(data = {}, params = {}) {
       const active = reusablePaymentCheckout(target, normalized);
       if (active) return active;
       const paymentCheckout = storePaymentCheckout(target, checkout, normalized);
+      markPaymentGatewayPendingRows(store, normalized.reference, {
+        status: 'replaced',
+        reason: 'Metode pembayaran diganti',
+        exceptExternalReference: paymentCheckout.externalReference || ''
+      });
       return { ok: true, ...paymentCheckout, reused: false };
-    }, { collections: [collection], includeCore: false });
+    }, { collections: [collection, 'paymentGatewayTransactions'], includeCore: false });
     return enrichPaymentCheckoutQr(saved.result);
   })();
   paymentGatewayCheckoutLocks.set(lockKey, pending);
@@ -18317,11 +18632,13 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'billing-monitor:read');
     if (!authContext) return;
     const period = url.searchParams.get('period') || currentPeriod();
+    const scope = billingMonitorScope(url.searchParams.get('scope') || 'month');
     sendJson(res, 200, {
       ok: true,
       source: standaloneMode(authContext.data) ? 'local' : 'remote',
       period: normalizePeriod(period),
-      revision: localBillingRevision(authContext.data, period)
+      scope,
+      revision: localBillingRevision(authContext.data, period, { scope })
     });
     return;
   }
@@ -18344,6 +18661,7 @@ async function handleApi(req, res, url) {
     const customerStatus = String(url.searchParams.get('customerStatus') || 'all').trim().toLowerCase();
     const site = String(url.searchParams.get('site') || 'all').trim();
     const period = url.searchParams.get('period') || currentPeriod();
+    const scope = billingMonitorScope(url.searchParams.get('scope') || 'collectible');
     const search = String(url.searchParams.get('search') || '').trim();
     const billingSites = (authContext.data.monitoringTargets || [])
       .filter((target) => target.status !== 'inactive')
@@ -18358,6 +18676,7 @@ async function handleApi(req, res, url) {
         customerStatus,
         site,
         period,
+        scope,
         search
       });
       const pagination = paginationPayload(page, limit, local.rows.length);
@@ -18365,7 +18684,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, {
         ok: true,
         source: 'local',
-        revision: localBillingRevision(authContext.data, period),
+        revision: localBillingRevision(authContext.data, period, { scope }),
         paymentGatewayEnabled: authContext.data.settings?.paymentGateway?.enabled === true,
         sites: local.sites.length ? local.sites : billingSites,
         summary: local.summary,
@@ -18983,8 +19302,13 @@ async function handleApi(req, res, url) {
         return user.customerId === customer.id
           || String(user.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase();
       }) || {};
-      const profile = radiusFindProfile(authContext.data, radiusUser.profileId || customer.packageName, radiusUser.serviceType || 'pppoe') || {};
-      const nas = radiusFindNas(authContext.data, radiusUser.nasId || customer.nas || customer.siteName) || {};
+      const internetUsername = radiusUser.username || customer.username || '';
+      const activeSession = await activeRadiusSessionForUsername(internetUsername);
+      const resolvedServiceType = radiusSessionServiceType(authContext.data, activeSession || {}, radiusUser) || radiusUser.serviceType || 'pppoe';
+      const profile = radiusFindProfile(authContext.data, radiusUser.profileId || customer.packageName, resolvedServiceType === 'dhcp' ? 'pppoe' : resolvedServiceType) || {};
+      const nas = radiusUserNas(authContext.data, radiusUser, profile, activeSession)
+        || radiusFindNas(authContext.data, radiusUser.nasId || customer.nas || customer.siteName)
+        || {};
       const customerUsernameKey = String(customer.username || '').trim().toLowerCase();
       const customerAccountKey = String(customer.code || customer.accountId || '').trim().toLowerCase();
       const invoices = (authContext.data.invoices || [])
@@ -19041,14 +19365,16 @@ async function handleApi(req, res, url) {
         billingIsolationOverride: customer.billingIsolationOverride === true || radiusUser.billingIsolationOverride === true
       };
       const internet = {
-        username: radiusUser.username || customer.username || '',
-        serviceType: radiusUser.serviceType || 'pppoe',
-        accessType: radiusUser.accessType || '',
+        username: internetUsername,
+        serviceType: resolvedServiceType || radiusUser.serviceType || 'pppoe',
+        accessType: radiusUser.accessType || (resolvedServiceType === 'dhcp' ? 'dhcp' : ''),
         profile: profile.name || customer.packageName || '',
         nas: nas.name || customer.nas || customer.siteName || '',
-        ipAddress: radiusUser.staticIp || '',
-        macAddress: radiusUser.callerId || '',
-        status: radiusUser.status || customer.status || '',
+        ipAddress: activeSession?.framedIpAddress || radiusUser.staticIp || customer.ipAddress || customer.staticIp || '',
+        macAddress: activeSession?.callingStationId || radiusUser.callerId || customer.macAddress || customer.mac || '',
+        status: radiusUiStatus(radiusUser.status || customer.status || ''),
+        rawStatus: radiusUser.status || customer.status || '',
+        internetStatus: activeSession ? 'online' : 'offline',
         activeDate: customer.activeDate || ''
       };
       const usageUsername = internet.username || customer.username || '';
@@ -19056,10 +19382,17 @@ async function handleApi(req, res, url) {
         ? null
         : await radiusUsageDetailForUsername(usageUsername, period, 40);
       if (usage) {
-        const dailyUsage = await radiusUsageDailyHistoryForUsername(usageUsername, localTodayIso(), 7);
+        const [dailyUsage, intervalUsage] = await Promise.all([
+          radiusUsageDailyHistoryForUsername(usageUsername, localTodayIso(), 7),
+          radiusUsageIntervalHistoryForUsername(usageUsername, 24, 15)
+        ]);
         usage.dailyRows = dailyUsage.rows || [];
         usage.dailyError = dailyUsage.error || '';
-        usage.retentionText = 'Chart hanya memuat ringkasan 7 hari terakhir.';
+        usage.intervalRows = intervalUsage.rows || [];
+        usage.intervalError = intervalUsage.error || '';
+        usage.intervalHours = intervalUsage.hours || 24;
+        usage.intervalMinutes = intervalUsage.intervalMinutes || 15;
+        usage.retentionText = 'Mingguan memakai 7 hari terakhir, traffic harian memakai agregasi 15 menit.';
       }
       sendJson(res, 200, {
         ok: true,

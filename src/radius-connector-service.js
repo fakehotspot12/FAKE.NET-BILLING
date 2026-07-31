@@ -54,11 +54,14 @@ async function poll(reason = 'interval') {
       rows: rows.length,
       suppressedDuplicates,
       usageRecorded: usageRecord?.recorded || 0,
+      usageRecordedIntervals: usageRecord?.recordedIntervals || 0,
       error: result.error || ''
     });
     if (result.ok) {
       const cleanupNote = cleanup.closed ? `, ${cleanup.closed} session stale ditutup` : '';
-      const usageNote = usageRecord?.ok ? `, delta usage ${usageRecord.recorded} user/hari` : '';
+      const usageNote = usageRecord?.ok
+        ? `, delta usage ${usageRecord.recorded} user/hari, ${usageRecord.recordedIntervals || 0} slot 15m`
+        : '';
       console.log(`Radius connector OK ${rows.length} session dari ${result.source}${suppressedDuplicates ? `, ${suppressedDuplicates} duplicate disembunyikan` : ''}${cleanupNote}${usageNote}`);
     } else {
       console.error(`Radius connector gagal: ${result.error || 'FreeRADIUS tidak terbaca'}`);
