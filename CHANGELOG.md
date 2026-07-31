@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.33] - 2026-07-31
+
+### Changed
+
+- Dashboard `Pendapatan Bulan Ini` sekarang memakai kas masuk bulan berjalan dari pembayaran invoice dan pemasukan external, bukan periode invoice.
+- Dashboard `Tagihan Terbayar` sekarang memakai invoice periode bulan berjalan yang sudah lunas, sehingga mudah dibaca sebagai progres tagihan bulan tersebut.
+
 ## [2.11.32] - 2026-07-31
 
 ### Changed

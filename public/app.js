@@ -2491,14 +2491,15 @@ function dashboardBillingCell(label, count, amount, tone = '', action = '') {
 }
 
 function dashboardFinanceOverview(summary = {}) {
-  const monthlyEarning = Number(summary.paidRevenue || 0);
+  const monthlyEarning = Number(summary.dashboardIncomeAmount ?? summary.paidRevenue ?? 0);
   const monthlyExpense = Number(summary.expenseTotal || 0);
   const billing = summary.billingSummary || {};
   const monthlyTransaction = Number(summary.monthlyTransactionCount || summary.paidCount || 0);
+  const monthlyIncomeCount = Number(summary.dashboardIncomeCount || monthlyTransaction || 0);
   const netCash = Number(summary.netCash || 0);
   return `
     <section class="dashboard-radbill-top">
-      ${dashboardRadbillCard('Pendapatan Bulan Ini', dashboardMoneyValue(monthlyEarning), `${dashboardCountValue(monthlyTransaction)} transaksi`, 'success', 'Rp', 'reportsMonthlyBilling', 'monthly-billing-report')}
+      ${dashboardRadbillCard('Pendapatan Bulan Ini', dashboardMoneyValue(monthlyEarning), `${dashboardCountValue(monthlyIncomeCount)} pemasukan`, 'success', 'Rp', 'reportsMonthlyBilling', 'monthly-billing-report')}
       ${dashboardRadbillCard('Tagihan Terbayar', dashboardMoneyValue(billing.monthlyPaidAmount || 0), `${dashboardCountValue(billing.monthlyPaidCount || 0)} invoice lunas`, 'info', '✓', 'monitoringBilling', 'billing-paid')}
       ${dashboardRadbillCard('Pengeluaran Bulan Ini', dashboardMoneyValue(monthlyExpense), 'Biaya operasional', 'danger', '−', 'expenses', 'monthly-expenses')}
       ${dashboardRadbillCard('Profit Bulan Ini', dashboardMoneyValue(netCash), netCash >= 0 ? 'Surplus kas' : 'Defisit kas', netCash >= 0 ? 'violet' : 'danger', '↗', 'reportsTransactions', 'monthly-transactions')}

@@ -6140,6 +6140,15 @@ function dashboardMonthlyTransactionCount(data = {}, period = currentPeriod()) {
   return payments + externalIncomes + expenses;
 }
 
+function dashboardExternalIncomeCount(data = {}, period = currentPeriod()) {
+  const selectedPeriod = normalizePeriod(period);
+  return (data.externalIncomes || []).filter((income) => {
+    const status = String(income.status || '').toLowerCase();
+    return String(income.date || income.createdAt || '').slice(0, 7) === selectedPeriod
+      && !['cancelled', 'canceled', 'void', 'batal'].includes(status);
+  }).length;
+}
+
 function radiusRemovedRecordCount(data = {}, serviceType = 'pppoe', period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period || currentPeriod());
   const selectedType = String(serviceType || '').trim().toLowerCase();
@@ -10247,6 +10256,8 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     overdueAmount: 0,
     monthlyPaidCount: 0,
     monthlyPaidAmount: 0,
+    monthlyPaymentCount: 0,
+    monthlyPaymentAmount: 0,
     monthlyInvoiceCount: 0,
     monthlyInvoiceAmount: 0
   };
@@ -10264,6 +10275,10 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
       summary.monthlyInvoiceAmount += amount;
       summary.dashboardInvoiceCount += 1;
       summary.dashboardInvoiceAmount += amount;
+      if (runtimeStatus === 'paid') {
+        summary.monthlyPaidCount += 1;
+        summary.monthlyPaidAmount += amount;
+      }
       const rowStatus = runtimeStatus === 'pending' ? 'unpaid' : runtimeStatus;
       if (!['unpaid', 'pending', 'overdue'].includes(String(rowStatus || '').toLowerCase())) continue;
       summary.totalUnpaidCount += 1;
@@ -10282,8 +10297,8 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     const invoiceId = String(payment.invoiceId || '');
     if (invoiceId && invoiceStatuses.has(invoiceId) && invoiceStatuses.get(invoiceId) !== 'paid') continue;
     if (paymentPeriodKeyFast(payment) !== selectedPeriod) continue;
-    summary.monthlyPaidCount += 1;
-    summary.monthlyPaidAmount += Number(payment.amount || 0);
+    summary.monthlyPaymentCount += 1;
+    summary.monthlyPaymentAmount += Number(payment.amount || 0);
   }
 
   dashboardBillingSummaryCache.set(cacheKey, {
@@ -15850,6 +15865,16 @@ async function handleApi(req, res, url) {
     const summary = summarize(standaloneMode(data) ? dataWithResolvedCustomerStatuses(data) : data, period);
     summary.monthlyTransactionCount = dashboardMonthlyTransactionCount(data, period);
     summary.billingSummary = await cachedDashboardBillingSummary(data, period);
+    const dashboardIncomeAmount = Number(summary.billingSummary.monthlyPaymentAmount || 0)
+      + Number(summary.externalIncomeTotal || 0)
+      + Number(summary.radbooxRevenue || 0);
+    const dashboardIncomeCount = Number(summary.billingSummary.monthlyPaymentCount || 0)
+      + dashboardExternalIncomeCount(data, period)
+      + Number(summary.lastRadbooxEarning?.transactionCount || 0);
+    summary.dashboardIncomeAmount = dashboardIncomeAmount;
+    summary.dashboardIncomeCount = dashboardIncomeCount;
+    summary.paidRevenue = dashboardIncomeAmount;
+    summary.netCash = dashboardIncomeAmount - Number(summary.expenseTotal || 0);
     const members = await dashboardCustomerSummary(data, { force: refreshRadboox, period });
     const response = {
       summary: await publicDashboardSummary(summary, data, authContext.user, period),

@@ -5652,7 +5652,9 @@ test('online payments with Unix timestamps remain visible in daily and monthly r
 
   const dashboard = serverInternals.dashboardBillingSummary(data, '2026-07');
   assert.equal(dashboard.monthlyPaidCount, 1);
-  assert.equal(dashboard.monthlyPaidAmount, 155000);
+  assert.equal(dashboard.monthlyPaidAmount, 150000);
+  assert.equal(dashboard.monthlyPaymentCount, 1);
+  assert.equal(dashboard.monthlyPaymentAmount, 155000);
 
   const statistics = await serverInternals.reportStatisticsPayload(data, '2026-07');
   assert.equal(statistics.summary.onlineRevenueAmount, 155000);
@@ -5724,7 +5726,7 @@ test('daily billing report includes migrated payments without an invoice relatio
   assert.equal(report.transactions[0].customerName, 'Pelanggan Migrasi');
 });
 
-test('dashboard monthly invoice counts issued invoices while monthly paid uses actual transactions', () => {
+test('dashboard monthly invoice counts issued invoices while monthly paid uses invoice period', () => {
   const data = createDefaultStore();
   data.invoices.push(
     {
@@ -5776,8 +5778,10 @@ test('dashboard monthly invoice counts issued invoices while monthly paid uses a
   assert.equal(summary.totalUnpaidCount, 2);
   assert.equal(summary.totalUnpaidAmount, 450000);
   assert.equal(summary.overdueCount, 0);
-  assert.equal(summary.monthlyPaidCount, 1);
-  assert.equal(summary.monthlyPaidAmount, 155000);
+  assert.equal(summary.monthlyPaidCount, 0);
+  assert.equal(summary.monthlyPaidAmount, 0);
+  assert.equal(summary.monthlyPaymentCount, 1);
+  assert.equal(summary.monthlyPaymentAmount, 155000);
 });
 
 test('report payment channels separate cash, manual transfer, and online settlement', async () => {
