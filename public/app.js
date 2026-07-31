@@ -2499,7 +2499,7 @@ function dashboardFinanceOverview(summary = {}) {
   const netCash = Number(summary.netCash || 0);
   return `
     <section class="dashboard-radbill-top">
-      ${dashboardRadbillCard('Pendapatan Bulan Ini', dashboardMoneyValue(monthlyEarning), `${dashboardCountValue(monthlyIncomeCount)} pemasukan`, 'success', 'Rp', 'reportsMonthlyBilling', 'monthly-billing-report')}
+      ${dashboardRadbillCard('Pendapatan Bulan Ini', dashboardMoneyValue(monthlyEarning), `${dashboardCountValue(monthlyIncomeCount)} pemasukan`, 'success', 'Rp', 'reportsTransactions', 'monthly-income-report')}
       ${dashboardRadbillCard('Tagihan Terbayar', dashboardMoneyValue(billing.monthlyPaidAmount || 0), `${dashboardCountValue(billing.monthlyPaidCount || 0)} invoice lunas`, 'info', '✓', 'monitoringBilling', 'billing-paid')}
       ${dashboardRadbillCard('Pengeluaran Bulan Ini', dashboardMoneyValue(monthlyExpense), 'Biaya operasional', 'danger', '−', 'expenses', 'monthly-expenses')}
       ${dashboardRadbillCard('Profit Bulan Ini', dashboardMoneyValue(netCash), netCash >= 0 ? 'Surplus kas' : 'Defisit kas', netCash >= 0 ? 'violet' : 'danger', '↗', 'reportsTransactions', 'monthly-transactions')}
@@ -5917,6 +5917,7 @@ async function renderReportsTransactions(options = {}) {
         ${metric('Total Mutasi', rupiah(summary.totalAmount || 0), periodLabel(state.reportTransactionsPeriod), 'positive')}
         ${metric('Tagihan', `${displayNumber(summary.billingCount || 0)} / ${rupiah(summary.billingAmount || 0)}`, 'Invoice bulanan')}
         ${metric('Voucher', `${displayNumber(summary.voucherCount || 0)} / ${rupiah(summary.voucherAmount || 0)}`, 'Voucher paid')}
+        ${metric('Pemasukan External', `${displayNumber(summary.externalIncomeCount || 0)} / ${rupiah(summary.externalIncomeAmount || 0)}`, 'Pemasukan manual')}
         ${metric('Tunai', `${displayNumber(summary.cashCount || 0)} / ${rupiah(summary.cashAmount || 0)}`, 'Pembayaran langsung')}
         ${metric('Transfer + Loket', `${displayNumber(summary.transferCount || 0)} / ${rupiah(summary.transferAmount || 0)}`, 'Transfer bank manual dan Loket')}
         ${metric('Online', `${displayNumber(summary.onlineCount || 0)} / ${rupiah(summary.onlineAmount || 0)}`, 'QRIS, VA, e-wallet, dan gerai')}

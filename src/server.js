@@ -6149,6 +6149,62 @@ function dashboardExternalIncomeCount(data = {}, period = currentPeriod()) {
   }).length;
 }
 
+function dashboardVoucherIncomeAmount(row = {}) {
+  const values = [
+    row.settlementAmount,
+    row.amountReceived,
+    row.netAmount,
+    row.paymentAmount,
+    row.amount,
+    row.baseAmount
+  ];
+  for (const value of values) {
+    const amount = Number(value);
+    if (Number.isFinite(amount) && amount > 0) return Math.round(amount);
+  }
+  return 0;
+}
+
+function dashboardVoucherIncomeTimestamp(row = {}) {
+  return reportTimestampValue(
+    row.paidAt,
+    row.paymentAt,
+    row.settledAt,
+    row.completedAt,
+    row.updatedAt,
+    row.createdAt,
+    row.date
+  );
+}
+
+function dashboardVoucherIncomeSummary(data = {}, period = currentPeriod()) {
+  const selectedPeriod = normalizePeriod(period);
+  const rows = [
+    ...(Array.isArray(data.hotspotVoucherOrders) ? data.hotspotVoucherOrders : []),
+    ...(Array.isArray(data.hotspotVoucherSalesHistory) ? data.hotspotVoucherSalesHistory : [])
+  ];
+  const seen = new Set();
+  let count = 0;
+  let amount = 0;
+  for (const row of rows) {
+    const status = String(row.status || row.paymentStatus || row.payment_status || '').trim().toLowerCase();
+    const paymentStatus = String(row.paymentStatus || row.payment_status || '').trim().toLowerCase();
+    if (!['paid', 'settled', 'success'].includes(status)) continue;
+    if (['free', 'unpaid', 'pending', 'expired', 'cancelled', 'canceled', 'failed', 'void', 'batal'].includes(paymentStatus)) continue;
+    const paidAt = dashboardVoucherIncomeTimestamp(row);
+    if (timestampLocalDateKey(paidAt).slice(0, 7) !== selectedPeriod) continue;
+    const reference = String(row.reference || row.merchantReference || row.paymentReference || row.invoiceNo || '').trim();
+    const id = String(row.id || row.orderId || row.transactionId || '').trim();
+    const fallbackKey = `${row.username || ''}:${paidAt}:${dashboardVoucherIncomeAmount(row)}`;
+    const key = (reference ? `ref:${reference}` : id ? `id:${id}` : `row:${fallbackKey}`).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    count += 1;
+    amount += dashboardVoucherIncomeAmount(row);
+  }
+  return { count, amount };
+}
+
 function radiusRemovedRecordCount(data = {}, serviceType = 'pppoe', period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period || currentPeriod());
   const selectedType = String(serviceType || '').trim().toLowerCase();
@@ -10282,7 +10338,8 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     }
     if (runtimeStatus === 'cancelled') continue;
     const amount = Number(invoice.amount || 0);
-    if (invoiceIssuePeriodKeyFast(invoice) === selectedPeriod) {
+    const invoiceDashboardPeriod = String(invoice.period || '').slice(0, 7) || invoiceIssuePeriodKeyFast(invoice);
+    if (invoiceDashboardPeriod === selectedPeriod) {
       summary.monthlyInvoiceCount += 1;
       summary.monthlyInvoiceAmount += amount;
       summary.dashboardInvoiceCount += 1;
@@ -15877,12 +15934,15 @@ async function handleApi(req, res, url) {
     const summary = summarize(standaloneMode(data) ? dataWithResolvedCustomerStatuses(data) : data, period);
     summary.monthlyTransactionCount = dashboardMonthlyTransactionCount(data, period);
     summary.billingSummary = await cachedDashboardBillingSummary(data, period);
+    summary.voucherIncomeSummary = dashboardVoucherIncomeSummary(data, period);
     const dashboardIncomeAmount = Number(summary.billingSummary.monthlyPaymentAmount || 0)
       + Number(summary.externalIncomeTotal || 0)
-      + Number(summary.radbooxRevenue || 0);
+      + Number(summary.radbooxRevenue || 0)
+      + Number(summary.voucherIncomeSummary.amount || 0);
     const dashboardIncomeCount = Number(summary.billingSummary.monthlyPaymentCount || 0)
       + dashboardExternalIncomeCount(data, period)
-      + Number(summary.lastRadbooxEarning?.transactionCount || 0);
+      + Number(summary.lastRadbooxEarning?.transactionCount || 0)
+      + Number(summary.voucherIncomeSummary.count || 0);
     summary.dashboardIncomeAmount = dashboardIncomeAmount;
     summary.dashboardIncomeCount = dashboardIncomeCount;
     summary.paidRevenue = dashboardIncomeAmount;
@@ -16381,7 +16441,39 @@ async function handleApi(req, res, url) {
         siteId: row.nasId || row.siteId || '',
         siteName: row.nasName || row.siteName || ''
       }));
-    let transactions = billingTransactions.concat(voucherTransactions, paymentGatewayTransactions);
+    const externalTransactions = (data.externalIncomes || [])
+      .filter((income) => String(income.date || income.createdAt || '').slice(0, 7) === period)
+      .filter((income) => !['cancelled', 'canceled', 'void', 'batal'].includes(String(income.status || '').trim().toLowerCase()))
+      .map((income) => {
+        const items = Array.isArray(income.items) ? income.items : [];
+        const itemNames = items.map((item) => item.itemName || item.category || '').filter(Boolean).join(', ');
+        return {
+          id: `external-${income.id || income.receiptNo || income.date}`,
+          source: 'external',
+          sourceLabel: 'Pemasukan External',
+          invoiceNo: income.receiptNo || income.referenceNo || income.id || '',
+          legacyInvoiceNo: income.receiptNo || income.referenceNo || income.id || '',
+          customerName: income.payerName || '',
+          username: '',
+          packageName: income.category || itemNames || 'Pemasukan External',
+          amount: Number(income.amount || 0),
+          method: income.paymentMethod || income.method || 'Tunai',
+          paymentCategory: paymentCategoryForRecord(income, income.paymentMethod || income.method || 'Tunai'),
+          paidAt: income.date || income.createdAt || '',
+          submittedAt: income.date || income.createdAt || '',
+          submittedRaw: income.date || income.createdAt || '',
+          item: itemNames || income.itemName || income.category || 'Pemasukan External',
+          description: income.description || income.payerName || income.receiptNo || '',
+          type: 'Pemasukan',
+          admin: income.createdByName || income.updatedByName || income.createdBy || income.updatedBy || 'Sistem',
+          notes: income.description || '',
+          nasId: income.nasId || income.siteId || '',
+          nasName: income.nasName || income.siteName || '',
+          siteId: income.siteId || income.nasId || '',
+          siteName: income.siteName || income.nasName || ''
+        };
+      });
+    let transactions = billingTransactions.concat(voucherTransactions, paymentGatewayTransactions, externalTransactions);
     if (selectedNas && selectedNas.toLowerCase() !== 'all') {
       transactions = transactions.filter((transaction) => reportMatchesNas(transaction, selectedNas));
     }
@@ -16400,6 +16492,8 @@ async function handleApi(req, res, url) {
       billingAmount: transactions.filter((transaction) => transaction.source === 'billing').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
       voucherCount: transactions.filter((transaction) => transaction.source === 'voucher').length,
       voucherAmount: transactions.filter((transaction) => transaction.source === 'voucher').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
+      externalIncomeCount: transactions.filter((transaction) => transaction.source === 'external').length,
+      externalIncomeAmount: transactions.filter((transaction) => transaction.source === 'external').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
       cashCount: transactions.filter((transaction) => transaction.paymentCategory === 'cash').length,
       cashAmount: transactions.filter((transaction) => transaction.paymentCategory === 'cash').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
       transferCount: transactions.filter((transaction) => transaction.paymentCategory === 'transfer').length,
@@ -20557,6 +20651,7 @@ module.exports = {
     createHotspotVoucherOrder,
     dashboardBillingSummary,
     dashboardRadiusServiceSummary,
+    dashboardVoucherIncomeSummary,
     dashboardCollectorScope,
     deleteRadiusLinkedMember,
     deleteOrphanRadiusMembers,

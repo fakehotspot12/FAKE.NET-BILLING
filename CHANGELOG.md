@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.35] - 2026-07-31
+
+### Changed
+
+- Dashboard `Pendapatan Bulan Ini` sekarang menyertakan pendapatan voucher Hotspot paid dengan nominal real/net jika tersedia, tanpa menambah kotak baru di Dashboard.
+- Kartu `Pendapatan Bulan Ini` diarahkan ke `Laporan > Mutasi Bulanan` agar gabungan invoice, voucher, dan pemasukan external bisa ditelusuri dari satu laporan.
+- `Mutasi Bulanan` menampilkan kotak `Pemasukan External` tersendiri dan memasukkan transaksi pemasukan manual ke daftar mutasi.
+
 ## [2.11.34] - 2026-07-31
 
 ### Changed
