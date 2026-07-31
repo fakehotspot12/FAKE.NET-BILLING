@@ -10247,6 +10247,18 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const resolver = radiusStatusResolver(data);
   const invoiceStatuses = new Map();
+  const activePaymentRows = activePayments(data);
+  const latestPaymentByInvoiceId = new Map();
+  for (const payment of activePaymentRows) {
+    const invoiceId = String(payment.invoiceId || '');
+    if (!invoiceId) continue;
+    const current = latestPaymentByInvoiceId.get(invoiceId);
+    const currentAt = current ? paymentReportTimestamp(current, {}) || current.createdAt || '' : '';
+    const nextAt = paymentReportTimestamp(payment, {}) || payment.createdAt || '';
+    if (!current || String(nextAt) >= String(currentAt)) {
+      latestPaymentByInvoiceId.set(invoiceId, payment);
+    }
+  }
   const summary = {
     dashboardInvoiceCount: 0,
     dashboardInvoiceAmount: 0,
@@ -10276,8 +10288,9 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
       summary.dashboardInvoiceCount += 1;
       summary.dashboardInvoiceAmount += amount;
       if (runtimeStatus === 'paid') {
+        const paidPayment = invoiceId ? latestPaymentByInvoiceId.get(invoiceId) : null;
         summary.monthlyPaidCount += 1;
-        summary.monthlyPaidAmount += amount;
+        summary.monthlyPaidAmount += Number(paidPayment?.amount ?? amount);
       }
       const rowStatus = runtimeStatus === 'pending' ? 'unpaid' : runtimeStatus;
       if (!['unpaid', 'pending', 'overdue'].includes(String(rowStatus || '').toLowerCase())) continue;
@@ -10292,8 +10305,7 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     }
   }
 
-  for (const payment of data.payments || []) {
-    if (!paymentIsActive(payment)) continue;
+  for (const payment of activePaymentRows) {
     const invoiceId = String(payment.invoiceId || '');
     if (invoiceId && invoiceStatuses.has(invoiceId) && invoiceStatuses.get(invoiceId) !== 'paid') continue;
     if (paymentPeriodKeyFast(payment) !== selectedPeriod) continue;

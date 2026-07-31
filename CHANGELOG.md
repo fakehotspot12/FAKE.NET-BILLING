@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.34] - 2026-07-31
+
+### Changed
+
+- Nominal `Tagihan Terbayar` di Dashboard tetap berbasis invoice periode bulan berjalan, tetapi memakai nilai payment real/net yang tercatat setelah potongan Tripay agar laporan kas lebih akurat.
+
 ## [2.11.33] - 2026-07-31
 
 ### Changed

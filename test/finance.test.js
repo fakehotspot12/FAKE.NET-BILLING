@@ -5652,7 +5652,7 @@ test('online payments with Unix timestamps remain visible in daily and monthly r
 
   const dashboard = serverInternals.dashboardBillingSummary(data, '2026-07');
   assert.equal(dashboard.monthlyPaidCount, 1);
-  assert.equal(dashboard.monthlyPaidAmount, 150000);
+  assert.equal(dashboard.monthlyPaidAmount, 155000);
   assert.equal(dashboard.monthlyPaymentCount, 1);
   assert.equal(dashboard.monthlyPaymentAmount, 155000);
 
