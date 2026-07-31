@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.32] - 2026-07-31
+
+### Changed
+
+- Auto-sync riwayat Tripay kini hanya memindai halaman terbaru dengan default 30 transaksi per interval agar lebih ringan, sementara sync manual tetap bisa dipakai untuk audit riwayat yang lebih panjang.
+- Batas auto-scan Tripay bisa disesuaikan lewat `PAYMENT_GATEWAY_HISTORY_AUTO_PER_PAGE` dan `PAYMENT_GATEWAY_HISTORY_AUTO_MAX_PAGES` tanpa mengubah kode.
+
 ## [2.11.31] - 2026-07-31
 
 ### Fixed

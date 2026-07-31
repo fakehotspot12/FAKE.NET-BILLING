@@ -97,6 +97,8 @@ const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
 const PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS = Math.max(60_000, Number(process.env.PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS || 120_000) || 120_000);
+const PAYMENT_GATEWAY_HISTORY_AUTO_PER_PAGE = Math.min(100, Math.max(10, Number(process.env.PAYMENT_GATEWAY_HISTORY_AUTO_PER_PAGE || 30) || 30));
+const PAYMENT_GATEWAY_HISTORY_AUTO_MAX_PAGES = Math.min(3, Math.max(1, Number(process.env.PAYMENT_GATEWAY_HISTORY_AUTO_MAX_PAGES || 1) || 1));
 const RADBOOX_AUTO_SYNC_DEFAULT_SECONDS = 120;
 const RADBOOX_DASHBOARD_MEMBER_TTL_MS = 5 * 60 * 1000;
 const RADBOOX_DASHBOARD_MEMBER_MAX_PAGES = 1;
@@ -14318,8 +14320,8 @@ async function runPaymentGatewayHistorySync(reason = 'interval') {
       name: 'Tripay Auto Sync',
       role: 'system'
     }, {
-      perPage: 100,
-      maxPages: 3
+      perPage: PAYMENT_GATEWAY_HISTORY_AUTO_PER_PAGE,
+      maxPages: PAYMENT_GATEWAY_HISTORY_AUTO_MAX_PAGES
     });
     if (synced.result.inserted || synced.result.reconciled || synced.result.reclassified) {
       console.log(`Tripay auto-sync ${reason}: ${synced.result.inserted} baru, ${synced.result.reconciled} pembayaran direkonsiliasi, ${synced.result.reclassified || 0} manual dikoreksi`);
@@ -14349,7 +14351,7 @@ function startPaymentGatewayHistorySync() {
   initialTimer.unref?.();
   paymentGatewayHistorySyncTimer = setInterval(() => run('interval'), PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS);
   paymentGatewayHistorySyncTimer.unref?.();
-  console.log(`Tripay auto-sync aktif setiap ${Math.round(PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS / 1000)} detik`);
+  console.log(`Tripay auto-sync aktif setiap ${Math.round(PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS / 1000)} detik, scan ${PAYMENT_GATEWAY_HISTORY_AUTO_PER_PAGE} transaksi terbaru`);
 }
 
 let routerDashboardBackgroundRunning = false;
