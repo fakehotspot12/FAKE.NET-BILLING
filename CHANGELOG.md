@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.31] - 2026-07-31
+
+### Fixed
+
+- Auto-sync riwayat Tripay sekarang bisa merekonsiliasi pembayaran sangkut ketika pelanggan membayar link invoice lama yang masih valid di Tripay, selama nomor invoice dan nominalnya cocok.
+- Pembayaran invoice yang sempat dipush manual tetapi ternyata sudah paid di Tripay akan dikoreksi menjadi metode online tanpa membuat pembayaran ganda atau mengirim ulang WA.
+- Penyimpanan transaksi payment gateway tidak lagi menimpa riwayat checkout expired/cancelled yang berbeda reference.
+
 ## [2.11.30] - 2026-07-31
 
 ### Fixed

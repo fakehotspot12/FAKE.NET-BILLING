@@ -13354,8 +13354,159 @@ function billingInvoicePaymentCheckoutValidForCallback(invoice = {}, payment = {
   if (checkout.invalidatedAt) return false;
   const externalReference = String(payment.externalId || payment.externalReference || '').trim();
   const storedReference = String(checkout.externalReference || '').trim();
-  if (externalReference && storedReference && externalReference !== storedReference) return false;
+  if (externalReference && storedReference && externalReference !== storedReference) {
+    if (payment.trustedHistory === true && paymentGatewayHistoryMatchesInvoice(invoice, payment)) {
+      return true;
+    }
+    return false;
+  }
   return true;
+}
+
+function paymentGatewayHistoryMatchesInvoice(invoice = {}, payment = {}) {
+  const merchantReference = cleanPaymentGatewayInvoiceReference(payment.merchantReference || '').toLowerCase();
+  if (!merchantReference) return false;
+  return [
+    invoice.id,
+    invoice.externalId,
+    invoice.invoiceNo,
+    displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id)
+  ]
+    .map(cleanPaymentGatewayInvoiceReference)
+    .map((item) => item.toLowerCase())
+    .filter(Boolean)
+    .includes(merchantReference);
+}
+
+function tripayHistoryPaymentFromRow(row = {}, merchantReference = '') {
+  return {
+    status: row.status,
+    provider: 'tripay',
+    method: paymentGatewayPayloadMethod(row, 'Payment Gateway'),
+    amount: paymentGatewayPayloadAmount(row),
+    fee: paymentGatewayPayloadFee(row),
+    feeMerchant: Math.round(Number(row.fee_merchant ?? row.feeMerchant ?? paymentGatewayPayloadFee(row)) || 0),
+    amountReceived: paymentGatewayPayloadAmountReceived(row),
+    paidAt: tripayTimestampIso(row.paid_at || row.paidAt) || paymentGatewayPayloadPaidAt(row),
+    externalId: paymentGatewayPayloadExternalReference(row) || merchantReference,
+    merchantReference,
+    trustedHistory: true,
+    source: 'tripay-history'
+  };
+}
+
+function reclassifyPaidInvoiceFromTripayHistory(data = {}, invoice = {}, row = {}, actor = {}) {
+  if (!invoice || !invoice.id || invoiceRuntimeStatus(invoice) !== 'paid') {
+    return { reclassified: false };
+  }
+  const merchantReference = String(row.merchant_ref || row.merchantRef || '').trim();
+  const payment = tripayHistoryPaymentFromRow(row, merchantReference);
+  if (!paymentGatewayHistoryMatchesInvoice(invoice, payment)) {
+    return { reclassified: false };
+  }
+  const status = normalizePaymentStatus(payment.status || 'paid');
+  if (status !== 'paid') {
+    return { reclassified: false };
+  }
+  const existingPayment = activePayments(data).find((item) => item.invoiceId === invoice.id);
+  if (!existingPayment) {
+    return { reclassified: false };
+  }
+  const currentCategory = paymentCategoryForRecord(
+    { ...invoice, ...existingPayment },
+    existingPayment.method || existingPayment.paymentMethod || invoice.paymentMethod || ''
+  );
+  if (currentCategory === 'online') {
+    return { reclassified: false, reused: true };
+  }
+
+  const amount = Math.round(Number(payment.amount || 0) || 0);
+  const gatewayBreakdown = paymentGatewayAmountBreakdown(data.settings || {}, invoice.amount || 0, 'monthly');
+  const checkoutBreakdown = tripayCheckoutAmountBreakdown({
+    kind: 'monthly-package',
+    method: payment.method,
+    baseAmount: gatewayBreakdown.baseAmount,
+    adminFee: gatewayBreakdown.adminFee,
+    amount: gatewayBreakdown.totalAmount
+  });
+  if (amount > 0 && amount < checkoutBreakdown.gatewayAmount) {
+    return { reclassified: false, error: 'Nominal pembayaran lebih kecil dari invoice' };
+  }
+
+  const previousMethod = existingPayment.method || existingPayment.paymentMethod || invoice.paymentMethod || '';
+  const providerFee = Math.max(0, Number(payment.fee || 0) || 0);
+  const billingPaymentAmount = Math.max(0, amount - providerFee);
+  const paidAt = payment.paidAt || existingPayment.paidAt || invoice.paidAt || new Date().toISOString();
+  const now = new Date().toISOString();
+
+  Object.assign(existingPayment, {
+    amount: billingPaymentAmount || Number(existingPayment.amount || invoice.amount || 0),
+    customerAmount: amount || checkoutBreakdown.customerAmount,
+    baseAmount: gatewayBreakdown.baseAmount,
+    fee: gatewayBreakdown.adminFee,
+    adminFee: gatewayBreakdown.adminFee,
+    gatewayAmount: amount || checkoutBreakdown.gatewayAmount,
+    providerFee,
+    cashierFee: checkoutBreakdown.cashierFee,
+    provider: 'tripay',
+    method: payment.method || 'Payment Gateway',
+    paymentMethod: payment.method || 'Payment Gateway',
+    paymentCategory: 'online',
+    paymentProvider: 'tripay',
+    gatewayProvider: 'tripay',
+    gatewayReference: payment.externalId || existingPayment.gatewayReference || '',
+    paymentGatewayReference: payment.merchantReference || existingPayment.paymentGatewayReference || '',
+    externalId: payment.externalId || existingPayment.externalId || '',
+    amountReceived: payment.amountReceived ?? Math.max(0, amount - providerFee),
+    status: 'paid',
+    paidAt,
+    notes: payment.externalId ? `Rekonsiliasi Tripay ${payment.externalId}` : 'Rekonsiliasi Tripay',
+    reconciledFromMethod: previousMethod,
+    reconciledAt: now,
+    reconciledByName: actor.name || actor.username || 'Payment Gateway',
+    reconciledByUsername: actor.username || 'payment-gateway',
+    reconciledByRole: actor.role || 'system',
+    updatedAt: now
+  });
+
+  invoice.paymentMethod = existingPayment.method;
+  invoice.paymentCategory = 'online';
+  invoice.paymentProvider = 'tripay';
+  invoice.gatewayProvider = 'tripay';
+  invoice.paymentGatewayReference = payment.merchantReference || invoice.paymentGatewayReference || '';
+  invoice.gatewayReference = payment.externalId || invoice.gatewayReference || '';
+  invoice.paidAt = paidAt;
+  invoice.updatedAt = now;
+
+  const transaction = upsertPaidBillingPaymentGatewayTransaction(data, invoice, {
+    ...payment,
+    amount: existingPayment.amount,
+    customerAmount: existingPayment.customerAmount,
+    gatewayAmount: existingPayment.gatewayAmount,
+    baseAmount: existingPayment.baseAmount,
+    providerFee: existingPayment.providerFee,
+    fee: existingPayment.adminFee,
+    adminFee: existingPayment.adminFee,
+    cashierFee: existingPayment.cashierFee,
+    amountReceived: existingPayment.amountReceived
+  }, actor);
+
+  addActivity(data, 'payment', `Pembayaran invoice ${displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id)} direkonsiliasi dari ${previousMethod || 'Manual'} ke ${existingPayment.method}`, {
+    action: 'payment-gateway-reclassified',
+    invoiceId: invoice.id,
+    invoiceNo: invoice.invoiceNo || invoice.externalId || '',
+    customerId: invoice.customerId || '',
+    customerName: invoice.customerName || invoice.username || '',
+    previousMethod,
+    paymentMethod: existingPayment.method,
+    amount: existingPayment.amount,
+    customerAmount: existingPayment.customerAmount,
+    providerFee: existingPayment.providerFee,
+    externalId: payment.externalId || '',
+    merchantReference: payment.merchantReference || ''
+  });
+
+  return { reclassified: true, invoice, payment: existingPayment, transaction };
 }
 
 function upsertPaidBillingPaymentGatewayTransaction(data = {}, invoice = {}, payment = {}, actor = {}) {
@@ -13363,11 +13514,24 @@ function upsertPaidBillingPaymentGatewayTransaction(data = {}, invoice = {}, pay
   const now = new Date().toISOString();
   const invoiceNo = displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id);
   const reference = payment.merchantReference || invoiceNo || invoice.id || '';
-  const existing = data.paymentGatewayTransactions.find((row) => {
+  const externalId = String(payment.externalId || '').trim();
+  const exactGatewayRow = externalId
+    ? data.paymentGatewayTransactions.find((row) => [row.externalId, row.providerReference, row.gatewayReference]
+      .some((value) => String(value || '').trim() === externalId))
+    : null;
+  const paidInvoiceRow = data.paymentGatewayTransactions.find((row) => {
+    const rowStatus = String(row.status || '').trim().toLowerCase();
+    if (!['paid', 'settled', 'success'].includes(rowStatus)) return false;
     return (row.invoiceId && row.invoiceId === invoice.id)
       || (reference && row.reference === reference)
       || (invoiceNo && row.invoiceNo === invoiceNo);
   });
+  const fallbackInvoiceRow = externalId ? null : data.paymentGatewayTransactions.find((row) => {
+    return (row.invoiceId && row.invoiceId === invoice.id)
+      || (reference && row.reference === reference)
+      || (invoiceNo && row.invoiceNo === invoiceNo);
+  });
+  const existing = exactGatewayRow || paidInvoiceRow || fallbackInvoiceRow;
   const customer = customerForInvoice(data, invoice);
   const next = {
     ...(existing || {}),
@@ -13517,7 +13681,9 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
     amountReceived: paymentGatewayPayloadAmountReceived(payload),
     paidAt: paymentGatewayPayloadPaidAt(payload),
     externalId: externalReference || merchantReference,
-    merchantReference
+    merchantReference,
+    trustedHistory: payload.trustedHistory === true,
+    source: payload.source || ''
   };
   const voucherOrder = findHotspotVoucherOrder(data, merchantReference);
   if (voucherOrder) {
@@ -13982,7 +14148,7 @@ function upsertTripayHistoryTransaction(data = {}, row = {}) {
 }
 
 function applyTripayTransactionHistory(data = {}, rows = [], actor = {}) {
-  const summary = { fetched: rows.length, inserted: 0, updated: 0, reconciled: 0, errors: [] };
+  const summary = { fetched: rows.length, inserted: 0, updated: 0, reconciled: 0, reclassified: 0, errors: [] };
   const ordered = [...rows].sort((a, b) => {
     return parseLocalTransactionTime(a.created_at || a.createdAt) - parseLocalTransactionTime(b.created_at || b.createdAt);
   });
@@ -13996,6 +14162,14 @@ function applyTripayTransactionHistory(data = {}, rows = [], actor = {}) {
       : invoice
         ? invoiceRuntimeStatus(invoice) === 'paid'
         : false;
+    if (tripayHistoryStatus(row.status) === 'paid' && invoice && targetAlreadyPaid) {
+      try {
+        const reclassified = reclassifyPaidInvoiceFromTripayHistory(data, invoice, row, actor);
+        if (reclassified.reclassified) summary.reclassified += 1;
+      } catch (error) {
+        summary.errors.push({ reference: merchantReference, error: error.message || String(error) });
+      }
+    }
     if (tripayHistoryStatus(row.status) === 'paid' && (voucherOrder || invoice) && !targetAlreadyPaid) {
       try {
         const fulfilled = fulfillPaymentGatewayCallback(data, {
@@ -14008,7 +14182,10 @@ function applyTripayTransactionHistory(data = {}, rows = [], actor = {}) {
           total_fee: row.total_fee,
           fee_merchant: row.fee_merchant,
           fee_customer: row.fee_customer,
-          paid_at: tripayTimestampIso(row.paid_at || row.paidAt)
+          amount_received: row.amount_received,
+          paid_at: tripayTimestampIso(row.paid_at || row.paidAt),
+          trustedHistory: true,
+          source: 'tripay-history'
         }, actor);
         fulfillments.push(fulfilled);
         if (!fulfilled.reused) summary.reconciled += 1;
@@ -14055,14 +14232,18 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
     store.settings.paymentGateway.lastHistorySyncTotal = eligibleRows.length;
     store.settings.paymentGateway.lastHistoryRemoteTotal = remote.totalRecords;
     store.settings.paymentGateway.lastHistorySyncError = '';
-    if (applied.summary.inserted || applied.summary.reconciled || applied.summary.errors.length || pruned) {
-      addActivity(store, 'monitoring', `Riwayat Tripay disinkron: ${eligibleRows.length} transaksi, ${applied.summary.reconciled} pembayaran direkonsiliasi`, {
+    if (applied.summary.inserted || applied.summary.reconciled || applied.summary.reclassified || applied.summary.errors.length || pruned) {
+      const reclassifiedText = applied.summary.reclassified
+        ? `, ${applied.summary.reclassified} pembayaran manual dikoreksi`
+        : '';
+      addActivity(store, 'monitoring', `Riwayat Tripay disinkron: ${eligibleRows.length} transaksi, ${applied.summary.reconciled} pembayaran direkonsiliasi${reclassifiedText}`, {
         action: 'tripay-history-sync',
         fetched: eligibleRows.length,
         remoteFetched: remote.rows.length,
         inserted: applied.summary.inserted,
         updated: applied.summary.updated,
         reconciled: applied.summary.reconciled,
+        reclassified: applied.summary.reclassified,
         pruned,
         errors: applied.summary.errors.length,
         actor: actor.username || actor.name || 'system'
@@ -14081,9 +14262,12 @@ async function syncTripayTransactionHistory(dataSnapshot = {}, actor = {}, optio
     includeCore: true,
     persistCollections: (result) => {
       const collections = ['paymentGatewayTransactions'];
-      if (result?.inserted || result?.reconciled || result?.errors?.length || result?.pruned) collections.push('activity');
+      if (result?.inserted || result?.reconciled || result?.reclassified || result?.errors?.length || result?.pruned) collections.push('activity');
       if (result?.reconciled) {
         collections.push('invoices', 'payments', 'customers', 'radiusUsers', 'hotspotVoucherOrders', 'waMessages');
+      }
+      if (result?.reclassified) {
+        collections.push('invoices', 'payments');
       }
       return collections;
     }
@@ -14137,8 +14321,8 @@ async function runPaymentGatewayHistorySync(reason = 'interval') {
       perPage: 100,
       maxPages: 3
     });
-    if (synced.result.inserted || synced.result.reconciled) {
-      console.log(`Tripay auto-sync ${reason}: ${synced.result.inserted} baru, ${synced.result.reconciled} pembayaran direkonsiliasi`);
+    if (synced.result.inserted || synced.result.reconciled || synced.result.reclassified) {
+      console.log(`Tripay auto-sync ${reason}: ${synced.result.inserted} baru, ${synced.result.reconciled} pembayaran direkonsiliasi, ${synced.result.reclassified || 0} manual dikoreksi`);
     }
     return synced.result;
   } finally {

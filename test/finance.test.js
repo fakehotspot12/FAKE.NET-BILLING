@@ -6768,6 +6768,120 @@ test('Tripay history import is idempotent and preserves provider status and fee'
   assert.equal(serverInternals.tripayTimestampIso(1784364610), '2026-07-18T08:50:10.000Z');
 });
 
+test('Tripay history reconciles paid invoice even when the latest checkout reference is stale', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.paymentGateway.provider = 'tripay';
+  data.settings.paymentGateway.monthlyAdminFee = 5000;
+  data.customers.push({
+    id: 'cus-stuck',
+    name: 'Kahfi',
+    username: 'kahfi@fake.net',
+    packageName: 'Paket Gold',
+    status: 'active'
+  });
+  data.invoices.push({
+    id: 'inv-stuck',
+    externalId: '010001',
+    invoiceNo: '010001',
+    customerId: 'cus-stuck',
+    customerName: 'Kahfi',
+    username: 'kahfi@fake.net',
+    packageName: 'Paket Gold',
+    period: '2026-08',
+    dueDate: '2026-08-01',
+    status: 'pending',
+    amount: 250000,
+    paymentCheckout: {
+      externalReference: 'T-LATEST-EXPIRED',
+      status: 'expired'
+    }
+  });
+
+  const result = serverInternals.applyTripayTransactionHistory(data, [{
+    reference: 'T-OLD-PAID',
+    merchant_ref: '010001',
+    payment_name: 'Mandiri Virtual Account',
+    amount: 255000,
+    total_fee: 4250,
+    amount_received: 250750,
+    status: 'PAID',
+    paid_at: '2026-07-29T11:22:38.000Z',
+    created_at: '2026-07-29T11:15:38.000Z'
+  }], { username: 'tripay-auto-sync', name: 'Tripay Auto Sync', role: 'system' });
+
+  assert.equal(result.summary.errors.length, 0);
+  assert.equal(result.summary.reconciled, 1);
+  assert.equal(invoiceRuntimeStatus(data.invoices[0]), 'paid');
+  assert.equal(data.invoices[0].paymentCategory, 'online');
+  assert.equal(data.payments.length, 1);
+  assert.equal(data.payments[0].method, 'Mandiri Virtual Account');
+  assert.equal(data.payments[0].paymentCategory, 'online');
+  assert.equal(data.payments[0].amount, 250750);
+  assert.equal(data.paymentGatewayTransactions.filter((row) => row.externalId === 'T-OLD-PAID').length, 1);
+  assert.equal(data.paymentGatewayTransactions.find((row) => row.externalId === 'T-OLD-PAID').status, 'paid');
+});
+
+test('Tripay history reclassifies manual payment without creating a duplicate payment', () => {
+  const data = createDefaultStore();
+  data.settings.paymentGateway.enabled = true;
+  data.settings.paymentGateway.provider = 'tripay';
+  data.settings.paymentGateway.monthlyAdminFee = 5000;
+  data.customers.push({
+    id: 'cus-manual-stuck',
+    name: 'Pelanggan Manual',
+    username: 'manual@fake.net',
+    packageName: 'Paket Gold',
+    status: 'active'
+  });
+  data.invoices.push({
+    id: 'inv-manual-stuck',
+    externalId: '010002',
+    invoiceNo: '010002',
+    customerId: 'cus-manual-stuck',
+    customerName: 'Pelanggan Manual',
+    username: 'manual@fake.net',
+    packageName: 'Paket Gold',
+    period: '2026-08',
+    dueDate: '2026-08-01',
+    status: 'pending',
+    amount: 250000,
+    paymentCheckout: {
+      externalReference: 'T-LATEST-EXPIRED',
+      status: 'expired'
+    }
+  });
+  markInvoicePaid(data, 'inv-manual-stuck', {
+    paymentMethod: 'Transfer Manual',
+    paymentCategory: 'transfer',
+    amount: 250000,
+    createdByName: 'Finance',
+    createdByUsername: 'finance'
+  });
+
+  const result = serverInternals.applyTripayTransactionHistory(data, [{
+    reference: 'T-MANUAL-PAID',
+    merchant_ref: '010002',
+    payment_name: 'Mandiri Virtual Account',
+    amount: 255000,
+    total_fee: 4250,
+    amount_received: 250750,
+    status: 'PAID',
+    paid_at: '2026-07-29T11:22:38.000Z',
+    created_at: '2026-07-29T11:15:38.000Z'
+  }], { username: 'tripay-auto-sync', name: 'Tripay Auto Sync', role: 'system' });
+
+  assert.equal(result.summary.errors.length, 0);
+  assert.equal(result.summary.reconciled, 0);
+  assert.equal(result.summary.reclassified, 1);
+  assert.equal(data.payments.length, 1);
+  assert.equal(data.payments[0].method, 'Mandiri Virtual Account');
+  assert.equal(data.payments[0].paymentCategory, 'online');
+  assert.equal(data.payments[0].amount, 250750);
+  assert.equal(data.invoices[0].paymentMethod, 'Mandiri Virtual Account');
+  assert.equal(data.invoices[0].paymentCategory, 'online');
+});
+
 test('Tripay history cutoff removes older provider tests without affecting other providers', () => {
   const data = createDefaultStore();
   const rows = [
