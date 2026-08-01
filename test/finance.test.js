@@ -1504,6 +1504,7 @@ test('auto termination default zero keeps billing-isolated customers invoiced', 
   data.settings.appMode = 'standalone';
   data.settings.billingSource = 'local';
   data.settings.billing.autoTerminateAfterDays = 0;
+  data.settings.billing.fixedInvoiceAdvanceDays = 31;
   data.customers.push({
     id: 'cus-isolated-continue',
     username: 'isolated-continue@ppp.test',
@@ -5728,7 +5729,7 @@ test('daily billing report includes migrated payments without an invoice relatio
   assert.equal(report.transactions[0].customerName, 'Pelanggan Migrasi');
 });
 
-test('dashboard monthly invoice counts issued invoices while monthly paid uses invoice period', () => {
+test('dashboard monthly invoice counts issued invoices while unpaid includes collectible arrears', () => {
   const data = createDefaultStore();
   data.invoices.push(
     {
@@ -5778,8 +5779,8 @@ test('dashboard monthly invoice counts issued invoices while monthly paid uses i
   assert.equal(summary.dashboardInvoiceCount, 2);
   assert.equal(summary.dashboardInvoiceAmount, 450000);
   assert.equal(summary.totalUnpaidCount, 2);
-  assert.equal(summary.totalUnpaidAmount, 450000);
-  assert.equal(summary.overdueCount, 0);
+  assert.equal(summary.totalUnpaidAmount, 320000);
+  assert.equal(summary.overdueCount, 1);
   assert.equal(summary.monthlyPaidCount, 0);
   assert.equal(summary.monthlyPaidAmount, 0);
   assert.equal(summary.monthlyPaymentCount, 1);

@@ -15,6 +15,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 - Perubahan target NAS user langsung dibaca ulang saat data Hotspot dimuat ulang sehingga NAS yang sudah dilepas tidak muncul dari sesi atau cache lama.
 - Akses profile dan voucher reseller divalidasi kembali di backend agar hanya NAS yang ditetapkan kepada user tersebut yang dapat digunakan.
 - Ringkasan tagihan collector disederhanakan menjadi jumlah pelanggan yang perlu ditindaklanjuti tanpa menampilkan nominal keuangan.
+- Kartu Monthly Invoice pada Dashboard menghitung invoice berdasarkan bulan penerbitannya, termasuk invoice periode berikutnya yang diterbitkan lebih awal.
 
 ### Performance
 

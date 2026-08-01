@@ -11774,7 +11774,7 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     const amount = Number(invoice.amount || 0);
     const customer = customers.get(invoice.customerId) || {};
     const customerStatus = normalizeCustomerStatusLocal(resolver.statusForInvoice(invoice, customer));
-    const invoiceDashboardPeriod = String(invoice.period || '').slice(0, 7) || invoiceIssuePeriodKeyFast(invoice);
+    const invoiceDashboardPeriod = invoiceIssuePeriodKeyFast(invoice) || String(invoice.period || '').slice(0, 7);
     if (invoiceDashboardPeriod === selectedPeriod) {
       summary.monthlyInvoiceCount += 1;
       summary.monthlyInvoiceAmount += amount;
