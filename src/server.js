@@ -8487,7 +8487,7 @@ async function finalizePaidInvoiceRadiusActivation(data = {}, activation = {}, a
 }
 
 function standaloneBillingAutomation(data = {}, actor = { username: 'billing-auto', name: 'Billing Auto' }, runtime = {}) {
-  if (!standaloneMode(data)) return { created: [], isolatedUsers: [], terminatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] } };
+  if (!standaloneMode(data)) return { created: [], invoiceIssuedInvoices: [], reminderInvoices: [], isolatedUsers: [], terminatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] } };
   const settings = data.settings?.billing || {};
   const now = runtime.now instanceof Date ? runtime.now : new Date();
   const nowIso = now.toISOString();
@@ -8502,6 +8502,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   const activatedUsers = [];
   const isolatedUsers = [];
   const reminderInvoices = [];
+  const invoiceIssuedInvoices = [];
   const voucherExpirations = applyHotspotVoucherExpirations(data, actor);
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const unpaidByCustomer = new Map();
@@ -8594,6 +8595,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
         invoice.invoiceIssuedSentAt = nowIso;
         invoice.invoiceIssuedPending = false;
         invoice.updatedAt = invoice.invoiceIssuedSentAt;
+        invoiceIssuedInvoices.push(invoice);
       }
     }
     for (const invoice of data.invoices || []) {
@@ -8605,6 +8607,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       invoice.invoiceIssuedSentAt = nowIso;
       invoice.invoiceIssuedPending = false;
       invoice.updatedAt = invoice.invoiceIssuedSentAt;
+      invoiceIssuedInvoices.push(invoice);
     }
   } else if (invoiceIssuedAutomationEnabled) {
     const invoiceSendTime = sanitizeTime(settings.notificationSendTime, '08:00');
@@ -8644,12 +8647,13 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     }
   }
 
-  if (created.length || reminderInvoices.length || isolatedUsers.length || terminatedUsers.length || activatedUsers.length) {
-    addActivity(data, 'invoice', `Billing otomatis: ${created.length} invoice, ${reminderInvoices.length} reminder, ${isolatedUsers.length} isolir, ${terminatedUsers.length} terminated, ${activatedUsers.length} aktif`, {
+  if (created.length || invoiceIssuedInvoices.length || reminderInvoices.length || isolatedUsers.length || terminatedUsers.length || activatedUsers.length) {
+    addActivity(data, 'invoice', `Billing otomatis: ${created.length} invoice, ${invoiceIssuedInvoices.length} kirim invoice, ${reminderInvoices.length} reminder, ${isolatedUsers.length} isolir, ${terminatedUsers.length} terminated, ${activatedUsers.length} aktif`, {
       action: 'billing-automation',
       period,
       periods: invoicePeriods,
       created: created.length,
+      invoiceIssued: invoiceIssuedInvoices.length,
       reminders: reminderInvoices.length,
       isolated: isolatedUsers.length,
       terminated: terminatedUsers.length,
@@ -8657,7 +8661,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       expiredVouchers: voucherExpirations.removed.length + voucherExpirations.updated.length
     });
   }
-  return { created, reminderInvoices, isolatedUsers, terminatedUsers, activatedUsers, voucherExpirations, terminationDateInitializations };
+  return { created, invoiceIssuedInvoices, reminderInvoices, isolatedUsers, terminatedUsers, activatedUsers, voucherExpirations, terminationDateInitializations };
 }
 
 function publicWaGatewaySettings(settings = {}) {
@@ -12712,7 +12716,7 @@ let billingAutomationTimer = null;
 
 async function runStandaloneBillingAutomation(reason = 'interval') {
   if (MIGRATION_MODE) {
-    return { created: [], isolatedUsers: [], terminatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] }, skipped: true, reason: 'migration-mode' };
+    return { created: [], invoiceIssuedInvoices: [], reminderInvoices: [], isolatedUsers: [], terminatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] }, skipped: true, reason: 'migration-mode' };
   }
   if (billingAutomationRunning) return null;
   billingAutomationRunning = true;
@@ -12745,6 +12749,7 @@ async function runStandaloneBillingAutomation(reason = 'interval') {
         const voucherExpirations = automation?.voucherExpirations || {};
         return Boolean(
           automation?.created?.length
+          || automation?.invoiceIssuedInvoices?.length
           || automation?.reminderInvoices?.length
           || automation?.isolatedUsers?.length
           || automation?.terminatedUsers?.length
@@ -17356,6 +17361,7 @@ async function handleApi(req, res, url) {
         settings: data.settings.billing || {},
         automation: {
           created: result.created.length,
+          invoiceIssued: result.invoiceIssuedInvoices?.length || 0,
           isolated: result.isolatedUsers.length,
           terminated: result.terminatedUsers.length,
           activated: result.activatedUsers.length

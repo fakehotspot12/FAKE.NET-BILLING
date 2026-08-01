@@ -2159,14 +2159,16 @@ test('standalone billing automation sends deferred invoice issued notification a
     invoiceIssuedSendAfter: '09:00'
   });
 
-  serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-07-26T00:30:00.000Z') });
+  const before = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-07-26T00:30:00.000Z') });
   assert.equal(data.waMessages.filter((message) => message.type === 'invoiceIssued').length, 0);
   assert.equal(data.invoices[0].invoiceIssuedPending, true);
+  assert.equal(before.invoiceIssuedInvoices.length, 0);
 
-  serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-07-26T01:00:00.000Z') });
+  const after = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-07-26T01:00:00.000Z') });
   assert.equal(data.waMessages.filter((message) => message.type === 'invoiceIssued').length, 1);
   assert.equal(data.invoices[0].invoiceIssuedPending, false);
   assert.ok(data.invoices[0].invoiceIssuedSentAt);
+  assert.equal(after.invoiceIssuedInvoices.length, 1);
 });
 
 test('manual invoice discount updates unpaid invoice without changing recurring member discount', () => {

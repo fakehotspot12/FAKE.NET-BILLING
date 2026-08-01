@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.37] - 2026-08-01
+
+### Fixed
+
+- Scheduler billing sekarang menyimpan antrean WA invoice yang sebelumnya dibuat sebelum jam kirim dan masih berstatus pending, sehingga invoice otomatis tetap terkirim setelah jam pengiriman yang ditentukan.
+- Activity billing otomatis menampilkan jumlah invoice yang berhasil masuk antrean kirim WA, memudahkan audit invoice yang sudah dibuat tetapi menunggu jadwal kirim.
+
 ## [2.11.36] - 2026-08-01
 
 ### Changed
