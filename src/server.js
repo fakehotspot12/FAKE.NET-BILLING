@@ -12566,7 +12566,12 @@ function onlinePaymentPushPayload(data = {}, fulfilled = {}) {
   const order = fulfilled.order || {};
   const invoice = fulfilled.invoice || {};
   const customerName = transaction.customerName || order.buyerName || invoice.customerName || invoice.username || 'Pelanggan';
-  const amount = Number(transaction.amount || order.gatewayAmount || order.totalAmount || invoice.amount || 0);
+  const amount = Number(transaction.id || transaction.reference
+    ? tripayAmountReceived(transaction)
+    : kind === 'hotspot-voucher'
+      ? (order.amountReceived ?? order.settlementAmount ?? order.netAmount ?? order.amount ?? order.baseAmount ?? order.totalAmount ?? 0)
+      : (invoice.amountReceived ?? invoice.netAmount ?? invoice.amount ?? invoice.baseAmount ?? 0)
+  );
   const method = transaction.paymentMethod || transaction.method || order.paymentMethod || invoice.paymentMethod || 'Online';
   const reference = fulfilled.reference || transaction.reference || invoice.invoiceNo || order.reference || '';
   const eventId = String(transaction.id || order.id || invoice.id || `${kind}:${reference}:${Date.now()}`);
@@ -13003,7 +13008,7 @@ async function notificationSummary(data = {}, user = {}) {
       const kind = paymentGatewayTransactionKind(row);
       const reference = row.invoiceNo || row.reference || row.externalId || row.id || '';
       const customerName = row.customerName || row.username || row.paidByName || '';
-      const amount = Number(row.amount || row.baseAmount || 0);
+      const amount = tripayAmountReceived(row);
       return {
         id: row.id || `${kind}:${reference}:${row.paidAt || row.paymentAt || row.updatedAt || ''}`,
         type: kind,

@@ -9,6 +9,8 @@
   let paymentGatewayEnabled = false;
   let checkoutStatusTimer = null;
   let checkoutCountdownTimer = null;
+  let statusCheckInFlight = false;
+  let paymentSuccessShown = false;
   const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
   function setText(id, value) {
@@ -278,15 +280,31 @@
     }
   }
 
+  function shouldPollCheckoutStatus() {
+    if (!invoiceRef) return false;
+    if (!currentInvoice || String(currentInvoice.status || '').toLowerCase() === 'paid') return false;
+    if (!currentCheckout || typeof currentCheckout !== 'object') return false;
+    const expiresAt = Date.parse(currentCheckout.expiresAt || currentCheckout.expiredAt || '');
+    return !Number.isFinite(expiresAt) || expiresAt > Date.now();
+  }
+
   function startCheckoutPolling() {
-    stopCheckoutPolling();
+    if (!shouldPollCheckoutStatus()) {
+      stopCheckoutPolling();
+      return;
+    }
+    if (checkoutStatusTimer) return;
     checkoutStatusTimer = window.setInterval(() => {
+      if (!shouldPollCheckoutStatus()) {
+        stopCheckoutPolling();
+        return;
+      }
       checkPaymentStatus(false).catch(() => {});
     }, 5000);
   }
 
   function hideCheckout() {
-    stopCheckoutPolling();
+    if (!shouldPollCheckoutStatus()) stopCheckoutPolling();
     stopCheckoutCountdown();
     const box = $('checkoutBox');
     if (box) {
@@ -599,6 +617,7 @@
     const invoice = payload.invoice || {};
     currentInvoice = invoice;
     currentCheckout = String(invoice.status || '').toLowerCase() === 'paid' ? null : (invoice.paymentCheckout || null);
+    if (String(invoice.status || '').toLowerCase() !== 'paid') paymentSuccessShown = false;
     paymentGatewayEnabled = payload.paymentGatewayEnabled !== false;
     if (payload.businessName) setText('businessName', payload.businessName);
     if (payload.appSubtitle) setText('paymentLabel', payload.appSubtitle);
@@ -637,6 +656,7 @@
     }
     if (paid) {
       currentCheckout = null;
+      stopCheckoutPolling();
       hideCheckout();
       renderChannels([]);
     }
@@ -647,6 +667,7 @@
     }
     if (!paid) {
       renderPendingCheckoutSummary();
+      if (currentCheckout) startCheckoutPolling();
     }
     if (paid) notice('Pembayaran invoice ini sudah tercatat lunas.');
     else if (payload.paymentGatewayEnabled === false) notice('Payment Gateway belum aktif. Hubungi admin.', 'error');
@@ -681,6 +702,11 @@
 
   function renderPaymentSuccess(payload) {
     stopCheckoutPolling();
+    if (paymentSuccessShown) {
+      render(payload);
+      return;
+    }
+    paymentSuccessShown = true;
     const box = $('checkoutBox');
     if (!box) return;
     box.hidden = false;
@@ -699,13 +725,16 @@
       </div>
     `;
     window.setTimeout(() => {
+      currentCheckout = null;
       hideCheckout();
       render(payload);
-    }, 1500);
+    }, 2500);
   }
 
   async function checkPaymentStatus(showNotice = true) {
     if (!invoiceRef) return null;
+    if (statusCheckInFlight) return null;
+    statusCheckInFlight = true;
     try {
       const payload = await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(invoiceRef)}`, {
         retries: 0,
@@ -726,6 +755,8 @@
     } catch (error) {
       if (showNotice) notice(error.message || 'Gagal cek status pembayaran', 'error');
       throw error;
+    } finally {
+      statusCheckInFlight = false;
     }
   }
 
@@ -778,6 +809,13 @@
       }
       checkout(method);
     });
+    const checkVisibleStatus = () => {
+      if (document.visibilityState && document.visibilityState !== 'visible') return;
+      if (shouldPollCheckoutStatus()) checkPaymentStatus(false).catch(() => {});
+    };
+    document.addEventListener('visibilitychange', checkVisibleStatus);
+    window.addEventListener('focus', checkVisibleStatus);
+    window.addEventListener('pageshow', checkVisibleStatus);
     loadInvoice().catch((error) => notice(error.message, 'error'));
   });
 }());

@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [2.11.40] - 2026-08-01
+
+### Fixed
+
+- Halaman link invoice sekarang tetap mengecek status checkout pending dan langsung menampilkan animasi pembayaran berhasil saat status invoice sudah paid, termasuk setelah pelanggan kembali dari QRIS/VA/payment gateway tanpa refresh manual.
+
+## [2.11.39] - 2026-08-01
+
+### Fixed
+
+- Notifikasi pembayaran online di lonceng dan Web Push sekarang memakai nominal bersih yang diterima setelah potongan payment gateway, bukan nominal bayar pelanggan yang masih termasuk fee gateway.
+
 ## [2.11.37] - 2026-08-01
 
 ### Fixed
