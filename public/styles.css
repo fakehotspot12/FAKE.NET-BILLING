@@ -3914,6 +3914,31 @@ input[type="checkbox"] {
   width: 110px;
 }
 
+.report-transactions-table th:nth-child(9),
+.report-transactions-table td:nth-child(9) {
+  width: 82px;
+}
+
+.report-transaction-detail {
+  min-width: min(680px, calc(100vw - 48px));
+}
+
+.report-transaction-detail-wide {
+  grid-column: 1 / -1;
+}
+
+.report-transaction-detail .readonly-value {
+  align-items: flex-start;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.report-transaction-detail-total .readonly-value {
+  color: var(--success);
+  font-size: 16px;
+  font-weight: 900;
+}
+
 .report-transaction-reference,
 .report-transaction-item,
 .report-transaction-description,
@@ -14752,6 +14777,14 @@ dialog::backdrop {
 }
 
 @media (max-width: 720px) {
+  .report-transaction-detail {
+    min-width: 0;
+  }
+
+  .report-transaction-detail-wide {
+    grid-column: auto;
+  }
+
   .report-transactions-table-wrap table.report-transactions-table {
     min-width: 1220px;
     width: 1220px;

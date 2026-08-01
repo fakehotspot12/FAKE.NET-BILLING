@@ -6295,6 +6295,43 @@ function openDailyBillingReceiptsModal(transactions = [], report = {}) {
   });
 }
 
+function openReportTransactionDetail(transaction = {}) {
+  const reference = transaction.invoiceNo || transaction.id || transaction.externalId || '-';
+  const customer = transaction.customerName || transaction.description || '-';
+  const account = transaction.username || '-';
+  const item = transaction.item || transaction.packageName || '-';
+  const source = transaction.sourceLabel || transaction.type || '-';
+  const nas = transaction.nasName || transaction.siteName || '-';
+  const amount = transaction.amountText || rupiah(transaction.amount || 0);
+  const detailField = (label, value, className = '') => `
+    <div class="field ${className}">
+      <span>${escapeHtml(label)}</span>
+      <div class="readonly-value">${escapeHtml(value || '-')}</div>
+    </div>
+  `;
+  openModal('Detail Mutasi', `
+    <div class="report-transaction-detail">
+      <div class="form-grid report-transaction-detail-grid">
+        ${detailField('Reference', reference)}
+        ${detailField('Waktu', reportTransactionDateText(transaction))}
+        ${detailField('Sumber', source)}
+        ${detailField('Metode', transaction.method || '-')}
+        ${detailField(transaction.source === 'voucher' ? 'Nama Pembeli' : 'Nama Pelanggan', customer)}
+        ${detailField(transaction.source === 'voucher' ? 'Kode Voucher' : 'Username', account)}
+        ${detailField('Paket / Item', item)}
+        ${detailField('NAS', nas)}
+        ${detailField('Petugas', transaction.admin || '-')}
+        ${detailField('Total', amount, 'report-transaction-detail-total')}
+        ${detailField('Description', transaction.description || '-', 'report-transaction-detail-wide')}
+        ${detailField('Catatan', transaction.notes || '-', 'report-transaction-detail-wide')}
+      </div>
+      <div class="modal-actions">
+        <button class="button" type="button" data-close-modal>Tutup</button>
+      </div>
+    </div>
+  `, async () => {});
+}
+
 async function renderReportsTransactions(options = {}) {
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat mutasi bulanan...</div>';
   const period = state.reportTransactionsPeriod || state.period || todayInput().slice(0, 7);
@@ -6376,6 +6413,7 @@ async function renderReportsTransactions(options = {}) {
                 <th>Method</th>
                 <th>Admin</th>
                 <th class="amount">Price</th>
+                <th>Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -6398,8 +6436,9 @@ async function renderReportsTransactions(options = {}) {
                   </td>
                   <td class="report-transaction-admin" title="${escapeHtml(transaction.admin || '-')}">${escapeHtml(transaction.admin || '-')}</td>
                   <td class="amount positive">${transaction.amountText ? escapeHtml(transaction.amountText) : rupiah(transaction.amount || 0)}</td>
+                  <td><button class="ghost-button compact" type="button" data-report-transaction-detail="${index}">Detail</button></td>
                 </tr>
-              `).join('') : '<tr><td colspan="8">Belum ada mutasi pada filter ini.</td></tr>'}
+              `).join('') : '<tr><td colspan="9">Belum ada mutasi pada filter ini.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -6426,6 +6465,12 @@ async function renderReportsTransactions(options = {}) {
     refreshFilters();
   });
   document.getElementById('refreshReportTransactions')?.addEventListener('click', () => renderReportsTransactions({ refresh: true }));
+  app.querySelectorAll('[data-report-transaction-detail]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const transaction = transactions[Number(button.dataset.reportTransactionDetail || -1)];
+      if (transaction) openReportTransactionDetail(transaction);
+    });
+  });
   bindSearch((renderOptions = {}) => {
     state.reportTransactionsPage = 1;
     return renderReportsTransactions(renderOptions);
@@ -12840,6 +12885,7 @@ async function renderRadiusPppDhcp(options = {}) {
   document.getElementById('refreshRadiusPpp')?.addEventListener('click', () => renderRadiusPppDhcp({ refresh: true }));
   bindPasswordPeek();
   bindFloatingActionMenus(app);
+  scheduleTableTopScrollbars(app);
   if (state.radiusPppTab === 'users') {
     bindRadiusPppBatchActions(rows, userWriteAllowed);
   }
@@ -13135,6 +13181,7 @@ async function renderRadiusHotspot(options = {}) {
   document.getElementById('refreshRadiusHotspot')?.addEventListener('click', () => renderRadiusHotspot({ refresh: true }));
   bindPasswordPeek();
   bindFloatingActionMenus(app);
+  scheduleTableTopScrollbars(app);
   document.getElementById('generateRadiusHotspotVoucher')?.addEventListener('click', () => openRadiusHotspotVoucherModal());
   document.getElementById('addRadiusHotspotUser')?.addEventListener('click', () => openRadiusHotspotUserModal());
   document.getElementById('addRadiusHotspotProfile')?.addEventListener('click', () => openRadiusProfileModal('hotspot'));

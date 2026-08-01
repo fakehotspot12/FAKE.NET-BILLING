@@ -16,6 +16,8 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 - Akses profile dan voucher reseller divalidasi kembali di backend agar hanya NAS yang ditetapkan kepada user tersebut yang dapat digunakan.
 - Ringkasan tagihan collector disederhanakan menjadi jumlah pelanggan yang perlu ditindaklanjuti tanpa menampilkan nominal keuangan.
 - Kartu Monthly Invoice pada Dashboard menghitung invoice berdasarkan bulan penerbitannya, termasuk invoice periode berikutnya yang diterbitkan lebih awal.
+- Scrollbar horizontal tabel user PPP-DHCP dan Hotspot dipasang konsisten di atas tabel, termasuk setelah filter, pencarian, refresh, dan perpindahan tab.
+- Mutasi Bulanan memiliki tombol Detail per transaksi untuk menampilkan rincian referensi, pelanggan, paket, metode, NAS, petugas, nominal, deskripsi, dan catatan.
 
 ### Performance
 
