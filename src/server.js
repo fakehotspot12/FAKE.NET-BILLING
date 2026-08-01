@@ -953,12 +953,46 @@ function normalizeListQuery(url) {
   };
 }
 
+const FILTER_SEARCH_CACHE_MAX_PER_ARRAY = Math.max(4, Number(process.env.FILTER_SEARCH_CACHE_MAX_PER_ARRAY || 12) || 12);
+const filterSearchCache = new WeakMap();
+
 function filterSearch(items, search, fields) {
-  if (!search) {
+  const needle = String(search || '').trim().toLowerCase();
+  if (!needle) {
     return items;
   }
 
-  return items.filter((item) => fields.some((field) => String(item[field] || '').toLowerCase().includes(search)));
+  const rows = Array.isArray(items) ? items : [];
+  const safeFields = Array.isArray(fields) ? fields : [];
+  const fieldsKey = safeFields.join('|');
+  const signature = `${rows.length}:${collectionNewestTimestamp(rows)}:${fieldsKey}:${needle}`;
+  let scopedCache = filterSearchCache.get(rows);
+  if (!scopedCache) {
+    scopedCache = new Map();
+    filterSearchCache.set(rows, scopedCache);
+  } else if (scopedCache.has(signature)) {
+    return scopedCache.get(signature);
+  }
+
+  const tokens = needle.split(/\s+/).filter(Boolean);
+  const filtered = rows.filter((item) => {
+    const haystack = safeFields
+      .map((field) => {
+        const value = item[field];
+        return value === undefined || value === null ? '' : String(value);
+      })
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (!haystack) return false;
+    return tokens.every((token) => haystack.includes(token));
+  });
+
+  scopedCache.set(signature, filtered);
+  while (scopedCache.size > FILTER_SEARCH_CACHE_MAX_PER_ARRAY) {
+    scopedCache.delete(scopedCache.keys().next().value);
+  }
+  return filtered;
 }
 
 function sortByDateDesc(items, field = 'createdAt') {
@@ -1169,6 +1203,138 @@ function reportTransactionTime(transaction = {}) {
 function sortReportTransactionsNewestFirst(a, b) {
   return reportTransactionTime(b) - reportTransactionTime(a)
     || String(b.id || '').localeCompare(String(a.id || ''));
+}
+
+function cleanMonthlyTransactionPackage(value = '') {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  text = text.replace(/\s+/g, ' ');
+  text = text.replace(/^internet\s*:\s*/i, '').trim();
+  if (text.includes('|')) text = text.slice(text.lastIndexOf('|') + 1).trim();
+  if (/^internet\s*:/i.test(text) && text.includes(' - ')) {
+    text = text.slice(text.lastIndexOf(' - ') + 3).trim();
+  }
+  return text;
+}
+
+function monthlyTransactionReferenceDetail(transaction = {}) {
+  const source = String(transaction.source || '').trim().toLowerCase();
+  const sourceLabel = String(transaction.sourceLabel || transaction.type || '').trim().toLowerCase();
+  const description = String(transaction.description || '').trim().replace(/\s+—\s+/g, ' - ');
+  const customerName = String(transaction.customerName || transaction.payerName || transaction.buyerName || '').trim();
+  const username = String(transaction.username || '').trim();
+  const name = customerName || username || '-';
+  const packageName = cleanMonthlyTransactionPackage(transaction.packageName || transaction.item || '');
+  const itemText = packageName || cleanMonthlyTransactionPackage(transaction.item || '') || '-';
+  if (/^(internet bulanan|voucher hotspot|pemasukan)\s*:/i.test(description)) return description;
+  if (source === 'billing' || sourceLabel.includes('tagihan')) return `Internet Bulanan: ${name} - ${itemText}`;
+  if (source === 'voucher' || sourceLabel.includes('voucher')) return `Voucher Hotspot: ${name} - ${itemText}`;
+  if (source === 'external' || sourceLabel.includes('pemasukan')) {
+    const detail = itemText !== '-' ? itemText : (description || '-');
+    return `Pemasukan: ${name} - ${detail}`;
+  }
+  if (source === 'payment-gateway' || sourceLabel.includes('online')) {
+    if (String(transaction.invoiceNo || transaction.reference || '').toUpperCase().startsWith('VO-')) {
+      return `Voucher Hotspot: ${name} - ${itemText}`;
+    }
+    if (description) return description;
+  }
+  return description || `${name} - ${itemText}`;
+}
+
+function normalizedMonthlySearchText(transaction = {}) {
+  return [
+    transaction.invoiceNo,
+    transaction.legacyInvoiceNo,
+    transaction.externalId,
+    transaction.customerName,
+    transaction.username,
+    transaction.packageName,
+    transaction.item,
+    transaction.method,
+    transaction.paymentCategory,
+    transaction.admin,
+    transaction.notes,
+    transaction.sourceLabel,
+    transaction.description,
+    transaction.paymentGatewayReference,
+    transaction.nasId,
+    transaction.nasName,
+    transaction.siteName,
+    transaction.referenceDetail
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean).join(' ');
+}
+
+function enrichMonthlyTransaction(transaction = {}) {
+  const referenceDetail = transaction.referenceDetail || monthlyTransactionReferenceDetail(transaction);
+  const enriched = {
+    ...transaction,
+    referenceDetail
+  };
+  enriched.searchText = normalizedMonthlySearchText(enriched);
+  return enriched;
+}
+
+function monthlyTransactionSearchTokens(search = '') {
+  return String(search || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function filterMonthlyTransactionsSearch(transactions = [], search = '') {
+  const tokens = monthlyTransactionSearchTokens(search);
+  if (!tokens.length) return transactions;
+  return transactions.filter((transaction) => {
+    const text = transaction.searchText || normalizedMonthlySearchText(transaction);
+    return tokens.every((token) => text.includes(token));
+  });
+}
+
+function preparedSearchText(values = []) {
+  return values
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function filterPreparedSearch(rows = [], search = '', field = 'searchText') {
+  const tokens = monthlyTransactionSearchTokens(search);
+  if (!tokens.length) return rows;
+  return rows.filter((row) => {
+    const text = String(row?.[field] || '').toLowerCase();
+    return tokens.every((token) => text.includes(token));
+  });
+}
+
+function stripSearchText(row = {}) {
+  const { searchText, ...publicRow } = row || {};
+  return publicRow;
+}
+
+function monthlyTransactionsSummary(transactions = []) {
+  const rows = Array.isArray(transactions) ? transactions : [];
+  const amountForSource = (source) => rows
+    .filter((transaction) => transaction.source === source)
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const categoryRows = (category) => rows.filter((transaction) => transaction.paymentCategory === category);
+  return {
+    totalCount: rows.length,
+    totalAmount: rows.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
+    billingCount: rows.filter((transaction) => transaction.source === 'billing').length,
+    billingAmount: amountForSource('billing'),
+    voucherCount: rows.filter((transaction) => transaction.source === 'voucher').length,
+    voucherAmount: amountForSource('voucher'),
+    externalIncomeCount: rows.filter((transaction) => transaction.source === 'external').length,
+    externalIncomeAmount: amountForSource('external'),
+    cashCount: categoryRows('cash').length,
+    cashAmount: categoryRows('cash').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
+    transferCount: categoryRows('transfer').length,
+    transferAmount: categoryRows('transfer').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
+    onlineCount: categoryRows('online').length,
+    onlineAmount: categoryRows('online').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0)
+  };
 }
 
 function movementDate(movement = {}) {
@@ -3243,6 +3409,237 @@ function localBillingMonitorPayload(data = {}, query = {}) {
   };
 }
 
+function billingMonitorInvoiceSearchText(invoice = {}) {
+  return preparedSearchText([
+    invoice.customerName,
+    invoice.accountId,
+    invoice.username,
+    invoice.phone,
+    invoice.address,
+    invoice.invoiceNo,
+    invoice.externalId,
+    invoice.siteName,
+    invoice.nasName,
+    invoice.packageName,
+    invoice.status,
+    invoice.customerStatus,
+    invoice.paymentMethod,
+    invoice.paymentCategory
+  ]);
+}
+
+function enrichBillingMonitorInvoiceRow(invoice = {}) {
+  return {
+    ...invoice,
+    searchText: billingMonitorInvoiceSearchText(invoice)
+  };
+}
+
+function billingMonitorBaseSignature(data = {}, period = currentPeriod(), scope = 'collectible') {
+  return [
+    normalizePeriod(period),
+    billingMonitorScope(scope),
+    runtimeDataSignature(data, [
+      'invoices',
+      'payments',
+      'customers',
+      'radiusUsers',
+      'monitoringTargets',
+      'paymentGatewayTransactions'
+    ])
+  ].join('|');
+}
+
+function billingMonitorSummaryFromRows(periodRows = [], summaryRows = [], filteredRows = [], scope = 'collectible') {
+  const paidRows = periodRows.filter((invoice) => invoice.status === 'paid');
+  const unpaidRows = summaryRows.filter((invoice) => ['unpaid', 'pending'].includes(invoice.status));
+  const overdueRows = summaryRows.filter((invoice) => invoice.status === 'overdue');
+  const sumAmount = (rows = []) => rows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+  return {
+    scope,
+    total: periodRows.length,
+    totalAmount: sumAmount(periodRows),
+    paid: paidRows.length,
+    paidAmount: sumAmount(paidRows),
+    periodPaidCount: paidRows.length,
+    periodPaidAmount: sumAmount(paidRows),
+    unpaid: unpaidRows.length,
+    unpaidAmount: sumAmount(unpaidRows),
+    overdue: overdueRows.length,
+    overdueAmount: sumAmount(overdueRows),
+    filteredCount: filteredRows.length,
+    filteredAmount: sumAmount(filteredRows)
+  };
+}
+
+function buildBillingMonitorBasePayload(data = {}, period = currentPeriod(), scope = 'collectible') {
+  const selectedPeriod = normalizePeriod(period);
+  const selectedScope = billingMonitorScope(scope || 'collectible');
+  const allRows = localBillingInvoiceRows(data, selectedPeriod, {
+    includeInvoice: (invoice) => billingMonitorInvoiceIncluded(invoice, selectedPeriod, selectedScope),
+    keepInvoicePeriod: selectedScope !== 'month'
+  }).filter((invoice) => invoice.status !== 'cancelled').map(enrichBillingMonitorInvoiceRow);
+  const periodRows = localBillingInvoiceRows(data, selectedPeriod)
+    .filter((invoice) => invoice.status !== 'cancelled')
+    .map(enrichBillingMonitorInvoiceRow);
+  return {
+    ok: true,
+    source: 'local',
+    period: selectedPeriod,
+    scope: selectedScope,
+    sites: localBillingSites(data),
+    rows: allRows,
+    periodRows,
+    summaryRows: selectedScope === 'month' ? periodRows : allRows,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function cachedBillingMonitorBasePayload(data = {}, period = currentPeriod(), scope = 'collectible', options = {}) {
+  const key = runtimeCacheKey('billing-monitor-base', billingMonitorBaseSignature(data, period, scope));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = buildBillingMonitorBasePayload(data, period, scope);
+  await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
+  return payload;
+}
+
+function billingMonitorCollectorNas(data = {}, user = {}) {
+  if (!userIsCollector(user)) return null;
+  const targets = resolveUserLockedNasList(data, user);
+  if (targets.some((target) => target.all === true)) {
+    return {
+      id: 'all',
+      name: 'Semua NAS',
+      all: true
+    };
+  }
+  if (!targets.length) return null;
+  if (targets.length === 1) return targets[0];
+  return {
+    id: targets.map((target) => target.id).join(','),
+    name: targets.map((target) => target.name || target.address || target.id).join(', '),
+    targets,
+    multi: true
+  };
+}
+
+function billingMonitorCollectorScopePayload(data = {}, user = {}) {
+  if (!userIsCollector(user)) return null;
+  const nas = billingMonitorCollectorNas(data, user);
+  return {
+    scoped: true,
+    targetReady: Boolean(nas),
+    targetNasId: nas?.id || '',
+    targetNasName: nas?.name || nas?.address || '',
+    targetNasAddress: nas?.address || '',
+    name: user.name || '',
+    username: user.username || ''
+  };
+}
+
+function billingMonitorRowMatchesNasTarget(row = {}, nas = {}) {
+  if (nas?.all === true || String(nas?.id || '').trim().toLowerCase() === 'all') return true;
+  if (Array.isArray(nas.targets) && nas.targets.length) {
+    return nas.targets.some((target) => billingMonitorRowMatchesNasTarget(row, target));
+  }
+  if (!nas?.id && !nas?.name && !nas?.address) return false;
+  return [
+    nas.id,
+    nas.name,
+    nas.address,
+    nas.ipAddress
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .some((value) => reportMatchesNas(row, value));
+}
+
+function billingMonitorRowsForUser(data = {}, rows = [], user = {}) {
+  if (!userIsCollector(user)) return rows || [];
+  const nas = billingMonitorCollectorNas(data, user);
+  if (!nas) return [];
+  if (nas.all === true) return rows || [];
+  return (rows || []).filter((row) => billingMonitorRowMatchesNasTarget(row, nas));
+}
+
+function billingMonitorSitesForUser(data = {}, sites = [], user = {}) {
+  if (!userIsCollector(user)) return sites || [];
+  const nas = billingMonitorCollectorNas(data, user);
+  if (!nas) return [];
+  if (nas.all === true) return sites || [];
+  if (Array.isArray(nas.targets) && nas.targets.length) {
+    const allowedIds = new Set(nas.targets.map((target) => String(target.id || '').trim()).filter(Boolean));
+    const rows = (sites || []).filter((site) => {
+      const candidate = {
+        siteId: site.id,
+        siteName: site.name,
+        nasId: site.id,
+        nasName: site.name,
+        nas: site.name,
+        host: site.host || site.address || '',
+        address: site.host || site.address || ''
+      };
+      return billingMonitorRowMatchesNasTarget(candidate, nas);
+    });
+    if (rows.length) return rows;
+    return nas.targets.map((target) => ({
+      id: target.id,
+      name: target.name || target.address || 'NAS Target',
+      host: target.address || '',
+      location: target.location || ''
+    })).filter((target) => allowedIds.has(String(target.id || '').trim()));
+  }
+  const rows = (sites || []).filter((site) => {
+    const candidate = {
+      siteId: site.id,
+      siteName: site.name,
+      nasId: site.id,
+      nasName: site.name,
+      nas: site.name,
+      host: site.host || site.address || '',
+      address: site.host || site.address || ''
+    };
+    return billingMonitorRowMatchesNasTarget(candidate, nas);
+  });
+  if (rows.length) return rows;
+  return [{
+    id: nas.id,
+    name: nas.name || nas.address || 'NAS Target',
+    host: nas.address || '',
+    location: nas.location || ''
+  }];
+}
+
+function billingMonitorSummaryForUser(summary = {}, user = {}) {
+  if (!userIsCollector(user)) return summary;
+  const next = { ...summary, amountsHidden: true };
+  for (const key of Object.keys(next)) {
+    if (/amount$/i.test(key)) next[key] = 0;
+  }
+  return next;
+}
+
+function invoiceMatchesBillingMonitorScope(data = {}, invoice = {}, user = {}) {
+  if (!userIsCollector(user)) return true;
+  const nas = billingMonitorCollectorNas(data, user);
+  if (!nas) return false;
+  if (nas.all === true) return true;
+  const customer = customerForInvoice(data, invoice);
+  const site = localBillingSite(data, customer, invoice);
+  return billingMonitorRowMatchesNasTarget({
+    customerId: customer.id || invoice.customerId || '',
+    siteId: site.id || invoice.siteId || customer.siteId || customer.nasId || '',
+    siteName: site.name || invoice.siteName || customer.siteName || customer.nas || '',
+    nasId: site.id || invoice.nasId || customer.nasId || '',
+    nasName: site.name || invoice.nasName || customer.nasName || customer.nas || '',
+    nas: customer.nas || invoice.nas || '',
+    address: customer.address || invoice.address || ''
+  }, nas);
+}
+
 function localBillingRevision(data = {}, period = currentPeriod(), options = {}) {
   const selectedPeriod = normalizePeriod(period || currentPeriod());
   const scope = billingMonitorScope(options.scope || options.periodScope || 'month');
@@ -3736,6 +4133,20 @@ function radiusNasRowsLocal(data = {}) {
 function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsername = new Map()) {
   const profiles = radiusProfileDirectory(data);
   const customers = radiusCustomerDirectory(data);
+  const voucherOrders = serviceType === 'hotspot'
+    ? [
+      ...(Array.isArray(data.hotspotVoucherOrders) ? data.hotspotVoucherOrders : []),
+      ...(Array.isArray(data.hotspotVoucherSalesHistory) ? data.hotspotVoucherSalesHistory : [])
+    ]
+    : [];
+  const voucherOrderById = new Map();
+  const voucherOrderByReference = new Map();
+  voucherOrders.forEach((order) => {
+    const id = String(order?.id || '').trim();
+    const reference = String(order?.reference || order?.paymentReference || '').trim().toLowerCase();
+    if (id && !voucherOrderById.has(id)) voucherOrderById.set(id, order);
+    if (reference && !voucherOrderByReference.has(reference)) voucherOrderByReference.set(reference, order);
+  });
   return (data.radiusUsers || [])
     .filter((user) => user.serviceType === serviceType)
     .map((user) => {
@@ -3743,6 +4154,15 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
       const session = sessionsByUsername.get(radiusSessionUsername(user.username)) || null;
       const nas = radiusUserNas(data, user, profile, session) || {};
       const customer = customers.get(user.customerId) || {};
+      const voucherOrder = serviceType === 'hotspot'
+        ? (
+          voucherOrderById.get(String(user.onlineOrderId || '').trim())
+          || voucherOrderByReference.get(String(user.onlineOrderReference || '').trim().toLowerCase())
+          || null
+        )
+        : null;
+      const voucherBasePrice = Number(user.amount || profile.price || 0);
+      const voucherReceiptPrice = voucherOrder ? hotspotVoucherReceiptUnitAmount(voucherOrder, voucherBasePrice) : voucherBasePrice;
       return {
         id: user.id,
         username: user.username,
@@ -3804,6 +4224,8 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         amount: user.amount || 0,
         paidAt: user.paidAt || '',
         price: profile.price || 0,
+        receiptPrice: serviceType === 'hotspot' ? voucherReceiptPrice : 0,
+        receiptPriceText: serviceType === 'hotspot' ? formatCurrencyText(voucherReceiptPrice) : '',
         service: user.accessType || (serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE'),
         serviceName: user.serviceName || '',
         type: user.accessType || (serviceType === 'hotspot' ? 'Hotspot' : 'PPPoE'),
@@ -4040,9 +4462,15 @@ async function radiusPayloadLocal(data = {}, section = 'ppp-dhcp', query = {}) {
   const tab = String(query.tab || 'users').trim();
   const page = Number(query.page || 1);
   const limit = Number(query.limit || 10);
+  const forceRefresh = truthyQuery(query.refresh);
   let sessionPayload = { ok: true, rows: [] };
   if (['users', 'sessions'].includes(tab)) {
-    sessionPayload = await freeradiusSessions.activeSessions({ limit: 2000 });
+    sessionPayload = await freeradiusSessions.activeSessions({
+      limit: 2000,
+      preferCache: !forceRefresh,
+      allowCache: true,
+      maxCacheAgeSeconds: forceRefresh ? 0 : (tab === 'sessions' ? 8 : 30)
+    });
   }
   const sessions = Array.isArray(sessionPayload.rows) ? sessionPayload.rows : [];
   const sessionsByUsername = radiusActiveSessionMap(sessions);
@@ -5634,7 +6062,31 @@ function canCreateRadiusLinkedMember(user = {}) {
 }
 
 function userLockedNasId(user = {}) {
-  return String(user.lockedNasId || user.resellerNasId || user.voucherNasId || '').trim();
+  const ids = userLockedNasIds(user);
+  return ids[0] || '';
+}
+
+function userLockedNasIds(user = {}) {
+  const values = [];
+  const append = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(append);
+      return;
+    }
+    String(value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((item) => values.push(item));
+  };
+  append(user.lockedNasIds);
+  append(user.lockedNasId || user.resellerNasId || user.voucherNasId);
+  const unique = [];
+  for (const value of values) {
+    if (value.toLowerCase() === 'all') return ['all'];
+    if (!unique.includes(value)) unique.push(value);
+  }
+  return unique;
 }
 
 function resolveUserLockedNas(data = {}, user = {}) {
@@ -5643,20 +6095,40 @@ function resolveUserLockedNas(data = {}, user = {}) {
   return radiusFindNas(data, lockedNasId) || null;
 }
 
-function requireResellerLockedNas(data = {}, user = {}) {
-  if (String(user.role || '') !== 'reseller_voucher') return null;
-  const lockedNasId = userLockedNasId(user);
-  if (!lockedNasId) return null;
-  const nas = resolveUserLockedNas(data, user);
-  if (!nas) {
-    throw new Error('NAS reseller voucher tidak ditemukan atau sudah dinonaktifkan');
+function resolveUserLockedNasList(data = {}, user = {}) {
+  const ids = userLockedNasIds(user);
+  if (ids.some((id) => id.toLowerCase() === 'all')) {
+    return [{
+      id: 'all',
+      name: 'Semua NAS',
+      all: true
+    }];
   }
-  return nas;
+  return ids.map((id) => radiusFindNas(data, id)).filter(Boolean);
+}
+
+function requireResellerLockedNas(data = {}, user = {}, payload = {}) {
+  if (String(user.role || '') !== 'reseller_voucher') return null;
+  const assignedNas = resolveUserLockedNasList(data, user).filter((nas) => nas && nas.all !== true);
+  if (!assignedNas.length) {
+    throw new Error('NAS target reseller hotspot belum diatur');
+  }
+  const requestedValue = String(payload.nasId || payload.nas || payload.routerNas || '').trim();
+  if (!requestedValue && assignedNas.length === 1) return assignedNas[0];
+  if (!requestedValue) {
+    throw new Error('Pilih NAS tujuan voucher');
+  }
+  const requestedNas = radiusFindNas(data, requestedValue);
+  const allowedNas = requestedNas && assignedNas.find((nas) => nas.id === requestedNas.id);
+  if (!allowedNas) {
+    throw new Error('NAS tujuan tidak termasuk target reseller hotspot');
+  }
+  return allowedNas;
 }
 
 function applyResellerVoucherNasLock(data = {}, payload = {}, user = {}) {
   const next = { ...payload };
-  const nas = requireResellerLockedNas(data, user);
+  const nas = requireResellerLockedNas(data, user, payload);
   if (!nas) return next;
   next.nasId = nas.id;
   next.nas = nas.id;
@@ -5684,16 +6156,15 @@ function resellerHotspotProfileAllowed(data = {}, profile = {}, nas = null) {
 
 function resellerHotspotProfileRowVisible(data = {}, row = {}, user = {}) {
   if (String(user.role || '') !== 'reseller_voucher') return true;
-  if (!userLockedNasId(user)) return true;
-  const nas = resolveUserLockedNas(data, user);
-  if (!nas) return false;
+  const assignedNas = resolveUserLockedNasList(data, user).filter((nas) => nas && nas.all !== true);
+  if (!assignedNas.length) return false;
   const profile = radiusFindProfile(data, row.id || row.name || row.profileId || row.profile, 'hotspot') || row;
-  return resellerHotspotProfileAllowed(data, profile, nas);
+  return assignedNas.some((nas) => resellerHotspotProfileAllowed(data, profile, nas));
 }
 
 function requireResellerHotspotProfileAccess(data = {}, payload = {}, user = {}) {
   if (String(user.role || '') !== 'reseller_voucher') return;
-  const nas = requireResellerLockedNas(data, user);
+  const nas = requireResellerLockedNas(data, user, payload);
   if (!nas) return;
   const profile = radiusFindProfile(data, payload.profileId || payload.profile, 'hotspot');
   if (!profile) return;
@@ -5706,8 +6177,8 @@ function resellerHotspotVoucherRowVisible(row = {}, user = {}) {
   if (String(user.role || '') !== 'reseller_voucher') return true;
   if (row.customerId) return false;
   if (row.onlineOrderId || row.onlineOrderReference) return false;
-  const lockedNasId = userLockedNasId(user);
-  if (lockedNasId && String(row.nasId || '') !== lockedNasId) return false;
+  const lockedNasIds = userLockedNasIds(user);
+  if (lockedNasIds.length && !lockedNasIds.includes(String(row.nasId || ''))) return false;
   return actorMatchesDashboardUser(row, user);
 }
 
@@ -5741,10 +6212,22 @@ function canManageHotspotUser(user = {}, existing = null) {
 function publicManagedUser(data = {}, user = {}) {
   const safe = auth.publicUser(user);
   if (!safe) return null;
+  if (Array.isArray(safe.lockedNasIds) && safe.lockedNasIds.includes('all')) {
+    safe.lockedNasName = 'Semua NAS';
+    safe.lockedNasNames = 'Semua NAS';
+    return safe;
+  }
+  const nasRows = resolveUserLockedNasList(data, safe);
+  if (nasRows.length > 1) {
+    safe.lockedNasName = nasRows.map((nas) => nas.name || nas.address || nas.id).join(', ');
+    safe.lockedNasNames = safe.lockedNasName;
+    return safe;
+  }
   const nas = resolveUserLockedNas(data, safe);
   if (nas) {
     safe.lockedNasName = nas.name || nas.address || safe.lockedNasName || '';
     safe.lockedNasAddress = nas.address || '';
+    safe.lockedNasNames = safe.lockedNasName;
   }
   return safe;
 }
@@ -5752,26 +6235,64 @@ function publicManagedUser(data = {}, user = {}) {
 function prepareManagedUserPayload(data = {}, payload = {}, existing = null) {
   const next = { ...payload };
   const nextRole = String(next.role || existing?.role || 'viewer').trim().toLowerCase();
-  if (nextRole !== 'reseller_voucher') {
+  if (!['reseller_voucher', 'collector', 'technician'].includes(nextRole)) {
     next.lockedNasId = '';
+    next.lockedNasIds = [];
     next.lockedNasName = '';
+    next.lockedNasNames = '';
     return next;
   }
-  const nas = radiusFindNas(
-    data,
-    next.lockedNasId
-      || next.resellerNasId
-      || next.voucherNasId
-      || next.nasId
-      || next.nas
-      || existing?.lockedNasId
-      || ''
-  );
-  if (!nas) {
-    throw new Error('NAS reseller voucher wajib dipilih');
+  const rawNasIds = [];
+  const appendNasId = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(appendNasId);
+      return;
+    }
+    String(value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((item) => rawNasIds.push(item));
+  };
+  appendNasId(next.lockedNasIds);
+  appendNasId(next.lockedNasId || next.resellerNasId || next.voucherNasId || next.nasId || next.nas || existing?.lockedNasId || '');
+  const selectedNasIds = [];
+  for (const value of rawNasIds) {
+    if (value.toLowerCase() === 'all') {
+      selectedNasIds.splice(0, selectedNasIds.length, 'all');
+      break;
+    }
+    if (!selectedNasIds.includes(value)) selectedNasIds.push(value);
   }
-  next.lockedNasId = nas.id;
-  next.lockedNasName = nas.name || nas.address || '';
+  if (nextRole === 'technician' && !selectedNasIds.length) {
+    next.lockedNasId = '';
+    next.lockedNasIds = [];
+    next.lockedNasName = '';
+    next.lockedNasNames = '';
+    return next;
+  }
+  const allNasRole = ['collector', 'technician'].includes(nextRole);
+  if (allNasRole && selectedNasIds.includes('all')) {
+    next.lockedNasId = 'all';
+    next.lockedNasIds = ['all'];
+    next.lockedNasName = 'Semua NAS';
+    next.lockedNasNames = 'Semua NAS';
+    return next;
+  }
+  const nasRows = selectedNasIds.map((id) => radiusFindNas(data, id)).filter(Boolean);
+  if (!nasRows.length || nasRows.length !== selectedNasIds.length) {
+    const roleTargetLabel = nextRole === 'collector'
+      ? 'collector'
+      : nextRole === 'technician'
+        ? 'teknisi'
+        : 'reseller hotspot';
+    throw new Error(`NAS target ${roleTargetLabel} wajib dipilih`);
+  }
+  const normalizedRows = nasRows;
+  next.lockedNasIds = normalizedRows.map((nas) => nas.id);
+  next.lockedNasId = next.lockedNasIds[0] || '';
+  next.lockedNasNames = normalizedRows.map((nas) => nas.name || nas.address || nas.id).join(', ');
+  next.lockedNasName = next.lockedNasNames;
   return next;
 }
 
@@ -6108,7 +6629,8 @@ function voucherUsernamesForReport(order = {}) {
 
 function enrichVoucherOrderForReport(data = {}, order = {}) {
   const reseller = voucherResellerForOrder(data, order);
-  const amount = Math.max(0, Math.round(Number(order.amount || 0) || 0));
+  const amount = hotspotVoucherReportAmount(order);
+  const receiptAmount = Math.max(0, Math.round(Number(order.receiptAmount || hotspotVoucherReceiptTotal(order) || amount) || 0));
   const commissionPercent = reseller ? voucherReportCommissionPercent(data.settings || {}) : 0;
   const commissionAmount = Math.round((amount * commissionPercent) / 100);
   const methodGroup = paymentCategoryForRecord(order, order.paymentMethod || order.method || '');
@@ -6116,6 +6638,8 @@ function enrichVoucherOrderForReport(data = {}, order = {}) {
   return {
     ...order,
     amount,
+    receiptAmount,
+    receiptAmountText: formatCurrencyText(receiptAmount),
     voucherUsernames,
     resellerId: reseller?.id || '',
     resellerUsername: reseller?.username || '',
@@ -6420,7 +6944,12 @@ async function dashboardRadiusSummary(data = {}, period = currentPeriod()) {
     sessionError: ''
   };
   try {
-    const sessionPayload = await freeradiusSessions.activeSessions({ limit: 5000, allowCache: false });
+    const sessionPayload = await freeradiusSessions.activeSessions({
+      limit: 5000,
+      preferCache: true,
+      allowCache: true,
+      maxCacheAgeSeconds: 8
+    });
     const sessions = Array.isArray(sessionPayload.rows) ? sessionPayload.rows : [];
     const usersByUsername = new Map((data.radiusUsers || []).map((user) => [radiusSessionUsername(user.username), user]));
     const online = {
@@ -7006,6 +7535,71 @@ function localMonitoringMemberRows(data = {}, query = {}) {
   return { members, creators, nasOptions, summary: monitoringMemberSummaryFromRows(members) };
 }
 
+function monitoringMemberSearchText(member = {}) {
+  return preparedSearchText([
+    member.fullName,
+    member.customerName,
+    member.userId,
+    member.accountId,
+    member.internet,
+    member.username,
+    member.whatsapp,
+    member.phone,
+    member.email,
+    member.ktp,
+    member.address,
+    member.latitude,
+    member.longitude,
+    member.createdByName,
+    member.createdByUsername,
+    member.packageName,
+    member.nasName,
+    member.siteName,
+    member.status,
+    member.paymentType,
+    member.billingPeriod
+  ]);
+}
+
+function monitoringMemberBaseSignature(data = {}, user = {}, query = {}) {
+  return [
+    runtimeDataSignature(data, ['customers', 'radiusUsers', 'monitoringTargets', 'invoices', 'payments']),
+    runtimeUserCacheScope(data, user),
+    String(query.status || 'all').trim().toLowerCase(),
+    String(query.paymentType || 'all').trim().toLowerCase(),
+    String(query.billingPeriod || 'all').trim().toLowerCase(),
+    String(query.newCustomer || 'all').trim().toLowerCase(),
+    String(query.periodMode || query.newPeriod || 'all').trim().toLowerCase(),
+    safeDateKey(query.from || query.dateFrom || ''),
+    safeDateKey(query.to || query.dateTo || ''),
+    String(query.creator || 'all').trim().toLowerCase(),
+    String(query.nas || query.site || 'all').trim().toLowerCase(),
+    String(query.sort || 'created_desc').trim().toLowerCase()
+  ].join('|');
+}
+
+async function cachedMonitoringMemberBasePayload(data = {}, user = {}, query = {}, options = {}) {
+  const key = runtimeCacheKey('monitoring-members-base', monitoringMemberBaseSignature(data, user, query));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = localMonitoringMemberRows(data, {
+    ...query,
+    search: ''
+  });
+  const next = {
+    ...payload,
+    members: (payload.members || []).map((member) => ({
+      ...member,
+      searchText: monitoringMemberSearchText(member)
+    })),
+    checkedAt: new Date().toISOString()
+  };
+  await runtimeJsonCacheSet(key, next, REPORT_BASE_CACHE_TTL_SECONDS);
+  return next;
+}
+
 async function fetchDashboardMemberGroup(settings = {}, status = '') {
   const limit = 25;
   const members = [];
@@ -7344,6 +7938,10 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
       const paidAt = paymentReportTimestamp(payment || {}, invoice);
       const addOns = invoiceBillingAddons(invoice, customer);
       const addOnsTotal = billingAddonsTotal(addOns);
+      const reportAmount = Number(payment?.amount || invoice.amount || 0);
+      const receiptAmount = paymentCategory === 'online'
+        ? Number(payment?.customerAmount || payment?.gatewayAmount || payment?.checkoutAmount || payment?.amount || invoice.amount || 0)
+        : reportAmount;
       return {
         id: payment?.id || invoice.id,
         invoiceId: invoice.id || payment?.invoiceId || '',
@@ -7390,8 +7988,10 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
         discountUpdatedByUsername: invoice.discountUpdatedByUsername || '',
         discountUpdatedByRole: invoice.discountUpdatedByRole || '',
         totalBeforeDiscount: invoiceGrossBeforeDiscount(invoice),
-        amount: Number(payment?.amount || invoice.amount || 0),
-        income: payment ? Number(payment.amount || invoice.amount || 0) : 0
+        amount: reportAmount,
+        income: payment ? reportAmount : 0,
+        receiptAmount,
+        receiptAmountText: formatCurrencyText(receiptAmount)
       };
     })
     .filter(Boolean)
@@ -8980,6 +9580,46 @@ function findHotspotVoucherOrder(data = {}, value = '') {
   }) || null;
 }
 
+function hotspotVoucherReceiptTotal(order = {}) {
+  const baseAmount = Math.max(0, Math.round(Number(order.amount ?? order.baseAmount ?? 0) || 0));
+  const checkoutAmount = Math.max(0, Math.round(Number(
+    order.customerAmount
+      ?? order.gatewayAmount
+      ?? order.checkoutAmount
+      ?? order.totalAmount
+      ?? 0
+  ) || 0));
+  const methodGroup = paymentCategoryForRecord(order, order.paymentMethod || order.method || '');
+  return methodGroup === 'online' && checkoutAmount > 0 ? checkoutAmount : baseAmount;
+}
+
+function hotspotVoucherReportAmount(order = {}) {
+  const baseAmount = Math.max(0, Math.round(Number(order.amount ?? order.baseAmount ?? 0) || 0));
+  const methodGroup = paymentCategoryForRecord(order, order.paymentMethod || order.method || '');
+  if (methodGroup === 'online') {
+    const received = Math.max(0, Math.round(Number(
+      order.amountReceived
+        ?? order.settlementAmount
+        ?? order.netAmount
+        ?? 0
+    ) || 0));
+    if (received > 0) return received;
+  }
+  return baseAmount;
+}
+
+function hotspotVoucherReceiptUnitAmount(order = {}, fallbackAmount = 0) {
+  const fallback = Math.max(0, Math.round(Number(fallbackAmount || 0) || 0));
+  const total = hotspotVoucherReceiptTotal(order);
+  const quantity = Math.max(1, Math.round(Number(
+    order.quantity
+      || (Array.isArray(order.vouchers) ? order.vouchers.length : 0)
+      || (Array.isArray(order.voucherUserIds) ? order.voucherUserIds.length : 0)
+      || 1
+  ) || 1));
+  return Math.max(0, Math.round(total / quantity)) || fallback;
+}
+
 const PAYMENT_GATEWAY_WEBHOOK_PATHS = new Set([
   '/tripay/webhook',
   '/tripay/callback',
@@ -9575,10 +10215,14 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
       const updatedAt = reportTimestampValue(order.updatedAt);
       const createdAt = reportTimestampValue(order.createdAt);
       const reportAt = paidAt || updatedAt || createdAt;
+      const amount = Number(order.amount ?? order.baseAmount ?? 0);
+      const receiptAmount = hotspotVoucherReceiptTotal({ ...order, amount });
       return {
         ...order,
         date: timestampLocalDateKey(reportAt),
-        amount: Number(order.amount ?? order.baseAmount ?? 0),
+        amount,
+        receiptAmount,
+        receiptAmountText: formatCurrencyText(receiptAmount),
         paymentMethod: order.paymentMethod || 'QRIS',
         paidAt,
         createdAt,
@@ -9624,6 +10268,8 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
         quantity: 1,
         unitPrice: amount,
         amount,
+        receiptAmount: amount,
+        receiptAmountText: formatCurrencyText(amount),
         status: 'paid',
         paymentMethod: generated ? 'First Online' : 'Paid',
         source: generated ? 'generated' : 'manual',
@@ -10318,7 +10964,10 @@ function localManualInvoiceMembers(data = {}, query = {}) {
 const DASHBOARD_BILLING_SUMMARY_CACHE_MS = 15000;
 const DASHBOARD_RUNTIME_CACHE_TTL_SECONDS = Math.max(5, Number(process.env.DASHBOARD_RUNTIME_CACHE_TTL_SECONDS || 20) || 20);
 const REPORT_RUNTIME_CACHE_TTL_SECONDS = Math.max(10, Number(process.env.REPORT_RUNTIME_CACHE_TTL_SECONDS || 60) || 60);
-const RUNTIME_JSON_MEMORY_CACHE_MAX = 64;
+const SEARCH_RUNTIME_CACHE_TTL_SECONDS = Math.max(5, Number(process.env.SEARCH_RUNTIME_CACHE_TTL_SECONDS || 25) || 25);
+const RUNTIME_JSON_MEMORY_CACHE_MAX = Math.max(64, Number(process.env.RUNTIME_JSON_MEMORY_CACHE_MAX || 128) || 128);
+const REPORT_BASE_CACHE_TTL_SECONDS = Math.max(30, Number(process.env.REPORT_BASE_CACHE_TTL_SECONDS || 180) || 180);
+const MONTHLY_TRANSACTIONS_BASE_CACHE_TTL_SECONDS = Math.max(30, Number(process.env.MONTHLY_TRANSACTIONS_BASE_CACHE_TTL_SECONDS || 180) || 180);
 const dashboardBillingSummaryCache = new Map();
 const runtimeJsonMemoryCache = new Map();
 
@@ -10398,6 +11047,669 @@ async function runtimeJsonCacheSet(key = '', value = null, ttlSeconds = REPORT_R
   } catch {
     // Redis cache is optional; the in-process cache above still protects the hot path.
   }
+}
+
+function runtimeSearchRequestEnabled(url = {}, options = {}) {
+  if (options.force === true) return true;
+  if (truthyQuery(url.searchParams?.get('refresh'))) return false;
+  return String(url.searchParams?.get('search') || '').trim().length > 0;
+}
+
+function runtimeSortedQueryString(url = {}) {
+  const ignored = new Set(['_', 'ts', 'timestamp']);
+  const entries = [];
+  url.searchParams?.forEach((value, key) => {
+    if (ignored.has(key)) return;
+    entries.push([key, value]);
+  });
+  entries.sort((left, right) => left[0].localeCompare(right[0]) || String(left[1]).localeCompare(String(right[1])));
+  return entries.map(([key, value]) => `${key}=${value}`).join('&');
+}
+
+function runtimeUserCacheScope(data = {}, user = {}) {
+  const lockedNas = resolveUserLockedNasList(data, user);
+  const raw = JSON.stringify({
+    id: user.id || '',
+    username: user.username || '',
+    role: user.role || '',
+    status: user.status || '',
+    updatedAt: user.updatedAt || '',
+    lockedNas: lockedNas.map((nas) => nas.id || nas.name || '').filter(Boolean).sort(),
+    permissions: user.permissions || null
+  });
+  return crypto.createHash('sha1').update(raw).digest('hex').slice(0, 16);
+}
+
+function runtimeSearchCacheTtlSeconds(namespace = '') {
+  if (/radius|genieacs|monitoring-customers/i.test(namespace)) return Math.min(SEARCH_RUNTIME_CACHE_TTL_SECONDS, 12);
+  if (/billing|payment-gateway/i.test(namespace)) return Math.max(10, Math.min(SEARCH_RUNTIME_CACHE_TTL_SECONDS, 25));
+  if (/report|inventory|member/i.test(namespace)) return Math.max(15, Math.min(SEARCH_RUNTIME_CACHE_TTL_SECONDS * 2, REPORT_RUNTIME_CACHE_TTL_SECONDS));
+  return SEARCH_RUNTIME_CACHE_TTL_SECONDS;
+}
+
+function runtimeSearchDataSignature(data = {}, collections = []) {
+  return [
+    data.updatedAt || '',
+    runtimeDataSignature(data, collections)
+  ].join('|');
+}
+
+async function runtimeSearchCachedPayload(authContext = {}, namespace = '', url = {}, collections = [], producer = async () => ({}), options = {}) {
+  if (!runtimeSearchRequestEnabled(url, options)) {
+    return producer();
+  }
+  const data = authContext.data || {};
+  const key = runtimeCacheKey(`search-${namespace}`, [
+    runtimeSearchDataSignature(data, collections),
+    runtimeUserCacheScope(data, authContext.user || {}),
+    runtimeSortedQueryString(url)
+  ].join('|'));
+  const cached = await runtimeJsonCacheGet(key);
+  if (cached) return cached;
+  const payload = await producer();
+  await runtimeJsonCacheSet(key, payload, runtimeSearchCacheTtlSeconds(namespace));
+  return payload;
+}
+
+function monthlyTransactionsBaseSignature(data = {}, period = currentPeriod(), user = {}) {
+  return [
+    normalizePeriod(period),
+    data.updatedAt || '',
+    String(data.settings?.updatedAt || data.settings?.paymentGateway?.updatedAt || data.settings?.billing?.updatedAt || ''),
+    runtimeDataSignature(data, [
+      'invoices',
+      'payments',
+      'customers',
+      'hotspotVoucherOrders',
+      'hotspotVoucherSalesHistory',
+      'paymentGatewayTransactions',
+      'externalIncomes',
+      'radiusUsers',
+      'monitoringTargets',
+      'users'
+    ]),
+    runtimeUserCacheScope(data, user)
+  ].join('|');
+}
+
+async function buildMonthlyTransactionsBasePayload(data = {}, period = currentPeriod(), user = {}) {
+  const selectedPeriod = normalizePeriod(period);
+  const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
+  const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
+  const billingTransactions = activePayments(data)
+    .map((payment) => {
+      const invoice = invoices.get(payment.invoiceId) || {};
+      const customer = customers.get(payment.customerId || invoice.customerId) || {};
+      const site = localBillingSite(data, customer, invoice);
+      const invoiceNo = displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id || payment.invoiceId || payment.id);
+      return {
+        id: `billing-${payment.id}`,
+        source: 'billing',
+        sourceLabel: 'Tagihan',
+        invoiceNo,
+        legacyInvoiceNo: invoice.externalId || invoice.invoiceNo || invoice.id || payment.invoiceId || payment.id,
+        customerName: customer.name || invoice.customerName || '',
+        username: customer.username || invoice.username || '',
+        packageName: invoice.packageName || customer.packageName || '',
+        amount: Number(payment.amount || invoice.amount || 0),
+        method: payment.method || invoice.paymentMethod || 'Tunai',
+        paymentCategory: paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod),
+        paidAt: paymentReportTimestamp(payment, invoice),
+        submittedAt: paymentReportTimestamp(payment, invoice),
+        submittedRaw: paymentReportTimestamp(payment, invoice),
+        item: invoice.packageName || customer.packageName || 'Tagihan internet',
+        description: payment.notes || customer.name || invoice.customerName || '',
+        type: 'Pembayaran',
+        admin: payment.admin || payment.createdBy || payment.createdByName || 'Sistem',
+        notes: payment.notes || invoice.notes || '',
+        nasId: site.id || customer.nasId || invoice.nasId || '',
+        nasName: site.name || customer.nasName || invoice.siteName || '',
+        siteId: site.id || '',
+        siteName: site.name || invoice.siteName || ''
+      };
+    })
+    .filter((transaction) => timestampLocalDateKey(transaction.paidAt).slice(0, 7) === selectedPeriod);
+
+  const voucherOrders = filterVoucherReportOrders(data, await paidVoucherOrdersForReport(data, selectedPeriod), {}, user);
+  const voucherTransactions = voucherOrders.map((order) => ({
+    id: `voucher-${order.id || order.reference}`,
+    source: 'voucher',
+    sourceLabel: 'Voucher',
+    invoiceNo: order.reference || '',
+    legacyInvoiceNo: order.reference || '',
+    customerName: order.buyerName || 'Pembeli Voucher',
+    username: Array.isArray(order.vouchers) ? order.vouchers.map((voucher) => voucher.username).filter(Boolean).join(', ') : '',
+    packageName: order.packageLabel || order.profileName || 'Voucher Hotspot',
+    amount: Number(order.amount || 0),
+    method: order.paymentMethod || 'QRIS',
+    paymentCategory: order.methodGroup || paymentCategoryForRecord(order, order.paymentMethod || order.method),
+    paidAt: order.paidAt || order.updatedAt || order.createdAt || '',
+    submittedAt: order.paidAt || order.updatedAt || order.createdAt || '',
+    submittedRaw: order.paidAt || order.updatedAt || order.createdAt || '',
+    item: order.packageLabel || order.profileName || 'Voucher Hotspot',
+    description: `${order.sourceLabel || 'Voucher'} ${order.quantity || 1} voucher${order.nasName ? ` - ${order.nasName}` : ''}`,
+    type: 'Voucher',
+    admin: order.resellerName || order.createdByName || order.paidByName || 'Sistem',
+    notes: order.reference || '',
+    paymentGatewayReference: order.reference || '',
+    nasId: order.nasId || '',
+    nasName: order.nasName || '',
+    siteId: order.nasId || '',
+    siteName: order.nasName || ''
+  }));
+
+  const voucherReferences = new Set(voucherTransactions.map((transaction) => String(transaction.invoiceNo || '').trim()).filter(Boolean));
+  const billingReferences = new Set(billingTransactions.flatMap((transaction) => [
+    transaction.invoiceNo,
+    transaction.legacyInvoiceNo
+  ]).map((value) => String(value || '').trim()).filter(Boolean));
+
+  const paymentGatewayTransactions = (paymentGatewayReportPayload(data, { kind: 'all' }).transactions || [])
+    .filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()))
+    .filter((row) => timestampLocalDateKey(row.paidAt || row.paymentAt || row.date || row.createdAt).slice(0, 7) === selectedPeriod)
+    .filter((row) => {
+      const kind = paymentGatewayTransactionKind(row);
+      const references = [
+        row.reference,
+        row.invoiceNo,
+        row.externalId
+      ].map((value) => String(value || '').trim()).filter(Boolean);
+      if (kind === 'hotspot-voucher' && references.some((reference) => voucherReferences.has(reference))) return false;
+      if (kind === 'monthly-package' && references.some((reference) => billingReferences.has(reference))) return false;
+      return true;
+    })
+    .map((row) => ({
+      id: `pg-${row.id || row.reference}`,
+      source: 'payment-gateway',
+      sourceLabel: 'Online',
+      invoiceNo: row.reference || row.invoiceNo || row.id || '',
+      legacyInvoiceNo: row.reference || row.invoiceNo || row.id || '',
+      customerName: row.customerName || row.description || '',
+      username: row.username || '',
+      packageName: paymentGatewayTransactionKindLabel(paymentGatewayTransactionKind(row)),
+      amount: Number(row.amount || 0),
+      method: row.method || row.paymentMethod || row.provider || 'Transfer',
+      paymentCategory: 'online',
+      paidAt: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
+      submittedAt: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
+      submittedRaw: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
+      item: row.description || paymentGatewayTransactionKindLabel(paymentGatewayTransactionKind(row)),
+      description: row.description || row.customerName || '',
+      type: 'Online',
+      admin: row.paidByName || row.provider || 'Payment Gateway',
+      notes: row.externalId || '',
+      paymentGatewayReference: row.reference || row.invoiceNo || '',
+      nasId: row.nasId || '',
+      nasName: row.nasName || row.siteName || '',
+      siteId: row.nasId || row.siteId || '',
+      siteName: row.nasName || row.siteName || ''
+    }));
+
+  const externalTransactions = (data.externalIncomes || [])
+    .filter((income) => String(income.date || income.createdAt || '').slice(0, 7) === selectedPeriod)
+    .filter((income) => !['cancelled', 'canceled', 'void', 'batal'].includes(String(income.status || '').trim().toLowerCase()))
+    .map((income) => {
+      const items = Array.isArray(income.items) ? income.items : [];
+      const itemNames = items.map((item) => item.itemName || item.category || '').filter(Boolean).join(', ');
+      return {
+        id: `external-${income.id || income.receiptNo || income.date}`,
+        source: 'external',
+        sourceLabel: 'Pemasukan External',
+        invoiceNo: income.receiptNo || income.referenceNo || income.id || '',
+        legacyInvoiceNo: income.receiptNo || income.referenceNo || income.id || '',
+        customerName: income.payerName || '',
+        username: '',
+        packageName: income.category || itemNames || 'Pemasukan External',
+        amount: Number(income.amount || 0),
+        method: income.paymentMethod || income.method || 'Tunai',
+        paymentCategory: paymentCategoryForRecord(income, income.paymentMethod || income.method || 'Tunai'),
+        paidAt: income.date || income.createdAt || '',
+        submittedAt: income.date || income.createdAt || '',
+        submittedRaw: income.date || income.createdAt || '',
+        item: itemNames || income.itemName || income.category || 'Pemasukan External',
+        description: income.description || income.payerName || income.receiptNo || '',
+        type: 'Pemasukan',
+        admin: income.createdByName || income.updatedByName || income.createdBy || income.updatedBy || 'Sistem',
+        notes: income.description || '',
+        nasId: income.nasId || income.siteId || '',
+        nasName: income.nasName || income.siteName || '',
+        siteId: income.siteId || income.nasId || '',
+        siteName: income.siteName || income.nasName || ''
+      };
+    });
+
+  const transactions = billingTransactions
+    .concat(voucherTransactions, paymentGatewayTransactions, externalTransactions)
+    .map(enrichMonthlyTransaction)
+    .sort(sortReportTransactionsNewestFirst);
+
+  return {
+    period: selectedPeriod,
+    transactions,
+    nasOptions: reportNasOptions(data, transactions),
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function cachedMonthlyTransactionsBasePayload(data = {}, period = currentPeriod(), user = {}, options = {}) {
+  const key = runtimeCacheKey('monthly-transactions-base', monthlyTransactionsBaseSignature(data, period, user));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = await buildMonthlyTransactionsBasePayload(data, period, user);
+  await runtimeJsonCacheSet(key, payload, MONTHLY_TRANSACTIONS_BASE_CACHE_TTL_SECONDS);
+  return payload;
+}
+
+function monthlyBillingBaseSignature(data = {}, period = currentPeriod(), selectedNas = 'all', user = {}) {
+  return [
+    normalizePeriod(period),
+    String(selectedNas || 'all').trim().toLowerCase(),
+    runtimeDataSignature(data, ['invoices', 'payments', 'customers', 'monitoringTargets', 'expenses', 'radiusUsers']),
+    runtimeUserCacheScope(data, user)
+  ].join('|');
+}
+
+function monthlyBillingInvoiceSearchText(invoice = {}) {
+  return preparedSearchText([
+    invoice.invoiceNo,
+    invoice.externalId,
+    invoice.legacyInvoiceNo,
+    invoice.customerName,
+    invoice.accountId,
+    invoice.username,
+    invoice.phone,
+    invoice.address,
+    invoice.packageName,
+    invoice.item,
+    invoice.siteName,
+    invoice.nasName,
+    invoice.status,
+    invoice.paymentMethod,
+    invoice.paymentCategory
+  ]);
+}
+
+function enrichMonthlyBillingInvoiceRow(invoice = {}) {
+  return {
+    ...invoice,
+    searchText: monthlyBillingInvoiceSearchText(invoice)
+  };
+}
+
+function monthlyBillingReportSummary(invoices = []) {
+  const rows = Array.isArray(invoices) ? invoices : [];
+  const paidRows = rows.filter((invoice) => invoice.status === 'paid');
+  const unpaidRows = rows.filter((invoice) => ['unpaid', 'pending'].includes(invoice.status));
+  const overdueRows = rows.filter((invoice) => invoice.status === 'overdue');
+  const sumAmount = (items = []) => items.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+  return {
+    totalCount: rows.length,
+    totalAmount: sumAmount(rows),
+    paidCount: paidRows.length,
+    paidAmount: sumAmount(paidRows),
+    unpaidCount: unpaidRows.length,
+    unpaidAmount: sumAmount(unpaidRows),
+    overdueCount: overdueRows.length,
+    overdueAmount: sumAmount(overdueRows)
+  };
+}
+
+async function buildMonthlyBillingBasePayload(data = {}, period = currentPeriod(), selectedNas = 'all', user = {}) {
+  const selectedPeriod = normalizePeriod(period);
+  const collectorReport = userIsCollector(user);
+  const reportPayments = collectorReportPayments(data, user);
+  const periodPaymentInvoiceIds = new Set(reportPayments
+    .filter((payment) => paymentPeriodKey(payment) === selectedPeriod)
+    .map((payment) => String(payment.invoiceId || ''))
+    .filter(Boolean));
+  const baseInvoices = localBillingInvoiceRows(data, selectedPeriod).filter((invoice) => invoice.status !== 'cancelled');
+  const nasOptions = reportNasOptions(data, baseInvoices);
+  let invoices = [...baseInvoices];
+  if (collectorReport) {
+    invoices = invoices.filter((invoice) => periodPaymentInvoiceIds.has(String(invoice.invoiceId || invoice.id || '')));
+  }
+  if (selectedNas && selectedNas.toLowerCase() !== 'all') {
+    invoices = invoices.filter((invoice) => reportMatchesNas(invoice, selectedNas));
+  }
+  invoices = invoices.map(enrichMonthlyBillingInvoiceRow);
+  return {
+    ok: true,
+    period: selectedPeriod,
+    nas: selectedNas,
+    collector: collectorReport ? { scoped: true, name: user.name || '', username: user.username || '' } : null,
+    nasOptions,
+    invoices,
+    dailyRows: monthlyBillingDailyRows(data, selectedPeriod, {
+      payments: collectorReport ? reportPayments : undefined,
+      includeExpenses: !collectorReport,
+      nas: selectedNas
+    }),
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function cachedMonthlyBillingBasePayload(data = {}, period = currentPeriod(), selectedNas = 'all', user = {}, options = {}) {
+  const key = runtimeCacheKey('monthly-billing-base', monthlyBillingBaseSignature(data, period, selectedNas, user));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = await buildMonthlyBillingBasePayload(data, period, selectedNas, user);
+  await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
+  return payload;
+}
+
+function voucherReportBaseSignature(data = {}, period = currentPeriod(), user = {}) {
+  return [
+    normalizePeriod(period),
+    runtimeDataSignature(data, [
+      'hotspotVoucherOrders',
+      'hotspotVoucherSalesHistory',
+      'radiusUsers',
+      'radiusVoucherRecords',
+      'paymentGatewayTransactions',
+      'monitoringTargets',
+      'users'
+    ]),
+    collectionNewestTimestamp([data.settings || {}, data.settings?.hotspotVoucherOnline || {}]),
+    runtimeUserCacheScope(data, user)
+  ].join('|');
+}
+
+function voucherReportOrderSearchText(order = {}) {
+  return preparedSearchText([
+    order.reference,
+    order.paymentReference,
+    order.voucherUsernames,
+    order.buyerName,
+    order.whatsapp,
+    order.profileName,
+    order.packageLabel,
+    order.nasName,
+    order.paymentMethod,
+    order.source,
+    order.sourceLabel,
+    order.resellerName,
+    order.resellerUsername,
+    order.createdByName,
+    order.createdByUsername
+  ]);
+}
+
+function enrichVoucherReportOrderSearch(order = {}) {
+  return {
+    ...order,
+    searchText: voucherReportOrderSearchText(order)
+  };
+}
+
+function filterPreparedVoucherReportOrders(orders = [], query = {}, user = {}) {
+  const scoped = String(user.role || '') === 'reseller_voucher';
+  const nas = String(query.nas || '').trim().toLowerCase();
+  const reseller = scoped
+    ? String(user.username || '').trim().toLowerCase()
+    : String(query.reseller || '').trim().toLowerCase();
+  const profile = String(query.profile || '').trim().toLowerCase();
+  const method = String(query.method || '').trim().toLowerCase();
+  return (orders || []).filter((order) => {
+    if (nas && nas !== 'all' && ![order.nasId, order.nasName].some((value) => String(value || '').toLowerCase() === nas)) return false;
+    if (reseller && reseller !== 'all' && ![order.resellerUsername, order.createdByUsername].some((value) => String(value || '').toLowerCase() === reseller)) return false;
+    if (profile && profile !== 'all' && ![order.profileId, order.profileName, order.packageLabel].some((value) => String(value || '').toLowerCase() === profile)) return false;
+    if (method && method !== 'all' && order.methodGroup !== method) return false;
+    return true;
+  });
+}
+
+async function buildVoucherReportBasePayload(data = {}, period = currentPeriod(), user = {}) {
+  const selectedPeriod = normalizePeriod(period);
+  const baseOrders = voucherOrdersVisibleForUser(data, await paidVoucherOrdersForReport(data, selectedPeriod), user);
+  const orders = filterVoucherReportOrders(data, baseOrders, {}, user)
+    .map(enrichVoucherReportOrderSearch)
+    .sort((a, b) => String(b.paidAt || b.updatedAt || '').localeCompare(String(a.paidAt || a.updatedAt || '')));
+  return {
+    ok: true,
+    period: selectedPeriod,
+    revision: hotspotVoucherRevision(data, user),
+    orders,
+    filterOptions: voucherReportFilterOptions(data, orders, user),
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function cachedVoucherReportBasePayload(data = {}, period = currentPeriod(), user = {}, options = {}) {
+  const key = runtimeCacheKey('voucher-report-base', voucherReportBaseSignature(data, period, user));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = await buildVoucherReportBasePayload(data, period, user);
+  await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
+  return payload;
+}
+
+function financeRecapBaseSignature(data = {}, period = currentPeriod()) {
+  return [
+    normalizePeriod(period),
+    runtimeDataSignature(data, ['invoices', 'payments', 'externalIncomes', 'expenses'])
+  ].join('|');
+}
+
+function buildFinanceRecapPayload(data = {}, period = currentPeriod()) {
+  const selectedPeriod = normalizePeriod(period);
+  const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
+  const payments = activePayments(data)
+    .filter((payment) => paymentPeriodKey(payment, invoices.get(payment.invoiceId) || {}) === selectedPeriod)
+    .map((payment) => {
+      const invoice = invoices.get(payment.invoiceId) || {};
+      return {
+        type: 'billing',
+        category: 'Tagihan Internet',
+        description: invoice.customerName || invoice.username || payment.notes || 'Pembayaran tagihan',
+        amount: Number(payment.amount || invoice.amount || 0),
+        paymentCategory: paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod),
+        date: paymentReportTimestamp(payment, invoice)
+      };
+    });
+  const externalIncomes = (data.externalIncomes || [])
+    .filter((income) => String(income.date || income.createdAt || '').slice(0, 7) === selectedPeriod && String(income.status || 'active') !== 'cancelled')
+    .map((income) => ({
+      type: 'external',
+      category: income.category || 'Pemasukan Lain',
+      description: income.payerName || income.itemName || income.description || income.receiptNo || '',
+      amount: Number(income.amount || 0),
+      paymentCategory: paymentCategoryForRecord(income, income.paymentMethod || income.method),
+      date: income.date || income.createdAt || ''
+    }));
+  const expenses = (data.expenses || [])
+    .filter((expense) => String(expense.date || expense.createdAt || '').slice(0, 7) === selectedPeriod)
+    .map((expense) => ({
+      category: expense.category || 'Pengeluaran',
+      description: expense.payee || expense.vendor || expense.itemName || expense.description || expense.noteNo || '',
+      amount: Number(expense.amount || 0),
+      date: expense.date || expense.createdAt || ''
+    }));
+  const incomeRows = payments.concat(externalIncomes);
+  const groupRows = (rows) => {
+    const groups = new Map();
+    rows.forEach((row) => {
+      const key = row.category || '-';
+      const current = groups.get(key) || { category: key, count: 0, amount: 0 };
+      current.count += 1;
+      current.amount += Number(row.amount || 0);
+      groups.set(key, current);
+    });
+    return [...groups.values()].sort((a, b) => b.amount - a.amount || a.category.localeCompare(b.category));
+  };
+  const incomeTotal = incomeRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const expenseTotal = expenses.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const paymentSummary = (category) => ({
+    count: incomeRows.filter((row) => row.paymentCategory === category).length,
+    amount: incomeRows
+      .filter((row) => row.paymentCategory === category)
+      .reduce((sum, row) => sum + Number(row.amount || 0), 0)
+  });
+  const cash = paymentSummary('cash');
+  const transfer = paymentSummary('transfer');
+  const online = paymentSummary('online');
+  return {
+    ok: true,
+    period: selectedPeriod,
+    summary: {
+      incomeCount: incomeRows.length,
+      incomeTotal,
+      expenseCount: expenses.length,
+      expenseTotal,
+      profit: incomeTotal - expenseTotal,
+      cashCount: cash.count,
+      cashAmount: cash.amount,
+      transferCount: transfer.count,
+      transferAmount: transfer.amount,
+      onlineCount: online.count,
+      onlineAmount: online.amount
+    },
+    incomeGroups: groupRows(incomeRows),
+    expenseGroups: groupRows(expenses),
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function cachedFinanceRecapPayload(data = {}, period = currentPeriod(), options = {}) {
+  const key = runtimeCacheKey('finance-recap-base', financeRecapBaseSignature(data, period));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = buildFinanceRecapPayload(data, period);
+  await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
+  return payload;
+}
+
+function inventoryStockBaseSignature(data = {}, period = currentPeriod(), type = 'all') {
+  return [
+    normalizePeriod(period),
+    movementTypeFilter(type),
+    runtimeDataSignature(data, ['inventoryItems', 'stockMovements'])
+  ].join('|');
+}
+
+function stockMovementSearchText(movement = {}) {
+  return preparedSearchText([
+    movement.itemName,
+    movement.type,
+    movement.reference,
+    movement.updatedByName,
+    movement.updatedByUsername,
+    movement.updatedByRole,
+    movement.notes,
+    movement.date
+  ]);
+}
+
+function buildInventoryStockBasePayload(data = {}, period = currentPeriod(), type = 'all') {
+  const selectedPeriod = normalizePeriod(period);
+  const selectedType = movementTypeFilter(type);
+  const itemDirectory = inventoryDirectory(data.inventoryItems || []);
+  let movements = (data.stockMovements || [])
+    .map((movement) => publicStockMovement(movement, itemDirectory))
+    .filter((movement) => !selectedPeriod || String(movement.date || '').slice(0, 7) === selectedPeriod);
+  if (selectedType !== 'all') {
+    movements = movements.filter((movement) => movement.type === selectedType);
+  }
+  movements = sortByDateDesc(movements, 'createdAt')
+    .map((movement) => ({
+      ...movement,
+      searchText: stockMovementSearchText(movement)
+    }));
+  return {
+    period: selectedPeriod,
+    type: selectedType,
+    movements,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function cachedInventoryStockBasePayload(data = {}, period = currentPeriod(), type = 'all', options = {}) {
+  const key = runtimeCacheKey('inventory-stock-base', inventoryStockBaseSignature(data, period, type));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = buildInventoryStockBasePayload(data, period, type);
+  await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
+  return payload;
+}
+
+function activityBaseSignature(data = {}, user = {}, filters = {}) {
+  return [
+    data.updatedAt || '',
+    runtimeDataSignature(data, ['activity']),
+    runtimeUserCacheScope(data, user),
+    String(filters.type || 'all'),
+    String(filters.category || 'all'),
+    String(filters.from || ''),
+    String(filters.to || '')
+  ].join('|');
+}
+
+function activitySearchText(item = {}) {
+  const metaText = item.meta && typeof item.meta === 'object' ? JSON.stringify(item.meta) : '';
+  return preparedSearchText([
+    item.type,
+    item.message,
+    item.at,
+    metaText
+  ]);
+}
+
+function buildActivityBasePayload(data = {}, user = {}, filters = {}) {
+  const type = String(filters.type || 'all').trim().toLowerCase();
+  const category = String(filters.category || 'all').trim().toLowerCase();
+  const dateRange = {
+    from: filters.from || '',
+    to: filters.to || ''
+  };
+  let activity = activityRowsForUser(user, Array.isArray(data.activity) ? [...data.activity] : []);
+  if (type !== 'all') {
+    activity = activity.filter((item) => String(item.type || '').toLowerCase() === type);
+  }
+  if (category !== 'all') {
+    activity = activity.filter((item) => activityMatchesCategory(item, category));
+  }
+  if (dateRange.from || dateRange.to) {
+    activity = activity.filter((item) => {
+      const key = activityDateKey(item, data.settings || {});
+      if (!key) return false;
+      return (!dateRange.from || key >= dateRange.from) && (!dateRange.to || key <= dateRange.to);
+    });
+  }
+  activity = sortByDateDesc(activity, 'at')
+    .map((item) => ({
+      ...item,
+      searchText: activitySearchText(item)
+    }));
+  return {
+    activity,
+    filters: {
+      range: String(filters.range || 'all').trim().toLowerCase(),
+      category: ACTIVITY_CATEGORY_KEYS.has(category) ? category : 'all',
+      from: dateRange.from,
+      to: dateRange.to
+    },
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function cachedActivityBasePayload(data = {}, user = {}, filters = {}, options = {}) {
+  const key = runtimeCacheKey('activity-base', activityBaseSignature(data, user, filters));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = buildActivityBasePayload(data, user, filters);
+  await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
+  return payload;
 }
 
 function dashboardBillingSummaryCacheKey(data = {}, period = currentPeriod()) {
@@ -12379,6 +13691,109 @@ function paymentGatewayReportPayload(data = {}, query = {}) {
       ...balanceSummary
     }
   };
+}
+
+function paymentGatewayReportSearchText(row = {}) {
+  return preparedSearchText([
+    row.reference,
+    row.description,
+    row.invoiceNo,
+    row.customerName,
+    row.provider,
+    row.method,
+    row.paymentMethod,
+    row.transactionKindLabel,
+    row.transactionKind,
+    row.status
+  ]);
+}
+
+function paymentGatewayReportBaseSignature(data = {}) {
+  return [
+    runtimeDataSignature(data, [
+      'paymentGatewayTransactions',
+      'hotspotVoucherOrders',
+      'invoices',
+      'payments',
+      'customers'
+    ]),
+    collectionNewestTimestamp([data.settings?.paymentGateway || {}])
+  ].join('|');
+}
+
+function paymentGatewayReportRowsFromBase(rows = [], balanceSummary = {}, query = {}) {
+  const from = String(query.from || '').trim();
+  const to = String(query.to || '').trim();
+  const search = String(query.search || '').trim().toLowerCase();
+  const method = String(query.method || 'all').trim().toLowerCase();
+  const kind = String(query.kind || 'all').trim().toLowerCase();
+  const filteredRows = (rows || []).filter((row) => {
+    const date = String(row.date || row.createdAt || '').slice(0, 10);
+    if (from && date && date < from) return false;
+    if (to && date && date > to) return false;
+    if (method !== 'all' && String(row.method || row.paymentMethod || '').toLowerCase() !== method) return false;
+    if (kind !== 'all' && row.transactionKind !== kind) return false;
+    return true;
+  });
+  const searchedRows = filterPreparedSearch(filteredRows, search);
+  const pending = searchedRows.filter((row) => ['pending', 'waiting', 'unpaid'].includes(String(row.status || '').toLowerCase()));
+  const paid = searchedRows.filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()));
+  const fees = paid.reduce((sum, row) => sum + Number(row.feeMerchant ?? row.providerFee ?? row.fee ?? 0), 0);
+  return {
+    transactions: searchedRows.map(stripSearchText),
+    balanceHistory: searchedRows.filter((row) => row.kind === 'balance').map(stripSearchText),
+    pending: pending.map(stripSearchText),
+    reports: searchedRows.filter((row) => row.kind === 'fee')
+      .concat(paid.filter((row) => row.kind !== 'fee' && Number(row.providerFee ?? row.fee ?? 0) > 0))
+      .map(stripSearchText),
+    summary: {
+      total: searchedRows.length,
+      totalAmount: searchedRows.reduce((sum, row) => sum + Number(row.amount || 0), 0),
+      paid: paid.length,
+      paidAmount: paid.reduce((sum, row) => sum + Number(row.amount || 0), 0),
+      pending: pending.length,
+      pendingAmount: pending.reduce((sum, row) => sum + Number(row.amount || 0), 0),
+      netReceivedAmount: paid.reduce((sum, row) => sum + tripayAmountReceived(row), 0),
+      fees,
+      merchantFees: fees,
+      ...balanceSummary
+    }
+  };
+}
+
+function buildPaymentGatewayReportBasePayload(data = {}) {
+  const allRows = Array.isArray(data.paymentGatewayTransactions) ? data.paymentGatewayTransactions : [];
+  const rows = allRows.map((row) => {
+    const transactionKind = paymentGatewayTransactionKind(row);
+    const next = {
+      ...row,
+      amount: paymentGatewayReportAmount(data, row, transactionKind),
+      description: paymentGatewayDescription(data, row),
+      transactionKind,
+      transactionKindLabel: paymentGatewayTransactionKindLabel(transactionKind)
+    };
+    next.searchText = paymentGatewayReportSearchText(next);
+    return next;
+  }).filter((row) => {
+    const rowStatus = String(row.status || '').trim().toLowerCase();
+    return !['closed', 'replaced'].includes(rowStatus);
+  });
+  return {
+    rows: sortByDateDesc(rows, 'createdAt'),
+    balanceSummary: tripayClearingSummary(allRows),
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function cachedPaymentGatewayReportBasePayload(data = {}, options = {}) {
+  const key = runtimeCacheKey('payment-gateway-report-base', paymentGatewayReportBaseSignature(data));
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(key);
+    if (cached) return cached;
+  }
+  const payload = buildPaymentGatewayReportBasePayload(data);
+  await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
+  return payload;
 }
 
 function publicSiteMediaServices(target = {}, fallbackMediaServices = {}) {
@@ -16328,34 +17743,22 @@ async function handleApi(req, res, url) {
     const category = String(url.searchParams.get('category') || 'all').trim().toLowerCase();
     const dateRange = activityDateRangeFromQuery(url, data.settings || {});
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    let activity = activityRowsForUser(authContext.user, Array.isArray(data.activity) ? [...data.activity] : []);
-    if (type !== 'all') {
-      activity = activity.filter((item) => String(item.type || '').toLowerCase() === type);
-    }
-    if (category !== 'all') {
-      activity = activity.filter((item) => activityMatchesCategory(item, category));
-    }
-    if (dateRange.from || dateRange.to) {
-      activity = activity.filter((item) => {
-        const key = activityDateKey(item, data.settings || {});
-        if (!key) return false;
-        return (!dateRange.from || key >= dateRange.from) && (!dateRange.to || key <= dateRange.to);
-      });
-    }
-    if (search) {
-      activity = activity.filter((item) => {
-        const metaText = item.meta && typeof item.meta === 'object' ? JSON.stringify(item.meta).toLowerCase() : '';
-        return ['type', 'message'].some((field) => String(item[field] || '').toLowerCase().includes(search))
-          || metaText.includes(search);
-      });
-    }
-    activity = sortByDateDesc(activity, 'at');
+    const base = await cachedActivityBasePayload(data, authContext.user, {
+      type,
+      category,
+      range: url.searchParams.get('range') || 'all',
+      from: dateRange.from,
+      to: dateRange.to
+    }, {
+      force: truthyQuery(url.searchParams.get('refresh'))
+    });
+    const activity = filterPreparedSearch(Array.isArray(base.activity) ? base.activity : [], search);
     const total = activity.length;
     const totalPages = Math.max(1, Math.ceil(total / limit));
     const currentPage = Math.min(page, totalPages);
     const currentOffset = (currentPage - 1) * limit;
     sendJson(res, 200, {
-      activity: activity.slice(currentOffset, currentOffset + limit),
+      activity: activity.slice(currentOffset, currentOffset + limit).map(stripSearchText),
       pagination: {
         page: currentPage,
         limit,
@@ -16364,12 +17767,13 @@ async function handleApi(req, res, url) {
         hasPrev: currentPage > 1,
         hasNext: currentPage < totalPages
       },
-      filters: {
+      filters: base.filters || {
         range: String(url.searchParams.get('range') || 'all').trim().toLowerCase(),
         category: ACTIVITY_CATEGORY_KEYS.has(category) ? category : 'all',
         from: dateRange.from,
         to: dateRange.to
-      }
+      },
+      checkedAt: base.checkedAt || new Date().toISOString()
     });
     return;
   }
@@ -16528,37 +17932,16 @@ async function handleApi(req, res, url) {
     const selectedNas = String(url.searchParams.get('nas') || url.searchParams.get('site') || 'all').trim();
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    const collectorReport = userIsCollector(authContext.user);
-    const reportPayments = collectorReportPayments(data, authContext.user);
-    const periodPaymentInvoiceIds = new Set(reportPayments
-      .filter((payment) => paymentPeriodKey(payment) === period)
-      .map((payment) => String(payment.invoiceId || ''))
-      .filter(Boolean));
-    const baseInvoices = localBillingInvoiceRows(data, period).filter((invoice) => invoice.status !== 'cancelled');
-    const nasOptions = reportNasOptions(data, baseInvoices);
-    let allPeriodInvoices = [...baseInvoices];
-    if (collectorReport) {
-      allPeriodInvoices = allPeriodInvoices.filter((invoice) => periodPaymentInvoiceIds.has(String(invoice.invoiceId || invoice.id || '')));
-    }
-    if (selectedNas && selectedNas.toLowerCase() !== 'all') {
-      allPeriodInvoices = allPeriodInvoices.filter((invoice) => reportMatchesNas(invoice, selectedNas));
-    }
-    let invoices = [...allPeriodInvoices];
+    const base = await cachedMonthlyBillingBasePayload(data, period, selectedNas, authContext.user, {
+      force: truthyQuery(url.searchParams.get('refresh'))
+    });
+    let invoices = Array.isArray(base.invoices) ? base.invoices : [];
+    const summary = monthlyBillingReportSummary(invoices);
     if (status !== 'all') {
       invoices = invoices.filter((invoice) => invoice.status === status || (status === 'unpaid' && ['unpaid', 'pending'].includes(invoice.status)));
     }
-    invoices = filterSearch(invoices, search, ['invoiceNo', 'externalId', 'customerName', 'username', 'phone', 'address', 'packageName', 'item', 'siteName', 'status']);
+    invoices = filterPreparedSearch(invoices, search);
     invoices.sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')) || String(a.customerName || '').localeCompare(String(b.customerName || '')));
-    const summary = {
-      totalCount: allPeriodInvoices.length,
-      totalAmount: allPeriodInvoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
-      paidCount: allPeriodInvoices.filter((invoice) => invoice.status === 'paid').length,
-      paidAmount: allPeriodInvoices.filter((invoice) => invoice.status === 'paid').reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
-      unpaidCount: allPeriodInvoices.filter((invoice) => ['unpaid', 'pending'].includes(invoice.status)).length,
-      unpaidAmount: allPeriodInvoices.filter((invoice) => ['unpaid', 'pending'].includes(invoice.status)).reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
-      overdueCount: allPeriodInvoices.filter((invoice) => invoice.status === 'overdue').length,
-      overdueAmount: allPeriodInvoices.filter((invoice) => invoice.status === 'overdue').reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0)
-    };
     const pagination = paginationPayload(page, limit, invoices.length);
     const offset = (pagination.page - 1) * limit;
     sendJson(res, 200, {
@@ -16568,16 +17951,12 @@ async function handleApi(req, res, url) {
       nas: selectedNas,
       search,
       summary,
-      collector: collectorReport ? { scoped: true, name: authContext.user.name || '', username: authContext.user.username || '' } : null,
-      nasOptions,
-      dailyRows: monthlyBillingDailyRows(data, period, {
-        payments: collectorReport ? reportPayments : undefined,
-        includeExpenses: !collectorReport,
-        nas: selectedNas
-      }),
-      invoices: invoices.slice(offset, offset + limit),
+      collector: base.collector || null,
+      nasOptions: Array.isArray(base.nasOptions) ? base.nasOptions : [],
+      dailyRows: Array.isArray(base.dailyRows) ? base.dailyRows : [],
+      invoices: invoices.slice(offset, offset + limit).map(stripSearchText),
       pagination,
-      checkedAt: new Date().toISOString()
+      checkedAt: base.checkedAt || new Date().toISOString()
     });
     return;
   }
@@ -16595,25 +17974,27 @@ async function handleApi(req, res, url) {
       method: String(url.searchParams.get('method') || '').trim()
     };
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    const baseOrders = voucherOrdersVisibleForUser(data, await paidVoucherOrdersForReport(data, date.slice(0, 7)), authContext.user);
-    let orders = filterVoucherReportOrders(data, baseOrders, filters, authContext.user)
+    const base = await cachedVoucherReportBasePayload(data, date.slice(0, 7), authContext.user, {
+      force: truthyQuery(url.searchParams.get('refresh'))
+    });
+    let orders = filterPreparedVoucherReportOrders(Array.isArray(base.orders) ? base.orders : [], filters, authContext.user)
       .filter((order) => order.date === date);
-    orders = filterSearch(orders, search, ['reference', 'paymentReference', 'voucherUsernames', 'buyerName', 'whatsapp', 'profileName', 'packageLabel', 'nasName', 'paymentMethod', 'source', 'sourceLabel', 'resellerName', 'resellerUsername', 'createdByName', 'createdByUsername']);
+    orders = filterPreparedSearch(orders, search);
     orders.sort((a, b) => String(b.paidAt || b.updatedAt || '').localeCompare(String(a.paidAt || a.updatedAt || '')));
     const summary = voucherReportSummary(orders);
     const pagination = paginationPayload(page, limit, orders.length);
     const offset = (pagination.page - 1) * limit;
     sendJson(res, 200, {
       ok: true,
-      revision: hotspotVoucherRevision(data, authContext.user),
+      revision: base.revision || hotspotVoucherRevision(data, authContext.user),
       date,
       search,
       filters,
-      filterOptions: voucherReportFilterOptions(data, filterVoucherReportOrders(data, baseOrders, {}, authContext.user), authContext.user),
+      filterOptions: base.filterOptions || voucherReportFilterOptions(data, orders, authContext.user),
       summary,
-      orders: orders.slice(offset, offset + limit),
+      orders: orders.slice(offset, offset + limit).map(stripSearchText),
       pagination,
-      checkedAt: new Date().toISOString()
+      checkedAt: base.checkedAt || new Date().toISOString()
     });
     return;
   }
@@ -16629,19 +18010,21 @@ async function handleApi(req, res, url) {
       profile: String(url.searchParams.get('profile') || '').trim(),
       method: String(url.searchParams.get('method') || '').trim()
     };
-    const baseOrders = voucherOrdersVisibleForUser(data, await paidVoucherOrdersForReport(data, period), authContext.user);
-    const orders = filterVoucherReportOrders(data, baseOrders, filters, authContext.user);
+    const base = await cachedVoucherReportBasePayload(data, period, authContext.user, {
+      force: truthyQuery(url.searchParams.get('refresh'))
+    });
+    const orders = filterPreparedVoucherReportOrders(Array.isArray(base.orders) ? base.orders : [], filters, authContext.user);
     const rows = monthlyVoucherDailyRows(data, period, orders);
     const summary = voucherReportSummary(orders);
     sendJson(res, 200, {
       ok: true,
-      revision: hotspotVoucherRevision(data, authContext.user),
+      revision: base.revision || hotspotVoucherRevision(data, authContext.user),
       period,
       filters,
-      filterOptions: voucherReportFilterOptions(data, filterVoucherReportOrders(data, baseOrders, {}, authContext.user), authContext.user),
+      filterOptions: base.filterOptions || voucherReportFilterOptions(data, orders, authContext.user),
       summary,
       dailyRows: rows,
-      checkedAt: new Date().toISOString()
+      checkedAt: base.checkedAt || new Date().toISOString()
     });
     return;
   }
@@ -16659,146 +18042,10 @@ async function handleApi(req, res, url) {
     const selectedNas = String(url.searchParams.get('nas') || url.searchParams.get('site') || 'all').trim();
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
-    const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
-    const billingTransactions = activePayments(data)
-      .map((payment) => {
-        const invoice = invoices.get(payment.invoiceId) || {};
-        const customer = customers.get(payment.customerId || invoice.customerId) || {};
-        const site = localBillingSite(data, customer, invoice);
-        const invoiceNo = displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id || payment.invoiceId || payment.id);
-        return {
-          id: `billing-${payment.id}`,
-          source: 'billing',
-          sourceLabel: 'Tagihan',
-          invoiceNo,
-          legacyInvoiceNo: invoice.externalId || invoice.invoiceNo || invoice.id || payment.invoiceId || payment.id,
-          customerName: customer.name || invoice.customerName || '',
-          username: customer.username || invoice.username || '',
-          packageName: invoice.packageName || customer.packageName || '',
-          amount: Number(payment.amount || invoice.amount || 0),
-          method: payment.method || invoice.paymentMethod || 'Tunai',
-          paymentCategory: paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod),
-          paidAt: paymentReportTimestamp(payment, invoice),
-          submittedAt: paymentReportTimestamp(payment, invoice),
-          submittedRaw: paymentReportTimestamp(payment, invoice),
-          item: invoice.packageName || customer.packageName || 'Tagihan internet',
-          description: payment.notes || customer.name || invoice.customerName || '',
-          type: 'Pembayaran',
-          admin: payment.admin || payment.createdBy || payment.createdByName || 'Sistem',
-          notes: payment.notes || invoice.notes || '',
-          nasId: site.id || customer.nasId || invoice.nasId || '',
-          nasName: site.name || customer.nasName || invoice.siteName || '',
-          siteId: site.id || '',
-          siteName: site.name || invoice.siteName || ''
-        };
-      })
-      .filter((transaction) => timestampLocalDateKey(transaction.paidAt).slice(0, 7) === period);
-    const voucherOrders = filterVoucherReportOrders(data, await paidVoucherOrdersForReport(data, period), {}, authContext.user);
-    const voucherTransactions = voucherOrders.map((order) => ({
-      id: `voucher-${order.id || order.reference}`,
-      source: 'voucher',
-      sourceLabel: 'Voucher',
-      invoiceNo: order.reference || '',
-      legacyInvoiceNo: order.reference || '',
-      customerName: order.buyerName || 'Pembeli Voucher',
-      username: Array.isArray(order.vouchers) ? order.vouchers.map((voucher) => voucher.username).filter(Boolean).join(', ') : '',
-      packageName: order.packageLabel || order.profileName || 'Voucher Hotspot',
-      amount: Number(order.amount || 0),
-      method: order.paymentMethod || 'QRIS',
-      paymentCategory: order.methodGroup || paymentCategoryForRecord(order, order.paymentMethod || order.method),
-      paidAt: order.paidAt || order.updatedAt || order.createdAt || '',
-      submittedAt: order.paidAt || order.updatedAt || order.createdAt || '',
-      submittedRaw: order.paidAt || order.updatedAt || order.createdAt || '',
-      item: order.packageLabel || order.profileName || 'Voucher Hotspot',
-      description: `${order.sourceLabel || 'Voucher'} ${order.quantity || 1} voucher${order.nasName ? ` - ${order.nasName}` : ''}`,
-      type: 'Voucher',
-      admin: order.resellerName || order.createdByName || order.paidByName || 'Sistem',
-      notes: order.reference || '',
-      paymentGatewayReference: order.reference || '',
-      nasId: order.nasId || '',
-      nasName: order.nasName || '',
-      siteId: order.nasId || '',
-      siteName: order.nasName || ''
-      }));
-    const voucherReferences = new Set(voucherTransactions.map((transaction) => String(transaction.invoiceNo || '').trim()).filter(Boolean));
-    const billingReferences = new Set(billingTransactions.flatMap((transaction) => [
-      transaction.invoiceNo,
-      transaction.legacyInvoiceNo
-    ]).map((value) => String(value || '').trim()).filter(Boolean));
-    const paymentGatewayTransactions = (paymentGatewayReportPayload(data, { kind: 'all' }).transactions || [])
-      .filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()))
-      .filter((row) => timestampLocalDateKey(row.paidAt || row.paymentAt || row.date || row.createdAt).slice(0, 7) === period)
-      .filter((row) => {
-        const kind = paymentGatewayTransactionKind(row);
-        const references = [
-          row.reference,
-          row.invoiceNo,
-          row.externalId
-        ].map((value) => String(value || '').trim()).filter(Boolean);
-        if (kind === 'hotspot-voucher' && references.some((reference) => voucherReferences.has(reference))) return false;
-        if (kind === 'monthly-package' && references.some((reference) => billingReferences.has(reference))) return false;
-        return true;
-      })
-      .map((row) => ({
-        id: `pg-${row.id || row.reference}`,
-        source: 'payment-gateway',
-        sourceLabel: 'Online',
-        invoiceNo: row.reference || row.invoiceNo || row.id || '',
-        legacyInvoiceNo: row.reference || row.invoiceNo || row.id || '',
-        customerName: row.customerName || row.description || '',
-        username: row.username || '',
-        packageName: paymentGatewayTransactionKindLabel(paymentGatewayTransactionKind(row)),
-        amount: Number(row.amount || 0),
-        method: row.method || row.paymentMethod || row.provider || 'Transfer',
-        paymentCategory: 'online',
-        paidAt: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
-        submittedAt: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
-        submittedRaw: row.paidAt || row.paymentAt || row.date || row.createdAt || '',
-        item: row.description || paymentGatewayTransactionKindLabel(paymentGatewayTransactionKind(row)),
-        description: row.description || row.customerName || '',
-        type: 'Online',
-        admin: row.paidByName || row.provider || 'Payment Gateway',
-        notes: row.externalId || '',
-        paymentGatewayReference: row.reference || row.invoiceNo || '',
-        nasId: row.nasId || '',
-        nasName: row.nasName || row.siteName || '',
-        siteId: row.nasId || row.siteId || '',
-        siteName: row.nasName || row.siteName || ''
-      }));
-    const externalTransactions = (data.externalIncomes || [])
-      .filter((income) => String(income.date || income.createdAt || '').slice(0, 7) === period)
-      .filter((income) => !['cancelled', 'canceled', 'void', 'batal'].includes(String(income.status || '').trim().toLowerCase()))
-      .map((income) => {
-        const items = Array.isArray(income.items) ? income.items : [];
-        const itemNames = items.map((item) => item.itemName || item.category || '').filter(Boolean).join(', ');
-        return {
-          id: `external-${income.id || income.receiptNo || income.date}`,
-          source: 'external',
-          sourceLabel: 'Pemasukan External',
-          invoiceNo: income.receiptNo || income.referenceNo || income.id || '',
-          legacyInvoiceNo: income.receiptNo || income.referenceNo || income.id || '',
-          customerName: income.payerName || '',
-          username: '',
-          packageName: income.category || itemNames || 'Pemasukan External',
-          amount: Number(income.amount || 0),
-          method: income.paymentMethod || income.method || 'Tunai',
-          paymentCategory: paymentCategoryForRecord(income, income.paymentMethod || income.method || 'Tunai'),
-          paidAt: income.date || income.createdAt || '',
-          submittedAt: income.date || income.createdAt || '',
-          submittedRaw: income.date || income.createdAt || '',
-          item: itemNames || income.itemName || income.category || 'Pemasukan External',
-          description: income.description || income.payerName || income.receiptNo || '',
-          type: 'Pemasukan',
-          admin: income.createdByName || income.updatedByName || income.createdBy || income.updatedBy || 'Sistem',
-          notes: income.description || '',
-          nasId: income.nasId || income.siteId || '',
-          nasName: income.nasName || income.siteName || '',
-          siteId: income.siteId || income.nasId || '',
-          siteName: income.siteName || income.nasName || ''
-        };
-      });
-    let transactions = billingTransactions.concat(voucherTransactions, paymentGatewayTransactions, externalTransactions);
+    const base = await cachedMonthlyTransactionsBasePayload(data, period, authContext.user, {
+      force: truthyQuery(url.searchParams.get('refresh'))
+    });
+    let transactions = Array.isArray(base.transactions) ? base.transactions : [];
     if (selectedNas && selectedNas.toLowerCase() !== 'all') {
       transactions = transactions.filter((transaction) => reportMatchesNas(transaction, selectedNas));
     }
@@ -16808,26 +18055,11 @@ async function handleApi(req, res, url) {
         return methodFilter === group || String(transaction.method || '').toLowerCase().includes(methodFilter);
       });
     }
-    transactions = filterSearch(transactions, search, ['invoiceNo', 'customerName', 'username', 'packageName', 'method', 'paymentCategory', 'admin', 'notes', 'sourceLabel', 'description', 'paymentGatewayReference']);
-    transactions.sort(sortReportTransactionsNewestFirst);
-    const summary = {
-      totalCount: transactions.length,
-      totalAmount: transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      billingCount: transactions.filter((transaction) => transaction.source === 'billing').length,
-      billingAmount: transactions.filter((transaction) => transaction.source === 'billing').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      voucherCount: transactions.filter((transaction) => transaction.source === 'voucher').length,
-      voucherAmount: transactions.filter((transaction) => transaction.source === 'voucher').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      externalIncomeCount: transactions.filter((transaction) => transaction.source === 'external').length,
-      externalIncomeAmount: transactions.filter((transaction) => transaction.source === 'external').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      cashCount: transactions.filter((transaction) => transaction.paymentCategory === 'cash').length,
-      cashAmount: transactions.filter((transaction) => transaction.paymentCategory === 'cash').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      transferCount: transactions.filter((transaction) => transaction.paymentCategory === 'transfer').length,
-      transferAmount: transactions.filter((transaction) => transaction.paymentCategory === 'transfer').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0),
-      onlineCount: transactions.filter((transaction) => transaction.paymentCategory === 'online').length,
-      onlineAmount: transactions.filter((transaction) => transaction.paymentCategory === 'online').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0)
-    };
+    transactions = filterMonthlyTransactionsSearch(transactions, search);
+    const summary = monthlyTransactionsSummary(transactions);
     const pagination = paginationPayload(page, limit, transactions.length);
     const offset = (pagination.page - 1) * limit;
+    const pageTransactions = transactions.slice(offset, offset + limit).map(({ searchText, ...transaction }) => transaction);
     sendJson(res, 200, {
       ok: true,
       period,
@@ -16835,8 +18067,8 @@ async function handleApi(req, res, url) {
       nas: selectedNas,
       search,
       summary,
-      nasOptions: reportNasOptions(data, transactions),
-      transactions: transactions.slice(offset, offset + limit),
+      nasOptions: Array.isArray(base.nasOptions) ? base.nasOptions : reportNasOptions(data, transactions),
+      transactions: pageTransactions,
       pagination,
       checkedAt: new Date().toISOString()
     });
@@ -16852,81 +18084,10 @@ async function handleApi(req, res, url) {
     }
     const data = authContext.data;
     const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
-    const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
-    const payments = activePayments(data)
-      .filter((payment) => paymentPeriodKey(payment, invoices.get(payment.invoiceId) || {}) === period)
-      .map((payment) => {
-        const invoice = invoices.get(payment.invoiceId) || {};
-        return {
-          type: 'billing',
-          category: 'Tagihan Internet',
-          description: invoice.customerName || invoice.username || payment.notes || 'Pembayaran tagihan',
-          amount: Number(payment.amount || invoice.amount || 0),
-          paymentCategory: paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod),
-          date: paymentReportTimestamp(payment, invoice)
-        };
-      });
-    const externalIncomes = (data.externalIncomes || [])
-      .filter((income) => String(income.date || income.createdAt || '').slice(0, 7) === period && String(income.status || 'active') !== 'cancelled')
-      .map((income) => ({
-        type: 'external',
-        category: income.category || 'Pemasukan Lain',
-        description: income.payerName || income.itemName || income.description || income.receiptNo || '',
-        amount: Number(income.amount || 0),
-        paymentCategory: paymentCategoryForRecord(income, income.paymentMethod || income.method),
-        date: income.date || income.createdAt || ''
-      }));
-    const expenses = (data.expenses || [])
-      .filter((expense) => String(expense.date || expense.createdAt || '').slice(0, 7) === period)
-      .map((expense) => ({
-        category: expense.category || 'Pengeluaran',
-        description: expense.payee || expense.vendor || expense.itemName || expense.description || expense.noteNo || '',
-        amount: Number(expense.amount || 0),
-        date: expense.date || expense.createdAt || ''
-      }));
-    const incomeRows = payments.concat(externalIncomes);
-    const groupRows = (rows) => {
-      const groups = new Map();
-      rows.forEach((row) => {
-        const key = row.category || '-';
-        const current = groups.get(key) || { category: key, count: 0, amount: 0 };
-        current.count += 1;
-        current.amount += Number(row.amount || 0);
-        groups.set(key, current);
-      });
-      return [...groups.values()].sort((a, b) => b.amount - a.amount || a.category.localeCompare(b.category));
-    };
-    const incomeTotal = incomeRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-    const expenseTotal = expenses.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-    const paymentSummary = (category) => ({
-      count: incomeRows.filter((row) => row.paymentCategory === category).length,
-      amount: incomeRows
-        .filter((row) => row.paymentCategory === category)
-        .reduce((sum, row) => sum + Number(row.amount || 0), 0)
+    const payload = await cachedFinanceRecapPayload(data, period, {
+      force: truthyQuery(url.searchParams.get('refresh'))
     });
-    const cash = paymentSummary('cash');
-    const transfer = paymentSummary('transfer');
-    const online = paymentSummary('online');
-    sendJson(res, 200, {
-      ok: true,
-      period,
-      summary: {
-        incomeCount: incomeRows.length,
-        incomeTotal,
-        expenseCount: expenses.length,
-        expenseTotal,
-        profit: incomeTotal - expenseTotal,
-        cashCount: cash.count,
-        cashAmount: cash.amount,
-        transferCount: transfer.count,
-        transferAmount: transfer.amount,
-        onlineCount: online.count,
-        onlineAmount: online.amount
-      },
-      incomeGroups: groupRows(incomeRows),
-      expenseGroups: groupRows(expenses),
-      checkedAt: new Date().toISOString()
-    });
+    sendJson(res, 200, payload);
     return;
   }
 
@@ -16938,15 +18099,10 @@ async function handleApi(req, res, url) {
     const type = movementTypeFilter(url.searchParams.get('type'));
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    const itemDirectory = inventoryDirectory(data.inventoryItems || []);
-    let movements = (data.stockMovements || [])
-      .map((movement) => publicStockMovement(movement, itemDirectory))
-      .filter((movement) => !period || movement.date.slice(0, 7) === period);
-    if (type !== 'all') {
-      movements = movements.filter((movement) => movement.type === type);
-    }
-    movements = filterSearch(movements, search, ['itemName', 'type', 'reference', 'updatedByName', 'updatedByUsername', 'updatedByRole', 'notes', 'date']);
-    movements = sortByDateDesc(movements, 'createdAt');
+    const base = await cachedInventoryStockBasePayload(data, period, type, {
+      force: truthyQuery(url.searchParams.get('refresh'))
+    });
+    const movements = filterPreparedSearch(Array.isArray(base.movements) ? base.movements : [], search);
     const summary = stockMovementSummary(movements);
     const pagination = paginationPayload(page, limit, movements.length);
     const offset = (pagination.page - 1) * limit;
@@ -16954,9 +18110,10 @@ async function handleApi(req, res, url) {
       period,
       type,
       search,
-      movements: movements.slice(offset, offset + limit),
+      movements: movements.slice(offset, offset + limit).map(stripSearchText),
       summary,
-      pagination
+      pagination,
+      checkedAt: base.checkedAt || new Date().toISOString()
     });
     return;
   }
@@ -17120,39 +18277,48 @@ async function handleApi(req, res, url) {
     const nas = String(url.searchParams.get('nas') || 'all').trim();
     const refresh = url.searchParams.get('refresh') === '1';
     try {
-      const payload = await genieAcs.listDevices(authContext.data.settings || {}, {
-        page: 1,
-        limit: 'all',
-        search,
-        status,
-        redaman,
-        refresh
-      });
-      const enrichedRows = await enrichGenieAcsRowsWithLocalData(authContext.data, payload.rows || [], currentPeriod());
-      const filteredRows = genieAcs.filterRowsByNas(enrichedRows, nas);
-      const pagination = paginationPayload(page, limit, filteredRows.length);
-      const offset = limit === Number.MAX_SAFE_INTEGER ? 0 : (pagination.page - 1) * limit;
-      const rows = limit === Number.MAX_SAFE_INTEGER
-        ? filteredRows
-        : filteredRows.slice(offset, offset + limit);
-      const nasOptions = freeradius.radiusNasEntries(authContext.data, { includeUnconfigured: true })
-        .filter((item) => item.active !== false)
-        .map((item) => ({
-          value: item.id,
-          label: item.name || item.address || item.id
-        }))
-        .sort((left, right) => left.label.localeCompare(right.label, 'id'));
-      sendJson(res, 200, {
-        ...payload,
-        rows,
-        nasOptions,
-        summary: {
-          ...(payload.summary || {}),
-          filtered: filteredRows.length
-        },
-        pagination,
-        settings: genieAcs.normalizeSettings(authContext.data.settings || {})
-      });
+      const responsePayload = await runtimeSearchCachedPayload(
+        authContext,
+        'genieacs-devices',
+        url,
+        ['customers', 'radiusUsers', 'monitoringTargets'],
+        async () => {
+          const payload = await genieAcs.listDevices(authContext.data.settings || {}, {
+            page: 1,
+            limit: 'all',
+            search,
+            status,
+            redaman,
+            refresh
+          });
+          const enrichedRows = await enrichGenieAcsRowsWithLocalData(authContext.data, payload.rows || [], currentPeriod());
+          const filteredRows = genieAcs.filterRowsByNas(enrichedRows, nas);
+          const pagination = paginationPayload(page, limit, filteredRows.length);
+          const offset = limit === Number.MAX_SAFE_INTEGER ? 0 : (pagination.page - 1) * limit;
+          const rows = limit === Number.MAX_SAFE_INTEGER
+            ? filteredRows
+            : filteredRows.slice(offset, offset + limit);
+          const nasOptions = freeradius.radiusNasEntries(authContext.data, { includeUnconfigured: true })
+            .filter((item) => item.active !== false)
+            .map((item) => ({
+              value: item.id,
+              label: item.name || item.address || item.id
+            }))
+            .sort((left, right) => left.label.localeCompare(right.label, 'id'));
+          return {
+            ...payload,
+            rows,
+            nasOptions,
+            summary: {
+              ...(payload.summary || {}),
+              filtered: filteredRows.length
+            },
+            pagination,
+            settings: genieAcs.normalizeSettings(authContext.data.settings || {})
+          };
+        }
+      );
+      sendJson(res, 200, responsePayload);
     } catch (error) {
       sendJson(res, 200, {
         ok: false,
@@ -17386,18 +18552,27 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const data = authContext.data;
     const { period, search } = normalizeListQuery(url);
-    let expenses = data.expenses
-      .filter((expense) => String(expense.date || '').startsWith(period))
-      .map((expense) => ({
-        ...expense,
-        itemSearch: (expense.items || []).map((item) => [
-          item.category,
-          item.itemName,
-          item.description
-        ].filter(Boolean).join(' ')).join(' ')
-      }));
-    expenses = filterSearch(expenses, search, ['category', 'payee', 'vendor', 'noteNo', 'itemName', 'description', 'paymentMethod', 'itemSearch']);
-    sendJson(res, 200, { expenses: sortByDateDesc(expenses, 'date') });
+    const payload = await runtimeSearchCachedPayload(
+      authContext,
+      'expenses',
+      url,
+      ['expenses'],
+      async () => {
+        let expenses = data.expenses
+          .filter((expense) => String(expense.date || '').startsWith(period))
+          .map((expense) => ({
+            ...expense,
+            itemSearch: (expense.items || []).map((item) => [
+              item.category,
+              item.itemName,
+              item.description
+            ].filter(Boolean).join(' ')).join(' ')
+          }));
+        expenses = filterSearch(expenses, search, ['category', 'payee', 'vendor', 'noteNo', 'itemName', 'description', 'paymentMethod', 'itemSearch']);
+        return { expenses: sortByDateDesc(expenses, 'date') };
+      }
+    );
+    sendJson(res, 200, payload);
     return;
   }
 
@@ -17406,18 +18581,27 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const data = authContext.data;
     const { period, search } = normalizeListQuery(url);
-    let externalIncomes = (data.externalIncomes || [])
-      .filter((income) => String(income.date || '').startsWith(period))
-      .map((income) => ({
-        ...income,
-        itemSearch: (income.items || []).map((item) => [
-          item.category,
-          item.itemName,
-          item.description
-        ].filter(Boolean).join(' ')).join(' ')
-      }));
-    externalIncomes = filterSearch(externalIncomes, search, ['receiptNo', 'category', 'payerName', 'itemName', 'description', 'paymentMethod', 'itemSearch']);
-    sendJson(res, 200, { externalIncomes: sortByDateDesc(externalIncomes, 'date') });
+    const payload = await runtimeSearchCachedPayload(
+      authContext,
+      'external-incomes',
+      url,
+      ['externalIncomes'],
+      async () => {
+        let externalIncomes = (data.externalIncomes || [])
+          .filter((income) => String(income.date || '').startsWith(period))
+          .map((income) => ({
+            ...income,
+            itemSearch: (income.items || []).map((item) => [
+              item.category,
+              item.itemName,
+              item.description
+            ].filter(Boolean).join(' ')).join(' ')
+          }));
+        externalIncomes = filterSearch(externalIncomes, search, ['receiptNo', 'category', 'payerName', 'itemName', 'description', 'paymentMethod', 'itemSearch']);
+        return { externalIncomes: sortByDateDesc(externalIncomes, 'date') };
+      }
+    );
+    sendJson(res, 200, payload);
     return;
   }
 
@@ -17531,30 +18715,39 @@ async function handleApi(req, res, url) {
     const data = authContext.data;
     const { status, search } = normalizeListQuery(url);
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    let items = [...(data.inventoryItems || [])];
-    if (status !== 'all') {
-      items = items.filter((item) => item.status === status);
-    }
-    items = filterSearch(items, search, ['sku', 'name', 'category', 'location', 'vendor', 'notes']);
-    items.sort((a, b) => {
-      const statusOrder = { active: 0, maintenance: 1, damaged: 2, lost: 3, inactive: 4 };
-      return (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
-        || String(a.category || '').localeCompare(String(b.category || ''))
-        || String(a.name || '').localeCompare(String(b.name || ''));
-    });
-    const pagination = paginationPayload(page, limit, items.length);
-    const offset = (pagination.page - 1) * limit;
-    const itemDirectory = inventoryDirectory(data.inventoryItems || []);
-    const movements = sortByDateDesc(
-      (data.stockMovements || []).map((movement) => publicStockMovement(movement, itemDirectory)),
-      'createdAt'
-    ).slice(0, 12);
-    sendJson(res, 200, {
-      items: items.slice(offset, offset + limit),
-      movements,
-      pagination,
-      summary: operations.inventorySummary(data.inventoryItems || [])
-    });
+    const payload = await runtimeSearchCachedPayload(
+      authContext,
+      'inventory',
+      url,
+      ['inventoryItems', 'stockMovements'],
+      async () => {
+        let items = [...(data.inventoryItems || [])];
+        if (status !== 'all') {
+          items = items.filter((item) => item.status === status);
+        }
+        items = filterSearch(items, search, ['sku', 'name', 'category', 'location', 'vendor', 'notes']);
+        items.sort((a, b) => {
+          const statusOrder = { active: 0, maintenance: 1, damaged: 2, lost: 3, inactive: 4 };
+          return (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
+            || String(a.category || '').localeCompare(String(b.category || ''))
+            || String(a.name || '').localeCompare(String(b.name || ''));
+        });
+        const pagination = paginationPayload(page, limit, items.length);
+        const offset = (pagination.page - 1) * limit;
+        const itemDirectory = inventoryDirectory(data.inventoryItems || []);
+        const movements = sortByDateDesc(
+          (data.stockMovements || []).map((movement) => publicStockMovement(movement, itemDirectory)),
+          'createdAt'
+        ).slice(0, 12);
+        return {
+          items: items.slice(offset, offset + limit),
+          movements,
+          pagination,
+          summary: operations.inventorySummary(data.inventoryItems || [])
+        };
+      }
+    );
+    sendJson(res, 200, payload);
     return;
   }
 
@@ -17636,21 +18829,30 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const data = authContext.data;
     const { status, search } = normalizeListQuery(url);
-    let assets = [...(data.networkAssets || [])];
-    if (status !== 'all') {
-      assets = assets.filter((asset) => asset.status === status);
-    }
-    assets = filterSearch(assets, search, ['name', 'type', 'site', 'location', 'brand', 'model', 'serialNumber', 'owner', 'notes']);
-    assets.sort((a, b) => {
-      const statusOrder = { active: 0, maintenance: 1, inactive: 2 };
-      return (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
-        || String(a.site || '').localeCompare(String(b.site || ''))
-        || String(a.name || '').localeCompare(String(b.name || ''));
-    });
-    sendJson(res, 200, {
-      assets,
-      summary: operations.networkSummary(data.networkAssets || [])
-    });
+    const payload = await runtimeSearchCachedPayload(
+      authContext,
+      'network-assets',
+      url,
+      ['networkAssets'],
+      async () => {
+        let assets = [...(data.networkAssets || [])];
+        if (status !== 'all') {
+          assets = assets.filter((asset) => asset.status === status);
+        }
+        assets = filterSearch(assets, search, ['name', 'type', 'site', 'location', 'brand', 'model', 'serialNumber', 'owner', 'notes']);
+        assets.sort((a, b) => {
+          const statusOrder = { active: 0, maintenance: 1, inactive: 2 };
+          return (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
+            || String(a.site || '').localeCompare(String(b.site || ''))
+            || String(a.name || '').localeCompare(String(b.name || ''));
+        });
+        return {
+          assets,
+          summary: operations.networkSummary(data.networkAssets || [])
+        };
+      }
+    );
+    sendJson(res, 200, payload);
     return;
   }
 
@@ -17808,7 +19010,11 @@ async function handleApi(req, res, url) {
     const forceRefresh = truthyQuery(url.searchParams.get('refresh'));
     try {
       const [snmpPayload, sessionPayload] = await Promise.all([
-        operations.mikrotikCustomerSummary(authContext.data.monitoringTargets || [], { forceRefresh }),
+        operations.mikrotikCustomerSummary(authContext.data.monitoringTargets || [], {
+          forceRefresh,
+          allowStale: !forceRefresh,
+          refreshInBackground: !forceRefresh
+        }),
         freeradiusSessions.activeSessions({
           limit: 5000,
           preferCache: !forceRefresh,
@@ -17868,17 +19074,23 @@ async function handleApi(req, res, url) {
       return;
     }
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    const result = await radiusPayloadLocal(authContext.data, 'ppp-dhcp', {
-      tab: String(url.searchParams.get('tab') || 'users').trim(),
-      page,
-      limit,
-      search: String(url.searchParams.get('search') || '').trim(),
-      nas: String(url.searchParams.get('nas') || '').trim(),
-      status: String(url.searchParams.get('status') || '').trim(),
-      profile: String(url.searchParams.get('profile') || '').trim(),
-      internet: String(url.searchParams.get('internet') || '').trim(),
-      viewer: authContext.user
-    });
+    const result = await runtimeSearchCachedPayload(
+      authContext,
+      'radius-ppp-dhcp',
+      url,
+      ['radiusUsers', 'customers', 'monitoringTargets'],
+      () => radiusPayloadLocal(authContext.data, 'ppp-dhcp', {
+        tab: String(url.searchParams.get('tab') || 'users').trim(),
+        page,
+        limit,
+        search: String(url.searchParams.get('search') || '').trim(),
+        nas: String(url.searchParams.get('nas') || '').trim(),
+        status: String(url.searchParams.get('status') || '').trim(),
+        profile: String(url.searchParams.get('profile') || '').trim(),
+        internet: String(url.searchParams.get('internet') || '').trim(),
+        viewer: authContext.user
+      })
+    );
     sendJson(res, 200, result);
     return;
   }
@@ -18203,18 +19415,33 @@ async function handleApi(req, res, url) {
       return;
     }
     const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    const lockedNas = resolveUserLockedNas(authContext.data, authContext.user);
-    const result = await radiusPayloadLocal(authContext.data, 'hotspot', {
-      tab,
-      page,
-      limit,
-      search: String(url.searchParams.get('search') || '').trim(),
-      nas: lockedNas?.id || String(url.searchParams.get('nas') || '').trim(),
-      status: String(url.searchParams.get('status') || '').trim(),
-      profile: String(url.searchParams.get('profile') || '').trim(),
-      internet: String(url.searchParams.get('internet') || '').trim(),
-      viewer: authContext.user
-    });
+    const lockedNas = resolveUserLockedNasList(authContext.data, authContext.user).filter((nas) => nas && nas.all !== true);
+    const requestedNas = String(url.searchParams.get('nas') || '').trim();
+    let resellerNasFilter = requestedNas;
+    if (String(authContext.user.role || '') === 'reseller_voucher') {
+      if (!resellerNasFilter && lockedNas.length === 1) resellerNasFilter = lockedNas[0].id;
+      if (resellerNasFilter) {
+        const resolved = radiusFindNas(authContext.data, resellerNasFilter);
+        if (!resolved || !lockedNas.some((nas) => nas.id === resolved.id)) resellerNasFilter = '';
+      }
+    }
+    const result = await runtimeSearchCachedPayload(
+      authContext,
+      'radius-hotspot',
+      url,
+      ['radiusUsers', 'customers', 'monitoringTargets', 'hotspotVoucherOrders', 'hotspotVoucherSalesHistory', 'paymentGatewayTransactions'],
+      () => radiusPayloadLocal(authContext.data, 'hotspot', {
+        tab,
+        page,
+        limit,
+        search: String(url.searchParams.get('search') || '').trim(),
+        nas: String(authContext.user.role || '') === 'reseller_voucher' ? resellerNasFilter : requestedNas,
+        status: String(url.searchParams.get('status') || '').trim(),
+        profile: String(url.searchParams.get('profile') || '').trim(),
+        internet: String(url.searchParams.get('internet') || '').trim(),
+        viewer: authContext.user
+      })
+    );
     sendJson(res, 200, {
       ...result,
       revision: hotspotVoucherRevision(authContext.data, authContext.user)
@@ -18682,26 +19909,44 @@ async function handleApi(req, res, url) {
         location: target.location
       }));
     if (standaloneMode(authContext.data)) {
-      const local = localBillingMonitorPayload(authContext.data, {
-        status,
-        customerStatus,
-        site,
-        period,
-        scope,
-        search
+      const base = await cachedBillingMonitorBasePayload(authContext.data, period, scope, {
+        force: truthyQuery(url.searchParams.get('refresh'))
       });
-      const pagination = paginationPayload(page, limit, local.rows.length);
+      let rows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.rows) ? base.rows : [], authContext.user);
+      const periodRows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.periodRows) ? base.periodRows : [], authContext.user);
+      const summaryRows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.summaryRows) ? base.summaryRows : [], authContext.user);
+      if (status !== 'all') {
+        rows = rows.filter((invoice) => {
+          if (status === 'collectible') return ['unpaid', 'pending', 'overdue'].includes(invoice.status);
+          return invoice.status === status || (status === 'unpaid' && invoice.status === 'pending');
+        });
+      }
+      if (customerStatus !== 'all') {
+        rows = rows.filter((invoice) => invoice.customerStatus === customerStatus);
+      }
+      if (!userIsCollector(authContext.user) && site !== 'all') {
+        rows = rows.filter((invoice) => invoice.siteId === site || invoice.siteName === site);
+      }
+      rows = filterPreparedSearch(rows, search);
+      const pagination = paginationPayload(page, limit, rows.length);
       const offset = (pagination.page - 1) * limit;
+      const summary = billingMonitorSummaryFromRows(
+        periodRows,
+        summaryRows,
+        rows,
+        base.scope || scope
+      );
       sendJson(res, 200, {
         ok: true,
         source: 'local',
         revision: localBillingRevision(authContext.data, period, { scope }),
         paymentGatewayEnabled: authContext.data.settings?.paymentGateway?.enabled === true,
-        sites: local.sites.length ? local.sites : billingSites,
-        summary: local.summary,
-        invoices: local.rows.slice(offset, offset + limit),
+        sites: billingMonitorSitesForUser(authContext.data, Array.isArray(base.sites) && base.sites.length ? base.sites : billingSites, authContext.user),
+        collector: billingMonitorCollectorScopePayload(authContext.data, authContext.user),
+        summary: billingMonitorSummaryForUser(summary, authContext.user),
+        invoices: rows.slice(offset, offset + limit).map(stripSearchText),
         pagination,
-        checkedAt: new Date().toISOString()
+        checkedAt: base.checkedAt || new Date().toISOString()
       });
       return;
     }
@@ -18766,6 +20011,10 @@ async function handleApi(req, res, url) {
         || displayBillingInvoiceNo(item.externalId || item.invoiceNo || item.id) === invoiceId);
       if (!invoice) {
         badRequest(res, 'Invoice tidak ditemukan untuk reminder');
+        return;
+      }
+      if (!invoiceMatchesBillingMonitorScope(authContext.data, invoice, authContext.user)) {
+        forbidden(res);
         return;
       }
       const customer = (authContext.data.customers || []).find((item) => item.id === invoice.customerId) || {};
@@ -18856,6 +20105,10 @@ async function handleApi(req, res, url) {
       });
       if (!invoice) {
         badRequest(res, 'Invoice tidak ditemukan');
+        return;
+      }
+      if (!invoiceMatchesBillingMonitorScope(authContext.data, invoice, authContext.user)) {
+        forbidden(res);
         return;
       }
       const publicInvoice = publicPaymentGatewayInvoicePayload(authContext.data, invoice);
@@ -18954,6 +20207,9 @@ async function handleApi(req, res, url) {
           item.id === customerId || (invoice?.customerId && item.id === invoice.customerId)
         ));
         if (!customer) throw new Error('Member pelanggan tidak ditemukan');
+        if (invoice && !invoiceMatchesBillingMonitorScope(data, invoice, authContext.user)) {
+          throw new Error('Tagihan di luar target collector');
+        }
         const user = radiusUserForCustomer(data, customer);
         if (!user) throw new Error('User PPP-DHCP pelanggan tidak ditemukan');
         if (radiusStatusForCustomer(user) !== 'isolated') {
@@ -19040,6 +20296,9 @@ async function handleApi(req, res, url) {
         });
         if (!invoice) {
           throw new Error('Invoice tidak ditemukan');
+        }
+        if (!invoiceMatchesBillingMonitorScope(data, invoice, authContext.user)) {
+          throw new Error('Tagihan di luar target collector');
         }
         if (action === 'pay') {
           const wasPaid = invoiceRuntimeStatus(invoice) === 'paid';
@@ -19216,7 +20475,7 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     if (standaloneMode(authContext.data)) {
       const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-      const { members, creators, nasOptions, summary } = localMonitoringMemberRows(authContext.data, {
+      const query = {
         status: url.searchParams.get('status') || 'all',
         paymentType: url.searchParams.get('paymentType') || 'all',
         billingPeriod: url.searchParams.get('billingPeriod') || 'all',
@@ -19226,9 +20485,12 @@ async function handleApi(req, res, url) {
         to: url.searchParams.get('to') || '',
         creator: url.searchParams.get('creator') || 'all',
         nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all',
-        search: url.searchParams.get('search') || '',
         sort: url.searchParams.get('sort') || 'created_desc'
+      };
+      const base = await cachedMonitoringMemberBasePayload(authContext.data, authContext.user, query, {
+        force: truthyQuery(url.searchParams.get('refresh'))
       });
+      const members = filterPreparedSearch(Array.isArray(base.members) ? base.members : [], url.searchParams.get('search') || '');
       const totalRows = members.length;
       const totalPages = Math.max(1, Math.ceil(totalRows / limit));
       const currentPage = Math.min(page, totalPages);
@@ -19236,10 +20498,10 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, {
         ok: true,
         source: 'local',
-        members: members.slice(offset, offset + limit),
-        creators,
-        nasOptions,
-        summary,
+        members: members.slice(offset, offset + limit).map(stripSearchText),
+        creators: base.creators || [],
+        nasOptions: base.nasOptions || [],
+        summary: monitoringMemberSummaryFromRows(members),
         pagination: {
           page: currentPage,
           limit,
@@ -19248,7 +20510,7 @@ async function handleApi(req, res, url) {
           hasPrev: currentPage > 1,
           hasNext: currentPage < totalPages
         },
-        checkedAt: new Date().toISOString()
+        checkedAt: base.checkedAt || new Date().toISOString()
       });
       return;
     }
@@ -19665,17 +20927,26 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'billing-monitor:read');
     if (!authContext) return;
     if (standaloneMode(authContext.data)) {
-      const result = localManualInvoiceMembers(authContext.data, {
-        page: url.searchParams.get('page') || '1',
-        limit: url.searchParams.get('limit') || '5',
-        search: url.searchParams.get('search') || ''
-      });
-      sendJson(res, 200, {
-        ok: true,
-        source: 'standalone',
-        members: result.members,
-        pagination: result.pagination
-      });
+      const payload = await runtimeSearchCachedPayload(
+        authContext,
+        'manual-invoice-members',
+        url,
+        ['customers', 'radiusUsers', 'invoices', 'payments'],
+        async () => {
+          const result = localManualInvoiceMembers(authContext.data, {
+            page: url.searchParams.get('page') || '1',
+            limit: url.searchParams.get('limit') || '5',
+            search: url.searchParams.get('search') || ''
+          });
+          return {
+            ok: true,
+            source: 'standalone',
+            members: result.members,
+            pagination: result.pagination
+          };
+        }
+      );
+      sendJson(res, 200, payload);
       return;
     }
     if (!auth.hasPermission(authContext.user, 'radboox:sync')) {
@@ -20411,7 +21682,10 @@ async function handleApi(req, res, url) {
       count: Number(currentSettings.lastHistorySyncCount || 0),
       error: currentSettings.lastHistorySyncError || ''
     };
-    const report = paymentGatewayReportPayload(reportData, {
+    const base = await cachedPaymentGatewayReportBasePayload(reportData, {
+      force: truthyQuery(url.searchParams.get('refresh'))
+    });
+    const report = paymentGatewayReportRowsFromBase(base.rows || [], base.balanceSummary || {}, {
       from: url.searchParams.get('from') || '',
       to: url.searchParams.get('to') || '',
       method: url.searchParams.get('method') || 'all',
@@ -20431,7 +21705,8 @@ async function handleApi(req, res, url) {
         { value: 'ipaymu', label: 'iPaymu' },
         { value: 'custom', label: 'Custom' }
       ],
-      ...report
+      ...report,
+      checkedAt: base.checkedAt || new Date().toISOString()
     });
     return;
   }
@@ -20986,6 +22261,7 @@ module.exports = {
   __test: {
     addDaysIso,
     applyHotspotVoucherExpirations,
+    applyResellerVoucherNasLock,
     autoTerminateOverdueCustomers,
     changelogSummaryFromText,
     commitLogSummaryFromText,
@@ -21063,6 +22339,7 @@ module.exports = {
     radiusPayloadLocal,
     radiusTemplateRowsLocal,
     resellerHotspotVoucherRowVisible,
+    requireResellerHotspotProfileAccess,
     sanitizeBillingSettings,
     sanitizeHotspotVoucherOnlineSettings,
     stampHotspotVoucherValidityFromFirstOnline,
@@ -21079,6 +22356,7 @@ module.exports = {
     tripayHistoryRowsFromDate,
     tripayTimestampIso,
     prunePaymentGatewayHistoryBefore,
+    prepareManagedUserPayload,
     tripayTransactionHistory,
     applyTripayTransactionHistory,
     syncTripayTransactionHistory,

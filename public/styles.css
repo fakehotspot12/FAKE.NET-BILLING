@@ -850,6 +850,139 @@ button.user-chip:hover {
   min-width: 126px;
 }
 
+.user-nas-target {
+  min-width: 150px;
+  display: grid;
+  gap: 5px;
+}
+
+.user-nas-target > span:first-child {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.nas-target-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.user-nas-target-field {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.nas-target-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.nas-target-picker-head {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.nas-target-picker-head strong {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.nas-target-choice-grid {
+  max-height: 230px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 2px;
+}
+
+.nas-target-choice {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.nas-target-choice:hover,
+.nas-target-choice.is-selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+
+.nas-target-choice input {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin: 0;
+}
+
+.nas-target-choice > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.nas-target-choice strong,
+.nas-target-choice small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nas-target-choice strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.nas-target-choice small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.nas-target-context {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.nas-target-context > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.nas-target-context > div > span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.nas-target-context small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .compact-empty {
   padding: 16px;
 }
@@ -3722,6 +3855,96 @@ input[type="checkbox"] {
   overflow: visible;
   text-overflow: clip;
   white-space: nowrap;
+}
+
+.report-transactions-table {
+  min-width: 1220px;
+  table-layout: fixed;
+}
+
+.report-transactions-table th,
+.report-transactions-table td {
+  max-width: none;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.report-transactions-table th:nth-child(1),
+.report-transactions-table td:nth-child(1) {
+  width: 305px;
+}
+
+.report-transactions-table th:nth-child(2),
+.report-transactions-table td:nth-child(2) {
+  width: 145px;
+}
+
+.report-transactions-table th:nth-child(3),
+.report-transactions-table td:nth-child(3) {
+  width: 110px;
+}
+
+.report-transactions-table th:nth-child(4),
+.report-transactions-table td:nth-child(4) {
+  width: 170px;
+}
+
+.report-transactions-table th:nth-child(5),
+.report-transactions-table td:nth-child(5) {
+  width: 210px;
+}
+
+.report-transactions-table th:nth-child(6),
+.report-transactions-table td:nth-child(6) {
+  width: 150px;
+}
+
+.report-transactions-table th:nth-child(7),
+.report-transactions-table td:nth-child(7) {
+  width: 120px;
+}
+
+.report-transactions-table th:nth-child(8),
+.report-transactions-table td:nth-child(8) {
+  width: 110px;
+}
+
+.report-transaction-reference,
+.report-transaction-item,
+.report-transaction-description,
+.report-transaction-method,
+.report-transaction-admin,
+.report-transaction-confirmed {
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.report-transactions-table .cell-title,
+.report-transactions-table .cell-subline {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.report-transactions-table .cell-title {
+  line-height: 1.25;
+}
+
+.report-transactions-table .cell-subline {
+  line-height: 1.2;
 }
 
 .panel,
@@ -10147,6 +10370,20 @@ dialog::backdrop {
     width: 100%;
   }
 
+  .nas-target-context {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .nas-target-picker-head,
+  .nas-target-choice-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nas-target-picker-head strong {
+    justify-self: start;
+  }
+
   .user-pager {
     justify-content: stretch;
   }
@@ -14511,5 +14748,41 @@ dialog::backdrop {
   .payment-gateway-amount,
   .payment-gateway-fee {
     white-space: nowrap;
+  }
+}
+
+@media (max-width: 720px) {
+  .report-transactions-table-wrap table.report-transactions-table {
+    min-width: 1220px;
+    width: 1220px;
+  }
+
+  .report-transactions-table-wrap table.report-transactions-table th,
+  .report-transactions-table-wrap table.report-transactions-table td,
+  .report-transactions-table-wrap table.report-transactions-table td strong,
+  .report-transactions-table-wrap table.report-transactions-table td .muted,
+  .report-transactions-table-wrap table.report-transactions-table .cell-title,
+  .report-transactions-table-wrap table.report-transactions-table .cell-subline,
+  .report-transactions-table-wrap table.report-transactions-table .badge {
+    overflow: hidden;
+    overflow-wrap: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-break: normal;
+  }
+
+  .report-transactions-table-wrap table.report-transactions-table th,
+  .report-transactions-table-wrap table.report-transactions-table td {
+    max-width: none;
+  }
+
+  .report-transactions-table-wrap table.report-transactions-table .cell-title {
+    font-size: 12.5px;
+    line-height: 1.2;
+  }
+
+  .report-transactions-table-wrap table.report-transactions-table .cell-subline {
+    font-size: 11px;
+    line-height: 1.15;
   }
 }

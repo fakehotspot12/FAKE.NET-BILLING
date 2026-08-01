@@ -5886,6 +5886,18 @@ test('reseller voucher visibility only allows own generated hotspot vouchers', (
     createdByUsername: 'reseller1',
     nasId: 'nas-site-2'
   }, lockedUser), false);
+
+  const multiNasUser = { ...user, lockedNasIds: ['nas-site-1', 'nas-site-2'] };
+  assert.equal(serverInternals.resellerHotspotVoucherRowVisible({
+    username: 'voucher-second-site',
+    createdByUsername: 'reseller1',
+    nasId: 'nas-site-2'
+  }, multiNasUser), true);
+  assert.equal(serverInternals.resellerHotspotVoucherRowVisible({
+    username: 'voucher-outside-target',
+    createdByUsername: 'reseller1',
+    nasId: 'nas-site-3'
+  }, multiNasUser), false);
 });
 
 test('technician hotspot write scope only accepts manual free users', () => {
@@ -5965,6 +5977,38 @@ test('reseller NAS lock only shows hotspot profiles for the locked NAS or All', 
   });
 
   assert.deepEqual(payload.rows.map((row) => row.name), ['V-All', 'V-Site-1']);
+
+  const multiPayload = await serverInternals.radiusPayloadLocal(data, 'hotspot', {
+    tab: 'profiles',
+    viewer: {
+      username: 'anduy',
+      name: 'anduy',
+      role: 'reseller_voucher',
+      lockedNasIds: ['nas-site-1', 'nas-site-2']
+    }
+  });
+  assert.deepEqual(multiPayload.rows.map((row) => row.name), ['V-All', 'V-Site-1', 'V-Site-2']);
+
+  const selected = serverInternals.applyResellerVoucherNasLock(data, {
+    nasId: 'nas-site-2'
+  }, {
+    username: 'anduy',
+    role: 'reseller_voucher',
+    lockedNasIds: ['nas-site-1', 'nas-site-2']
+  });
+  assert.equal(selected.nasId, 'nas-site-2');
+  const managedUser = serverInternals.prepareManagedUserPayload(data, {
+    role: 'reseller_voucher',
+    lockedNasIds: ['nas-site-1', 'nas-site-2']
+  });
+  assert.deepEqual(managedUser.lockedNasIds, ['nas-site-1', 'nas-site-2']);
+  assert.throws(() => serverInternals.applyResellerVoucherNasLock(data, {
+    nasId: 'nas-outside'
+  }, {
+    username: 'anduy',
+    role: 'reseller_voucher',
+    lockedNasIds: ['nas-site-1', 'nas-site-2']
+  }), /tidak termasuk target reseller/i);
 });
 
 test('radius PPP-DHCP and Hotspot users are sorted by newest created date first', async () => {

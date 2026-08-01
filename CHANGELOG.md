@@ -2,6 +2,60 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [3.0.0] - 2026-08-01
+
+### Changed
+
+- Target NAS pada user reseller voucher dan collector mendukung pilihan lebih dari satu NAS, sedangkan teknisi dapat diberi target NAS opsional untuk kebutuhan operasional.
+- Reseller memilih NAS tujuan saat menambah user atau menghasilkan voucher; daftar profile Hotspot otomatis mengikuti NAS yang dipilih.
+- Pengaturan target NAS pada manajemen user memakai pemilih checkbox yang lebih jelas, dilengkapi pencarian dan jumlah NAS terpilih.
+
+### Fixed
+
+- Perubahan target NAS user langsung dibaca ulang saat data Hotspot dimuat ulang sehingga NAS yang sudah dilepas tidak muncul dari sesi atau cache lama.
+- Akses profile dan voucher reseller divalidasi kembali di backend agar hanya NAS yang ditetapkan kepada user tersebut yang dapat digunakan.
+- Ringkasan tagihan collector disederhanakan menjadi jumlah pelanggan yang perlu ditindaklanjuti tanpa menampilkan nominal keuangan.
+
+### Performance
+
+- Pencarian tabel, session FreeRADIUS, dan opsi Radius menggunakan cache berumur pendek serta pembatalan request lama agar antarmuka tetap responsif pada data besar.
+
+## [2.11.45] - 2026-08-01
+
+### Improved
+
+- Hasil pencarian berulang disimpan sementara di browser dengan `sessionStorage`, sehingga query yang sama bisa tampil lebih cepat tanpa menyimpan data terlalu lama.
+- Cache pencarian otomatis dibersihkan setelah aksi tambah/edit/hapus/bayar/import atau refresh manual.
+- Session FreeRADIUS memiliki fallback cache memory saat Redis tidak tersedia, dengan TTL pendek agar pencarian Radius lebih ringan.
+
+## [2.11.44] - 2026-08-01
+
+### Improved
+
+- Pencarian live sekarang membatalkan request lama sebelum menjalankan query baru, sehingga input tetap responsif saat user mengetik cepat.
+- Tab Radius PPP-DHCP/Hotspot memakai cache session FreeRADIUS pendek ketika pencarian biasa, dan tetap membaca fresh saat tombol Refresh dipakai.
+- Filter pencarian backend dibuat lebih ringan untuk data tabel besar.
+
+## [2.11.43] - 2026-08-01
+
+### Fixed
+
+- Pencarian live di seluruh menu dibuat lebih stabil: input tidak lagi kehilangan fokus atau tertimpa hasil pencarian lama saat user masih mengetik.
+- Pencarian member di popup Invoice Manual mengikuti mekanisme yang sama sehingga proses memuat data tidak memutus ketikan.
+
+## [2.11.42] - 2026-08-01
+
+### Fixed
+
+- Laporan voucher online sekarang memakai nominal real/net yang diterima dari payment gateway jika tersedia, sementara print/PDF voucher tetap menampilkan nominal bayar pelanggan termasuk fee checkout.
+- Print voucher A4, thermal, RawBT, dan template custom sekarang memakai nominal receipt voucher online yang konsisten dengan checkout pelanggan.
+
+## [2.11.41] - 2026-08-01
+
+### Fixed
+
+- Kuitansi/PDF tagihan harian untuk pembayaran online kembali menampilkan nominal yang dibayar pelanggan beserta fee checkout, sementara tabel laporan tetap memakai nominal real bersih setelah potongan merchant.
+
 ## [2.11.40] - 2026-08-01
 
 ### Fixed

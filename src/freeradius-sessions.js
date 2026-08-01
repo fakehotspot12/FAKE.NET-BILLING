@@ -12,6 +12,7 @@ const USAGE_STATE_TABLE = 'fakenet_radius_usage_state';
 const DEFAULT_USAGE_RETENTION_DAYS = 370;
 const DEFAULT_USAGE_15M_RETENTION_HOURS = 72;
 const DEFAULT_USAGE_DAILY_VIEW_DAYS = 31;
+let memorySessionCache = null;
 
 function enabled() {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env.FREERADIUS_SYNC_ENABLED || '').toLowerCase());
@@ -99,6 +100,14 @@ function psqlJson(query) {
       }
     });
   });
+}
+
+function cloneJson(value = {}) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
 }
 
 function activeSessionsQuery(limit, columns = new Set()) {
@@ -1012,7 +1021,12 @@ function normalizeIntervalUsage(row = {}) {
 }
 
 async function cacheSessions(payload = {}) {
-  if (!redisCache.enabled() || !payload.ok) return;
+  if (!payload.ok) return;
+  memorySessionCache = {
+    ...cloneJson(payload),
+    cachedAt: new Date().toISOString()
+  };
+  if (!redisCache.enabled()) return;
   try {
     await redisCache.set(SESSION_CACHE_KEY, JSON.stringify({
       ...payload,
@@ -1024,6 +1038,21 @@ async function cacheSessions(payload = {}) {
 }
 
 async function cachedSessions(fallbackError = '') {
+  if (memorySessionCache) {
+    const cachedAtMs = memorySessionCache.cachedAt ? new Date(memorySessionCache.cachedAt).getTime() : 0;
+    const cacheAgeSeconds = cachedAtMs ? Math.max(0, Math.round((Date.now() - cachedAtMs) / 1000)) : null;
+    return {
+      ...cloneJson(memorySessionCache),
+      ok: true,
+      enabled: true,
+      configured: true,
+      source: 'freeradius-radacct-memory-cache',
+      cache: true,
+      cacheAgeSeconds,
+      stale: true,
+      error: fallbackError || memorySessionCache.error || ''
+    };
+  }
   if (!redisCache.enabled()) return null;
   try {
     const raw = await redisCache.get(SESSION_CACHE_KEY);

@@ -25,6 +25,7 @@ const dashboardInterfaceResolutionCache = new Map();
 const routerDashboardSummaryCache = new Map();
 const routerDashboardRefreshPromises = new Map();
 const customerSummaryCache = new Map();
+const customerSummaryRefreshPromises = new Map();
 const ROUTER_DASHBOARD_CACHE_MS = Math.max(3000, Number(process.env.ROUTER_DASHBOARD_CACHE_MS || 10000) || 10000);
 const ROUTER_DASHBOARD_STALE_MS = Math.max(30000, Number(process.env.ROUTER_DASHBOARD_STALE_MS || 180000) || 180000);
 const ROUTER_DASHBOARD_REDIS_TTL_SECONDS = Math.max(
@@ -37,6 +38,7 @@ const ROUTER_DASHBOARD_INTERFACE_CACHE_MS = Math.max(
   Number(process.env.ROUTER_DASHBOARD_INTERFACE_CACHE_MS || 300000) || 300000
 );
 const CUSTOMER_SUMMARY_CACHE_MS = Math.max(5000, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_CACHE_MS || 20000) || 20000);
+const CUSTOMER_SUMMARY_STALE_MS = Math.max(30000, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_STALE_MS || 90000) || 90000);
 const CUSTOMER_SUMMARY_REDIS_TTL_SECONDS = Math.max(5, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_REDIS_TTL_SECONDS || 20) || 20);
 const CUSTOMER_SUMMARY_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_CONCURRENCY || 3) || 3));
 
@@ -1437,6 +1439,75 @@ async function setCustomerSummaryRedisCache(signature = '', payload = null) {
   }
 }
 
+function decorateCustomerSummaryPayload(payload = {}, options = {}) {
+  const next = structuredClone(payload || {});
+  next.cached = Boolean(options.cached);
+  next.stale = Boolean(options.stale);
+  next.refreshing = Boolean(options.refreshing);
+  next.summary = {
+    ...(next.summary || {}),
+    cached: next.cached,
+    stale: next.stale,
+    refreshing: next.refreshing
+  };
+  return next;
+}
+
+async function refreshMikrotikCustomerSummary(activeTargets = [], cacheKey = '') {
+  if (customerSummaryRefreshPromises.has(cacheKey)) {
+    return customerSummaryRefreshPromises.get(cacheKey);
+  }
+  const promise = (async () => {
+    const sites = await mapWithConcurrency(activeTargets, CUSTOMER_SUMMARY_CONCURRENCY, (target) => checkMikrotikCustomerTarget(target));
+    const summary = sites.reduce((totals, site) => {
+      totals.online += Number(site.online || 0);
+      totals.totalCustomerInterfaces += Number(site.totalCustomerInterfaces || 0);
+      totals.pppoe += Number(site.pppoe || 0);
+      totals.hotspot += Number(site.hotspot || 0);
+      totals.interfaceCount += Number(site.interfaceCount || 0);
+      if (site.status === 'up') totals.upCount += 1;
+      if (site.status === 'down') totals.downCount += 1;
+      return totals;
+    }, {
+      online: 0,
+      pppoe: 0,
+      hotspot: 0,
+      interfaceCount: 0,
+      totalCustomerInterfaces: 0,
+      upCount: 0,
+      downCount: 0
+    });
+
+    const payload = {
+      ok: sites.some((site) => site.status === 'up'),
+      source: 'mikrotik-snmp',
+      summary: {
+        ...summary,
+        siteCount: sites.length,
+        customerMode: 'summary-and-per-site',
+        onlineMeaning: 'pppoe-only',
+        generatedAt: nowIso(),
+        sourceMode: 'mikrotik-snmp'
+      },
+      sites
+    };
+    customerSummaryCache.set(cacheKey, {
+      expiresAt: Date.now() + CUSTOMER_SUMMARY_CACHE_MS,
+      staleAt: Date.now() + CUSTOMER_SUMMARY_STALE_MS,
+      value: structuredClone(payload)
+    });
+    while (customerSummaryCache.size > 8) {
+      customerSummaryCache.delete(customerSummaryCache.keys().next().value);
+    }
+    await setCustomerSummaryRedisCache(cacheKey, payload);
+    return payload;
+  })().finally(() => {
+    customerSummaryRefreshPromises.delete(cacheKey);
+  });
+  customerSummaryRefreshPromises.set(cacheKey, promise);
+  return promise;
+}
+
 function monitoringTargetSignature(targets = []) {
   return (targets || []).map((target) => [
     target.id,
@@ -1547,63 +1618,47 @@ async function mikrotikCustomerSummary(targets = [], options = {}) {
     .filter((target) => target && target.status !== 'inactive' && cleanText(target.host));
   const cacheKey = monitoringTargetSignature(activeTargets);
   const forceRefresh = options.forceRefresh === true || options.refresh === true;
+  const allowStale = options.allowStale === true;
+  const refreshInBackground = options.refreshInBackground === true;
   if (!forceRefresh) {
     const cached = customerSummaryCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
-      return structuredClone(cached.value);
+      return decorateCustomerSummaryPayload(cached.value, {
+        cached: true,
+        stale: false,
+        refreshing: customerSummaryRefreshPromises.has(cacheKey)
+      });
+    }
+    if (allowStale && cached && cached.staleAt > Date.now()) {
+      if (refreshInBackground) {
+        refreshMikrotikCustomerSummary(activeTargets, cacheKey).catch(() => null);
+      }
+      return decorateCustomerSummaryPayload(cached.value, {
+        cached: true,
+        stale: true,
+        refreshing: refreshInBackground || customerSummaryRefreshPromises.has(cacheKey)
+      });
     }
     const redisCached = await getCustomerSummaryRedisCache(cacheKey);
     if (redisCached) {
       customerSummaryCache.set(cacheKey, {
         expiresAt: Date.now() + CUSTOMER_SUMMARY_CACHE_MS,
+        staleAt: Date.now() + CUSTOMER_SUMMARY_STALE_MS,
         value: structuredClone(redisCached)
       });
-      return structuredClone(redisCached);
+      return decorateCustomerSummaryPayload(redisCached, {
+        cached: true,
+        stale: false,
+        refreshing: customerSummaryRefreshPromises.has(cacheKey)
+      });
     }
   }
-
-  const sites = await mapWithConcurrency(activeTargets, CUSTOMER_SUMMARY_CONCURRENCY, (target) => checkMikrotikCustomerTarget(target));
-  const summary = sites.reduce((totals, site) => {
-    totals.online += Number(site.online || 0);
-    totals.totalCustomerInterfaces += Number(site.totalCustomerInterfaces || 0);
-    totals.pppoe += Number(site.pppoe || 0);
-    totals.hotspot += Number(site.hotspot || 0);
-    totals.interfaceCount += Number(site.interfaceCount || 0);
-    if (site.status === 'up') totals.upCount += 1;
-    if (site.status === 'down') totals.downCount += 1;
-    return totals;
-  }, {
-    online: 0,
-    pppoe: 0,
-    hotspot: 0,
-    interfaceCount: 0,
-    totalCustomerInterfaces: 0,
-    upCount: 0,
-    downCount: 0
+  const payload = await refreshMikrotikCustomerSummary(activeTargets, cacheKey);
+  return decorateCustomerSummaryPayload(payload, {
+    cached: false,
+    stale: false,
+    refreshing: false
   });
-
-  const payload = {
-    ok: sites.some((site) => site.status === 'up'),
-    source: 'mikrotik-snmp',
-    summary: {
-      ...summary,
-      siteCount: sites.length,
-      customerMode: 'summary-and-per-site',
-      onlineMeaning: 'pppoe-only',
-      generatedAt: nowIso(),
-      sourceMode: 'mikrotik-snmp'
-    },
-    sites
-  };
-  customerSummaryCache.set(cacheKey, {
-    expiresAt: Date.now() + CUSTOMER_SUMMARY_CACHE_MS,
-    value: structuredClone(payload)
-  });
-  while (customerSummaryCache.size > 8) {
-    customerSummaryCache.delete(customerSummaryCache.keys().next().value);
-  }
-  await setCustomerSummaryRedisCache(cacheKey, payload);
-  return payload;
 }
 
 module.exports = {

@@ -249,6 +249,10 @@ function roleUnitLabel(role) {
   return ROLE_DEFINITIONS[normalizeRole(role)].label;
 }
 
+function roleSupportsNasLock(role) {
+  return ['reseller_voucher', 'collector', 'technician'].includes(normalizeRole(role));
+}
+
 function permissionsForRole(role) {
   return ROLE_DEFINITIONS[normalizeRole(role)].permissions;
 }
@@ -289,7 +293,8 @@ function publicUser(user) {
   }
 
   const role = normalizeRole(user.role);
-  const lockedNasId = String(user.lockedNasId || user.resellerNasId || user.voucherNasId || '').trim();
+  const lockedNasIds = normalizeLockedNasIds(user);
+  const lockedNasId = lockedNasIds[0] || String(user.lockedNasId || user.resellerNasId || user.voucherNasId || '').trim();
   const employeeId = user.employeeId || user.nik || user.nip || '';
   const photoUrl = user.photoUrl || user.avatarUrl || '';
   return {
@@ -315,10 +320,37 @@ function publicUser(user) {
     radbooxUsername: user.radbooxUsername || '',
     hasRadbooxPassword: Boolean(user.radbooxPasswordEnc || user.radbooxPassword),
     lockedNasId,
+    lockedNasIds,
     lockedNasName: user.lockedNasName || '',
+    lockedNasNames: user.lockedNasNames || user.lockedNasName || '',
     resellerNasId: lockedNasId,
     permissions: permissionsForRole(role)
   };
+}
+
+function normalizeLockedNasIds(payload = {}) {
+  const values = [];
+  const append = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(append);
+      return;
+    }
+    String(value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .forEach((item) => values.push(item));
+  };
+  append(payload.lockedNasIds);
+  append(payload.lockedNasId || payload.resellerNasId || payload.voucherNasId);
+  const unique = [];
+  for (const value of values) {
+    if (value.toLowerCase() === 'all') {
+      return ['all'];
+    }
+    if (!unique.some((item) => item === value)) unique.push(value);
+  }
+  return unique;
 }
 
 function ensureDefaultUsers(data) {
@@ -562,7 +594,8 @@ function createUser(data, payload = {}) {
 
   const now = new Date().toISOString();
   const role = normalizeRole(payload.role || 'viewer');
-  const lockedNasId = String(payload.lockedNasId || payload.resellerNasId || payload.voucherNasId || '').trim();
+  const lockedNasIds = normalizeLockedNasIds(payload);
+  const lockedNasId = lockedNasIds[0] || '';
   const employeeId = cleanText(payload.employeeId ?? payload.nik, 60);
   const user = {
     id: createId('usr'),
@@ -582,8 +615,10 @@ function createUser(data, payload = {}) {
     passwordHash: hashPassword(validatePassword(payload.password)),
     radbooxUsername: String(payload.radbooxUsername || '').trim(),
     radbooxPasswordEnc: secureSecrets.encryptSecret(data, payload.radbooxPassword || ''),
-    lockedNasId: role === 'reseller_voucher' ? lockedNasId : '',
-    lockedNasName: role === 'reseller_voucher' ? String(payload.lockedNasName || '').trim() : '',
+    lockedNasId: roleSupportsNasLock(role) ? lockedNasId : '',
+    lockedNasIds: roleSupportsNasLock(role) ? lockedNasIds : [],
+    lockedNasName: roleSupportsNasLock(role) ? String(payload.lockedNasName || '').trim() : '',
+    lockedNasNames: roleSupportsNasLock(role) ? String(payload.lockedNasNames || payload.lockedNasName || '').trim() : '',
     createdAt: now,
     updatedAt: now,
     lastLoginAt: ''
@@ -637,12 +672,21 @@ function updateUser(data, userId, payload = {}) {
   }
   user.unit = roleUnitLabel(user.role);
   user.department = user.unit;
-  if (user.role === 'reseller_voucher') {
-    user.lockedNasId = String(payload.lockedNasId || payload.resellerNasId || payload.voucherNasId || user.lockedNasId || '').trim();
+  if (roleSupportsNasLock(user.role)) {
+    const lockedNasIds = normalizeLockedNasIds({
+      ...payload,
+      lockedNasIds: payload.lockedNasIds || user.lockedNasIds,
+      lockedNasId: payload.lockedNasId || payload.resellerNasId || payload.voucherNasId || user.lockedNasId || ''
+    });
+    user.lockedNasIds = lockedNasIds;
+    user.lockedNasId = lockedNasIds[0] || '';
     user.lockedNasName = String(payload.lockedNasName || user.lockedNasName || '').trim();
+    user.lockedNasNames = String(payload.lockedNasNames || payload.lockedNasName || user.lockedNasNames || user.lockedNasName || '').trim();
   } else {
     user.lockedNasId = '';
+    user.lockedNasIds = [];
     user.lockedNasName = '';
+    user.lockedNasNames = '';
   }
   if (payload.active !== undefined) {
     user.active = payload.active !== false && payload.active !== 'false';

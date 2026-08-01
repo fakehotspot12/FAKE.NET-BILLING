@@ -345,6 +345,10 @@ const NOTIFICATION_CACHE_PREFIX = 'fakenetOpsNotifications';
 const PAYMENT_NOTIFICATION_SEEN_PREFIX = 'fakenetBillingPaymentNotificationsSeen';
 const PAYMENT_NOTIFICATION_TTL_MS = 3000;
 const PAYMENT_NOTIFICATION_SEEN_LIMIT = 100;
+const SEARCH_API_CACHE_PREFIX = 'fakenetBillingSearchApiCache:';
+const SEARCH_API_CACHE_MAX_ENTRIES = 120;
+const SEARCH_FOCUS_INTENT_MS = 5000;
+let activeSearchFocusIntent = null;
 
 const money = new Intl.NumberFormat('id-ID', {
   style: 'currency',
@@ -1175,6 +1179,125 @@ function abortPageRequests() {
   pageRequestController = new AbortController();
 }
 
+function cloneJson(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function truthyParam(value = '') {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+function searchApiUrl(path = '') {
+  try {
+    return new URL(path, window.location.origin);
+  } catch {
+    return null;
+  }
+}
+
+function searchApiCacheTtlMs(path = '', fetchOptions = {}) {
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  if (method !== 'GET' || !state.auth) return 0;
+  const url = searchApiUrl(path);
+  if (!url || truthyParam(url.searchParams.get('refresh'))) return 0;
+  if (!String(url.searchParams.get('search') || '').trim()) return 0;
+  const endpoint = url.pathname;
+  const tab = String(url.searchParams.get('tab') || '').trim().toLowerCase();
+  if (endpoint.includes('/api/radius/')) return tab === 'sessions' ? 10000 : 60000;
+  if (endpoint.includes('/api/monitoring/billing-unpaid')) return 120000;
+  if (endpoint.includes('/api/monitoring/customers')) return 30000;
+  if (endpoint.includes('/api/genieacs/devices')) return 60000;
+  if (endpoint.includes('/api/payment-gateway')) return 120000;
+  if (endpoint.includes('/api/activity')) return 60000;
+  if (endpoint.includes('/api/monitoring/members')) return 300000;
+  if (endpoint.includes('/api/reports/')) return 300000;
+  return 300000;
+}
+
+function searchApiCacheKey(path = '') {
+  const url = searchApiUrl(path);
+  if (!url) return '';
+  return `${SEARCH_API_CACHE_PREFIX}${url.pathname}${url.search}`;
+}
+
+function readSearchApiCache(path = '', fetchOptions = {}) {
+  const ttl = searchApiCacheTtlMs(path, fetchOptions);
+  if (!ttl) return null;
+  const key = searchApiCacheKey(path);
+  if (!key) return null;
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    const age = Date.now() - Number(entry.cachedAt || 0);
+    if (!Number.isFinite(age) || age < 0 || age > ttl) {
+      window.sessionStorage.removeItem(key);
+      return null;
+    }
+    return cloneJson(entry.payload);
+  } catch {
+    return null;
+  }
+}
+
+function pruneSearchApiCache() {
+  try {
+    const entries = [];
+    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.sessionStorage.key(index);
+      if (!key || !key.startsWith(SEARCH_API_CACHE_PREFIX)) continue;
+      let cachedAt = 0;
+      try {
+        cachedAt = Number(JSON.parse(window.sessionStorage.getItem(key) || '{}').cachedAt || 0);
+      } catch {
+        cachedAt = 0;
+      }
+      entries.push({ key, cachedAt });
+    }
+    entries
+      .sort((a, b) => Number(b.cachedAt || 0) - Number(a.cachedAt || 0))
+      .slice(SEARCH_API_CACHE_MAX_ENTRIES)
+      .forEach((entry) => window.sessionStorage.removeItem(entry.key));
+  } catch {
+    // Browser storage is optional.
+  }
+}
+
+function writeSearchApiCache(path = '', payload = {}, fetchOptions = {}) {
+  if (!searchApiCacheTtlMs(path, fetchOptions)) return;
+  const key = searchApiCacheKey(path);
+  if (!key) return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify({
+      cachedAt: Date.now(),
+      payload
+    }));
+    pruneSearchApiCache();
+  } catch {
+    try {
+      pruneSearchApiCache();
+      window.sessionStorage.setItem(key, JSON.stringify({ cachedAt: Date.now(), payload }));
+    } catch {
+      // Ignore quota/private-mode storage failures.
+    }
+  }
+}
+
+function clearSearchApiCache() {
+  try {
+    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith(SEARCH_API_CACHE_PREFIX)) window.sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Browser storage is optional.
+  }
+}
+
 function loginScreenVisible() {
   return Boolean(app?.querySelector?.(':scope > .login-screen'));
 }
@@ -1198,6 +1321,13 @@ function themeColor(name, fallback) {
 
 async function api(path, options = {}) {
   const { skipAuthRedirect = false, timeoutMs = 0, signal, ...fetchOptions } = options;
+  const requestMethod = String(fetchOptions.method || 'GET').toUpperCase();
+  const requestUrl = searchApiUrl(path);
+  if (requestMethod === 'GET' && truthyParam(requestUrl?.searchParams.get('refresh'))) {
+    clearSearchApiCache();
+  }
+  const cachedPayload = !signal && !skipAuthRedirect ? readSearchApiCache(path, fetchOptions) : null;
+  if (cachedPayload) return cachedPayload;
   const pageSignal = !signal && !skipAuthRedirect && state.auth ? pageRequestController.signal : null;
   const controller = timeoutMs > 0 && !signal && !pageSignal ? new AbortController() : null;
   const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
@@ -1227,6 +1357,11 @@ async function api(path, options = {}) {
       error.status = response.status;
       error.payload = payload;
       throw error;
+    }
+    if (requestMethod === 'GET') {
+      writeSearchApiCache(path, payload, fetchOptions);
+    } else {
+      clearSearchApiCache();
     }
     return payload;
   } finally {
@@ -2203,8 +2338,30 @@ async function copyTextToClipboard(text = '') {
 }
 
 function formData(form) {
-  const data = Object.fromEntries(new FormData(form).entries());
-  form.querySelectorAll('input[type="checkbox"][name]').forEach((checkbox) => {
+  const data = {};
+  const formEntries = new FormData(form);
+  for (const [key, value] of formEntries.entries()) {
+    if (Object.prototype.hasOwnProperty.call(data, key)) {
+      data[key] = Array.isArray(data[key]) ? [...data[key], value] : [data[key], value];
+    } else {
+      data[key] = value;
+    }
+  }
+  form.querySelectorAll('select[multiple][name]').forEach((select) => {
+    data[select.name] = [...select.selectedOptions].map((option) => option.value).filter(Boolean);
+  });
+  const multiCheckboxes = [...form.querySelectorAll('input[type="checkbox"][name][data-multi-value]')];
+  const multiCheckboxNames = new Set();
+  multiCheckboxes.forEach((checkbox) => {
+    multiCheckboxNames.add(checkbox.name);
+  });
+  multiCheckboxNames.forEach((name) => {
+    data[name] = multiCheckboxes
+      .filter((checkbox) => checkbox.name === name && checkbox.checked)
+      .map((checkbox) => checkbox.value)
+      .filter(Boolean);
+  });
+  form.querySelectorAll('input[type="checkbox"][name]:not([data-multi-value])').forEach((checkbox) => {
     data[checkbox.name] = checkbox.checked;
   });
   return data;
@@ -2264,7 +2421,10 @@ function enhanceTableTopScrollbars(root = document) {
 
 function scheduleTableTopScrollbars(root = document) {
   const scope = root || document;
-  const run = () => enhanceTableTopScrollbars(scope);
+  const run = () => {
+    enhanceTableTopScrollbars(scope);
+    restoreSearchFocusIntent();
+  };
   requestAnimationFrame(() => {
     run();
     requestAnimationFrame(run);
@@ -2347,6 +2507,26 @@ function nasActiveBadge(value = '-', options = {}) {
   const label = String(value || '').trim() || '-';
   const title = String(options.title || label).trim() || label;
   return `<span class="badge active nas-badge" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+function nasTargetBadges(value = '-') {
+  const labels = Array.isArray(value)
+    ? value
+    : String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+  const rows = labels.length ? labels : ['-'];
+  return `<span class="nas-target-badges">${rows.map((label) => nasActiveBadge(label)).join('')}</span>`;
+}
+
+function nasTargetContext(label, value, hint = '') {
+  return `
+    <section class="nas-target-context" aria-label="${escapeHtml(label)}">
+      <div>
+        <span>${escapeHtml(label)}</span>
+        ${hint ? `<small>${escapeHtml(hint)}</small>` : ''}
+      </div>
+      ${nasTargetBadges(value)}
+    </section>
+  `;
 }
 
 function empty(message) {
@@ -3206,14 +3386,70 @@ function shouldShowPageLoading(options = {}) {
   return !options.silent || !app?.childElementCount;
 }
 
-function focusSearchAfterRender(selector, expectedValue = '') {
-  window.requestAnimationFrame(() => {
-    const input = document.querySelector(selector);
-    if (!(input instanceof HTMLInputElement)) return;
-    if (String(input.value || '').trim() !== String(expectedValue || '').trim()) return;
-    input.focus({ preventScroll: true });
-    input.setSelectionRange(input.value.length, input.value.length);
-  });
+function rememberSearchFocusIntent(selector, getValue = () => '') {
+  if (!selector) return;
+  activeSearchFocusIntent = {
+    selector,
+    getValue,
+    expiresAt: Date.now() + SEARCH_FOCUS_INTENT_MS
+  };
+}
+
+function clearSearchFocusIntent(selector = '') {
+  if (!selector || activeSearchFocusIntent?.selector === selector) {
+    activeSearchFocusIntent = null;
+  }
+}
+
+function searchFocusIntentExpectedValue(intent) {
+  try {
+    return String(intent?.getValue?.() || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function restoreSearchFocusIntent() {
+  const intent = activeSearchFocusIntent;
+  if (!intent) return false;
+  if (Date.now() > intent.expiresAt) {
+    activeSearchFocusIntent = null;
+    return false;
+  }
+  const active = document.activeElement;
+  if (
+    active instanceof HTMLElement
+    && !active.matches(intent.selector)
+    && (
+      active.matches('input, textarea, select, button')
+      || active.isContentEditable
+    )
+  ) {
+    return false;
+  }
+  const input = document.querySelector(intent.selector);
+  if (!(input instanceof HTMLInputElement)) return false;
+  const expected = searchFocusIntentExpectedValue(intent);
+  if (String(input.value || '').trim() !== expected) {
+    input.value = expected;
+  }
+  input.focus({ preventScroll: true });
+  input.setSelectionRange(input.value.length, input.value.length);
+  return true;
+}
+
+function focusSearchAfterRender(selector, expectedValue = '', options = {}) {
+  const startedAt = Date.now();
+  const preserveMs = Math.max(120, Number(options.preserveMs || 1400) || 1400);
+  const expected = String(expectedValue || '').trim();
+  rememberSearchFocusIntent(selector, () => expected);
+  const tryFocus = () => {
+    restoreSearchFocusIntent();
+    if (activeSearchFocusIntent?.selector === selector && Date.now() - startedAt < preserveMs) {
+      window.setTimeout(() => window.requestAnimationFrame(tryFocus), 80);
+    }
+  };
+  window.requestAnimationFrame(tryFocus);
 }
 
 function bindLiveTextSearch(input, options = {}) {
@@ -3227,27 +3463,54 @@ function bindLiveTextSearch(input, options = {}) {
   } = options;
   const viewAtBind = state.view;
   let timer = null;
+  let running = false;
+  let queued = false;
+  let lastStartedValue = String(getValue() || '').trim();
   const run = (force = false, refocus = true) => {
     window.clearTimeout(timer);
     if (state.view !== viewAtBind) return;
-    const next = String(input.value || '').trim();
-    if (!force && String(getValue() || '') === next) return;
+    const activeInput = document.querySelector(refocusSelector);
+    const inputValue = activeInput instanceof HTMLInputElement ? activeInput.value : input.value;
+    const next = String(inputValue || '').trim();
     setValue(next);
+    if (refocus) rememberSearchFocusIntent(refocusSelector, () => getValue());
+    if (!force && lastStartedValue === next && !queued) return;
+    if (running) {
+      queued = true;
+      abortPageRequests();
+      return;
+    }
+    running = true;
+    queued = false;
+    lastStartedValue = next;
+    setValue(next);
+    abortPageRequests();
     const result = handler({ silent: true, liveSearch: true });
-    Promise.resolve(result).finally(() => {
+    Promise.resolve(result).catch((error) => {
+      if (error?.name !== 'AbortError' && state.view === viewAtBind) setToast(error.message || 'Pencarian gagal');
+    }).finally(() => {
+      running = false;
       if (state.view === viewAtBind) scheduleTableTopScrollbars(app);
       if (refocus && state.view === viewAtBind) {
-        focusSearchAfterRender(refocusSelector, next);
+        focusSearchAfterRender(refocusSelector, String(getValue() || '').trim(), { preserveMs: SEARCH_FOCUS_INTENT_MS });
+      }
+      if (state.view === viewAtBind && String(getValue() || '').trim() !== lastStartedValue) {
+        queued = false;
+        run(true, refocus);
       }
     });
   };
   input.addEventListener('input', () => {
+    setValue(String(input.value || '').trim());
+    rememberSearchFocusIntent(refocusSelector, () => getValue());
+    queued = running;
     window.clearTimeout(timer);
     timer = window.setTimeout(() => run(false, true), debounceMs);
   });
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
+    rememberSearchFocusIntent(refocusSelector, () => getValue());
     run(true, true);
   });
   return { apply: () => run(true, true), reset: () => run(true, true) };
@@ -3314,11 +3577,23 @@ function bindSearch(handler) {
     const result = handler({ silent: true, liveSearch: true });
     Promise.resolve(result).finally(() => {
       scheduleTableTopScrollbars(app);
-      focusSearchAfterRender('#searchInput', '');
+      focusSearchAfterRender('#searchInput', '', { preserveMs: SEARCH_FOCUS_INTENT_MS });
     });
   };
   bindSearchClearButton(search, reset);
 }
+
+document.addEventListener('focusin', (event) => {
+  const intent = activeSearchFocusIntent;
+  const target = event.target;
+  if (!intent || !(target instanceof HTMLElement) || target.matches(intent.selector)) return;
+  if (
+    target.matches('input, textarea, select, button')
+    || target.isContentEditable
+  ) {
+    clearSearchFocusIntent(intent.selector);
+  }
+}, true);
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter' || event.isComposing || event.defaultPrevented) return;
@@ -4243,7 +4518,7 @@ async function renderActivity(options = {}) {
   });
   bindSearch((renderOptions = {}) => {
     state.activityPage = 1;
-    renderActivity(renderOptions);
+    return renderActivity(renderOptions);
   });
   document.querySelectorAll('[data-activity-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -4674,6 +4949,49 @@ function reportTransactionsPaginationControls(pagination = {}) {
       <button class="ghost-button compact" type="button" data-report-transaction-page="${page + 1}" ${pagination.hasNext ? '' : 'disabled'}>Berikutnya</button>
     </div>
   `;
+}
+
+function cleanReportTransactionPackage(value = '') {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  text = text.replace(/\s+/g, ' ');
+  text = text.replace(/^internet\s*:\s*/i, '').trim();
+  if (text.includes('|')) text = text.slice(text.lastIndexOf('|') + 1).trim();
+  if (/^internet\s*:/i.test(text) && text.includes(' - ')) {
+    text = text.slice(text.lastIndexOf(' - ') + 3).trim();
+  }
+  return text;
+}
+
+function reportTransactionReferenceDetail(transaction = {}) {
+  if (transaction.referenceDetail) return String(transaction.referenceDetail);
+  const source = String(transaction.source || '').trim().toLowerCase();
+  const sourceLabel = String(transaction.sourceLabel || transaction.type || '').trim().toLowerCase();
+  const description = String(transaction.description || '').trim().replace(/\s+—\s+/g, ' - ');
+  const customerName = String(transaction.customerName || transaction.payerName || transaction.buyerName || '').trim();
+  const username = String(transaction.username || '').trim();
+  const name = customerName || username || '-';
+  const packageName = cleanReportTransactionPackage(transaction.packageName || transaction.item || '');
+  const itemText = packageName || cleanReportTransactionPackage(transaction.item || '') || '-';
+
+  if (/^(internet bulanan|voucher hotspot|pemasukan)\s*:/i.test(description)) return description;
+  if (source === 'billing' || sourceLabel.includes('tagihan')) {
+    return `Internet Bulanan: ${name} - ${itemText}`;
+  }
+  if (source === 'voucher' || sourceLabel.includes('voucher')) {
+    return `Voucher Hotspot: ${name} - ${itemText}`;
+  }
+  if (source === 'external' || sourceLabel.includes('pemasukan')) {
+    const detail = itemText !== '-' ? itemText : (description || '-');
+    return `Pemasukan: ${name} - ${detail}`;
+  }
+  if (source === 'payment-gateway' || sourceLabel.includes('online')) {
+    if (String(transaction.invoiceNo || transaction.reference || '').toUpperCase().startsWith('VO-')) {
+      return `Voucher Hotspot: ${name} - ${itemText}`;
+    }
+    if (description) return description;
+  }
+  return description || `${name} - ${itemText}`;
 }
 
 function monthlyBillingPaginationControls(pagination = {}) {
@@ -5204,7 +5522,7 @@ async function renderReportsMonthlyBilling(options = {}) {
   });
   bindSearch((renderOptions = {}) => {
     state.reportMonthlyBillingPage = 1;
-    renderReportsMonthlyBilling(renderOptions);
+    return renderReportsMonthlyBilling(renderOptions);
   });
   app.querySelectorAll('[data-monthly-billing-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -5484,7 +5802,7 @@ async function renderReportsVoucherDaily(options = {}) {
   bindVoucherReportFilters(renderReportsVoucherDaily, { daily: true });
   bindSearch((renderOptions = {}) => {
     state.reportVoucherDailyPage = 1;
-    renderReportsVoucherDaily(renderOptions);
+    return renderReportsVoucherDaily(renderOptions);
   });
   app.querySelectorAll('[data-voucher-daily-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -5798,11 +6116,15 @@ function dailyReceiptTransaction(item = {}, report = {}) {
   const planAfterPrefix = planAfterPipe.includes(' - ')
     ? planAfterPipe.slice(planAfterPipe.lastIndexOf(' - ') + 3).trim()
     : planAfterPipe;
+  const receiptAmount = Number(item.receiptAmount || 0) > 0
+    ? Number(item.receiptAmount || 0)
+    : Number(item.amount || item.income || 0);
   return {
     ...item,
     admin: dailyAdminLabel(item, report),
     planName: planAfterPrefix || 'Paket tidak tersedia',
-    amountText: rupiah(item.amount || item.income || 0),
+    amountText: item.receiptAmountText || rupiah(receiptAmount),
+    receiptAmount,
     ppnText: billingReceiptPpnText(item),
     discountText: billingReceiptDiscountText(item),
     addOnsText: billingReceiptAddonsText(item),
@@ -5982,7 +6304,8 @@ async function renderReportsTransactions(options = {}) {
     nas: state.reportNas || 'all',
     search: state.search,
     page: state.reportTransactionsPage,
-    limit: state.reportTransactionsLimit
+    limit: state.reportTransactionsLimit,
+    refresh: options.refresh ? 1 : ''
   };
   const payload = await api(`/api/reports/monthly-transactions?${queryString(params)}`);
   const transactions = Array.isArray(payload.transactions) ? payload.transactions : [];
@@ -6041,8 +6364,8 @@ async function renderReportsTransactions(options = {}) {
           <h2>Mutasi Bulanan</h2>
           <span>${displayNumber(pagination.total || transactions.length)} data</span>
         </div>
-        <div class="table-wrap">
-          <table class="xendit-table">
+        <div class="table-wrap report-transactions-table-wrap">
+          <table class="xendit-table report-transactions-table">
             <thead>
               <tr>
                 <th>Reference</th>
@@ -6058,21 +6381,22 @@ async function renderReportsTransactions(options = {}) {
             <tbody>
               ${transactions.length ? transactions.map((transaction, index) => `
                 <tr>
-                  <td>
+                  <td class="report-transaction-reference">
                     <strong class="cell-title">${escapeHtml(transaction.invoiceNo || transaction.id || transaction.externalId || '-')}</strong>
-                    <div class="muted">${escapeHtml(transaction.externalId && transaction.externalId !== transaction.invoiceNo ? transaction.externalId : '')}</div>
+                    <span class="cell-subline" title="${escapeHtml(reportTransactionReferenceDetail(transaction))}">${escapeHtml(reportTransactionReferenceDetail(transaction))}</span>
+                    ${transaction.externalId && transaction.externalId !== transaction.invoiceNo ? `<span class="cell-subline muted">${escapeHtml(transaction.externalId)}</span>` : ''}
                   </td>
-                  <td class="nowrap">${escapeHtml(reportTransactionDateText(transaction))}</td>
+                  <td class="nowrap report-transaction-time">${escapeHtml(reportTransactionDateText(transaction))}</td>
                   <td><span class="badge ${transaction.source === 'voucher' ? 'pending' : transaction.paymentCategory === 'online' ? 'active' : ''}">${escapeHtml(transaction.sourceLabel || transaction.type || '-')}</span></td>
-                  <td>${escapeHtml(transaction.item || '-')}</td>
-                  <td>${escapeHtml(transaction.description || '-')}</td>
-                  <td>
+                  <td class="report-transaction-item" title="${escapeHtml(transaction.item || '-')}">${escapeHtml(transaction.item || '-')}</td>
+                  <td class="report-transaction-description" title="${escapeHtml(transaction.description || '-')}">${escapeHtml(transaction.description || '-')}</td>
+                  <td class="report-transaction-method">
                     <span class="badge ${reportTransactionMethodClass(transaction.method)}">${escapeHtml(transaction.method || '-')}</span>
                     ${String(transaction.method || '').trim().toLowerCase() === 'tunai - loket'
-                      ? `<div class="muted">Dikonfirmasi oleh: ${escapeHtml(transaction.admin || '-')}</div>`
+                      ? `<div class="muted report-transaction-confirmed" title="Dikonfirmasi oleh: ${escapeHtml(transaction.admin || '-')}">Dikonfirmasi: ${escapeHtml(transaction.admin || '-')}</div>`
                       : ''}
                   </td>
-                  <td>${escapeHtml(transaction.admin || '-')}</td>
+                  <td class="report-transaction-admin" title="${escapeHtml(transaction.admin || '-')}">${escapeHtml(transaction.admin || '-')}</td>
                   <td class="amount positive">${transaction.amountText ? escapeHtml(transaction.amountText) : rupiah(transaction.amount || 0)}</td>
                 </tr>
               `).join('') : '<tr><td colspan="8">Belum ada mutasi pada filter ini.</td></tr>'}
@@ -6104,7 +6428,7 @@ async function renderReportsTransactions(options = {}) {
   document.getElementById('refreshReportTransactions')?.addEventListener('click', () => renderReportsTransactions({ refresh: true }));
   bindSearch((renderOptions = {}) => {
     state.reportTransactionsPage = 1;
-    renderReportsTransactions(renderOptions);
+    return renderReportsTransactions(renderOptions);
   });
   app.querySelectorAll('[data-report-transaction-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -6781,7 +7105,7 @@ async function renderXendit(options = {}) {
   document.getElementById('xenditWithdrawButton')?.addEventListener('click', () => openXenditWithdrawModal(account, balance));
   bindSearch((renderOptions = {}) => {
     resetXenditPages();
-    renderXendit(renderOptions);
+    return renderXendit(renderOptions);
   });
   app.querySelector('[data-xendit-prev]')?.addEventListener('click', () => {
     state.xenditPage = Math.max(1, Number(state.xenditPage || 1) - 1);
@@ -6939,7 +7263,7 @@ async function renderReportsInventoryStock(options = {}) {
   });
   bindSearch((renderOptions = {}) => {
     state.inventoryReportPage = 1;
-    renderReportsInventoryStock(renderOptions);
+    return renderReportsInventoryStock(renderOptions);
   });
   app.querySelectorAll('[data-stock-report-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -8108,7 +8432,7 @@ async function renderInventory(options = {}) {
   }
   bindSearch((renderOptions = {}) => {
     state.inventoryPage = 1;
-    renderInventory(renderOptions);
+    return renderInventory(renderOptions);
   });
   app.querySelectorAll('[data-inventory-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -8487,15 +8811,25 @@ async function loadRadiusNasOptions() {
   return radiusNasOptions(payload.rows || []);
 }
 
-function currentUserLockedNasOption(nasOptions = []) {
-  const lockedNasId = String(state.auth?.lockedNasId || state.auth?.resellerNasId || '').trim();
-  if (!lockedNasId) return null;
-  return nasOptions.find((item) => [item.id, item.value, item.ip].some((value) => String(value || '') === lockedNasId)) || {
-    id: lockedNasId,
-    value: lockedNasId,
+function currentUserLockedNasOptions(nasOptions = []) {
+  const ids = Array.isArray(state.auth?.lockedNasIds) && state.auth.lockedNasIds.length
+    ? state.auth.lockedNasIds
+    : [state.auth?.lockedNasId || state.auth?.resellerNasId || ''].filter(Boolean);
+  const labels = String(state.auth?.lockedNasNames || state.auth?.lockedNasName || '')
+    .split(',')
+    .map((item) => item.trim());
+  return ids.map((lockedNasId, index) => nasOptions.find((item) => (
+    [item.id, item.value, item.ip].some((value) => String(value || '') === String(lockedNasId))
+  )) || {
+    id: String(lockedNasId),
+    value: String(lockedNasId),
     ip: '',
-    label: state.auth?.lockedNasName || lockedNasId
-  };
+    label: labels[index] || String(lockedNasId)
+  }).filter((item) => item && item.id !== 'all');
+}
+
+function currentUserLockedNasOption(nasOptions = []) {
+  return currentUserLockedNasOptions(nasOptions)[0] || null;
 }
 
 function profileAllowedForLockedNas(profile = {}, lockedNas = null) {
@@ -8508,7 +8842,47 @@ function profileAllowedForLockedNas(profile = {}, lockedNas = null) {
 }
 
 function radiusProfilesForLockedNas(options = {}, lockedNas = null) {
-  return (options.profiles || []).filter((profile) => profileAllowedForLockedNas(profile, lockedNas));
+  const lockedRows = Array.isArray(lockedNas) ? lockedNas.filter(Boolean) : [lockedNas].filter(Boolean);
+  if (!lockedRows.length) return options.profiles || [];
+  return (options.profiles || []).filter((profile) => lockedRows.some((nas) => profileAllowedForLockedNas(profile, nas)));
+}
+
+function resellerNasTargetField(inputName = 'nasId', nasOptions = [], selected = '', label = 'NAS') {
+  const rows = Array.isArray(nasOptions) ? nasOptions.filter(Boolean) : [];
+  if (!rows.length) return '';
+  if (rows.length === 1) return lockedNasReadonlyField(inputName, rows[0], label);
+  const options = rows.map((nas) => ({
+    value: nas.id || nas.value || nas.ip || '',
+    label: nas.ip && nas.ip !== nas.label ? `${nas.label} (${nas.ip})` : nas.label
+  }));
+  return `
+    <label class="field">
+      <span>${escapeHtml(label)}</span>
+      <select name="${escapeHtml(inputName)}" data-reseller-operation-nas required>
+        ${radiusOptionTags(options, selected, 'Pilih NAS tujuan')}
+      </select>
+    </label>
+  `;
+}
+
+function bindResellerOperationNasProfile(options = {}, initialProfile = '') {
+  if (state.auth?.role !== 'reseller_voucher') return;
+  const nasSelect = modalBody.querySelector('[data-reseller-operation-nas]');
+  const profileSelect = modalBody.querySelector('select[name="profile"]');
+  if (!nasSelect || !profileSelect) return;
+  const allowedNas = currentUserLockedNasOptions(options.nas || []);
+  const sync = (notify = false) => {
+    const selectedNas = allowedNas.find((nas) => [nas.id, nas.value, nas.ip].some((value) => String(value || '') === String(nasSelect.value || '')));
+    const profileRows = selectedNas ? radiusProfilesForLockedNas(options, selectedNas) : [];
+    const preferred = profileRows.some((profile) => String(profile.value) === String(profileSelect.value || initialProfile))
+      ? (profileSelect.value || initialProfile)
+      : '';
+    profileSelect.innerHTML = radiusOptionTags(profileRows, preferred, 'Pilih Profile');
+    profileSelect.disabled = !selectedNas;
+    if (notify) profileSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  nasSelect.addEventListener('change', () => sync(true));
+  sync();
 }
 
 function lockedNasReadonlyField(inputName = 'nasId', nas = null, label = 'NAS') {
@@ -8526,11 +8900,44 @@ function lockedNasReadonlyField(inputName = 'nasId', nas = null, label = 'NAS') 
   `;
 }
 
-function nasLockOptionTags(options = [], selected = '', emptyLabel = 'Pilih NAS') {
-  return radiusOptionTags(options.map((item) => ({
-    value: item.id || item.value || item.ip,
-    label: item.ip && item.ip !== item.label ? `${item.label} (${item.ip})` : item.label
-  })), selected, emptyLabel);
+function nasTargetChoiceMarkup(options = [], selected = []) {
+  const selectedValues = Array.isArray(selected)
+    ? selected.map((value) => String(value || ''))
+    : String(selected || '').split(',').map((value) => value.trim()).filter(Boolean);
+  const selectedSet = new Set(selectedValues);
+  const rows = [
+    {
+      value: 'all',
+      label: 'Semua NAS',
+      detail: 'Seluruh NAS yang tersedia',
+      all: true
+    },
+    ...options.map((item) => ({
+      value: String(item.id || item.value || item.ip || ''),
+      label: item.label || item.name || item.ip || '-',
+      detail: item.ip && item.ip !== item.label ? item.ip : '',
+      all: false
+    })).filter((item) => item.value)
+  ];
+  return `
+    <div class="nas-target-picker" data-nas-target-picker>
+      <div class="nas-target-picker-head">
+        <input class="control compact" type="search" data-nas-target-search placeholder="Cari NAS" autocomplete="off">
+        <strong data-nas-target-count>0 NAS dipilih</strong>
+      </div>
+      <div class="nas-target-choice-grid">
+        ${rows.map((item) => `
+          <label class="nas-target-choice" data-nas-target-choice data-nas-target-text="${escapeHtml(`${item.label} ${item.detail}`.toLowerCase())}" ${item.all ? 'data-all-nas-choice' : ''}>
+            <input type="checkbox" name="lockedNasIds" value="${escapeHtml(item.value)}" data-multi-value ${selectedSet.has(item.value) ? 'checked' : ''}>
+            <span>
+              <strong>${escapeHtml(item.label)}</strong>
+              ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}
+            </span>
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `;
 }
 
 function clearRadiusOptionsCache(section = '') {
@@ -9066,6 +9473,19 @@ function hotspotVoucherPriceText(value) {
   return amount.toLocaleString('id-ID', { maximumFractionDigits: 0 });
 }
 
+function hotspotVoucherReceiptPrice(row = {}) {
+  return Number(
+    row.receiptPrice
+      || row.receiptAmount
+      || row.customerAmount
+      || row.gatewayAmount
+      || row.checkoutAmount
+      || row.totalAmount
+      || row.price
+      || 0
+  );
+}
+
 function hotspotVoucherValidityText(row = {}) {
   const raw = String(row.validity || '').trim();
   if (raw) {
@@ -9120,7 +9540,7 @@ function hotspotVoucherTemplateValues(row = {}, index = 0, template = {}) {
   const callCenter = hotspotVoucherAdminPhone();
   const support = callCenter ? `CS: ${callCenter}` : String(template.supportText || '').trim();
   const validity = hotspotVoucherValidityText(row);
-  const price = hotspotVoucherPriceText(row.price);
+  const price = hotspotVoucherPriceText(hotspotVoucherReceiptPrice(row));
   return {
     business_name: hotspotVoucherBusinessName(),
     code: username,
@@ -9214,7 +9634,7 @@ function hotspotVoucherMikhmonCompactTable(row = {}, index = 0, template = {}) {
   const logoUrl = hotspotVoucherAbsoluteUrl(hotspotVoucherLogoUrl());
   const businessName = hotspotVoucherBusinessName();
   const voucherCode = String(row.username || row.password || '-');
-  const price = hotspotVoucherPriceText(row.price);
+  const price = hotspotVoucherPriceText(hotspotVoucherReceiptPrice(row));
   const validity = hotspotVoucherValidityText(row);
   const activationText = renderHotspotVoucherTemplateText(
     String(template.instruction || template.subtitle || '').trim() || HOTSPOT_VOUCHER_DEFAULT_INSTRUCTION,
@@ -9381,7 +9801,7 @@ function hotspotVoucherThermalTicket(row = {}, index = 0, template = {}, mode = 
       ${password && password !== voucherCode ? `<div class="hotspot-voucher-thermal-pass">Password: ${escapeHtml(password)}</div>` : ''}
       <div class="hotspot-voucher-thermal-meta">
         <span>Paket</span><strong>${escapeHtml(row.profile || '-')}</strong>
-        <span>Harga</span><strong>${escapeHtml(hotspotVoucherPriceText(row.price))}</strong>
+        <span>Harga</span><strong>${escapeHtml(hotspotVoucherPriceText(hotspotVoucherReceiptPrice(row)))}</strong>
         <span>Masa Aktif</span><strong>${escapeHtml(hotspotVoucherValidityText(row))}</strong>
         <span>Tanggal</span><strong>${escapeHtml(hotspotVoucherDateText(dateSource))} ${escapeHtml(timeText(dateSource))}</strong>
       </div>
@@ -9616,7 +10036,7 @@ function hotspotVoucherRawBtTicketText(row = {}, index = 0, template = {}, mode 
     thermalCenter(`Kode Voucher : ${voucherCode}`, width),
     ...(password && password !== voucherCode ? thermalKeyValue('Password', password, width) : []),
     ...thermalKeyValue('Paket', row.profile || '-', width),
-    ...thermalKeyValue('Harga', hotspotVoucherPriceText(row.price), width),
+    ...thermalKeyValue('Harga', hotspotVoucherPriceText(hotspotVoucherReceiptPrice(row)), width),
     ...thermalKeyValue('Masa Aktif', hotspotVoucherValidityText(row), width),
     ...thermalKeyValue('Tanggal', `${hotspotVoucherDateText(dateSource)} ${timeText(dateSource)}`, width),
     thermalSeparator(width)
@@ -9774,7 +10194,7 @@ function hotspotVoucherTicket(row = {}, index = 0) {
         ${template.showPrice === false ? '' : `
           <div class="hotspot-voucher-price">
             <span>Rp</span>
-            <strong>${escapeHtml(hotspotVoucherPriceText(row.price))}</strong>
+            <strong>${escapeHtml(hotspotVoucherPriceText(hotspotVoucherReceiptPrice(row)))}</strong>
           </div>
         `}
       </div>
@@ -10826,10 +11246,14 @@ function radiusPppUserFormBody(user = null, options = {}) {
 }
 
 function radiusHotspotUserFormBody(user = null, options = {}) {
-  const lockedNas = state.auth?.role === 'reseller_voucher' ? currentUserLockedNasOption(options.nas || []) : null;
-  const profileOptions = radiusProfilesForLockedNas(options, lockedNas);
+  const lockedNasOptions = state.auth?.role === 'reseller_voucher' ? currentUserLockedNasOptions(options.nas || []) : [];
+  const profileOptions = radiusProfilesForLockedNas(options, lockedNasOptions);
   const freeOnly = can('radius:hotspot-free:write') && !can('radius:write');
-  const selectedNas = lockedNas ? (lockedNas.id || lockedNas.value || lockedNas.ip || '') : (user ? radiusNasIpForRow(user, options.nas || []) : '');
+  const userNasValue = user ? String(user.nasId || radiusNasIpForRow(user, options.nas || []) || '') : '';
+  const selectedLockedNas = lockedNasOptions.find((nas) => [nas.id, nas.value, nas.ip, nas.label].some((value) => String(value || '') === userNasValue));
+  const selectedNas = lockedNasOptions.length
+    ? (selectedLockedNas?.id || (lockedNasOptions.length === 1 ? lockedNasOptions[0].id : ''))
+    : userNasValue;
   const selectedProfile = user?.profile || user?.profileName || '';
   const selectedPaymentStatus = freeOnly
     ? 'free'
@@ -10850,16 +11274,16 @@ function radiusHotspotUserFormBody(user = null, options = {}) {
         <span>Password</span>
         <input name="password" type="text" autocomplete="off" ${user ? 'placeholder="Kosongkan jika tidak diubah"' : ''}>
       </label>
-      <label class="field">
-        <span>Profile</span>
-        <select name="profile" id="radiusHotspotProfile" ${user ? '' : 'required'}>${radiusOptionTags(profileOptions, selectedProfile, 'None')}</select>
-      </label>
-      ${lockedNas ? lockedNasReadonlyField('nasId', lockedNas, 'NAS') : `
+      ${lockedNasOptions.length ? resellerNasTargetField('nasId', lockedNasOptions, selectedNas, 'NAS Tujuan') : `
         <label class="field">
           <span>NAS</span>
           <select name="routerNas">${radiusOptionTags((options.nas || []).map((item) => ({ label: item.label, value: item.ip })), selectedNas, 'All')}</select>
         </label>
       `}
+      <label class="field">
+        <span>Profile</span>
+        <select name="profile" id="radiusHotspotProfile" ${user ? '' : 'required'}>${radiusOptionTags(profileOptions, selectedProfile, 'None')}</select>
+      </label>
       <label class="field">
         <span>Hotspot Server</span>
         <input name="hotspotServer" value="${escapeHtml(user?.hotspotServer || user?.server || '')}" autocomplete="off" placeholder="all">
@@ -11745,6 +12169,8 @@ function bindRadiusHotspotPaymentFields(options = {}) {
     if (price !== '' && (!amountInput.value || amountInput.dataset.autoFilled === '1')) {
       amountInput.value = price;
       amountInput.dataset.autoFilled = '1';
+    } else if (price === '' && amountInput.dataset.autoFilled === '1') {
+      amountInput.value = '';
     }
   };
   amountInput.addEventListener('input', () => {
@@ -11820,12 +12246,13 @@ async function openRadiusHotspotUserModal(user = null) {
     renderRadiusHotspot({ refresh: true });
   });
   bindRequiredRadiusProfileWarning('#radiusHotspotProfile', 'Hotspot');
+  bindResellerOperationNasProfile(options, user?.profile || user?.profileName || '');
   bindRadiusHotspotPaymentFields(options);
 }
 
 function radiusHotspotVoucherFormBody(options = {}) {
-  const lockedNas = state.auth?.role === 'reseller_voucher' ? currentUserLockedNasOption(options.nas || []) : null;
-  const profileOptions = radiusProfilesForLockedNas(options, lockedNas);
+  const lockedNasOptions = state.auth?.role === 'reseller_voucher' ? currentUserLockedNasOptions(options.nas || []) : [];
+  const profileOptions = radiusProfilesForLockedNas(options, lockedNasOptions);
   return `
     <div class="form-grid">
       <label class="field">
@@ -11851,16 +12278,16 @@ function radiusHotspotVoucherFormBody(options = {}) {
           <option value="lower-number">Huruf kecil + angka</option>
         </select>
       </label>
-      <label class="field">
-        <span>Profile</span>
-        <select name="profile" required>${radiusOptionTags(profileOptions, '', 'Pilih Profile')}</select>
-      </label>
-      ${lockedNas ? lockedNasReadonlyField('nasId', lockedNas, 'NAS') : `
+      ${lockedNasOptions.length ? resellerNasTargetField('nasId', lockedNasOptions, lockedNasOptions.length === 1 ? lockedNasOptions[0].id : '', 'NAS Tujuan') : `
         <label class="field">
           <span>NAS</span>
           <select name="nas">${radiusOptionTags(options.nas || [], '', 'All')}</select>
         </label>
       `}
+      <label class="field">
+        <span>Profile</span>
+        <select name="profile" required>${radiusOptionTags(profileOptions, '', 'Pilih Profile')}</select>
+      </label>
       <label class="field full">
         <span>Catatan</span>
         <textarea name="note"></textarea>
@@ -11883,6 +12310,7 @@ async function openRadiusHotspotVoucherModal() {
     setToast(`Generate voucher selesai: ${displayNumber(result.created || 0)} voucher`);
     renderRadiusHotspot({ refresh: true });
   });
+  bindResellerOperationNasProfile(options);
 }
 
 function radiusHotspotTemplateFormBody(template = {}) {
@@ -12568,7 +12996,7 @@ async function renderRadiusPppDhcp(options = {}) {
   }
   bindSearch((renderOptions = {}) => {
     state.radiusPppPage = 1;
-    renderRadiusPppDhcp(renderOptions);
+    return renderRadiusPppDhcp(renderOptions);
   });
   bindRadiusPager('radius-ppp', (page) => {
     state.radiusPppPage = page;
@@ -12580,7 +13008,17 @@ async function renderRadiusPppDhcp(options = {}) {
 async function renderRadiusHotspot(options = {}) {
   clearRealtimeTimers();
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat Radius Hotspot...</div>';
-  const resellerVoucherRole = state.auth?.role === 'reseller_voucher';
+  let resellerVoucherRole = state.auth?.role === 'reseller_voucher';
+  if (resellerVoucherRole && options.refresh === true) {
+    try {
+      const authPayload = await api('/api/auth/me');
+      state.auth = authPayload.user || state.auth;
+      clearRadiusOptionsCache('hotspot');
+      resellerVoucherRole = state.auth?.role === 'reseller_voucher';
+    } catch {
+      // Data halaman tetap dapat memakai konteks sesi terakhir jika refresh profil gagal.
+    }
+  }
   if (resellerVoucherRole && state.radiusHotspotTab === 'voucher-online') {
     state.radiusHotspotTab = 'users';
   }
@@ -12622,6 +13060,17 @@ async function renderRadiusHotspot(options = {}) {
       filterOptions = { profiles: [], nas: [] };
     }
   }
+  const resellerTargetNas = resellerVoucherRole ? currentUserLockedNasOptions(filterOptions.nas || []) : [];
+  if (resellerVoucherRole) {
+    filterOptions = { ...filterOptions, nas: resellerTargetNas };
+    const selectedNasAllowed = !state.radiusHotspotNas || resellerTargetNas.some((nas) => (
+      [nas.id, nas.value, nas.ip].some((value) => String(value || '') === String(state.radiusHotspotNas))
+    ));
+    if (!selectedNasAllowed) state.radiusHotspotNas = '';
+  }
+  const resellerTargetLabel = resellerTargetNas.length
+    ? resellerTargetNas.map((nas) => nas.label || nas.id).join(', ')
+    : (state.auth?.lockedNasNames || state.auth?.lockedNasName || 'Belum diatur');
   const tabs = [
     { value: 'users', label: 'User' },
     { value: 'sessions', label: 'Session' },
@@ -12632,6 +13081,7 @@ async function renderRadiusHotspot(options = {}) {
 
   app.innerHTML = `
     <div class="stack">
+      ${resellerVoucherRole ? nasTargetContext('NAS Target Reseller Hotspot', resellerTargetLabel, 'Voucher dan profile dibatasi ke NAS ini') : ''}
       ${state.radiusHotspotTab === 'users' ? hotspotRadiusSummary(payload) : radiusSummary(payload, {
         total: 'Hotspot',
         totalSub: 'Total data',
@@ -12674,7 +13124,7 @@ async function renderRadiusHotspot(options = {}) {
       <section class="section radius-section">
         <div class="section-head">
           ${radiusTabButtons(state.radiusHotspotTab, tabs, 'radius-hotspot')}
-          <span class="muted">${resellerVoucherRole ? 'Reseller mengelola voucher sesuai NAS lock.' : fullWriteAllowed ? 'User dan profile bisa dikelola dari aplikasi ini.' : userWriteAllowed ? 'Teknisi hanya bisa kelola user Hotspot Free manual.' : 'Read-only sesuai role login.'}</span>
+          <span class="muted">${resellerVoucherRole ? 'Reseller mengelola voucher sesuai NAS target.' : fullWriteAllowed ? 'User dan profile bisa dikelola dari aplikasi ini.' : userWriteAllowed ? 'Teknisi hanya bisa kelola user Hotspot Free manual.' : 'Read-only sesuai role login.'}</span>
         </div>
         ${voucherOnlineTab ? radiusHotspotVoucherOnlinePanel(payload, fullWriteAllowed) : radiusTable(state.radiusHotspotTab, rows, 'hotspot', tableWriteAllowed, radiusHotspotStartNo, { rowWriteAllowed: state.radiusHotspotTab === 'users' ? hotspotUserWriteAllowed : null })}
         ${voucherOnlineTab ? '' : radiusPaginationControls('radius-hotspot', payload.pagination, state.radiusHotspotTab === 'sessions' ? 'session' : 'data')}
@@ -12835,7 +13285,7 @@ async function renderRadiusHotspot(options = {}) {
   if (!voucherOnlineTab) {
     bindSearch((renderOptions = {}) => {
       state.radiusHotspotPage = 1;
-      renderRadiusHotspot(renderOptions);
+      return renderRadiusHotspot(renderOptions);
     });
     bindRadiusPager('radius-hotspot', (page) => {
       state.radiusHotspotPage = page;
@@ -14185,7 +14635,7 @@ async function renderGenieAcs(options = {}) {
   });
   bindSearch((renderOptions = {}) => {
     state.genieAcsPage = 1;
-    renderGenieAcs(renderOptions);
+    return renderGenieAcs(renderOptions);
   });
   document.getElementById('genieAcsStatusFilter')?.addEventListener('change', (event) => {
     state.genieAcsStatus = event.target.value || 'all';
@@ -14421,7 +14871,7 @@ function filteredMonitoringCustomers(rows = []) {
 
 async function renderMonitoringCustomers(options = {}) {
   clearRealtimeTimers();
-  const shouldFetch = options.refresh || options.silent || !state.monitoringCustomersPayload;
+  const shouldFetch = options.refresh || (!options.liveSearch && options.silent) || !state.monitoringCustomersPayload;
   if (shouldFetch && shouldShowPageLoading(options)) {
     app.innerHTML = '<div class="empty">Memuat pelanggan online...</div>';
   }
@@ -14551,7 +15001,7 @@ async function renderMonitoringCustomers(options = {}) {
   document.getElementById('refreshCustomers')?.addEventListener('click', () => renderMonitoringCustomers({ refresh: true }));
   bindSearch((renderOptions = {}) => {
     state.monitoringCustomerPage = 1;
-    renderMonitoringCustomers(renderOptions);
+    return renderMonitoringCustomers(renderOptions);
   });
   app.querySelectorAll('[data-customer-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -15323,15 +15773,13 @@ function openManualInvoiceModal() {
     preview: null,
     error: ''
   };
-  let manualInvoiceSearchTimer = null;
-
-  const setLoading = (loading) => {
+  const setLoading = (loading, options = {}) => {
     wizard.loading = loading;
-    render();
+    if (!options.silent) render();
   };
 
-  const loadMembers = async () => {
-    setLoading(true);
+  const loadMembers = async (options = {}) => {
+    setLoading(true, options);
     wizard.error = '';
     try {
       const params = queryString({
@@ -15426,23 +15874,24 @@ function openManualInvoiceModal() {
 
   function bindManualInvoiceModal() {
     const searchInput = modalBody.querySelector('#manualInvoiceSearch');
-    const applyManualInvoiceSearch = (force = false) => {
-      const next = searchInput?.value.trim() || '';
-      if (!force && wizard.search === next) return;
-      wizard.search = next;
+    const applyManualInvoiceSearch = (renderOptions = {}) => {
+      wizard.page = 1;
+      return loadMembers(renderOptions);
+    };
+    bindLiveTextSearch(searchInput, {
+      getValue: () => wizard.search,
+      setValue: (value) => {
+        wizard.search = value;
+        wizard.page = 1;
+      },
+      handler: applyManualInvoiceSearch,
+      refocusSelector: '#manualInvoiceSearch'
+    });
+    bindSearchClearButton(searchInput, () => {
+      wizard.search = '';
       wizard.page = 1;
       const result = loadMembers();
-      Promise.resolve(result).finally(() => focusSearchAfterRender('#manualInvoiceSearch', next));
-    };
-    bindSearchClearButton(searchInput, () => applyManualInvoiceSearch(true));
-    searchInput?.addEventListener('input', () => {
-      window.clearTimeout(manualInvoiceSearchTimer);
-      manualInvoiceSearchTimer = window.setTimeout(() => applyManualInvoiceSearch(false), LIVE_SEARCH_DEBOUNCE_MS);
-    });
-    searchInput?.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      applyManualInvoiceSearch(true);
+      Promise.resolve(result).finally(() => focusSearchAfterRender('#manualInvoiceSearch', wizard.search, { preserveMs: SEARCH_FOCUS_INTENT_MS }));
     });
     modalBody.querySelectorAll('[data-manual-invoice-page]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -17075,7 +17524,7 @@ async function renderMonitoringMembers(options = {}) {
   });
   bindSearch((renderOptions = {}) => {
     state.monitoringMemberPage = 1;
-    renderMonitoringMembers(renderOptions);
+    return renderMonitoringMembers(renderOptions);
   });
   app.querySelectorAll('[data-member-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -17129,17 +17578,19 @@ function billingFilteredAmount(summary = {}) {
 }
 
 function billingFilteredMetric(summary = {}) {
+  if (summary.amountsHidden === true) return displayNumber(summary.filteredCount || 0);
   return `${displayNumber(summary.filteredCount || 0)} / ${rupiah(billingFilteredAmount(summary))}`;
 }
 
-function billingCountAmountMetric(count, amount) {
+function billingCountAmountMetric(count, amount, summary = {}) {
+  if (summary.amountsHidden === true) return displayNumber(count || 0);
   return `${displayNumber(count || 0)} / ${rupiah(amount || 0)}`;
 }
 
 function billingPaidMetric(summary = {}) {
   const count = summary.periodPaidCount !== undefined ? summary.periodPaidCount : summary.paid;
   const amount = summary.periodPaidAmount !== undefined ? summary.periodPaidAmount : summary.paidAmount;
-  return billingCountAmountMetric(count, amount);
+  return billingCountAmountMetric(count, amount, summary);
 }
 
 async function renderMonitoringBilling(options = {}) {
@@ -17170,6 +17621,11 @@ async function renderMonitoringBilling(options = {}) {
   const summary = payload.summary || {};
   const invoices = Array.isArray(payload.invoices) ? payload.invoices : [];
   const sites = Array.isArray(payload.sites) ? payload.sites : [];
+  const collectorBillingView = String(state.auth?.role || '').toLowerCase() === 'collector';
+  const collectorScope = payload.collector || null;
+  const collectorTargetLabel = collectorScope?.targetReady
+    ? (collectorScope.targetNasName || collectorScope.targetNasAddress || 'NAS target')
+    : 'NAS target belum diatur';
   const pagination = payload.pagination || { page: 1, totalPages: 1, total: invoices.length, limit: state.monitoringBillingLimit };
   const standaloneBilling = payload.source === 'local';
   const paymentGatewayEnabled = payload.paymentGatewayEnabled === true;
@@ -17252,12 +17708,27 @@ async function renderMonitoringBilling(options = {}) {
         </section>
       `}
 
-      <section class="metrics">
-        ${metric('Sudah Bayar', billingPaidMetric(summary), `Periode ${periodLabel(billingPeriod)}`, 'positive')}
-        ${metric('Belum Bayar', billingCountAmountMetric(summary.unpaid, summary.unpaidAmount), billingScopeLabel, 'warning-card')}
-        ${metric('Lewat Tempo', billingCountAmountMetric(summary.overdue, summary.overdueAmount), billingScopeLabel, 'negative')}
-        ${metric('Hasil Filter', billingFilteredMetric(summary), filterLabel)}
-      </section>
+      ${collectorBillingView ? `
+        ${collectorScope?.targetReady ? '' : `
+          <section class="notice warning">
+            <strong>Target tagihan belum diatur</strong>
+            <span>Hubungi admin untuk mengatur NAS target penagihan.</span>
+          </section>
+        `}
+        ${nasTargetContext('NAS Target Collector', collectorTargetLabel, 'Area penagihan akun yang sedang login')}
+        <section class="metrics collector-billing-metrics">
+          ${metric('Belum Bayar', displayNumber(summary.unpaid || 0), billingScopeLabel, 'warning-card')}
+          ${metric('Lewat Tempo', displayNumber(summary.overdue || 0), billingScopeLabel, 'negative')}
+          ${metric('Hasil Filter', displayNumber(summary.filteredCount || 0), filterLabel)}
+        </section>
+      ` : `
+        <section class="metrics">
+          ${metric('Sudah Bayar', billingPaidMetric(summary), `Periode ${periodLabel(billingPeriod)}`, 'positive')}
+          ${metric('Belum Bayar', billingCountAmountMetric(summary.unpaid, summary.unpaidAmount, summary), billingScopeLabel, 'warning-card')}
+          ${metric('Lewat Tempo', billingCountAmountMetric(summary.overdue, summary.overdueAmount, summary), billingScopeLabel, 'negative')}
+          ${metric('Hasil Filter', billingFilteredMetric(summary), filterLabel)}
+        </section>
+      `}
 
       <div class="toolbar">
         <div class="filters">
@@ -17267,10 +17738,12 @@ async function renderMonitoringBilling(options = {}) {
             <option value="arrears" ${billingScope === 'arrears' ? 'selected' : ''}>Semua tunggakan</option>
           </select>
           <input class="control month-picker-control" id="billingPeriodFilter" type="month" value="${escapeHtml(billingPeriod)}" aria-label="Filter bulan tagihan">
-          <select class="control" id="billingSiteFilter" aria-label="Filter NAS">
-            <option value="all" ${state.monitoringBillingSite === 'all' ? 'selected' : ''}>Semua NAS</option>
-            ${sites.map((site) => `<option value="${escapeHtml(site.id)}" ${state.monitoringBillingSite === site.id ? 'selected' : ''}>${escapeHtml(site.name)}</option>`).join('')}
-          </select>
+          ${collectorBillingView ? '' : `
+            <select class="control" id="billingSiteFilter" aria-label="Filter NAS">
+              <option value="all" ${state.monitoringBillingSite === 'all' ? 'selected' : ''}>Semua NAS</option>
+              ${sites.map((site) => `<option value="${escapeHtml(site.id)}" ${state.monitoringBillingSite === site.id ? 'selected' : ''}>${escapeHtml(site.name)}</option>`).join('')}
+            </select>
+          `}
           <select class="control" id="billingCustomerStatusFilter" aria-label="Filter status pelanggan">
             <option value="all" ${state.monitoringBillingCustomerStatus === 'all' ? 'selected' : ''}>Semua pelanggan</option>
             <option value="active" ${state.monitoringBillingCustomerStatus === 'active' ? 'selected' : ''}>Aktif</option>
@@ -17461,7 +17934,7 @@ async function renderMonitoringBilling(options = {}) {
   });
   bindSearch((renderOptions = {}) => {
     state.monitoringBillingPage = 1;
-    renderMonitoringBilling(renderOptions);
+    return renderMonitoringBilling(renderOptions);
   });
   app.querySelectorAll('[data-billing-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -17952,7 +18425,7 @@ async function renderMonitoringServices(options = {}) {
   document.getElementById('goServiceSettings')?.addEventListener('click', () => setView('monitoringSite'));
   bindSearch((renderOptions = {}) => {
     state.monitoringServicesPage = 1;
-    renderMonitoringServices(renderOptions);
+    return renderMonitoringServices(renderOptions);
   });
   app.querySelectorAll('[data-service-page]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -17990,6 +18463,7 @@ function filteredUserRows(users = []) {
         user.phone,
         user.address,
         user.lockedNasName,
+        user.lockedNasNames,
         user.lockedNasAddress
       ].some((value) => String(value || '').toLowerCase().includes(query));
     })
@@ -18046,7 +18520,7 @@ async function renderUsers(options = {}) {
       <div class="toolbar user-page-head">
         <div>
           <h2 class="page-section-title">User aplikasi</h2>
-          <p class="muted compact-text">Kelola akun, identitas petugas, role, dan pembatasan NAS reseller.</p>
+          <p class="muted compact-text">Kelola akun, identitas petugas, role, dan NAS target penugasan.</p>
         </div>
         <div class="row-actions">
           <button class="ghost-button" id="refreshUsers" type="button">Refresh</button>
@@ -18086,7 +18560,7 @@ async function renderUsers(options = {}) {
               <th>Identitas Staf</th>
               <th>Role / Unit</th>
               <th>Kontak</th>
-              <th>NAS Lock</th>
+              <th>NAS Target</th>
               <th>Status</th>
               <th>Login terakhir</th>
               <th>Aksi</th>
@@ -18123,7 +18597,7 @@ async function renderUsers(options = {}) {
                     ${user.address ? `<span>${escapeHtml(user.address)}</span>` : ''}
                   </div>
                 </td>
-                <td>${user.role === 'reseller_voucher' ? nasActiveBadge(user.lockedNasName || user.lockedNasAddress || user.lockedNasId || '-') : '<span class="muted">-</span>'}</td>
+                <td>${userLockedNasDisplay(user)}</td>
                 <td><span class="badge ${user.active !== false ? 'active' : 'inactive'}">${user.active !== false ? 'Aktif' : 'Nonaktif'}</span></td>
                 <td><span class="user-last-login">${dateTimeText(user.lastLoginAt)}</span></td>
                 <td class="user-actions-cell">
@@ -18223,11 +18697,45 @@ async function renderUsers(options = {}) {
   });
 }
 
+function userLockedNasDisplay(user = {}) {
+  if (!['reseller_voucher', 'collector', 'technician'].includes(user.role)) return '<span class="muted">-</span>';
+  const ids = Array.isArray(user.lockedNasIds) ? user.lockedNasIds : [];
+  const label = user.lockedNasNames
+    || user.lockedNasName
+    || (ids.includes('all') ? 'Semua NAS' : ids.join(', '))
+    || user.lockedNasAddress
+    || user.lockedNasId
+    || '-';
+  const roleTargetLabel = user.role === 'collector'
+    ? 'Collector'
+    : user.role === 'technician'
+      ? 'Teknisi'
+      : 'Reseller Hotspot';
+  const targetMarkup = label === '-'
+    ? '<span class="muted">Belum diatur</span>'
+    : nasTargetBadges(label);
+  return `
+    <div class="user-nas-target">
+      <span>${escapeHtml(roleTargetLabel)}</span>
+      ${targetMarkup}
+    </div>
+  `;
+}
+
 function userFormBody(user = {}, options = {}) {
   const isEdit = Boolean(user.id);
   const nasOptions = Array.isArray(options.nas) ? options.nas : [];
-  const selectedNasId = user.lockedNasId || user.resellerNasId || '';
-  const resellerRole = (user.role || 'viewer') === 'reseller_voucher';
+  const selectedNasIds = Array.isArray(user.lockedNasIds) && user.lockedNasIds.length
+    ? user.lockedNasIds
+    : [user.lockedNasId || user.resellerNasId || ''].filter(Boolean);
+  const nasLockedRole = ['reseller_voucher', 'collector', 'technician'].includes(user.role || 'viewer');
+  const collectorRole = (user.role || 'viewer') === 'collector';
+  const technicianRole = (user.role || 'viewer') === 'technician';
+  const nasLockLabel = collectorRole
+    ? 'NAS Target Collector'
+    : technicianRole
+      ? 'NAS Area Teknisi'
+      : 'NAS Target Reseller Hotspot';
   const roleText = user.roleLabel || roleLabel(user.role || 'viewer');
   const roleHelp = roleDescription(user.role || 'viewer');
   const photoUrl = safeProfilePhotoUrl(user.photoUrl || user.avatarUrl);
@@ -18266,12 +18774,11 @@ function userFormBody(user = {}, options = {}) {
           ${roleOptions(user.role || 'viewer')}
         </select>
       </label>
-      <label class="field" data-reseller-nas-lock ${resellerRole ? '' : 'hidden'}>
-        <span>NAS Reseller Voucher</span>
-        <select name="lockedNasId" ${resellerRole ? 'required' : ''}>
-          ${nasLockOptionTags(nasOptions, selectedNasId, nasOptions.length ? 'Pilih NAS' : 'Belum ada NAS')}
-        </select>
-      </label>
+      <div class="field full user-nas-target-field" data-reseller-nas-lock ${nasLockedRole ? '' : 'hidden'}>
+        <span data-nas-lock-label>${escapeHtml(nasLockLabel)}</span>
+        ${nasTargetChoiceMarkup(nasOptions, selectedNasIds)}
+        <small data-nas-lock-help>${collectorRole ? 'Pilih satu atau beberapa NAS penagihan. Gunakan Semua NAS untuk seluruh target.' : technicianRole ? 'Opsional: pilih satu atau beberapa NAS sebagai area penugasan teknisi.' : 'Pilih satu atau beberapa NAS yang boleh dikelola reseller hotspot.'}</small>
+      </div>
       <div class="user-role-description field full" data-user-role-description>
         <strong>${escapeHtml(roleText)}</strong>
         <span>${escapeHtml(roleHelp)}</span>
@@ -18325,22 +18832,65 @@ function userFormBody(user = {}, options = {}) {
 function bindUserRoleNasLock() {
   const roleSelect = modalBody.querySelector('select[name="role"]');
   const lockField = modalBody.querySelector('[data-reseller-nas-lock]');
-  const lockSelect = modalBody.querySelector('select[name="lockedNasId"]');
+  const lockPicker = modalBody.querySelector('[data-nas-target-picker]');
+  const lockChoices = [...modalBody.querySelectorAll('[data-nas-target-choice]')];
+  const lockInputs = lockChoices.map((choice) => choice.querySelector('input[data-multi-value]')).filter(Boolean);
+  const allChoice = modalBody.querySelector('[data-all-nas-choice]');
+  const allInput = allChoice?.querySelector('input[data-multi-value]');
+  const lockSearch = modalBody.querySelector('[data-nas-target-search]');
+  const lockCount = modalBody.querySelector('[data-nas-target-count]');
+  const lockLabel = modalBody.querySelector('[data-nas-lock-label]');
+  const lockHelp = modalBody.querySelector('[data-nas-lock-help]');
   const unitInput = modalBody.querySelector('[data-user-role-unit]');
   const positionSelect = modalBody.querySelector('select[name="position"]');
   const roleHelp = modalBody.querySelector('[data-user-role-description]');
-  const sync = () => {
-    const reseller = roleSelect?.value === 'reseller_voucher';
-    if (lockField) lockField.hidden = !reseller;
-    if (lockSelect) {
-      lockSelect.required = reseller;
-      if (!reseller) lockSelect.value = '';
+  const syncCount = () => {
+    const selected = lockInputs.filter((input) => input.checked);
+    if (lockCount) lockCount.textContent = allInput?.checked ? 'Semua NAS' : `${selected.length} NAS dipilih`;
+    lockChoices.forEach((choice) => {
+      choice.classList.toggle('is-selected', choice.querySelector('input')?.checked === true);
+    });
+  };
+  const normalizeLockSelection = (changedInput = null) => {
+    if (changedInput === allInput && allInput?.checked) {
+      lockInputs.forEach((input) => {
+        if (input !== allInput) input.checked = false;
+      });
+    } else if (changedInput?.checked && changedInput !== allInput && allInput) {
+      allInput.checked = false;
     }
+    syncCount();
+  };
+  const sync = () => {
+    const selectedRole = roleSelect?.value || 'viewer';
+    const nasLockedRole = ['reseller_voucher', 'collector', 'technician'].includes(selectedRole);
+    if (lockField) lockField.hidden = !nasLockedRole;
+    if (lockPicker) lockPicker.hidden = !nasLockedRole;
+    if (lockLabel) {
+      lockLabel.textContent = selectedRole === 'collector'
+        ? 'NAS Target Collector'
+        : selectedRole === 'technician'
+          ? 'NAS Area Teknisi'
+          : 'NAS Target Reseller Hotspot';
+    }
+    const collector = selectedRole === 'collector';
+    const technician = selectedRole === 'technician';
+    const allowAllNas = collector || technician;
+    if (allChoice) allChoice.hidden = !allowAllNas;
+    if (!allowAllNas && allInput) allInput.checked = false;
+    if (!nasLockedRole) lockInputs.forEach((input) => { input.checked = false; });
+    if (lockHelp) {
+      lockHelp.textContent = collector
+        ? 'Pilih satu atau beberapa NAS penagihan. Gunakan Semua NAS untuk seluruh target.'
+        : technician
+          ? 'Opsional: pilih satu atau beberapa NAS sebagai area penugasan teknisi. Akses teknis belum dibatasi oleh pilihan ini.'
+          : 'Pilih satu atau beberapa NAS yang boleh dikelola reseller hotspot.';
+    }
+    syncCount();
     if (unitInput) {
-      unitInput.value = roleLabel(roleSelect?.value || 'viewer');
+      unitInput.value = roleLabel(selectedRole);
     }
     if (positionSelect) {
-      const selectedRole = roleSelect?.value || 'viewer';
       const current = positionSelect.value;
       const allowed = USER_POSITION_OPTIONS[selectedRole] || ['Staf'];
       const next = allowed.includes(current) ? current : allowed[0];
@@ -18348,11 +18898,18 @@ function bindUserRoleNasLock() {
       positionSelect.value = next;
     }
     if (roleHelp) {
-      const selectedRole = roleSelect?.value || 'viewer';
       roleHelp.innerHTML = `<strong>${escapeHtml(roleLabel(selectedRole))}</strong><span>${escapeHtml(roleDescription(selectedRole))}</span>`;
     }
   };
   roleSelect?.addEventListener('change', sync);
+  lockInputs.forEach((input) => input.addEventListener('change', () => normalizeLockSelection(input)));
+  lockSearch?.addEventListener('input', () => {
+    const query = String(lockSearch.value || '').trim().toLowerCase();
+    lockChoices.forEach((choice) => {
+      if (choice === allChoice) return;
+      choice.hidden = Boolean(query) && !String(choice.dataset.nasTargetText || '').includes(query);
+    });
+  });
   sync();
 }
 
@@ -18547,6 +19104,13 @@ async function logoutCurrentUser() {
 async function openUserModal(user = null) {
   const nasOptions = await loadRadiusNasOptions();
   openModal(user ? 'Edit User' : 'Tambah User', userFormBody(user || {}, { nas: nasOptions }), async (payload, form) => {
+    const targetRole = String(payload.role || user?.role || 'viewer');
+    const selectedNasTargets = Array.isArray(payload.lockedNasIds)
+      ? payload.lockedNasIds.filter(Boolean)
+      : [payload.lockedNasIds].filter(Boolean);
+    if (['collector', 'reseller_voucher'].includes(targetRole) && !selectedNasTargets.length) {
+      throw new Error(targetRole === 'collector' ? 'Pilih minimal satu NAS target collector' : 'Pilih minimal satu NAS target reseller hotspot');
+    }
     const photoFile = form.querySelector('#accountPhotoInput')?.files?.[0];
     const body = {
       ...payload,
@@ -19922,7 +20486,7 @@ async function renderPaymentGateway(options = {}) {
   });
   bindSearch((renderOptions = {}) => {
     state.paymentGatewayPage = 1;
-    renderPaymentGateway(renderOptions);
+    return renderPaymentGateway(renderOptions);
   });
   app.querySelectorAll('[data-payment-gateway-page]').forEach((button) => {
     button.addEventListener('click', () => {
