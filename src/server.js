@@ -6254,8 +6254,16 @@ function prepareManagedUserPayload(data = {}, payload = {}, existing = null) {
       .filter(Boolean)
       .forEach((item) => rawNasIds.push(item));
   };
-  appendNasId(next.lockedNasIds);
-  appendNasId(next.lockedNasId || next.resellerNasId || next.voucherNasId || next.nasId || next.nas || existing?.lockedNasId || '');
+  const hasLockedNasIds = Object.prototype.hasOwnProperty.call(next, 'lockedNasIds');
+  const explicitLegacyNas = next.lockedNasId || next.resellerNasId || next.voucherNasId || next.nasId || next.nas || '';
+  if (hasLockedNasIds) {
+    appendNasId(next.lockedNasIds);
+  } else if (explicitLegacyNas) {
+    appendNasId(explicitLegacyNas);
+  } else {
+    appendNasId(existing?.lockedNasIds);
+    appendNasId(existing?.lockedNasId || existing?.resellerNasId || existing?.voucherNasId || '');
+  }
   const selectedNasIds = [];
   for (const value of rawNasIds) {
     if (value.toLowerCase() === 'all') {

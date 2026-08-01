@@ -847,7 +847,22 @@ button.user-chip:hover {
 }
 
 .user-actions-cell {
-  min-width: 126px;
+  width: 138px;
+  min-width: 138px;
+  max-width: 138px;
+}
+
+.user-row-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  gap: 6px;
+}
+
+.user-row-actions > button {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
 }
 
 .user-nas-target {
@@ -10424,16 +10439,23 @@ dialog::backdrop {
 
   .user-management-table th:last-child,
   .user-management-table .user-actions-cell {
-    position: sticky;
-    right: 0;
-    z-index: 4;
-    background: var(--surface);
-    box-shadow: -12px 0 20px -22px rgba(8, 32, 79, 0.7);
+    position: static;
+    right: auto;
+    z-index: auto;
+    width: 124px;
+    min-width: 124px;
+    max-width: 124px;
+    box-shadow: none;
   }
 
-  .user-management-table th:last-child {
-    z-index: 5;
-    background: var(--surface-soft);
+  .user-row-actions {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .user-row-actions > button {
+    min-height: 32px;
+    padding: 6px 8px;
   }
 
   .app-shell {

@@ -6303,6 +6303,18 @@ function openReportTransactionDetail(transaction = {}) {
   const source = transaction.sourceLabel || transaction.type || '-';
   const nas = transaction.nasName || transaction.siteName || '-';
   const amount = transaction.amountText || rupiah(transaction.amount || 0);
+  const description = String(transaction.description || '').trim() || '-';
+  const notes = String(transaction.notes || '').trim();
+  const normalizedDetailText = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  const noteMatches = [description, reference, customer, account, item]
+    .map(normalizedDetailText)
+    .filter(Boolean);
+  const showNotes = notes
+    && notes !== '-'
+    && !noteMatches.includes(normalizedDetailText(notes));
   const detailField = (label, value, className = '') => `
     <div class="field ${className}">
       <span>${escapeHtml(label)}</span>
@@ -6322,8 +6334,8 @@ function openReportTransactionDetail(transaction = {}) {
         ${detailField('NAS', nas)}
         ${detailField('Petugas', transaction.admin || '-')}
         ${detailField('Total', amount, 'report-transaction-detail-total')}
-        ${detailField('Description', transaction.description || '-', 'report-transaction-detail-wide')}
-        ${detailField('Catatan', transaction.notes || '-', 'report-transaction-detail-wide')}
+        ${detailField('Rincian Transaksi', description, 'report-transaction-detail-wide')}
+        ${showNotes ? detailField('Catatan', notes, 'report-transaction-detail-wide') : ''}
       </div>
       <div class="modal-actions">
         <button class="button" type="button" data-close-modal>Tutup</button>
@@ -18648,7 +18660,7 @@ async function renderUsers(options = {}) {
                 <td><span class="badge ${user.active !== false ? 'active' : 'inactive'}">${user.active !== false ? 'Aktif' : 'Nonaktif'}</span></td>
                 <td><span class="user-last-login">${dateTimeText(user.lastLoginAt)}</span></td>
                 <td class="user-actions-cell">
-                  <div class="row-actions">
+                  <div class="row-actions user-row-actions">
                     <button class="ghost-button compact" type="button" data-edit-user="${escapeHtml(user.id)}">Edit</button>
                     ${user.id === state.auth.id ? '' : `<button class="danger-button compact" type="button" data-delete-user="${escapeHtml(user.id)}">Hapus</button>`}
                   </div>
@@ -18736,12 +18748,22 @@ async function renderUsers(options = {}) {
         await api(`/api/users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
         state.userRows = null;
         setToast('User dihapus');
-        renderUsers({ refresh: true });
+        await renderUsers({ refresh: true, resetScroll: true });
       } catch (error) {
         setToast(error.message);
       }
     });
   });
+  scheduleTableTopScrollbars(app);
+  if (options.resetScroll) {
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      const wrapper = app.querySelector('.user-table-wrap');
+      const topScroll = wrapper?.previousElementSibling;
+      if (wrapper) wrapper.scrollLeft = 0;
+      if (topScroll?.classList.contains('table-top-scroll')) topScroll.scrollLeft = 0;
+    });
+  }
 }
 
 function userLockedNasDisplay(user = {}) {
@@ -19176,7 +19198,7 @@ async function openUserModal(user = null) {
     });
     state.userRows = null;
     setToast(user ? 'User diperbarui' : 'User dibuat');
-    renderUsers({ refresh: true });
+    await renderUsers({ refresh: true, resetScroll: true });
   });
   bindUserRoleNasLock();
   bindAccountSettingsPhotoInput(user || {});

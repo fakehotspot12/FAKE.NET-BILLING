@@ -6003,6 +6003,15 @@ test('reseller NAS lock only shows hotspot profiles for the locked NAS or All', 
     lockedNasIds: ['nas-site-1', 'nas-site-2']
   });
   assert.deepEqual(managedUser.lockedNasIds, ['nas-site-1', 'nas-site-2']);
+  const reducedManagedUser = serverInternals.prepareManagedUserPayload(data, {
+    role: 'reseller_voucher',
+    lockedNasIds: ['nas-site-2']
+  }, {
+    role: 'reseller_voucher',
+    lockedNasId: 'nas-site-1',
+    lockedNasIds: ['nas-site-1', 'nas-site-2']
+  });
+  assert.deepEqual(reducedManagedUser.lockedNasIds, ['nas-site-2']);
   assert.throws(() => serverInternals.applyResellerVoucherNasLock(data, {
     nasId: 'nas-outside'
   }, {
@@ -6010,6 +6019,30 @@ test('reseller NAS lock only shows hotspot profiles for the locked NAS or All', 
     role: 'reseller_voucher',
     lockedNasIds: ['nas-site-1', 'nas-site-2']
   }), /tidak termasuk target reseller/i);
+});
+
+test('managed user NAS assignment replaces the previous selection exactly', () => {
+  const data = createDefaultStore();
+  ensureDefaultUsers(data);
+  const collector = createUser(data, {
+    username: 'collector-nas-test',
+    password: 'Password123!',
+    name: 'Collector NAS Test',
+    role: 'collector',
+    lockedNasIds: ['nas-site-1', 'nas-site-2'],
+    lockedNasName: 'SITE-1, SITE-2',
+    lockedNasNames: 'SITE-1, SITE-2'
+  });
+
+  const reduced = updateUser(data, collector.id, {
+    role: 'collector',
+    lockedNasIds: ['nas-site-2'],
+    lockedNasName: 'SITE-2',
+    lockedNasNames: 'SITE-2'
+  });
+  assert.deepEqual(reduced.lockedNasIds, ['nas-site-2']);
+  assert.equal(reduced.lockedNasId, 'nas-site-2');
+  assert.equal(reduced.lockedNasNames, 'SITE-2');
 });
 
 test('radius PPP-DHCP and Hotspot users are sorted by newest created date first', async () => {

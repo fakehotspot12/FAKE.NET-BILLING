@@ -673,15 +673,31 @@ function updateUser(data, userId, payload = {}) {
   user.unit = roleUnitLabel(user.role);
   user.department = user.unit;
   if (roleSupportsNasLock(user.role)) {
-    const lockedNasIds = normalizeLockedNasIds({
-      ...payload,
-      lockedNasIds: payload.lockedNasIds || user.lockedNasIds,
-      lockedNasId: payload.lockedNasId || payload.resellerNasId || payload.voucherNasId || user.lockedNasId || ''
-    });
+    const hasLockedNasIds = Object.prototype.hasOwnProperty.call(payload, 'lockedNasIds');
+    const hasLegacyNas = ['lockedNasId', 'resellerNasId', 'voucherNasId']
+      .some((key) => Object.prototype.hasOwnProperty.call(payload, key));
+    const lockedNasIds = normalizeLockedNasIds(hasLockedNasIds
+      ? { lockedNasIds: payload.lockedNasIds }
+      : hasLegacyNas
+        ? {
+            lockedNasId: payload.lockedNasId,
+            resellerNasId: payload.resellerNasId,
+            voucherNasId: payload.voucherNasId
+          }
+        : {
+            lockedNasIds: user.lockedNasIds,
+            lockedNasId: user.lockedNasId || user.resellerNasId || user.voucherNasId || ''
+          });
     user.lockedNasIds = lockedNasIds;
     user.lockedNasId = lockedNasIds[0] || '';
-    user.lockedNasName = String(payload.lockedNasName || user.lockedNasName || '').trim();
-    user.lockedNasNames = String(payload.lockedNasNames || payload.lockedNasName || user.lockedNasNames || user.lockedNasName || '').trim();
+    if (Object.prototype.hasOwnProperty.call(payload, 'lockedNasName')) {
+      user.lockedNasName = String(payload.lockedNasName || '').trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'lockedNasNames')) {
+      user.lockedNasNames = String(payload.lockedNasNames || '').trim();
+    } else if (Object.prototype.hasOwnProperty.call(payload, 'lockedNasName')) {
+      user.lockedNasNames = user.lockedNasName;
+    }
   } else {
     user.lockedNasId = '';
     user.lockedNasIds = [];
