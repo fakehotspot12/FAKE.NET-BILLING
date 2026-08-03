@@ -15,8 +15,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=genie-provision-queue-v1-20260803"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=genie-provision-queue-v1-20260803"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v310-login-viewport-20260803"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v310-login-viewport-20260803"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
