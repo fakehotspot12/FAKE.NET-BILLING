@@ -38,3 +38,14 @@ test('loads the lightweight bootstrap before the full authenticated application'
   assert.match(bootStyleSource, /display: none !important/);
   assert.match(bootStyleSource, /\.boot-app-pending/);
 });
+
+test('keeps the login viewport dark through bootstrap and authenticated app handoff', () => {
+  const html = publicSource('index.html');
+  const bootCss = publicSource('boot.css');
+  const appCss = publicSource('styles.css');
+
+  assert.match(html, /viewport-fit=cover/);
+  assert.match(html, /apple-mobile-web-app-status-bar-style" content="black-translucent"/);
+  assert.match(bootCss, /html:has\(body\.is-bootstrap-login\)[\s\S]*?background:\s*#020a22/);
+  assert.match(appCss, /html:has\(body\.is-login\)[\s\S]*?background:\s*#020a22/);
+});

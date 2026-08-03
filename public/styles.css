@@ -117,6 +117,15 @@ body {
     linear-gradient(180deg, #07111f 0%, var(--bg) 100%);
 }
 
+html:has(body.is-loading-auth),
+html:has(body.is-bootstrap-login),
+html:has(body.is-login),
+body.is-loading-auth,
+body.is-bootstrap-login,
+body.is-login {
+  background: #020a22;
+}
+
 img,
 svg {
   max-width: 100%;
