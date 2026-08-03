@@ -98,6 +98,7 @@ create table if not exists radacct (
 
 create unique index if not exists radacct_acctuniqueid_idx on radacct (acctuniqueid);
 create index if not exists radacct_username_idx on radacct (username);
+create index if not exists radacct_username_lower_idx on radacct (lower(username));
 create index if not exists radacct_active_idx on radacct (acctstoptime) where acctstoptime is null;
 create index if not exists radacct_start_idx on radacct (acctstarttime);
 

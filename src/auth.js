@@ -9,6 +9,10 @@ const secureSecrets = require('./secure-secrets');
 const SESSION_COOKIE = 'isp_finance_session';
 const SESSION_DEFAULT_HOURS = Math.min(72, Math.max(1, Number(process.env.APP_SESSION_HOURS || 24)));
 const SESSION_DEFAULT_AGE_SECONDS = SESSION_DEFAULT_HOURS * 60 * 60;
+const SESSION_SAVE_THROTTLE_MS = Math.max(
+  5_000,
+  Number(process.env.AUTH_SESSION_SAVE_THROTTLE_MS || 30_000) || 30_000
+);
 const PASSWORD_MIN_LENGTH = 6;
 const PROFILE_PHOTO_URL_MAX_LENGTH = 240;
 const SESSION_STORE_PATH = process.env.AUTH_SESSION_STORE_PATH
@@ -239,6 +243,17 @@ function saveSessions() {
   } catch {
     // Login tetap berjalan apabila storage sesi sementara tidak dapat ditulis.
   }
+}
+
+let sessionSaveTimer = null;
+
+function scheduleSessionSave() {
+  if (sessionSaveTimer) return;
+  sessionSaveTimer = setTimeout(() => {
+    sessionSaveTimer = null;
+    saveSessions();
+  }, SESSION_SAVE_THROTTLE_MS);
+  sessionSaveTimer.unref?.();
 }
 
 function normalizeRole(role) {
@@ -476,7 +491,7 @@ function requestUser(req, data) {
   }
 
   session.expiresAt = Date.now() + Number(session.maxAgeSeconds || SESSION_DEFAULT_AGE_SECONDS) * 1000;
-  saveSessions();
+  scheduleSessionSave();
   return userWithSession(user);
 }
 

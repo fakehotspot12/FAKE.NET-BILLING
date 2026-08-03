@@ -4,6 +4,24 @@ const { createId } = require('./store');
 
 const DEFAULT_TIME_ZONE = 'Asia/Makassar';
 let activeTimeZone = DEFAULT_TIME_ZONE;
+const localDateFormatterCache = new Map();
+
+function localDateFormatter() {
+  const timeZone = getTimeZone();
+  let formatter = localDateFormatterCache.get(timeZone);
+  if (formatter) return formatter;
+  formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  localDateFormatterCache.set(timeZone, formatter);
+  while (localDateFormatterCache.size > 4) {
+    localDateFormatterCache.delete(localDateFormatterCache.keys().next().value);
+  }
+  return formatter;
+}
 
 function validTimeZone(value = '') {
   const text = String(value || '').trim();
@@ -26,12 +44,7 @@ function getTimeZone() {
 }
 
 function localDateParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: getTimeZone(),
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date);
+  const parts = localDateFormatter().formatToParts(date);
   return Object.fromEntries(parts.map((part) => [part.type, part.value]));
 }
 
@@ -840,19 +853,30 @@ function summarize(data, period = currentPeriod()) {
   const legacyRemoteEarning = standaloneBillingSource(data.settings || {})
     ? null
     : latestMonthlyEarning(data, selectedPeriod, 'radboox');
-
-  const invoicePaidRevenue = invoices
-    .filter((invoice) => invoiceRuntimeStatus(invoice) === 'paid')
-    .reduce((sum, invoice) => sum + toNumber(invoice.amount), 0);
+  const referenceDate = todayIso();
+  let invoicePaidRevenue = 0;
+  let pendingRevenue = 0;
+  let overdueRevenue = 0;
+  let paidCount = 0;
+  let pendingCount = 0;
+  let overdueCount = 0;
+  for (const invoice of invoices) {
+    const status = invoiceRuntimeStatus(invoice, referenceDate);
+    const amount = toNumber(invoice.amount);
+    if (status === 'paid') {
+      invoicePaidRevenue += amount;
+      paidCount += 1;
+    } else if (status === 'overdue') {
+      overdueRevenue += amount;
+      overdueCount += 1;
+    } else if (status === 'pending') {
+      pendingRevenue += amount;
+      pendingCount += 1;
+    }
+  }
   const radbooxRevenue = legacyRemoteEarning ? toNumber(legacyRemoteEarning.amount) : 0;
   const externalIncomeTotal = externalIncomes.reduce((sum, income) => sum + toNumber(income.amount), 0);
   const paidRevenue = invoicePaidRevenue + radbooxRevenue + externalIncomeTotal;
-  const pendingRevenue = invoices
-    .filter((invoice) => invoiceRuntimeStatus(invoice) === 'pending')
-    .reduce((sum, invoice) => sum + toNumber(invoice.amount), 0);
-  const overdueRevenue = invoices
-    .filter((invoice) => invoiceRuntimeStatus(invoice) === 'overdue')
-    .reduce((sum, invoice) => sum + toNumber(invoice.amount), 0);
   const expenseTotal = expenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
   const activeCustomers = data.customers.filter(customerIsActive);
   const expectedRevenue = activeCustomers.reduce((sum, customer) => sum + resolvePrice(data.settings, customer), 0);
@@ -872,9 +896,9 @@ function summarize(data, period = currentPeriod()) {
     expenseTotal,
     netCash: paidRevenue - expenseTotal,
     invoiceCount: invoices.length,
-    paidCount: invoices.filter((invoice) => invoiceRuntimeStatus(invoice) === 'paid').length,
-    pendingCount: invoices.filter((invoice) => invoiceRuntimeStatus(invoice) === 'pending').length,
-    overdueCount: invoices.filter((invoice) => invoiceRuntimeStatus(invoice) === 'overdue').length
+    paidCount,
+    pendingCount,
+    overdueCount
   };
 }
 
@@ -1632,6 +1656,7 @@ module.exports = {
   invoiceCoveredPeriods,
   invoiceBlocksPeriod,
   invoicePaymentRollbackLocked,
+  onlinePaymentRecord,
   markInvoicePaid,
   markInvoiceUnpaid,
   normalizeBillingPeriodForType,

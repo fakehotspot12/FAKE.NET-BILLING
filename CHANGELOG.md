@@ -2,6 +2,19 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [3.1.1] - 2026-08-03
+
+### Performance
+
+- Cache laporan di dalam proses Node sekarang dibatasi berdasarkan jumlah entri dan ukuran byte, memakai LRU, serta membersihkan data kedaluwarsa secara berkala untuk mencegah OOM.
+- Payload laporan besar tetap memakai Redis ber-TTL tanpa diduplikasi sebagai object graph di heap aplikasi.
+- Cache pencarian dan transaksi bulanan hanya diinvalidasi ketika koleksi terkait berubah, bukan oleh aktivitas lain seperti antrean Whatsapp.
+- Hasil waktu aktif pertama voucher digunakan ulang selama lima menit dan pencarian `lower(username)` FreeRADIUS memakai indeks khusus.
+- Perpanjangan sesi login disimpan secara terjadwal, bukan melakukan penulisan sinkron pada setiap request API.
+- Formatter tanggal/zona waktu dipakai ulang dan status invoice dihitung satu kali per batch, sehingga dashboard dan laporan tidak membuat ribuan object formatter.
+- Relasi transaksi payment gateway, invoice, member, dan voucher menggunakan direktori lookup satu kali, bukan memindai seluruh invoice untuk setiap transaksi.
+- Service billing dibatasi heap 1,5 GB dan cgroup 2,2 GB agar anomali memori tidak memicu OOM global pada VM.
+
 ## [3.1.0] - 2026-08-03
 
 ### Added

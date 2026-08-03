@@ -39,8 +39,8 @@ const {
   generateInvoices,
   invoiceBlocksPeriod,
   invoiceCoveredPeriods,
-  invoicePaymentRollbackLocked,
   invoiceRuntimeStatus,
+  onlinePaymentRecord,
   markInvoicePaid,
   markInvoiceUnpaid,
   nextBillingInvoiceNumber,
@@ -70,6 +70,7 @@ const genieAcs = require('./genieacs');
 const license = require('./license');
 const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
+const { BoundedJsonCache } = require('./bounded-json-cache');
 const { WhatsAppQueue } = require('./whatsapp-queue');
 const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
 
@@ -77,6 +78,19 @@ const PORT = Number(process.env.PORT || 8891);
 const HOST = process.env.HOST || '0.0.0.0';
 const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
 let activeAppTimeZone = DEFAULT_APP_TIME_ZONE;
+const dateTimeFormatterCache = new Map();
+
+function cachedDateTimeFormatter(locale = 'en-CA', options = {}) {
+  const key = `${locale}|${JSON.stringify(options)}`;
+  let formatter = dateTimeFormatterCache.get(key);
+  if (formatter) return formatter;
+  formatter = new Intl.DateTimeFormat(locale, options);
+  dateTimeFormatterCache.set(key, formatter);
+  while (dateTimeFormatterCache.size > 12) {
+    dateTimeFormatterCache.delete(dateTimeFormatterCache.keys().next().value);
+  }
+  return formatter;
+}
 const APP_MODE = String(process.env.APP_MODE || 'standalone').toLowerCase();
 const BILLING_SOURCE = String(process.env.BILLING_SOURCE || (APP_MODE === 'standalone' ? 'local' : 'radboox')).toLowerCase();
 const MIGRATION_MODE = ['1', 'true', 'yes', 'on'].includes(String(process.env.MIGRATION_MODE || '').toLowerCase());
@@ -128,6 +142,7 @@ const APP_UPDATE_LOCK = process.env.FAKENET_UPDATE_LOCK || '/tmp/fakenet-billing
 const APP_UPDATE_LOCK_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.FAKENET_UPDATE_LOCK_MAX_AGE_SECONDS || 3600) * 1000 || 3600 * 1000);
 const APP_UPDATE_REMOTE_TIMEOUT_MS = Math.max(2000, Number(process.env.FAKENET_UPDATE_REMOTE_TIMEOUT_MS || 5000) || 5000);
 const APP_UPDATE_STATUS_TTL_MS = Math.max(60_000, Number(process.env.FAKENET_UPDATE_STATUS_TTL_MS || 300_000) || 300_000);
+const SLOW_OPERATION_LOG_MS = Math.max(500, Number(process.env.SLOW_OPERATION_LOG_MS || 2000) || 2000);
 const CHANGELOG_PATH = path.join(APP_ROOT, 'CHANGELOG.md');
 const WA_GATEWAY_PROVIDERS = {
   waha: { label: 'Whatsapp Gateway', baseUrl: 'http://127.0.0.1:8895', autoBaseUrl: false }
@@ -2487,7 +2502,7 @@ function intervalLabel(ms) {
 }
 
 function todayIso() {
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  const parts = cachedDateTimeFormatter('en-CA', {
     timeZone: activeAppTimeZone || DEFAULT_APP_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
@@ -3247,9 +3262,11 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod(), options = 
     : (invoice) => invoiceCoversPeriod(invoice, selectedPeriod);
   const keepInvoicePeriod = options.keepInvoicePeriod === true;
   const paymentsByInvoice = new Map();
+  const onlinePaymentInvoiceIds = new Set();
   for (const payment of activePayments(data)) {
     const invoiceId = String(payment.invoiceId || '');
     if (!invoiceId) continue;
+    if (onlinePaymentRecord(payment)) onlinePaymentInvoiceIds.add(invoiceId);
     const current = paymentsByInvoice.get(invoiceId);
     if (!current || String(payment.createdAt || payment.paidAt || '') > String(current.createdAt || current.paidAt || '')) {
       paymentsByInvoice.set(invoiceId, payment);
@@ -3333,7 +3350,7 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod(), options = 
         paidAt: invoice.paidAt || payment.paidAt || '',
         paymentMethod: invoice.paymentMethod || payment.method || '',
         paymentCategory,
-        rollbackLocked: invoicePaymentRollbackLocked(data, invoice),
+        rollbackLocked: onlinePaymentRecord(invoice) || onlinePaymentInvoiceIds.has(String(invoice.id || '')),
         paidByName: invoice.paidByName || payment.createdByName || payment.admin || '',
         paidByUsername: invoice.paidByUsername || payment.createdByUsername || ''
       };
@@ -6403,10 +6420,11 @@ function activePayments(data = {}) {
     return cached.value;
   }
   const invoiceStatuses = new Map();
+  const referenceDate = todayIso();
   for (const invoice of data.invoices || []) {
     const id = String(invoice.id || '');
     if (id && !invoiceStatuses.has(id)) {
-      invoiceStatuses.set(id, invoiceRuntimeStatus(invoice));
+      invoiceStatuses.set(id, invoiceRuntimeStatus(invoice, referenceDate));
     }
   }
   const rows = (data.payments || []).filter((payment) => {
@@ -6489,6 +6507,7 @@ function paymentPeriodKey(payment = {}, invoice = {}) {
 
 function periodKeyFromDateOrTimestamp(value = '', fallbackPeriod = '') {
   const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.slice(0, 7);
   const localDate = timestampLocalDateKey(raw);
   if (/^\d{4}-\d{2}/.test(localDate)) return localDate.slice(0, 7);
   if (/^\d{4}-\d{2}/.test(raw)) return raw.slice(0, 7);
@@ -6497,7 +6516,8 @@ function periodKeyFromDateOrTimestamp(value = '', fallbackPeriod = '') {
 
 function paymentPeriodKeyFast(payment = {}, invoice = {}) {
   const raw = String(payment.paidAt || invoice.paidAt || payment.createdAt || '').trim();
-  return periodKeyFromDateOrTimestamp(raw, paymentPeriodKey(payment, invoice));
+  const resolved = periodKeyFromDateOrTimestamp(raw);
+  return resolved || paymentPeriodKey(payment, invoice);
 }
 
 function invoiceIssueDateKey(invoice = {}) {
@@ -6512,7 +6532,9 @@ function invoiceIssueDateKey(invoice = {}) {
 
 function invoiceIssuePeriodKeyFast(invoice = {}) {
   const raw = String(invoice.issuedAt || invoice.invoiceDate || invoice.createdAt || invoice.date || '').trim();
-  return periodKeyFromDateOrTimestamp(raw || invoiceIssueDateKey(invoice), invoice.period || currentPeriod());
+  const resolved = periodKeyFromDateOrTimestamp(raw);
+  if (resolved) return resolved;
+  return periodKeyFromDateOrTimestamp(invoiceIssueDateKey(invoice), invoice.period || currentPeriod());
 }
 
 function paymentBelongsToCollector(data = {}, payment = {}) {
@@ -8466,7 +8488,7 @@ function sanitizeWaGatewaySettings(payload = {}, current = {}) {
 }
 
 function localDateParts(date = new Date(), timeZone = '') {
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  const parts = cachedDateTimeFormatter('en-CA', {
     timeZone: normalizeAppTimeZone(timeZone || activeAppTimeZone || DEFAULT_APP_TIME_ZONE),
     year: 'numeric',
     month: '2-digit',
@@ -10211,11 +10233,21 @@ function hotspotVoucherReportUsers(data = {}) {
 async function generatedVoucherFirstOnlineMap(data = {}) {
   const users = reportableGeneratedVoucherUsers(data);
   if (!users.length) return new Map();
+  const usernameSignature = crypto.createHash('sha1')
+    .update(users.map((user) => radiusSessionUsername(user.username)).filter(Boolean).sort().join('\n'))
+    .digest('hex');
+  const cacheKey = runtimeCacheKey('voucher-first-online', usernameSignature);
+  const cached = await runtimeJsonCacheGet(cacheKey);
+  if (Array.isArray(cached?.rows)) {
+    return new Map(cached.rows);
+  }
   const result = await freeradiusSessions.firstOnlineByUsernames(users.map((user) => user.username));
   if (!result.ok) return new Map();
-  return new Map((result.rows || [])
+  const rows = (result.rows || [])
     .filter((row) => row.usernameKey && row.firstOnlineAt)
-    .map((row) => [radiusSessionUsername(row.usernameKey), row.firstOnlineAt]));
+    .map((row) => [radiusSessionUsername(row.usernameKey), row.firstOnlineAt]);
+  await runtimeJsonCacheSet(cacheKey, { rows }, 300);
+  return new Map(rows);
 }
 
 function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUsername = new Map()) {
@@ -11007,11 +11039,35 @@ const DASHBOARD_BILLING_SUMMARY_CACHE_MS = 15000;
 const DASHBOARD_RUNTIME_CACHE_TTL_SECONDS = Math.max(5, Number(process.env.DASHBOARD_RUNTIME_CACHE_TTL_SECONDS || 20) || 20);
 const REPORT_RUNTIME_CACHE_TTL_SECONDS = Math.max(10, Number(process.env.REPORT_RUNTIME_CACHE_TTL_SECONDS || 60) || 60);
 const SEARCH_RUNTIME_CACHE_TTL_SECONDS = Math.max(5, Number(process.env.SEARCH_RUNTIME_CACHE_TTL_SECONDS || 25) || 25);
-const RUNTIME_JSON_MEMORY_CACHE_MAX = Math.max(64, Number(process.env.RUNTIME_JSON_MEMORY_CACHE_MAX || 128) || 128);
+const RUNTIME_JSON_MEMORY_CACHE_MAX = Math.max(4, Number(process.env.RUNTIME_JSON_MEMORY_CACHE_MAX || 24) || 24);
+const RUNTIME_JSON_MEMORY_CACHE_MAX_BYTES = Math.max(
+  4 * 1024 * 1024,
+  Number(process.env.RUNTIME_JSON_MEMORY_CACHE_MAX_BYTES || 24 * 1024 * 1024) || 24 * 1024 * 1024
+);
+const RUNTIME_JSON_MEMORY_CACHE_MAX_ENTRY_BYTES = Math.min(
+  RUNTIME_JSON_MEMORY_CACHE_MAX_BYTES,
+  Math.max(
+    256 * 1024,
+    Number(process.env.RUNTIME_JSON_MEMORY_CACHE_MAX_ENTRY_BYTES || 2 * 1024 * 1024) || 2 * 1024 * 1024
+  )
+);
+const RUNTIME_JSON_MEMORY_CACHE_CLEANUP_MS = Math.max(
+  10_000,
+  Number(process.env.RUNTIME_JSON_MEMORY_CACHE_CLEANUP_MS || 30_000) || 30_000
+);
 const REPORT_BASE_CACHE_TTL_SECONDS = Math.max(30, Number(process.env.REPORT_BASE_CACHE_TTL_SECONDS || 180) || 180);
 const MONTHLY_TRANSACTIONS_BASE_CACHE_TTL_SECONDS = Math.max(30, Number(process.env.MONTHLY_TRANSACTIONS_BASE_CACHE_TTL_SECONDS || 180) || 180);
 const dashboardBillingSummaryCache = new Map();
-const runtimeJsonMemoryCache = new Map();
+const runtimeJsonMemoryCache = new BoundedJsonCache({
+  maxEntries: RUNTIME_JSON_MEMORY_CACHE_MAX,
+  maxBytes: RUNTIME_JSON_MEMORY_CACHE_MAX_BYTES,
+  maxEntryBytes: RUNTIME_JSON_MEMORY_CACHE_MAX_ENTRY_BYTES
+});
+const runtimeJsonMemoryCacheCleanupTimer = setInterval(
+  () => runtimeJsonMemoryCache.pruneExpired(),
+  RUNTIME_JSON_MEMORY_CACHE_CLEANUP_MS
+);
+runtimeJsonMemoryCacheCleanupTimer.unref?.();
 
 function collectionNewestTimestamp(rows = []) {
   let newest = '';
@@ -11047,29 +11103,30 @@ function runtimeCacheKey(namespace = '', signature = '') {
   return `fakenet:runtime:${APP_VERSION}:${namespace}:${digest}`;
 }
 
-function pruneRuntimeJsonMemoryCache() {
-  while (runtimeJsonMemoryCache.size > RUNTIME_JSON_MEMORY_CACHE_MAX) {
-    runtimeJsonMemoryCache.delete(runtimeJsonMemoryCache.keys().next().value);
-  }
+function logSlowOperation(name = '', startedAt = Date.now(), details = {}) {
+  const elapsedMs = Date.now() - startedAt;
+  if (elapsedMs < SLOW_OPERATION_LOG_MS) return;
+  const detailText = Object.entries(details)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(' ');
+  console.log(`[performance] ${name} total=${elapsedMs}ms${detailText ? ` ${detailText}` : ''}`);
 }
 
 async function runtimeJsonCacheGet(key = '') {
   if (!key) return null;
   const memory = runtimeJsonMemoryCache.get(key);
-  if (memory && memory.expiresAt > Date.now()) {
-    return structuredClone(memory.value);
-  }
+  if (memory !== undefined) return memory;
   if (!redisCache.enabled()) return null;
   try {
     const raw = await redisCache.get(key);
     if (!raw) return null;
     const value = JSON.parse(raw);
-    runtimeJsonMemoryCache.set(key, {
-      expiresAt: Date.now() + Math.max(1000, DASHBOARD_RUNTIME_CACHE_TTL_SECONDS * 1000),
-      value: structuredClone(value)
-    });
-    pruneRuntimeJsonMemoryCache();
-    return structuredClone(value);
+    runtimeJsonMemoryCache.setRaw(
+      key,
+      raw,
+      Math.max(1000, DASHBOARD_RUNTIME_CACHE_TTL_SECONDS * 1000)
+    );
+    return value;
   } catch {
     return null;
   }
@@ -11078,14 +11135,17 @@ async function runtimeJsonCacheGet(key = '') {
 async function runtimeJsonCacheSet(key = '', value = null, ttlSeconds = REPORT_RUNTIME_CACHE_TTL_SECONDS) {
   if (!key || value === null || value === undefined) return;
   const ttl = Math.max(1, Number(ttlSeconds || REPORT_RUNTIME_CACHE_TTL_SECONDS) || REPORT_RUNTIME_CACHE_TTL_SECONDS);
-  runtimeJsonMemoryCache.set(key, {
-    expiresAt: Date.now() + ttl * 1000,
-    value: structuredClone(value)
-  });
-  pruneRuntimeJsonMemoryCache();
+  let raw;
+  try {
+    raw = JSON.stringify(value);
+  } catch {
+    return;
+  }
+  if (raw === undefined) return;
+  runtimeJsonMemoryCache.setRaw(key, raw, ttl * 1000);
   if (!redisCache.enabled()) return;
   try {
-    await redisCache.set(key, JSON.stringify(value), ttl);
+    await redisCache.set(key, raw, ttl);
   } catch {
     // Redis cache is optional; the in-process cache above still protects the hot path.
   }
@@ -11131,10 +11191,7 @@ function runtimeSearchCacheTtlSeconds(namespace = '') {
 }
 
 function runtimeSearchDataSignature(data = {}, collections = []) {
-  return [
-    data.updatedAt || '',
-    runtimeDataSignature(data, collections)
-  ].join('|');
+  return runtimeDataSignature(data, collections);
 }
 
 async function runtimeSearchCachedPayload(authContext = {}, namespace = '', url = {}, collections = [], producer = async () => ({}), options = {}) {
@@ -11157,7 +11214,6 @@ async function runtimeSearchCachedPayload(authContext = {}, namespace = '', url 
 function monthlyTransactionsBaseSignature(data = {}, period = currentPeriod(), user = {}) {
   return [
     normalizePeriod(period),
-    data.updatedAt || '',
     String(data.settings?.updatedAt || data.settings?.paymentGateway?.updatedAt || data.settings?.billing?.updatedAt || ''),
     runtimeDataSignature(data, [
       'invoices',
@@ -11176,10 +11232,16 @@ function monthlyTransactionsBaseSignature(data = {}, period = currentPeriod(), u
 }
 
 async function buildMonthlyTransactionsBasePayload(data = {}, period = currentPeriod(), user = {}) {
+  const buildStartedAt = Date.now();
+  let stageStartedAt = buildStartedAt;
   const selectedPeriod = normalizePeriod(period);
   const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const billingTransactions = activePayments(data)
+    .filter((payment) => {
+      const invoice = invoices.get(payment.invoiceId) || {};
+      return paymentPeriodKeyFast(payment, invoice) === selectedPeriod;
+    })
     .map((payment) => {
       const invoice = invoices.get(payment.invoiceId) || {};
       const customer = customers.get(payment.customerId || invoice.customerId) || {};
@@ -11210,9 +11272,10 @@ async function buildMonthlyTransactionsBasePayload(data = {}, period = currentPe
         siteId: site.id || '',
         siteName: site.name || invoice.siteName || ''
       };
-    })
-    .filter((transaction) => timestampLocalDateKey(transaction.paidAt).slice(0, 7) === selectedPeriod);
+    });
+  const billingMs = Date.now() - stageStartedAt;
 
+  stageStartedAt = Date.now();
   const voucherOrders = filterVoucherReportOrders(data, await paidVoucherOrdersForReport(data, selectedPeriod), {}, user);
   const voucherTransactions = voucherOrders.map((order) => ({
     id: `voucher-${order.id || order.reference}`,
@@ -11240,6 +11303,7 @@ async function buildMonthlyTransactionsBasePayload(data = {}, period = currentPe
     siteId: order.nasId || '',
     siteName: order.nasName || ''
   }));
+  const voucherMs = Date.now() - stageStartedAt;
 
   const voucherReferences = new Set(voucherTransactions.map((transaction) => String(transaction.invoiceNo || '').trim()).filter(Boolean));
   const billingReferences = new Set(billingTransactions.flatMap((transaction) => [
@@ -11247,6 +11311,7 @@ async function buildMonthlyTransactionsBasePayload(data = {}, period = currentPe
     transaction.legacyInvoiceNo
   ]).map((value) => String(value || '').trim()).filter(Boolean));
 
+  stageStartedAt = Date.now();
   const paymentGatewayTransactions = (paymentGatewayReportPayload(data, { kind: 'all' }).transactions || [])
     .filter((row) => ['paid', 'settled', 'success'].includes(String(row.status || '').toLowerCase()))
     .filter((row) => timestampLocalDateKey(row.paidAt || row.paymentAt || row.date || row.createdAt).slice(0, 7) === selectedPeriod)
@@ -11287,7 +11352,9 @@ async function buildMonthlyTransactionsBasePayload(data = {}, period = currentPe
       siteId: row.nasId || row.siteId || '',
       siteName: row.nasName || row.siteName || ''
     }));
+  const paymentGatewayMs = Date.now() - stageStartedAt;
 
+  stageStartedAt = Date.now();
   const externalTransactions = (data.externalIncomes || [])
     .filter((income) => String(income.date || income.createdAt || '').slice(0, 7) === selectedPeriod)
     .filter((income) => !['cancelled', 'canceled', 'void', 'batal'].includes(String(income.status || '').trim().toLowerCase()))
@@ -11320,11 +11387,23 @@ async function buildMonthlyTransactionsBasePayload(data = {}, period = currentPe
         siteName: income.siteName || income.nasName || ''
       };
     });
+  const externalMs = Date.now() - stageStartedAt;
 
+  stageStartedAt = Date.now();
   const transactions = billingTransactions
     .concat(voucherTransactions, paymentGatewayTransactions, externalTransactions)
     .map(enrichMonthlyTransaction)
     .sort(sortReportTransactionsNewestFirst);
+  const mergeMs = Date.now() - stageStartedAt;
+
+  logSlowOperation('monthly-transactions-build', buildStartedAt, {
+    period: selectedPeriod,
+    billingMs,
+    voucherMs,
+    paymentGatewayMs,
+    externalMs,
+    mergeMs
+  });
 
   return {
     period: selectedPeriod,
@@ -11340,8 +11419,17 @@ async function cachedMonthlyTransactionsBasePayload(data = {}, period = currentP
     const cached = await runtimeJsonCacheGet(key);
     if (cached) return cached;
   }
+  const startedAt = Date.now();
   const payload = await buildMonthlyTransactionsBasePayload(data, period, user);
+  const buildMs = Date.now() - startedAt;
+  const cacheStartedAt = Date.now();
   await runtimeJsonCacheSet(key, payload, MONTHLY_TRANSACTIONS_BASE_CACHE_TTL_SECONDS);
+  logSlowOperation('monthly-transactions-base', startedAt, {
+    period: normalizePeriod(period),
+    buildMs,
+    cacheMs: Date.now() - cacheStartedAt,
+    rows: Array.isArray(payload.transactions) ? payload.transactions.length : 0
+  });
   return payload;
 }
 
@@ -11439,8 +11527,17 @@ async function cachedMonthlyBillingBasePayload(data = {}, period = currentPeriod
     const cached = await runtimeJsonCacheGet(key);
     if (cached) return cached;
   }
+  const startedAt = Date.now();
   const payload = await buildMonthlyBillingBasePayload(data, period, selectedNas, user);
+  const buildMs = Date.now() - startedAt;
+  const cacheStartedAt = Date.now();
   await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
+  logSlowOperation('monthly-billing-base', startedAt, {
+    period: normalizePeriod(period),
+    buildMs,
+    cacheMs: Date.now() - cacheStartedAt,
+    rows: Array.isArray(payload.invoices) ? payload.invoices.length : 0
+  });
   return payload;
 }
 
@@ -11745,7 +11842,6 @@ async function cachedInventoryStockBasePayload(data = {}, period = currentPeriod
 
 function activityBaseSignature(data = {}, user = {}, filters = {}) {
   return [
-    data.updatedAt || '',
     runtimeDataSignature(data, ['activity']),
     runtimeUserCacheScope(data, user),
     String(filters.type || 'all'),
@@ -11841,16 +11937,18 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
   const invoiceStatuses = new Map();
   const activePaymentRows = activePayments(data);
   const latestPaymentByInvoiceId = new Map();
+  const latestPaymentTimestampByInvoiceId = new Map();
   for (const payment of activePaymentRows) {
     const invoiceId = String(payment.invoiceId || '');
     if (!invoiceId) continue;
-    const current = latestPaymentByInvoiceId.get(invoiceId);
-    const currentAt = current ? paymentReportTimestamp(current, {}) || current.createdAt || '' : '';
     const nextAt = paymentReportTimestamp(payment, {}) || payment.createdAt || '';
-    if (!current || String(nextAt) >= String(currentAt)) {
+    const currentAt = latestPaymentTimestampByInvoiceId.get(invoiceId) || '';
+    if (!latestPaymentByInvoiceId.has(invoiceId) || String(nextAt) >= String(currentAt)) {
       latestPaymentByInvoiceId.set(invoiceId, payment);
+      latestPaymentTimestampByInvoiceId.set(invoiceId, nextAt);
     }
   }
+  const referenceDate = todayIso();
   const summary = {
     dashboardInvoiceCount: 0,
     dashboardInvoiceAmount: 0,
@@ -11867,7 +11965,7 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
   };
 
   for (const invoice of data.invoices || []) {
-    const runtimeStatus = invoiceRuntimeStatus(invoice);
+    const runtimeStatus = invoiceRuntimeStatus(invoice, referenceDate);
     const invoiceId = String(invoice.id || '');
     if (invoiceId && !invoiceStatuses.has(invoiceId)) {
       invoiceStatuses.set(invoiceId, runtimeStatus);
@@ -11988,7 +12086,7 @@ function dateDisplayText(value = '') {
 function dateTimeDisplayText(value = '') {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return dateDisplayText(value);
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  const parts = cachedDateTimeFormatter('en-CA', {
     timeZone: normalizeAppTimeZone(activeAppTimeZone || DEFAULT_APP_TIME_ZONE),
     year: 'numeric',
     month: '2-digit',
@@ -13645,12 +13743,56 @@ function paymentGatewayPackageLabel(value = '') {
   return text;
 }
 
-function paymentGatewayDescription(data = {}, row = {}) {
+function paymentGatewayReportLookup(data = {}) {
+  const invoices = new Map();
+  for (const invoice of data.invoices || []) {
+    const values = [
+      invoice.id,
+      invoice.externalId,
+      invoice.invoiceNo,
+      displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id)
+    ];
+    for (const value of values) {
+      const key = cleanPaymentGatewayInvoiceReference(value).toLowerCase();
+      if (key && !invoices.has(key)) invoices.set(key, invoice);
+    }
+  }
+  const voucherOrders = new Map();
+  for (const order of data.hotspotVoucherOrders || []) {
+    for (const value of [order.id, order.reference, order.paymentReference]) {
+      const key = String(value || '').trim().toLowerCase();
+      if (key && !voucherOrders.has(key)) voucherOrders.set(key, order);
+    }
+  }
+  return {
+    invoices,
+    voucherOrders,
+    customersById: new Map((data.customers || []).map((customer) => [String(customer.id || ''), customer])),
+    customersByUsername: new Map((data.customers || []).map((customer) => [String(customer.username || '').trim().toLowerCase(), customer]))
+  };
+}
+
+function paymentGatewayLookupInvoice(lookup = {}, value = '') {
+  const key = cleanPaymentGatewayInvoiceReference(value).toLowerCase();
+  return lookup.invoices?.get(key) || null;
+}
+
+function paymentGatewayLookupVoucherOrder(lookup = {}, value = '') {
+  return lookup.voucherOrders?.get(String(value || '').trim().toLowerCase()) || null;
+}
+
+function paymentGatewayLookupCustomer(lookup = {}, invoice = {}) {
+  return lookup.customersById?.get(String(invoice.customerId || ''))
+    || lookup.customersByUsername?.get(String(invoice.username || '').trim().toLowerCase())
+    || {};
+}
+
+function paymentGatewayDescription(data = {}, row = {}, lookup = null) {
   const kind = paymentGatewayTransactionKind(row);
   const reference = row.reference || row.invoiceNo || '';
   if (kind === 'monthly-package') {
-    const invoice = findBillingInvoiceByReference(data, reference) || {};
-    const customer = customerForInvoice(data, invoice);
+    const invoice = (lookup ? paymentGatewayLookupInvoice(lookup, reference) : findBillingInvoiceByReference(data, reference)) || {};
+    const customer = lookup ? paymentGatewayLookupCustomer(lookup, invoice) : customerForInvoice(data, invoice);
     const customerName = String(
       row.customerName
       || invoice.customerName
@@ -13672,7 +13814,7 @@ function paymentGatewayDescription(data = {}, row = {}) {
     return `Internet Bulanan: ${customerName}`;
   }
   if (kind === 'hotspot-voucher') {
-    const order = findHotspotVoucherOrder(data, reference) || {};
+    const order = (lookup ? paymentGatewayLookupVoucherOrder(lookup, reference) : findHotspotVoucherOrder(data, reference)) || {};
     const buyerName = String(row.customerName || order.buyerName || row.username || '-').trim();
     const packageName = String(order.packageLabel || order.profileName || row.packageName || row.item || '').trim();
     if (packageName) return `Voucher Hotspot: ${buyerName} — ${packageName}`;
@@ -13681,14 +13823,16 @@ function paymentGatewayDescription(data = {}, row = {}) {
   return String(row.description || row.customerName || '-').trim() || '-';
 }
 
-function paymentGatewayReportAmount(data = {}, row = {}, kind = paymentGatewayTransactionKind(row)) {
+function paymentGatewayReportAmount(data = {}, row = {}, kind = paymentGatewayTransactionKind(row), lookup = null) {
   if (kind === 'hotspot-voucher') {
-    const order = findHotspotVoucherOrder(data, row.reference || row.voucherOrderId || row.invoiceNo || '') || {};
+    const reference = row.reference || row.voucherOrderId || row.invoiceNo || '';
+    const order = (lookup ? paymentGatewayLookupVoucherOrder(lookup, reference) : findHotspotVoucherOrder(data, reference)) || {};
     const amount = Number(order.amount ?? order.baseAmount ?? row.baseAmount ?? 0);
     if (Number.isFinite(amount) && amount > 0) return Math.round(amount);
   }
   if (kind === 'monthly-package') {
-    const invoice = findBillingInvoiceByReference(data, row.reference || row.invoiceNo || row.invoiceId || '') || {};
+    const reference = row.reference || row.invoiceNo || row.invoiceId || '';
+    const invoice = (lookup ? paymentGatewayLookupInvoice(lookup, reference) : findBillingInvoiceByReference(data, reference)) || {};
     const amount = Number(invoice.amount ?? invoice.baseAmount ?? row.baseAmount ?? 0);
     if (Number.isFinite(amount) && amount > 0) return Math.round(amount);
   }
@@ -13739,13 +13883,14 @@ function paymentGatewayReportPayload(data = {}, query = {}) {
   const method = String(query.method || 'all').trim().toLowerCase();
   const kind = String(query.kind || 'all').trim().toLowerCase();
   const allRows = Array.isArray(data.paymentGatewayTransactions) ? data.paymentGatewayTransactions : [];
+  const lookup = paymentGatewayReportLookup(data);
   const balanceSummary = tripayClearingSummary(allRows);
   let rows = allRows.map((row) => {
     const transactionKind = paymentGatewayTransactionKind(row);
     return {
       ...row,
-      amount: paymentGatewayReportAmount(data, row, transactionKind),
-      description: paymentGatewayDescription(data, row),
+      amount: paymentGatewayReportAmount(data, row, transactionKind, lookup),
+      description: paymentGatewayDescription(data, row, lookup),
       transactionKind,
       transactionKindLabel: paymentGatewayTransactionKindLabel(transactionKind)
     };
@@ -13865,12 +14010,13 @@ function paymentGatewayReportRowsFromBase(rows = [], balanceSummary = {}, query 
 
 function buildPaymentGatewayReportBasePayload(data = {}) {
   const allRows = Array.isArray(data.paymentGatewayTransactions) ? data.paymentGatewayTransactions : [];
+  const lookup = paymentGatewayReportLookup(data);
   const rows = allRows.map((row) => {
     const transactionKind = paymentGatewayTransactionKind(row);
     const next = {
       ...row,
-      amount: paymentGatewayReportAmount(data, row, transactionKind),
-      description: paymentGatewayDescription(data, row),
+      amount: paymentGatewayReportAmount(data, row, transactionKind, lookup),
+      description: paymentGatewayDescription(data, row, lookup),
       transactionKind,
       transactionKindLabel: paymentGatewayTransactionKindLabel(transactionKind)
     };
@@ -17739,6 +17885,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/dashboard') {
+    const dashboardStartedAt = Date.now();
     const authContext = await requirePermission(req, res, 'dashboard:read');
     if (!authContext) return;
     let data = authContext.data;
@@ -17773,9 +17920,27 @@ async function handleApi(req, res, url) {
       }
     }
 
+    const summaryStartedAt = Date.now();
     const summary = summarize(standaloneMode(data) ? dataWithResolvedCustomerStatuses(data) : data, period);
     summary.monthlyTransactionCount = dashboardMonthlyTransactionCount(data, period);
-    summary.billingSummary = await cachedDashboardBillingSummary(data, period);
+    const summaryMs = Date.now() - summaryStartedAt;
+    const asyncStartedAt = Date.now();
+    const asyncTimings = {};
+    const timedDashboardPart = async (name, producer) => {
+      const startedAt = Date.now();
+      try {
+        return await producer();
+      } finally {
+        asyncTimings[`${name}Ms`] = Date.now() - startedAt;
+      }
+    };
+    const [billingSummary, members, radiusSummary] = await Promise.all([
+      timedDashboardPart('billing', () => cachedDashboardBillingSummary(data, period)),
+      timedDashboardPart('members', () => dashboardCustomerSummary(data, { force: refreshRadboox, period })),
+      timedDashboardPart('radius', () => dashboardRadiusSummary(data, period))
+    ]);
+    const asyncMs = Date.now() - asyncStartedAt;
+    summary.billingSummary = billingSummary;
     summary.voucherIncomeSummary = dashboardVoucherIncomeSummary(data, period);
     const dashboardIncomeAmount = Number(summary.billingSummary.monthlyPaymentAmount || 0)
       + Number(summary.externalIncomeTotal || 0)
@@ -17789,12 +17954,12 @@ async function handleApi(req, res, url) {
     summary.dashboardIncomeCount = dashboardIncomeCount;
     summary.paidRevenue = dashboardIncomeAmount;
     summary.netCash = dashboardIncomeAmount - Number(summary.expenseTotal || 0);
-    const members = await dashboardCustomerSummary(data, { force: refreshRadboox, period });
+    const responseStartedAt = Date.now();
     const response = {
       summary: await publicDashboardSummary(summary, data, authContext.user, period),
       canViewFinance: dashboardFinanceAllowed(authContext.user),
       members,
-      radiusSummary: await dashboardRadiusSummary(data, period),
+      radiusSummary,
       settings: publicAppSettings(data.settings)
     };
     if (!standaloneMode(data)) {
@@ -17804,6 +17969,13 @@ async function handleApi(req, res, url) {
         ...radbooxFreshness(summary.lastRadbooxEarning)
       };
     }
+    logSlowOperation('dashboard', dashboardStartedAt, {
+      period: normalizePeriod(period),
+      summaryMs,
+      asyncMs,
+      ...asyncTimings,
+      responseMs: Date.now() - responseStartedAt
+    });
     sendJson(res, 200, response);
     return;
   }
