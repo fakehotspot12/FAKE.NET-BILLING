@@ -2,6 +2,30 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [3.1.0] - 2026-08-03
+
+### Added
+
+- Konfigurasi WAN GenieACS menyediakan aksi `Simpan Binding` untuk mengubah binding LAN/SSID tanpa menulis ulang VLAN, mode WAN, atau kredensial PPPoE.
+- Log aktivitas provisioning menyimpan status verifikasi, task ID, fault modem, dan kegagalan konfigurasi WAN/WiFi untuk kebutuhan audit.
+- Detail client terkoneksi dimuat langsung dari perangkat hanya ketika dibuka, sehingga nama, IP, dan MAC tetap lengkap tanpa membebani tabel utama.
+
+### Changed
+
+- Daftar GenieACS memakai snapshot cache 60 detik, stale fallback lima menit, deduplikasi request, dan cache Redis pada endpoint halaman.
+- Projection NBI yang besar dipecah menjadi beberapa request ringkas; aplikasi tidak lagi fallback mengunduh dokumen seluruh ONT ketika NBI mengembalikan HTTP 414/431.
+- Deteksi ONT baru berjalan setiap 30 detik dan tetap menyediakan refresh manual untuk pemeriksaan langsung.
+- Daftar utama hanya membaca parameter ringkasan; konfigurasi WAN, WiFi, dan client lengkap dibaca saat popup terkait dibuka.
+
+### Security
+
+- Token NBI GenieACS tidak lagi ikut dikirim melalui payload daftar perangkat kepada role yang hanya memiliki izin baca.
+- Paket distribusi mengecualikan database runtime, sesi, foto pelanggan, VAPID key, generator lisensi, dan file konteks internal.
+
+### Fixed
+
+- Modul WAN/WiFi, bootstrap UI, dan aset loading awal disertakan sebagai bagian wajib rilis agar instalasi atau update bersih tidak menyebabkan aplikasi gagal start atau halaman blank.
+
 ## [3.0.0] - 2026-08-01
 
 ### Changed

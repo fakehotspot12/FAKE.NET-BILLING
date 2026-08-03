@@ -1,0 +1,15 @@
+AGENTS.md
+PROJECT_CONTEXT.md
+.env
+/data/*
+!/data/.gitkeep
+/node_modules/
+/src/license-server.js
+/app.js
+/genieacs.js
+/index.html
+/styles.css
+/wifiku.css
+/wifiku.html
+/wifiku.js
+*.tgz

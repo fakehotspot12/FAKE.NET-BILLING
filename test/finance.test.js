@@ -6110,6 +6110,152 @@ test('monitoring members are sorted by newest created date first', () => {
   assert.deepEqual(az.members.map((member) => member.fullName), ['Alpha Old', 'Beta Fallback', 'Zeta New']);
 });
 
+test('member data validation requires complete identity, location, and photos', () => {
+  const completeCustomer = {
+    id: 'member-complete',
+    username: 'member-complete',
+    name: 'Pelanggan Lengkap',
+    ktpName: 'PELANGGAN LENGKAP',
+    ktp: '6472041309960005',
+    address: 'Jalan Pelanggan No. 1',
+    latitude: '-0.5021',
+    longitude: '117.1536',
+    housePhotoUrl: '/uploads/member-house/rumah.webp',
+    ktpPhoto: {
+      id: 'ktp-member-1',
+      file: 'ktp-member-1.fnbktp',
+      mime: 'image/webp'
+    }
+  };
+  const complete = serverInternals.memberDataValidation(completeCustomer);
+  assert.equal(complete.valid, true);
+  assert.deepEqual(Object.values(complete.checks), [true, true, true, true, true, true, true]);
+
+  const incomplete = serverInternals.memberDataValidation({
+    name: 'Pelanggan Belum Lengkap',
+    ktpName: '',
+    ktp: '647204130996000',
+    address: 'Jalan Pelanggan No. 2',
+    latitude: '0.0',
+    longitude: '0.0'
+  });
+  assert.equal(incomplete.valid, false);
+  assert.equal(incomplete.checks.ktpName, false);
+  assert.equal(incomplete.checks.ktpNumber, false);
+  assert.equal(incomplete.checks.location, false);
+  assert.equal(incomplete.checks.housePhoto, false);
+  assert.equal(incomplete.checks.ktpPhoto, false);
+
+  const data = createDefaultStore();
+  data.customers = [completeCustomer, {
+    id: 'member-incomplete',
+    username: 'member-incomplete',
+    name: 'Pelanggan Belum Lengkap',
+    ktpName: '',
+    ktp: '647204130996000',
+    address: 'Jalan Pelanggan No. 2',
+    latitude: '0.0',
+    longitude: '0.0'
+  }];
+  assert.deepEqual(
+    serverInternals.localMonitoringMemberRows(data, { search: 'data valid' }).members.map((member) => member.id),
+    ['member-complete']
+  );
+  assert.deepEqual(
+    serverInternals.localMonitoringMemberRows(data, { search: 'belum valid' }).members.map((member) => member.id),
+    ['member-incomplete']
+  );
+});
+
+test('finance recap includes paid vouchers and splits multi-item categories', async () => {
+  const data = createDefaultStore();
+  data.invoices = [{
+    id: 'invoice-recap-1',
+    customerId: 'customer-recap-1',
+    customerName: 'Pelanggan Rekap',
+    username: 'rekap@example.net',
+    status: 'paid',
+    amount: 100000,
+    period: '2026-08',
+    paidAt: '2026-08-01T01:00:00.000Z',
+    updatedAt: '2026-08-01T01:00:00.000Z'
+  }];
+  data.payments = [{
+    id: 'payment-recap-1',
+    invoiceId: 'invoice-recap-1',
+    customerId: 'customer-recap-1',
+    amount: 100000,
+    method: 'Tunai',
+    status: 'paid',
+    paidAt: '2026-08-01T01:00:00.000Z',
+    createdAt: '2026-08-01T01:00:00.000Z'
+  }];
+  data.hotspotVoucherOrders = [{
+    id: 'voucher-recap-1',
+    reference: 'VO-RECAP-1',
+    status: 'paid',
+    paymentStatus: 'paid',
+    source: 'online',
+    buyerName: 'Pembeli Voucher',
+    amount: 10000,
+    quantity: 1,
+    paymentMethod: 'QRIS',
+    paidAt: '2026-08-01T02:00:00.000Z',
+    createdAt: '2026-08-01T02:00:00.000Z',
+    vouchers: [{ id: 'voucher-user-1', username: 'VOUCHER1', password: 'VOUCHER1' }]
+  }];
+  data.externalIncomes = [{
+    id: 'income-recap-1',
+    date: '2026-08-01',
+    status: 'active',
+    category: '2 kategori: Perangkat, Jasa',
+    amount: 166500,
+    subtotal: 150000,
+    taxEnabled: true,
+    taxAmount: 16500,
+    paymentMethod: 'Transfer',
+    items: [
+      { id: 'income-line-1', category: 'Perangkat', quantity: 1, unitPrice: 100000, amount: 100000 },
+      { id: 'income-line-2', category: 'Jasa', quantity: 1, unitPrice: 50000, amount: 50000 }
+    ]
+  }];
+  data.expenses = [{
+    id: 'expense-recap-1',
+    date: '2026-08-01',
+    category: '2 kategori: Gaji, Operasional',
+    amount: 70000,
+    items: [
+      { id: 'expense-line-1', category: 'Gaji', quantity: 1, unitPrice: 50000, amount: 50000 },
+      { id: 'expense-line-2', category: 'Operasional', quantity: 1, unitPrice: 20000, amount: 20000 }
+    ]
+  }];
+
+  const result = await serverInternals.buildFinanceRecapPayload(data, '2026-08');
+  const incomeGroups = Object.fromEntries(result.incomeGroups.map((row) => [row.category, row]));
+  const expenseGroups = Object.fromEntries(result.expenseGroups.map((row) => [row.category, row]));
+
+  assert.deepEqual(result.summary, {
+    incomeCount: 3,
+    incomeTotal: 276500,
+    expenseCount: 1,
+    expenseTotal: 70000,
+    profit: 206500,
+    cashCount: 1,
+    cashAmount: 100000,
+    transferCount: 1,
+    transferAmount: 166500,
+    onlineCount: 1,
+    onlineAmount: 10000
+  });
+  assert.equal(incomeGroups['Tagihan Internet'].amount, 100000);
+  assert.equal(incomeGroups['Voucher Hotspot'].amount, 10000);
+  assert.equal(incomeGroups.Perangkat.amount, 100000);
+  assert.equal(incomeGroups.Jasa.amount, 50000);
+  assert.equal(incomeGroups.PPN.amount, 16500);
+  assert.equal(expenseGroups.Gaji.amount, 50000);
+  assert.equal(expenseGroups.Operasional.amount, 20000);
+});
+
 test('voucher report scopes reseller revenue and calculates commission', () => {
   const data = createDefaultStore();
   data.settings.voucherRevenueSharePercent = 20;

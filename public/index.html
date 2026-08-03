@@ -12,7 +12,7 @@
     <link id="appFavicon" rel="icon" href="__FAKENET_META_ICON__">
     <link id="appleTouchIcon" rel="apple-touch-icon" href="__FAKENET_META_ICON__">
     <link rel="manifest" href="/manifest.webmanifest?v=fakenet-billing-__FAKENET_APP_VERSION__">
-    <link rel="stylesheet" href="/styles.css?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=user-nas-save-v5-20260801">
+    <link rel="stylesheet" href="/boot.css?ui=genie-provision-queue-v1-20260803">
   </head>
   <body class="is-loading-auth">
     <div class="app-shell">
@@ -160,7 +160,9 @@
         </footer>
       </aside>
 
-      <main class="content" id="app" tabindex="-1"></main>
+      <main class="content" id="app" tabindex="-1">
+        <div class="boot-app-pending" aria-hidden="true"></div>
+      </main>
 
       <nav class="bottom-nav" aria-label="Navigasi mobile">
         <button class="bottom-item is-active" type="button" data-view="dashboard">Dash</button>
@@ -185,6 +187,6 @@
       </form>
     </dialog>
 
-    <script src="/app.js?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=user-nas-save-v5-20260801" defer></script>
+    <script src="/bootstrap.js?ui=genie-provision-queue-v1-20260803" defer></script>
   </body>
 </html>

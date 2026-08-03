@@ -315,6 +315,12 @@ let monitoringCustomersTimer = null;
 let monitoringServicesTimer = null;
 let monitoringBillingTimer = null;
 let monitoringBillingRevision = '';
+let genieAcsRecentTimer = null;
+let genieAcsRecentLoading = false;
+let genieAcsRecentSignature = '';
+let genieAcsRecentIds = new Set();
+let genieAcsRecentPage = 1;
+let genieAcsRecentPayload = { devices: [] };
 let voucherDataTimer = null;
 let voucherDataRevision = '';
 let dashboardRouterNasTimer = null;
@@ -2038,6 +2044,10 @@ function takeLoginReturnView() {
 }
 
 function clearRealtimeTimers() {
+  if (genieAcsRecentTimer) {
+    window.clearTimeout(genieAcsRecentTimer);
+    genieAcsRecentTimer = null;
+  }
   if (monitoringCustomersTimer) {
     window.clearTimeout(monitoringCustomersTimer);
     monitoringCustomersTimer = null;
@@ -2162,7 +2172,14 @@ function setPeriod(period) {
 
 function configureShell() {
   const loggedIn = Boolean(state.auth);
+  try {
+    if (loggedIn) localStorage.setItem('fakenetAuthHint', '1');
+    else localStorage.removeItem('fakenetAuthHint');
+  } catch {
+    // Hint hanya mempercepat skeleton awal; sesi tetap ditentukan server.
+  }
   document.body.classList.remove('is-loading-auth');
+  document.body.classList.remove('is-bootstrap-login');
   document.body.classList.toggle('is-login', !loggedIn);
   document.body.classList.toggle('is-authenticated', loggedIn);
   document.body.classList.toggle('is-dashboard-view', loggedIn && state.view === 'dashboard');
@@ -2434,6 +2451,41 @@ function scheduleTableTopScrollbars(root = document) {
   window.setTimeout(run, 600);
 }
 
+let observedTableScrollbarFrame = 0;
+const observedTableScrollbarRoots = new Set();
+
+function queueObservedTableTopScrollbars(root = document) {
+  observedTableScrollbarRoots.add(root || document);
+  if (observedTableScrollbarFrame) return;
+  observedTableScrollbarFrame = requestAnimationFrame(() => {
+    observedTableScrollbarFrame = 0;
+    const roots = [...observedTableScrollbarRoots];
+    observedTableScrollbarRoots.clear();
+    roots.forEach((scope) => enhanceTableTopScrollbars(scope));
+  });
+}
+
+function mutationTouchesScrollableTable(record) {
+  if (record.target instanceof Element && record.target.closest('.table-wrap, .detail-table-wrap')) {
+    return true;
+  }
+  return [...record.addedNodes].some((node) => node instanceof Element && (
+    node.matches('.table-wrap, .detail-table-wrap')
+    || Boolean(node.querySelector('.table-wrap, .detail-table-wrap'))
+  ));
+}
+
+function observeTableTopScrollbars(root) {
+  if (!root || !('MutationObserver' in window)) return null;
+  const observer = new MutationObserver((records) => {
+    if (records.some(mutationTouchesScrollableTable)) {
+      queueObservedTableTopScrollbars(root);
+    }
+  });
+  observer.observe(root, { childList: true, subtree: true });
+  return observer;
+}
+
 function openModal(title, body, onSubmit) {
   if (notificationPanel) {
     notificationPanel.hidden = true;
@@ -2472,8 +2524,8 @@ function openModal(title, body, onSubmit) {
     }
     event.preventDefault();
     try {
-      await onSubmit(formData(form), form);
-      modal.close();
+      const result = await onSubmit(formData(form), form);
+      if (result !== false) modal.close();
     } catch (error) {
       setToast(error.message);
     }
@@ -3459,6 +3511,8 @@ function bindLiveTextSearch(input, options = {}) {
     setValue = () => {},
     handler = () => {},
     debounceMs = LIVE_SEARCH_DEBOUNCE_MS,
+    minLength = 0,
+    onTooShort = () => {},
     refocusSelector = '#searchInput'
   } = options;
   const viewAtBind = state.view;
@@ -3474,6 +3528,11 @@ function bindLiveTextSearch(input, options = {}) {
     const next = String(inputValue || '').trim();
     setValue(next);
     if (refocus) rememberSearchFocusIntent(refocusSelector, () => getValue());
+    if (next && next.length < minLength) {
+      queued = false;
+      onTooShort(next, minLength);
+      return;
+    }
     if (!force && lastStartedValue === next && !queued) return;
     if (running) {
       queued = true;
@@ -3561,13 +3620,14 @@ function bindSearchClearButton(input, onClear = () => {}) {
   refresh();
 }
 
-function bindSearch(handler) {
+function bindSearch(handler, options = {}) {
   const search = document.getElementById('searchInput');
   if (!search) return;
   const live = bindLiveTextSearch(search, {
     getValue: () => state.search,
     setValue: (value) => { state.search = value; },
     handler,
+    ...options,
     refocusSelector: '#searchInput'
   });
   const reset = () => {
@@ -6541,29 +6601,33 @@ async function renderReportsFinanceRecap(options = {}) {
           <span>${escapeHtml(periodLabel(state.period))}</span>
         </div>
         <div class="split-grid">
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Pemasukan</th>
-                  <th>Transaksi</th>
-                  <th class="amount">Nominal</th>
-                </tr>
-              </thead>
-              <tbody>${financeRecapRows(incomeGroups, 'positive')}</tbody>
-            </table>
+          <div class="finance-recap-table-host">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pemasukan</th>
+                    <th>Transaksi</th>
+                    <th class="amount">Nominal</th>
+                  </tr>
+                </thead>
+                <tbody>${financeRecapRows(incomeGroups, 'positive')}</tbody>
+              </table>
+            </div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Pengeluaran</th>
-                  <th>Transaksi</th>
-                  <th class="amount">Nominal</th>
-                </tr>
-              </thead>
-              <tbody>${financeRecapRows(expenseGroups, 'negative')}</tbody>
-            </table>
+          <div class="finance-recap-table-host">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pengeluaran</th>
+                    <th>Transaksi</th>
+                    <th class="amount">Nominal</th>
+                  </tr>
+                </thead>
+                <tbody>${financeRecapRows(expenseGroups, 'negative')}</tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
@@ -14270,9 +14334,13 @@ function genieClientCounts(row = {}) {
   return { count24, count5, countLan, total };
 }
 
-function openGenieClientsModal(row = {}) {
+async function openGenieClientsModal(row = {}) {
+  const payload = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/clients?refresh=1`);
+  row = { ...row, ...(payload.device || {}) };
   const rows = genieClientRows(row);
   const counts = genieClientCounts(row);
+  const pageSize = 10;
+  let page = 1;
   openModal('Client Terkoneksi', `
     <div class="genie-client-detail">
       <div class="notice">
@@ -14284,7 +14352,21 @@ function openGenieClientsModal(row = {}) {
         <span>5G ${displayNumber(counts.count5)}</span>
         <span>LAN ${displayNumber(counts.countLan)}</span>
       </div>
-      ${rows.length ? `
+      <div id="genieClientPage"></div>
+    </div>
+  `, async () => {});
+  const renderPage = () => {
+    const host = document.getElementById('genieClientPage');
+    if (!host) return;
+    if (!rows.length) {
+      host.innerHTML = '<p class="empty-detail">Detail client belum terbaca dari GenieACS.</p>';
+      return;
+    }
+    const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+    page = Math.max(1, Math.min(totalPages, page));
+    const offset = (page - 1) * pageSize;
+    const visibleRows = rows.slice(offset, offset + pageSize);
+    host.innerHTML = `
         <div class="detail-table-wrap">
           <table class="detail-table">
             <thead>
@@ -14297,9 +14379,9 @@ function openGenieClientsModal(row = {}) {
               </tr>
             </thead>
             <tbody>
-              ${rows.map((client, index) => `
+              ${visibleRows.map((client, index) => `
                 <tr>
-                  <td>${displayNumber(index + 1)}</td>
+                  <td>${displayNumber(offset + index + 1)}</td>
                   <td><span class="client-type-badge ${genieClientBadgeClass(client.type)}">${escapeHtml(genieClientTypeKey(client.type))}</span></td>
                   <td>${escapeHtml(client.name || '-')}</td>
                   <td>${escapeHtml(client.ipAddress || '-')}</td>
@@ -14309,9 +14391,22 @@ function openGenieClientsModal(row = {}) {
             </tbody>
           </table>
         </div>
-      ` : '<p class="empty-detail">Detail client belum terbaca dari GenieACS.</p>'}
-    </div>
-  `, async () => {});
+        <div class="client-detail-pager">
+          <span>${displayNumber(offset + 1)}–${displayNumber(Math.min(offset + pageSize, rows.length))} dari ${displayNumber(rows.length)} client</span>
+          <div>
+            <button class="ghost-button compact" type="button" data-genie-client-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>Sebelumnya</button>
+            <strong>${displayNumber(page)} / ${displayNumber(totalPages)}</strong>
+            <button class="ghost-button compact" type="button" data-genie-client-page="${page + 1}" ${page >= totalPages ? 'disabled' : ''}>Berikutnya</button>
+          </div>
+        </div>`;
+  };
+  document.getElementById('genieClientPage')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-genie-client-page]');
+    if (!button || button.disabled) return;
+    page = Number(button.dataset.genieClientPage || 1);
+    renderPage();
+  });
+  renderPage();
 }
 
 function genieAcsPaginationControls(pagination = {}) {
@@ -14347,130 +14442,593 @@ function genieAcsRedamanLabel(value = 'all') {
   return labels[value] || labels.all;
 }
 
-function openGenieWifiModal(row = {}) {
-  const networks = genieWifiNetworks(row);
+function setGenieModalStatus(element, state = 'loading', title = '', detail = '') {
+  if (!element) return;
+  const tone = state === 'success' ? 'positive' : (state === 'error' ? 'error' : (state === 'pending' ? 'warning' : ''));
+  element.className = `notice genie-operation-status ${tone}`.trim();
+  element.dataset.state = state;
+  element.setAttribute('role', state === 'error' ? 'alert' : 'status');
+  element.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false');
+  element.hidden = false;
+  element.innerHTML = `
+    <strong>${escapeHtml(title || 'Memproses...')}</strong>
+    ${detail ? `<span>${escapeHtml(detail)}</span>` : ''}
+  `;
+  requestAnimationFrame(() => {
+    const scrollRoot = element.closest('#modalBody');
+    if (!scrollRoot) return;
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const statusRect = element.getBoundingClientRect();
+    if (statusRect.top < rootRect.top || statusRect.bottom > rootRect.bottom) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+}
+
+async function openGenieWifiModal(row = {}) {
+  const wifiPayload = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wifi-options?${queryString({
+    username: row.username || '',
+    refresh: '1'
+  })}`);
+  const networks = Array.isArray(wifiPayload.networks) && wifiPayload.networks.length
+    ? wifiPayload.networks
+    : genieWifiNetworks(row);
+  const addSsid = wifiPayload.addSsid || {};
+  const addBands = Array.isArray(addSsid.bands) ? addSsid.bands.filter((item) => item.nextIndex) : [];
   const firstNetwork = networks.find((item) => item.enabled) || networks[0] || {};
-  const optionTags = networks.length
-    ? networks.map((network) => `
+  const wifiOptionTags = (items = [], selectedParameter = '') => items.length
+    ? items.map((network) => `
       <option value="${escapeHtml(network.ssidParameter)}"
         data-ssid="${escapeHtml(network.ssid || '')}"
-        data-password="${escapeHtml(network.password || '')}"
         data-password-parameter="${escapeHtml(network.passwordParameter || '')}"
-        data-password-enabled="${network.securityEnabled || network.password ? 'true' : 'false'}"
-        ${network.ssidParameter === firstNetwork.ssidParameter ? 'selected' : ''}>
+        data-password-enabled="${network.securityEnabled === true ? 'true' : 'false'}"
+        data-enabled="${network.enabled !== false ? 'true' : 'false'}"
+        ${network.ssidParameter === selectedParameter ? 'selected' : ''}>
         ${escapeHtml(genieWifiOptionLabel(network))}
       </option>
     `).join('')
     : '<option value="">SSID tidak ditemukan</option>';
-  openModal('Ganti WiFi', `
-    <label class="field full">
-      <span>Perangkat</span>
-      <input value="${escapeHtml(genieDeviceLabel(row))}" readonly>
-    </label>
-    <label class="field full">
-      <span>Pilih SSID</span>
-      <select name="ssidParameter" id="genieWifiSelect" required>
-        ${optionTags}
-      </select>
-    </label>
-    <input name="passwordParameter" id="genieWifiPasswordParameter" type="hidden" value="${escapeHtml(firstNetwork.passwordParameter || '')}">
-    <label class="field">
-      <span>Nama WiFi</span>
-      <input name="ssid" id="genieWifiSsidInput" type="text" maxlength="32" value="${escapeHtml(firstNetwork.ssid || '')}" required>
-    </label>
-    <label class="field">
-      <span>Password</span>
-      <input name="password" id="genieWifiPasswordInput" type="password" minlength="8" maxlength="63" value="${escapeHtml(firstNetwork.password || '')}" autocomplete="new-password" placeholder="Kosongkan jika tidak diganti">
-    </label>
-    <label class="field checkbox-field">
-      <input name="usePassword" id="genieWifiUsePassword" type="checkbox" value="true" ${firstNetwork.securityEnabled || firstNetwork.password ? 'checked' : ''}>
-      <span>Gunakan WPA/WPA2 password</span>
-    </label>
-    <label class="field checkbox-field">
-      <input id="genieWifiShowPassword" type="checkbox" value="true">
-      <span>Tampilkan password</span>
-    </label>
-    <div class="modal-actions field full">
-      <button class="button" type="submit">Kirim Perintah</button>
+  const optionTags = wifiOptionTags(networks, firstNetwork.ssidParameter);
+  const addSsidForm = addSsid.supported && addBands.length ? `
+    <div class="genie-wifi-form-layout">
+      <label class="field">
+        <span>Band</span>
+        <select id="genieWifiAddBand">
+          ${addBands.map((band) => `<option value="${escapeHtml(band.value)}">${escapeHtml(band.label)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span>Nama SSID</span>
+        <input id="genieWifiAddName" type="text" maxlength="32" autocomplete="off" placeholder="Nama WiFi baru">
+      </label>
+      <label class="field">
+        <span>Security</span>
+        <select id="genieWifiAddSecurity">
+          <option value="none">Open / Tanpa Password</option>
+          <option value="pass">WPA/WPA2 Password</option>
+        </select>
+      </label>
+      <label class="field" id="genieWifiAddPasswordField" hidden>
+        <span>Password</span>
+        <input id="genieWifiAddPassword" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Minimal 8 karakter">
+      </label>
+      <label class="field checkbox-field full" id="genieWifiAddShowPasswordField" hidden>
+        <input id="genieWifiAddShowPassword" type="checkbox" value="true">
+        <span>Tampilkan password</span>
+      </label>
+      <div class="modal-actions field full genie-wifi-add-actions">
+        <button class="ghost-button" type="button" data-close-modal>Batal</button>
+        <button class="button" id="genieWifiAddButton" type="button">Tambah SSID</button>
+      </div>
     </div>
-  `, async (payload) => {
-    await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wifi`, {
-      method: 'POST',
-      body: JSON.stringify({
-        ssid: payload.ssid,
-        ssidParameter: payload.ssidParameter,
-        password: payload.password,
-        passwordParameter: payload.passwordParameter,
-        usePassword: payload.usePassword === true
-      })
-    });
-    setToast('Perintah WiFi dikirim');
+  ` : `
+    <div class="notice warning">
+      ${escapeHtml(addSsid.note || 'Slot SSID baru belum tersedia pada modem ini.')}
+    </div>
+  `;
+  openModal('WiFi', `
+    <div class="tab-switcher genie-wifi-tab-switcher" role="tablist" aria-label="Pengaturan WiFi">
+      <button class="tab-button is-active" type="button" data-genie-wifi-tab="edit" role="tab" aria-selected="true">Ubah WiFi</button>
+      <button class="tab-button" type="button" data-genie-wifi-tab="add" role="tab" aria-selected="false">Tambah SSID</button>
+    </div>
+    <div class="notice genie-operation-status" id="genieWifiOperationStatus" aria-live="polite" hidden></div>
+    <section class="genie-wifi-panel is-active" data-genie-wifi-panel="edit">
+      <div class="genie-wifi-form-layout">
+      <div class="genie-wan-device genie-wifi-device field full">
+        <div>
+          <strong>${escapeHtml(genieDeviceLabel(row))}</strong>
+          <span>${escapeHtml(row.username || 'Username PPPoE belum terbaca')}</span>
+        </div>
+        <span class="badge">${escapeHtml(wifiPayload.vendor?.label || 'Vendor belum dikenali')}</span>
+      </div>
+      <label class="field full">
+        <span>Pilih SSID</span>
+        <select name="ssidParameter" id="genieWifiSelect" required>
+          ${optionTags}
+        </select>
+      </label>
+      <input name="passwordParameter" id="genieWifiPasswordParameter" type="hidden" value="${escapeHtml(firstNetwork.passwordParameter || '')}">
+      <label class="field">
+        <span>Nama WiFi</span>
+        <input name="ssid" id="genieWifiSsidInput" type="text" maxlength="32" value="${escapeHtml(firstNetwork.ssid || '')}" required>
+      </label>
+      <label class="field">
+        <span>Status SSID</span>
+        <select name="enabled" id="genieWifiEnabled">
+          <option value="true" ${firstNetwork.enabled !== false ? 'selected' : ''}>Aktif</option>
+          <option value="false" ${firstNetwork.enabled === false ? 'selected' : ''}>Nonaktif</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Security</span>
+        <select name="security" id="genieWifiSecurity">
+          <option value="pass" ${firstNetwork.securityEnabled === true ? 'selected' : ''}>Password</option>
+          <option value="none" ${firstNetwork.securityEnabled === true ? '' : 'selected'}>Open / Tanpa Password</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Password WiFi</span>
+        <input name="password" id="genieWifiPasswordInput" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Kosongkan jika tidak diganti">
+      </label>
+      <label class="field checkbox-field" id="genieWifiShowPasswordField">
+        <input id="genieWifiShowPassword" type="checkbox" value="true">
+        <span>Tampilkan password</span>
+      </label>
+      <div class="modal-actions field full">
+        <button class="ghost-button" type="button" data-close-modal>Batal</button>
+        <button class="button" type="submit">Simpan WiFi</button>
+      </div>
+      </div>
+    </section>
+    <section class="genie-wifi-panel" data-genie-wifi-panel="add" hidden>
+      <div class="genie-wifi-device-summary">
+        <strong>${escapeHtml(genieDeviceLabel(row))}</strong>
+        <span class="muted">${escapeHtml(addSsid.note || 'Slot SSID dipilih otomatis oleh sistem.')}</span>
+      </div>
+      ${addSsidForm}
+    </section>
+  `, async (payload, form) => {
+    const statusElement = document.getElementById('genieWifiOperationStatus');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const enabled = String(payload.enabled) !== 'false';
+    const security = payload.security === 'none' ? 'none' : 'pass';
+    let accepted = false;
+    try {
+      if (submitButton) submitButton.disabled = true;
+      setGenieModalStatus(statusElement, 'loading', 'Mengirim konfigurasi WiFi', 'Menunggu task diterima dan inform modem diperbarui.');
+      const response = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wifi`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ssid: payload.ssid,
+          ssidParameter: payload.ssidParameter,
+          password: payload.password,
+          passwordParameter: payload.passwordParameter,
+          usePassword: security === 'pass',
+          enabled
+        })
+      });
+      accepted = true;
+      const verification = response.result?.verification || {};
+      setGenieModalStatus(
+        statusElement,
+        verification.verified ? 'success' : 'pending',
+        verification.verified ? 'WiFi berhasil diperbarui' : 'Konfigurasi WiFi sudah dikirim',
+        verification.verified
+          ? `SSID ${payload.ssid} terverifikasi ${enabled ? 'aktif' : 'nonaktif'} dengan security ${security === 'pass' ? 'Password' : 'Open'}.`
+          : 'Task diterima, tetapi SSID, status, security, atau password belum seluruhnya terbaca sesuai. Buka ulang popup untuk cek ulang.'
+      );
+      const closeButton = form.querySelector('[data-close-modal]');
+      if (closeButton) closeButton.textContent = verification.verified ? 'Tutup' : 'Tutup & cek ulang';
+      if (verification.verified) {
+        try {
+          await refreshWifiNetworkOptions(payload.ssidParameter || '');
+        } catch {
+          // Status task tetap valid; daftar dapat diperbarui saat popup dibuka lagi.
+        }
+      }
+      renderGenieAcs({ refresh: true });
+    } catch (error) {
+      setGenieModalStatus(statusElement, 'error', 'Konfigurasi WiFi gagal', error.message || 'Task GenieACS tidak dapat dikirim.');
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = accepted;
+        if (accepted) submitButton.textContent = 'Sudah dikirim';
+      }
+    }
+    return false;
   });
   const select = document.getElementById('genieWifiSelect');
   const ssidInput = document.getElementById('genieWifiSsidInput');
   const passwordInput = document.getElementById('genieWifiPasswordInput');
   const passwordParameter = document.getElementById('genieWifiPasswordParameter');
-  const usePassword = document.getElementById('genieWifiUsePassword');
+  const wifiSecurity = document.getElementById('genieWifiSecurity');
+  const wifiEnabled = document.getElementById('genieWifiEnabled');
+  const showPasswordField = document.getElementById('genieWifiShowPasswordField');
   const showPassword = document.getElementById('genieWifiShowPassword');
   const syncWifiForm = () => {
     const option = select?.selectedOptions?.[0];
     if (!option) return;
     if (ssidInput) ssidInput.value = option.dataset.ssid || '';
-    if (passwordInput) passwordInput.value = option.dataset.password || '';
+    if (passwordInput) passwordInput.value = '';
     if (passwordParameter) passwordParameter.value = option.dataset.passwordParameter || '';
-    if (usePassword) usePassword.checked = option.dataset.passwordEnabled === 'true';
-    if (passwordInput && usePassword) {
-      passwordInput.disabled = !usePassword.checked;
+    if (wifiSecurity) wifiSecurity.value = option.dataset.passwordEnabled === 'true' ? 'pass' : 'none';
+    if (wifiEnabled) wifiEnabled.value = option.dataset.enabled === 'false' ? 'false' : 'true';
+    if (passwordInput && wifiSecurity) {
+      passwordInput.disabled = wifiSecurity.value === 'none';
       passwordInput.required = false;
+      passwordInput.type = 'password';
     }
+    if (showPasswordField && wifiSecurity) showPasswordField.hidden = wifiSecurity.value === 'none';
+    if (showPassword) showPassword.checked = false;
+  };
+  const refreshWifiNetworkOptions = async (selectedParameter = '') => {
+    const refreshed = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wifi-options?${queryString({
+      username: row.username || '',
+      refresh: '1'
+    })}`);
+    const refreshedNetworks = Array.isArray(refreshed.networks) ? refreshed.networks : [];
+    if (!select || !refreshedNetworks.length) return refreshed;
+    const selected = refreshedNetworks.find((item) => item.ssidParameter === selectedParameter)
+      || refreshedNetworks.find((item) => item.enabled)
+      || refreshedNetworks[0];
+    select.innerHTML = wifiOptionTags(refreshedNetworks, selected?.ssidParameter || '');
+    select.value = selected?.ssidParameter || '';
+    syncWifiForm();
+    return refreshed;
   };
   select?.addEventListener('change', syncWifiForm);
-  usePassword?.addEventListener('change', () => {
+  wifiSecurity?.addEventListener('change', () => {
     if (!passwordInput) return;
-    passwordInput.disabled = !usePassword.checked;
+    passwordInput.disabled = wifiSecurity.value === 'none';
+    if (wifiSecurity.value === 'none') {
+      passwordInput.value = '';
+      passwordInput.type = 'password';
+    }
     passwordInput.required = false;
+    if (showPasswordField) showPasswordField.hidden = wifiSecurity.value === 'none';
+    if (wifiSecurity.value === 'none' && showPassword) showPassword.checked = false;
   });
   showPassword?.addEventListener('change', () => {
     if (passwordInput) passwordInput.type = showPassword.checked ? 'text' : 'password';
   });
+  const tabButtons = [...document.querySelectorAll('[data-genie-wifi-tab]')];
+  const tabPanels = [...document.querySelectorAll('[data-genie-wifi-panel]')];
+  const selectWifiTab = (tab = 'edit') => {
+    tabButtons.forEach((button) => {
+      const active = button.dataset.genieWifiTab === tab;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    tabPanels.forEach((panel) => {
+      const active = panel.dataset.genieWifiPanel === tab;
+      panel.classList.toggle('is-active', active);
+      panel.hidden = !active;
+    });
+  };
+  tabButtons.forEach((button) => {
+    button.addEventListener('click', () => selectWifiTab(button.dataset.genieWifiTab || 'edit'));
+  });
+  const addSecurity = document.getElementById('genieWifiAddSecurity');
+  const addPasswordField = document.getElementById('genieWifiAddPasswordField');
+  const addPassword = document.getElementById('genieWifiAddPassword');
+  const addShowPasswordField = document.getElementById('genieWifiAddShowPasswordField');
+  const addShowPassword = document.getElementById('genieWifiAddShowPassword');
+  const syncAddSecurity = () => {
+    const protectedWifi = addSecurity?.value === 'pass';
+    if (addPasswordField) addPasswordField.hidden = !protectedWifi;
+    if (addShowPasswordField) addShowPasswordField.hidden = !protectedWifi;
+    if (addPassword) {
+      addPassword.required = protectedWifi;
+      if (!protectedWifi) {
+        addPassword.value = '';
+        addPassword.type = 'password';
+      }
+    }
+    if (!protectedWifi && addShowPassword) addShowPassword.checked = false;
+  };
+  addSecurity?.addEventListener('change', syncAddSecurity);
+  addShowPassword?.addEventListener('change', () => {
+    if (addPassword) addPassword.type = addShowPassword.checked ? 'text' : 'password';
+  });
+  const addButton = document.getElementById('genieWifiAddButton');
+  addButton?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const statusElement = document.getElementById('genieWifiOperationStatus');
+    const band = document.getElementById('genieWifiAddBand')?.value || '';
+    const ssid = String(document.getElementById('genieWifiAddName')?.value || '').trim();
+    const security = addSecurity?.value || 'none';
+    const password = String(addPassword?.value || '');
+    if (!ssid) {
+      setGenieModalStatus(statusElement, 'error', 'Tambah SSID belum lengkap', 'Nama SSID wajib diisi.');
+      return;
+    }
+    if (security === 'pass' && password.length < 8) {
+      setGenieModalStatus(statusElement, 'error', 'Tambah SSID belum lengkap', 'Password WiFi minimal 8 karakter.');
+      return;
+    }
+    let accepted = false;
+    try {
+      button.disabled = true;
+      setGenieModalStatus(statusElement, 'loading', 'Menambahkan SSID', 'Menjalankan konfigurasi SSID, security, password, dan enable secara berurutan.');
+      const result = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wifi-add-ssid`, {
+        method: 'POST',
+        body: JSON.stringify({
+          band,
+          ssid,
+          security,
+          password: security === 'pass' ? password : ''
+        })
+      });
+      accepted = true;
+      const verified = result.result?.ssid?.verified === true;
+      const ssidIndex = Number(result.result?.ssid?.index || 0);
+      setGenieModalStatus(
+        statusElement,
+        verified ? 'success' : 'pending',
+        verified ? 'SSID berhasil ditambahkan' : 'Task Tambah SSID sudah dikirim',
+        verified
+          ? `${ssid} berhasil menjadi SSID${ssidIndex || ''} dan security sudah terverifikasi.`
+          : 'Task diterima, tetapi SSID, status, security, atau password belum seluruhnya terbaca sesuai. Buka ulang popup untuk cek ulang.'
+      );
+      const closeButton = modalBody.querySelector('[data-genie-wifi-panel="add"] [data-close-modal]');
+      if (closeButton) closeButton.textContent = verified ? 'Tutup' : 'Tutup & cek ulang';
+      if (verified) {
+        const selectedParameter = ssidIndex
+          ? `InternetGatewayDevice.LANDevice.1.WLANConfiguration.${ssidIndex}.SSID`
+          : '';
+        try {
+          await refreshWifiNetworkOptions(selectedParameter);
+        } catch {
+          // Inform sudah terverifikasi; daftar akan terbaca saat popup berikutnya dibuka.
+        }
+        selectWifiTab('edit');
+      }
+      const addName = document.getElementById('genieWifiAddName');
+      if (addName) addName.value = '';
+      if (addPassword) addPassword.value = '';
+      renderGenieAcs({ refresh: true });
+    } catch (error) {
+      setGenieModalStatus(statusElement, 'error', 'Tambah SSID gagal', error.message || 'Task GenieACS tidak dapat dikirim.');
+    } finally {
+      button.disabled = accepted;
+      if (accepted) button.textContent = 'Sudah dikirim';
+    }
+  });
+  document.querySelector('[data-genie-wifi-panel="add"]')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.target.closest('button')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    addButton?.click();
+  });
   syncWifiForm();
+  syncAddSecurity();
+  selectWifiTab('edit');
 }
 
-function openGeniePppoeModal(row = {}) {
-  openModal('Edit PPPoE', `
+async function openGenieWanModal(row = {}) {
+  const payload = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wans?${queryString({
+    username: row.username || '',
+    refresh: '1'
+  })}`);
+  const wanRows = Array.isArray(payload.rows) ? payload.rows : [];
+  const bindings = Array.isArray(payload.bindings) ? payload.bindings : [];
+  const sortedWanRows = [...wanRows].sort((left, right) => Number(right.protected === true) - Number(left.protected === true));
+  const editableRows = wanRows.filter((item) => item.editable);
+  const primary = payload.primary || editableRows.find((item) => item.mode === 'pppoe') || null;
+  const initialWan = editableRows.find((item) => item.id === payload.defaultTargetId)
+    || primary
+    || editableRows[0]
+    || null;
+  const initialTarget = initialWan?.id || 'new';
+  const defaultTargetIds = {
+    pppoe: payload.defaultTargetIds?.pppoe
+      || (primary?.mode === 'pppoe' ? primary.id : editableRows.find((item) => item.mode === 'pppoe')?.id)
+      || 'new',
+    bridge: payload.defaultTargetIds?.bridge
+      || editableRows.find((item) => item.mode === 'bridge')?.id
+      || 'new'
+  };
+  const occupied = new Map();
+  wanRows.forEach((wan) => (wan.bindings || []).forEach((key) => {
+    if (!occupied.has(key) || wan.protected) occupied.set(key, wan);
+  }));
+  const rowById = new Map(wanRows.map((item) => [item.id, item]));
+  const wanStatus = (item) => {
+    const tone = item.protected ? 'warning' : (item.connected ? 'positive' : '');
+    return `<span class="badge ${tone}">${escapeHtml(item.protected ? 'Dikunci' : (item.status || 'Tidak aktif'))}</span>`;
+  };
+  const wanList = sortedWanRows.length
+    ? sortedWanRows.map((item) => `
+      <div class="genie-wan-row ${item.protected ? 'is-protected' : ''}">
+        <div>
+          <strong>${escapeHtml(item.label || item.mode || 'WAN')}</strong>
+          <span>${escapeHtml(item.username || item.serviceList || item.name || 'Tanpa username')}</span>
+        </div>
+        <div class="genie-wan-row-meta">
+          ${item.primary ? '<span class="badge positive">Utama</span>' : ''}
+          ${wanStatus(item)}
+          <span>${escapeHtml((item.bindings || []).join(', ') || 'Tanpa binding')}</span>
+        </div>
+      </div>
+    `).join('')
+    : '<div class="empty-detail">Belum ada WAN yang terbaca dari modem.</div>';
+  const bridgeDisabled = payload.vendor?.bridgeSupported === false ? 'disabled' : '';
+  let bindingOnlyRequested = false;
+  openModal('Konfigurasi WAN', `
+    <div class="genie-wan-form-layout">
+    <div class="genie-wan-modal field full">
+      <div class="genie-wan-device">
+        <div>
+          <span>Perangkat</span>
+          <strong>${escapeHtml(genieDeviceLabel(row))}</strong>
+        </div>
+        <span class="badge">${escapeHtml(payload.vendor?.label || 'Vendor belum dikenali')}</span>
+      </div>
+      <div class="genie-wan-list">${wanList}</div>
+    </div>
+    <div class="notice genie-operation-status field full" id="genieWanOperationStatus" aria-live="polite" hidden></div>
+    <div class="field full form-subhead">
+      <strong id="genieWanFormTitle">${initialWan ? `Edit WAN ${escapeHtml(initialWan.label)}` : 'Tambah WAN baru'}</strong>
+      <span class="muted">WAN provisioning GenieACS tetap dikunci.</span>
+    </div>
     <label class="field full">
-      <span>Perangkat</span>
-      <input value="${escapeHtml(genieDeviceLabel(row))}" readonly>
+      <span>Target WAN</span>
+      <select name="targetWan" id="genieWanTarget">
+        ${editableRows.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === initialTarget ? 'selected' : ''}>Edit WAN ${escapeHtml(item.label)}${item.username ? ` - ${escapeHtml(item.username)}` : ''}</option>`).join('')}
+        <option value="new" ${initialTarget === 'new' ? 'selected' : ''}>Tambah WAN baru</option>
+      </select>
     </label>
-    <label class="field full">
+    <div class="genie-wan-mode field full" role="group" aria-label="Mode WAN">
+      <label><input name="mode" type="radio" value="pppoe" ${initialWan?.mode !== 'bridge' ? 'checked' : ''}><span>PPPoE Routed</span></label>
+      <label class="${bridgeDisabled ? 'is-disabled' : ''}"><input name="mode" type="radio" value="bridge" ${initialWan?.mode === 'bridge' ? 'checked' : ''} ${bridgeDisabled}><span>Bridge</span></label>
+    </div>
+    <label class="field">
+      <span>VLAN ID</span>
+      <input name="vlan" id="genieWanVlan" type="number" min="1" max="4094" inputmode="numeric" required>
+    </label>
+    <label class="field" data-genie-wan-pppoe>
       <span>Username PPPoE</span>
-      <input name="username" type="text" value="${escapeHtml(row.username || '')}" autocomplete="off" required>
+      <input name="username" id="genieWanUsername" value="${escapeHtml(row.username || '')}" autocomplete="off">
     </label>
-    <label class="field full">
+    <label class="field full" data-genie-wan-pppoe>
       <span>Password PPPoE</span>
-      <input name="password" type="text" autocomplete="off" placeholder="Kosongkan jika tidak diganti">
+      <input name="password" id="genieWanPassword" type="text" autocomplete="off" placeholder="Kosongkan jika tidak diganti">
     </label>
-    <input name="usernameParameter" type="hidden" value="${escapeHtml(row.usernameParameter || '')}">
+    <div class="field full genie-wan-bindings">
+      <span>Binding port dan WiFi</span>
+      <div class="genie-wan-binding-grid">
+        ${bindings.map((binding) => {
+          const owner = occupied.get(binding.key);
+          const locked = owner?.protected === true;
+          const detail = locked
+            ? 'Dipakai WAN management'
+            : (owner ? `Dipakai ${owner.label}` : (binding.active === false ? 'Port/SSID nonaktif' : 'Tersedia'));
+          return `<label class="genie-wan-binding ${locked ? 'is-locked' : ''}" title="${escapeHtml(detail)}">
+            <input name="bindings" type="checkbox" value="${escapeHtml(binding.key)}" data-multi-value ${locked ? 'disabled' : ''}>
+            <span><strong>${escapeHtml(binding.label || binding.key)}</strong><small>${escapeHtml(detail)}</small></span>
+          </label>`;
+        }).join('') || '<span class="muted">Binding LAN/SSID belum terbaca dari modem.</span>'}
+      </div>
+    </div>
+    <label class="field full checkbox-field">
+      <input name="moveBindings" type="checkbox" value="true">
+      <span>Pindahkan LAN/SSID yang masih terikat ke WAN lain</span>
+    </label>
     <div class="notice field full">
-      Password tidak ditampilkan dari GenieACS. Isi password hanya jika ingin mengganti password PPPoE.
+      Untuk Bridge, satu WAN dapat mengikat beberapa port sekaligus, misalnya SSID2 dan LAN4. Binding management tidak dapat dipindahkan.
     </div>
     <div class="modal-actions field full">
-      <button class="button" type="submit">Simpan PPPoE</button>
+      <button class="ghost-button" type="button" data-close-modal>Tutup</button>
+      <button class="ghost-button" id="genieWanBindingOnly" type="button">Simpan Binding</button>
+      <button class="button" type="submit">Kirim Konfigurasi</button>
     </div>
-  `, async (payload) => {
-    const username = String(payload.username || '').trim();
-    if (!username) throw new Error('Username PPPoE wajib diisi');
-    await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/pppoe`, {
-      method: 'POST',
-      body: JSON.stringify({
-        username,
-        password: payload.password,
-        usernameParameter: payload.usernameParameter || row.usernameParameter
-      })
-    });
-    setToast('Perintah ubah PPPoE dikirim');
-    renderGenieAcs({ refresh: true });
+    </div>
+  `, async (formPayload, form) => {
+    const statusElement = document.getElementById('genieWanOperationStatus');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const bindingOnly = bindingOnlyRequested;
+    bindingOnlyRequested = false;
+    const mode = String(formPayload.mode || 'pppoe').trim().toLowerCase();
+    if (bindingOnly && String(formPayload.targetWan || '') === 'new') {
+      setGenieModalStatus(statusElement, 'error', 'Binding belum dapat disimpan', 'Pilih WAN yang sudah ada.');
+      return false;
+    }
+    if (mode === 'pppoe' && !String(formPayload.username || '').trim()) {
+      setGenieModalStatus(statusElement, 'error', 'Konfigurasi WAN belum lengkap', 'Username PPPoE wajib diisi.');
+      return false;
+    }
+    try {
+      if (submitButton) submitButton.disabled = true;
+      setGenieModalStatus(
+        statusElement,
+        'loading',
+        bindingOnly ? 'Menyimpan binding WAN' : 'Mengirim konfigurasi WAN',
+        'Menunggu task diterima dan inform modem diperbarui.'
+      );
+      const response = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wan`, {
+        method: 'POST',
+        body: JSON.stringify({
+          targetWan: formPayload.targetWan || 'new',
+          mode,
+          vlan: Number(formPayload.vlan || 0),
+          username: formPayload.username,
+          password: formPayload.password,
+          bindings: formPayload.bindings || [],
+          moveBindings: formPayload.moveBindings === true,
+          bindingOnly,
+          preferredUsername: row.username || ''
+        })
+      });
+      const verification = response.verification || {};
+      setGenieModalStatus(
+        statusElement,
+        verification.verified ? 'success' : 'pending',
+        verification.verified
+          ? (bindingOnly ? 'Binding WAN berhasil disimpan' : 'WAN berhasil dikonfigurasi')
+          : (bindingOnly ? 'Binding WAN sudah dikirim' : 'Konfigurasi WAN sudah dikirim'),
+        verification.verified
+          ? 'Binding dan inform modem sudah terverifikasi melalui GenieACS.'
+          : 'Modem belum mengirim inform terbaru. Konfigurasi tetap berada di antrean GenieACS.'
+      );
+      renderGenieAcs({ refresh: true });
+    } catch (error) {
+      setGenieModalStatus(statusElement, 'error', 'Konfigurasi WAN gagal', error.message || 'Task GenieACS tidak dapat dikirim.');
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
+    return false;
   });
+
+  const target = document.getElementById('genieWanTarget');
+  const vlan = document.getElementById('genieWanVlan');
+  const username = document.getElementById('genieWanUsername');
+  const password = document.getElementById('genieWanPassword');
+  const bindingOnlyButton = document.getElementById('genieWanBindingOnly');
+  const formTitle = document.getElementById('genieWanFormTitle');
+  const modeInputs = [...modalBody.querySelectorAll('input[name="mode"]')];
+  const bindingInputs = [...modalBody.querySelectorAll('input[name="bindings"]')];
+  const syncWanForm = () => {
+    const selected = rowById.get(target?.value || '') || null;
+    if (formTitle) formTitle.textContent = selected ? `Edit WAN ${selected.label}` : 'Tambah WAN baru';
+    if (selected) {
+      const modeInput = modeInputs.find((input) => input.value === selected.mode);
+      if (modeInput && !modeInput.disabled) modeInput.checked = true;
+      if (vlan) vlan.value = selected.vlan ?? '';
+      if (username) username.value = selected.username || row.username || '';
+      if (password) password.value = '';
+      const selectedBindings = new Set(selected.bindings || []);
+      bindingInputs.forEach((input) => { input.checked = selectedBindings.has(input.value); });
+    } else {
+      if (vlan) vlan.value = '';
+      if (username && !username.value) username.value = row.username || '';
+      if (password) password.value = '';
+      bindingInputs.forEach((input) => { input.checked = false; });
+    }
+    const mode = modeInputs.find((input) => input.checked)?.value || 'pppoe';
+    modalBody.querySelectorAll('[data-genie-wan-pppoe]').forEach((field) => { field.hidden = mode !== 'pppoe'; });
+    if (username) username.required = mode === 'pppoe';
+    if (password) password.required = mode === 'pppoe' && !selected;
+    if (bindingOnlyButton) bindingOnlyButton.disabled = !selected || payload.vendor?.wanWriteSupported === false;
+  };
+  target?.addEventListener('change', syncWanForm);
+  modeInputs.forEach((input) => input.addEventListener('change', () => {
+    if (target) target.value = defaultTargetIds[input.value] || 'new';
+    syncWanForm();
+  }));
+  bindingOnlyButton?.addEventListener('click', () => {
+    if (!rowById.has(target?.value || '')) {
+      setGenieModalStatus(
+        document.getElementById('genieWanOperationStatus'),
+        'error',
+        'Binding belum dapat disimpan',
+        'Pilih WAN yang sudah ada.'
+      );
+      return;
+    }
+    bindingOnlyRequested = true;
+    modal.querySelector('.modal-frame')?.requestSubmit();
+  });
+  syncWanForm();
 }
 
 async function openGenieAcsSettingsModal() {
@@ -14544,20 +15102,156 @@ async function openGenieAcsSettingsModal() {
   });
 }
 
+function genieAcsRecentPendingSignature(payload = {}) {
+  return (Array.isArray(payload.devices) ? payload.devices : [])
+    .map((device) => `${device.id || ''}|${device.registered || ''}|${device.wanPending?.code || ''}`)
+    .join(';');
+}
+
+function genieAcsRecentPendingMarkup(payload = {}, requestedPage = genieAcsRecentPage) {
+  const devices = Array.isArray(payload.devices) ? payload.devices : [];
+  if (payload.ok === false) {
+    return `<div class="notice warning">${escapeHtml(payload.error || 'ONT baru belum dapat dideteksi.')}</div>`;
+  }
+  if (!devices.length) {
+    return '<div class="empty genieacs-recent-empty">Tidak ada perangkat baru yang menunggu konfigurasi internet.</div>';
+  }
+  const pageSize = 6;
+  const totalPages = Math.max(1, Math.ceil(devices.length / pageSize));
+  const page = Math.max(1, Math.min(totalPages, Number(requestedPage || 1) || 1));
+  genieAcsRecentPage = page;
+  const offset = (page - 1) * pageSize;
+  const visibleDevices = devices.slice(offset, offset + pageSize);
+  const pagerMarkup = totalPages > 1 ? `<div class="genieacs-provision-pager">
+    <span>Menampilkan ${displayNumber(offset + 1)}–${displayNumber(Math.min(offset + pageSize, devices.length))} dari ${displayNumber(devices.length)} ONT</span>
+    <div class="row-actions">
+      <button class="ghost-button compact" type="button" data-genie-recent-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>Sebelumnya</button>
+      <strong>Halaman ${displayNumber(page)} / ${displayNumber(totalPages)}</strong>
+      <button class="ghost-button compact" type="button" data-genie-recent-page="${page + 1}" ${page >= totalPages ? 'disabled' : ''}>Berikutnya</button>
+    </div>
+  </div>` : '';
+  return `<div class="genieacs-provision-table" role="table" aria-label="Antrian aktivasi ONT">
+    <div class="genieacs-provision-table-head" role="row" aria-hidden="true">
+      <span>Perangkat</span>
+      <span>Terdaftar</span>
+      <span>Kesiapan Internet</span>
+      <span>Aksi</span>
+    </div>
+    <div class="genieacs-provision-table-body">${visibleDevices.map((device) => {
+    const pppoe = device.wanSummary?.pppoe || device.wanPending?.pppoe || null;
+    const pppDetail = pppoe
+      ? [pppoe.username || '', pppoe.status || '', pppoe.vlan ? `VLAN ${pppoe.vlan}` : ''].filter(Boolean).join(' · ')
+      : 'Profil PPPoE belum ditemukan';
+    return `<div class="genieacs-provision-row" role="row">
+      <div class="genieacs-provision-device" role="cell" data-label="Perangkat">
+        <strong>${escapeHtml(device.model || device.productClass || 'Modem baru')}</strong>
+        <span>${escapeHtml(device.detectedVendor || device.manufacturer || 'Vendor belum dikenali')}</span>
+        <code title="${escapeHtml(device.serialNumber || device.id || '-')}">${escapeHtml(device.serialNumber || device.id || '-')}</code>
+      </div>
+      <div class="genieacs-provision-registered" role="cell" data-label="Terdaftar">
+        <strong>${escapeHtml(dateTimeText(device.registered))}</strong>
+        <span>Registrasi ACS</span>
+      </div>
+      <div class="genieacs-provision-status" role="cell" data-label="Kesiapan Internet">
+        <span class="badge pending">${escapeHtml(device.wanPending?.label || 'Perlu internet')}</span>
+        <span>${escapeHtml(pppDetail)}</span>
+      </div>
+      <div class="genieacs-provision-action" role="cell">
+        <button class="ghost-button compact" type="button" data-genie-recent-device="${escapeHtml(device.id || '')}">Tampilkan</button>
+      </div>
+    </div>`;
+  }).join('')}</div>
+  </div>${pagerMarkup}`;
+}
+
+function applyGenieAcsRecentPending(payload = {}, options = {}) {
+  if (state.view !== 'genieAcs') return;
+  const devices = Array.isArray(payload.devices) ? payload.devices : [];
+  const nextIds = new Set(devices.map((device) => String(device.id || '')).filter(Boolean));
+  const newIds = [...nextIds].filter((id) => !genieAcsRecentIds.has(id));
+  const list = document.getElementById('genieAcsRecentList');
+  const count = document.getElementById('genieAcsRecentCount');
+  const checked = document.getElementById('genieAcsRecentChecked');
+  if (options.notify === true && newIds.length) genieAcsRecentPage = 1;
+  genieAcsRecentPayload = payload;
+  if (list) list.innerHTML = genieAcsRecentPendingMarkup(payload);
+  if (count) count.textContent = displayNumber(devices.length);
+  if (checked) checked.textContent = payload.checkedAt ? `Diperbarui ${dateTimeText(payload.checkedAt)}` : 'Menunggu pembaruan pertama';
+  if (options.notify === true && newIds.length) {
+    setToast(`${displayNumber(newIds.length)} ONT baru terdeteksi dan memerlukan konfigurasi WAN`);
+  }
+  genieAcsRecentSignature = genieAcsRecentPendingSignature(payload);
+  genieAcsRecentIds = nextIds;
+}
+
+function scheduleGenieAcsRecentDetection() {
+  window.clearTimeout(genieAcsRecentTimer);
+  genieAcsRecentTimer = null;
+  if (state.view !== 'genieAcs' || !state.auth) return;
+  genieAcsRecentTimer = window.setTimeout(async () => {
+    if (state.view !== 'genieAcs' || !state.auth) return;
+    if (document.hidden || genieAcsRecentLoading) {
+      scheduleGenieAcsRecentDetection();
+      return;
+    }
+    genieAcsRecentLoading = true;
+    try {
+      const payload = await api('/api/genieacs/devices/recent-pending?hours=24&limit=100');
+      const nextSignature = genieAcsRecentPendingSignature(payload);
+      if (nextSignature !== genieAcsRecentSignature) {
+        applyGenieAcsRecentPending(payload, { notify: true });
+      } else {
+        const checked = document.getElementById('genieAcsRecentChecked');
+        if (checked && payload.checkedAt) checked.textContent = `Diperbarui ${dateTimeText(payload.checkedAt)}`;
+      }
+    } catch {
+      // Deteksi berikutnya tetap dijadwalkan; tabel utama tidak ikut terganggu.
+    } finally {
+      genieAcsRecentLoading = false;
+      scheduleGenieAcsRecentDetection();
+    }
+  }, 30000);
+}
+
+async function refreshGenieAcsRecentPending(options = {}) {
+  if (genieAcsRecentLoading) return;
+  const button = document.getElementById('refreshGenieAcsRecent');
+  genieAcsRecentLoading = true;
+  if (button) button.disabled = true;
+  try {
+    const payload = await api(`/api/genieacs/devices/recent-pending?hours=24&limit=100${options.refresh ? '&refresh=1' : ''}`);
+    applyGenieAcsRecentPending(payload, { notify: options.notify === true });
+  } catch (error) {
+    setToast(error.message || 'Deteksi ONT baru gagal');
+  } finally {
+    genieAcsRecentLoading = false;
+    if (button?.isConnected) button.disabled = false;
+    scheduleGenieAcsRecentDetection();
+  }
+}
+
 async function renderGenieAcs(options = {}) {
+  window.clearTimeout(genieAcsRecentTimer);
+  genieAcsRecentTimer = null;
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat GenieACS...</div>';
-  const payload = await api(`/api/genieacs/devices?${queryString({
-    page: state.genieAcsPage,
-    limit: state.genieAcsLimit,
-    status: state.genieAcsStatus,
-    nas: state.genieAcsNas,
-    redaman: state.genieAcsRedaman,
-    search: state.search,
-    refresh: options.refresh ? '1' : ''
-  })}`);
+  const [payload, recentPending] = await Promise.all([
+    api(`/api/genieacs/devices?${queryString({
+      page: state.genieAcsPage,
+      limit: state.genieAcsLimit,
+      status: state.genieAcsStatus,
+      nas: state.genieAcsNas,
+      redaman: state.genieAcsRedaman,
+      search: state.search,
+      refresh: options.refresh ? '1' : ''
+    })}`),
+    api(`/api/genieacs/devices/recent-pending?hours=24&limit=100${options.refresh ? '&refresh=1' : ''}`)
+      .catch((error) => ({ ok: false, devices: [], error: error.message }))
+  ]);
   const rows = payload.rows || [];
   const nasOptions = Array.isArray(payload.nasOptions) ? payload.nasOptions : [];
   const summary = payload.summary || {};
+  genieAcsRecentPage = 1;
+  genieAcsRecentPayload = recentPending;
   const writeAllowed = can('genieacs:write');
   const startNo = ((Number(payload.pagination?.page || state.genieAcsPage || 1) - 1) * Number(payload.pagination?.limit || state.genieAcsLimit || 10)) + 1;
   app.innerHTML = `
@@ -14570,9 +15264,31 @@ async function renderGenieAcs(options = {}) {
         ${metric('Redaman Tinggi', displayNumber(summary.redamanHighCount || 0), `> 26,5 dB dari ${displayNumber(summary.redamanCount || 0)} terbaca`, Number(summary.redamanHighCount || 0) ? 'negative' : '')}
       </section>
 
+      <section class="section genieacs-recent-section">
+        <div class="section-head genieacs-recent-head">
+          <div class="genieacs-recent-title">
+            <span class="genieacs-recent-kicker">Provisioning perangkat</span>
+            <h2>Antrian Aktivasi ONT</h2>
+            <span class="muted">Perangkat baru yang belum memiliki koneksi PPPoE aktif</span>
+          </div>
+          <div class="genieacs-recent-actions">
+            <div class="genieacs-recent-status">
+              <strong id="genieAcsRecentCount">${displayNumber((recentPending.devices || []).length)}</strong>
+              <span>Menunggu konfigurasi</span>
+            </div>
+            <button class="ghost-button compact" id="refreshGenieAcsRecent" type="button">Perbarui</button>
+          </div>
+        </div>
+        <div class="genieacs-recent-meta">
+          <span>Rentang pemantauan: 24 jam</span>
+          <span id="genieAcsRecentChecked">${recentPending.checkedAt ? `Diperbarui ${escapeHtml(dateTimeText(recentPending.checkedAt))}` : 'Menunggu pembaruan pertama'}</span>
+        </div>
+        <div id="genieAcsRecentList">${genieAcsRecentPendingMarkup(recentPending)}</div>
+      </section>
+
       <div class="toolbar">
         <div class="filters">
-          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari PPPoE, IP, NAS, serial, device" autocomplete="off">
+          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari SN, tag, SSID, PPPoE (min. 3 karakter)" autocomplete="off">
           <select class="control" id="genieAcsStatusFilter">
             <option value="all" ${state.genieAcsStatus === 'all' ? 'selected' : ''}>Semua Status</option>
             <option value="online" ${state.genieAcsStatus === 'online' ? 'selected' : ''}>Online</option>
@@ -14654,8 +15370,8 @@ async function renderGenieAcs(options = {}) {
                     <div class="genieacs-pppoe-cell">
                       <strong>${escapeHtml(row.username || '-')}</strong>
                       ${writeAllowed ? `
-                        <button class="cell-icon-button" type="button" data-genie-pppoe="${escapeHtml(row.id)}" title="Edit PPPoE" aria-label="Edit PPPoE ${escapeHtml(row.username || row.serialNumber || '')}">
-                          <span class="edit-icon" aria-hidden="true"></span>
+                        <button class="cell-icon-button" type="button" data-genie-wan="${escapeHtml(row.id)}" title="Konfigurasi WAN" aria-label="Konfigurasi WAN ${escapeHtml(row.username || row.serialNumber || '')}">
+                          <span class="wan-config-icon" aria-hidden="true"></span>
                         </button>
                       ` : ''}
                     </div>
@@ -14689,12 +15405,32 @@ async function renderGenieAcs(options = {}) {
   `;
 
   document.getElementById('refreshGenieAcs')?.addEventListener('click', () => renderGenieAcs({ refresh: true }));
+  document.getElementById('refreshGenieAcsRecent')?.addEventListener('click', () => {
+    refreshGenieAcsRecentPending({ refresh: true, notify: true });
+  });
+  document.getElementById('genieAcsRecentList')?.addEventListener('click', (event) => {
+    const pageButton = event.target.closest('[data-genie-recent-page]');
+    if (pageButton && !pageButton.disabled) {
+      genieAcsRecentPage = Math.max(1, Number(pageButton.dataset.genieRecentPage || 1));
+      const list = document.getElementById('genieAcsRecentList');
+      if (list) list.innerHTML = genieAcsRecentPendingMarkup(genieAcsRecentPayload);
+      return;
+    }
+    const target = event.target.closest('[data-genie-recent-device]');
+    if (!target) return;
+    state.search = String(target.dataset.genieRecentDevice || '').trim();
+    state.genieAcsPage = 1;
+    renderGenieAcs({ refresh: true });
+  });
   document.getElementById('openGenieAcsSettings')?.addEventListener('click', () => {
     openGenieAcsSettingsModal().catch((error) => setToast(error.message));
   });
   bindSearch((renderOptions = {}) => {
     state.genieAcsPage = 1;
     return renderGenieAcs(renderOptions);
+  }, {
+    minLength: 3,
+    onTooShort: () => setToast('Ketik minimal 3 karakter untuk pencarian GenieACS')
   });
   document.getElementById('genieAcsStatusFilter')?.addEventListener('change', (event) => {
     state.genieAcsStatus = event.target.value || 'all';
@@ -14789,23 +15525,60 @@ async function renderGenieAcs(options = {}) {
     });
   });
   app.querySelectorAll('[data-genie-wifi]').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       const row = rows.find((item) => item.id === button.dataset.genieWifi);
-      if (row) openGenieWifiModal(row);
+      if (!row || button.disabled) return;
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      setToast('Memuat konfigurasi WiFi...');
+      try {
+        await openGenieWifiModal(row);
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        if (button.isConnected) {
+          button.disabled = false;
+          button.removeAttribute('aria-busy');
+        }
+      }
     });
   });
   app.querySelectorAll('[data-genie-clients]').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       const row = rows[Number(button.dataset.genieClients || -1)];
-      if (row) openGenieClientsModal(row);
+      if (!row || button.disabled) return;
+      button.disabled = true;
+      try {
+        await openGenieClientsModal(row);
+      } catch (error) {
+        setToast(error.message || 'Detail client belum dapat dibaca');
+      } finally {
+        if (button.isConnected) button.disabled = false;
+      }
     });
   });
-  app.querySelectorAll('[data-genie-pppoe]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const row = rows.find((item) => item.id === button.dataset.geniePppoe);
-      if (row) openGeniePppoeModal(row);
+  app.querySelectorAll('[data-genie-wan]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const row = rows.find((item) => item.id === button.dataset.genieWan);
+      if (!row || button.disabled) return;
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      setToast('Memuat konfigurasi WAN...');
+      try {
+        await openGenieWanModal(row);
+      } catch (error) {
+        setToast(error.message);
+      } finally {
+        if (button.isConnected) {
+          button.disabled = false;
+          button.removeAttribute('aria-busy');
+        }
+      }
     });
   });
+  genieAcsRecentSignature = genieAcsRecentPendingSignature(recentPending);
+  genieAcsRecentIds = new Set((recentPending.devices || []).map((device) => String(device.id || '')).filter(Boolean));
+  scheduleGenieAcsRecentDetection();
   updateGenieSelection();
 }
 
@@ -16224,6 +16997,88 @@ function memberKtpPhotoUrl(member = {}, fallbackId = '') {
   return `/api/monitoring/member-ktp-photo?memberId=${encodeURIComponent(id)}${version ? `&v=${encodeURIComponent(version)}` : ''}`;
 }
 
+function memberDataValidationState(member = {}) {
+  const serverChecks = member.dataValidation?.checks;
+  if (serverChecks && typeof serverChecks === 'object') {
+    const checks = {
+      name: serverChecks.name === true,
+      ktpName: serverChecks.ktpName === true,
+      ktpNumber: serverChecks.ktpNumber === true,
+      address: serverChecks.address === true,
+      location: serverChecks.location === true,
+      housePhoto: serverChecks.housePhoto === true,
+      ktpPhoto: serverChecks.ktpPhoto === true
+    };
+    return { valid: Object.values(checks).every(Boolean), checks };
+  }
+  const latitude = Number(member.latitude ?? member.memberLatitude ?? 0);
+  const longitude = Number(member.longitude ?? member.memberLongitude ?? 0);
+  const photo = member.ktpPhoto || member.memberKtpPhoto || null;
+  const checks = {
+    name: Boolean(String(member.fullName || member.customerName || member.name || '').trim()),
+    ktpName: Boolean(String(member.ktpName || member.memberKtpName || '').trim()),
+    ktpNumber: String(member.ktp || member.idCard || '').replace(/\D+/g, '').length === 16,
+    address: Boolean(String(member.address || '').trim()),
+    location: Number.isFinite(latitude)
+      && Number.isFinite(longitude)
+      && latitude !== 0
+      && longitude !== 0
+      && latitude >= -90
+      && latitude <= 90
+      && longitude >= -180
+      && longitude <= 180,
+    housePhoto: Boolean(memberHousePhotoUrl(member)),
+    ktpPhoto: Boolean(
+      member.ktpPhotoUrl
+      || member.memberKtpPhotoUrl
+      || (photo && typeof photo === 'object' && (photo.hasPhoto || photo.id))
+    )
+  };
+  return { valid: Object.values(checks).every(Boolean), checks };
+}
+
+function memberDataValidationModalBody(member = {}) {
+  const validation = memberDataValidationState(member);
+  const items = [
+    ['name', 'Nama'],
+    ['ktpName', 'Nama di KTP'],
+    ['ktpNumber', 'No KTP'],
+    ['address', 'Alamat'],
+    ['location', 'Data Lokasi'],
+    ['housePhoto', 'Foto Rumah'],
+    ['ktpPhoto', 'Foto KTP']
+  ];
+  return `
+    <div class="member-validation-modal">
+      <div class="member-validation-head">
+        <div>
+          <strong>${escapeHtml(memberTitle(member))}</strong>
+          <span>${escapeHtml(memberDisplayId(member))}</span>
+        </div>
+        <span class="member-validation-summary ${validation.valid ? 'is-valid' : 'is-invalid'}">
+          ${validation.valid ? 'Data Valid' : 'Belum Valid'}
+        </span>
+      </div>
+      <div class="member-validation-list">
+        ${items.map(([key, label]) => `
+          <div class="member-validation-item ${validation.checks[key] ? 'is-valid' : 'is-invalid'}">
+            <span class="member-validation-icon" aria-hidden="true"></span>
+            <strong>${escapeHtml(label)}</strong>
+            <small>${validation.checks[key] ? 'Valid' : 'Belum terisi'}</small>
+          </div>
+        `).join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" data-close-modal type="button">Tutup</button>
+      </div>
+    </div>
+  `;
+}
+
+function openMemberDataValidationModal(member = {}) {
+  openModal('Validasi Data Member', memberDataValidationModalBody(member), async () => {});
+}
+
 function customerLocationTitle(record = {}) {
   return record.customerName || record.fullName || record.name || record.userId || record.accountId || record.username || record.internet || '-';
 }
@@ -17393,6 +18248,7 @@ async function renderMonitoringMembers(options = {}) {
     const internetText = member.internet || member.username || '';
     const showInternetLine = internetText && !sameMemberText(titleText, internetText);
     const creatorText = memberCreatorText(member);
+    const dataValidation = memberDataValidationState(member);
     const dateLines = [
       member.registeredDate ? `Registrasi ${dateText(member.registeredDate)}` : '',
       member.activeDate ? `Aktif ${dateText(member.activeDate)}` : '',
@@ -17424,7 +18280,14 @@ async function renderMonitoringMembers(options = {}) {
             ${addOnText !== '-' ? `<span class="cell-subline">${escapeHtml(addOnText)}</span>` : ''}
           </div>
         </td>
-        <td><span class="badge ${memberStatusBadge(member.status || member.serviceStatus)}">${escapeHtml(memberStatusLabel(member.status || member.serviceStatus))}</span></td>
+        <td>
+          <div class="member-status-stack">
+            <span class="badge ${memberStatusBadge(member.status || member.serviceStatus)}">${escapeHtml(memberStatusLabel(member.status || member.serviceStatus))}</span>
+            <button class="member-data-validation-badge ${dataValidation.valid ? 'is-valid' : 'is-invalid'}" type="button" data-member-validation="${index}">
+              ${dataValidation.valid ? 'Data Valid' : 'Belum Valid'}
+            </button>
+          </div>
+        </td>
         <td>${dateLines.length ? dateLines.map((line) => `<div class="nowrap">${escapeHtml(line)}</div>`).join('') : '<span class="muted">-</span>'}</td>
         <td>
           <div class="row-actions compact-actions">
@@ -17495,7 +18358,7 @@ async function renderMonitoringMembers(options = {}) {
           <select class="control" id="memberNasFilter" aria-label="Filter NAS member">
             ${voucherReportOptionTags(nasOptions, state.monitoringMemberNas || 'all', 'Semua NAS')}
           </select>
-          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, UID, PPPoE, WA" autocomplete="off">
+          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, UID, PPPoE, WA, validasi" autocomplete="off">
         </div>
         <div class="row-actions">
           <button class="ghost-button compact" id="exportMembersXlsx" type="button">Export XLSX</button>
@@ -17601,6 +18464,12 @@ async function renderMonitoringMembers(options = {}) {
       event.preventDefault();
       const member = members[Number(link.dataset.memberLocation || -1)];
       if (member) openCustomerLocationModal(member);
+    });
+  });
+  app.querySelectorAll('[data-member-validation]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const member = members[Number(button.dataset.memberValidation || -1)];
+      if (member) openMemberDataValidationModal(member);
     });
   });
   app.querySelectorAll('[data-member-contact]').forEach((button) => {
@@ -21558,10 +22427,18 @@ window.addEventListener('keydown', (event) => {
 });
 
 if (app && 'MutationObserver' in window) {
-  new MutationObserver(() => restoreLoginIfNeeded()).observe(app, {
-    childList: true
+  new MutationObserver((records) => {
+    restoreLoginIfNeeded();
+    if (records.some(mutationTouchesScrollableTable)) {
+      queueObservedTableTopScrollbars(app);
+    }
+  }).observe(app, {
+    childList: true,
+    subtree: true
   });
 }
+
+observeTableTopScrollbars(modalBody);
 
 document.addEventListener('click', (event) => {
   if (!notificationMenu || notificationMenu.hidden) return;
@@ -21710,7 +22587,11 @@ onMediaQueryChange(mobileMenuQuery, () => {
 
 async function init() {
   try {
-    const payload = await api('/api/auth/me', { skipAuthRedirect: true });
+    const preloadedPayload = window.__FAKENET_BOOTSTRAP_AUTH__;
+    window.__FAKENET_BOOTSTRAP_AUTH__ = null;
+    const payload = preloadedPayload?.user
+      ? preloadedPayload
+      : await api('/api/auth/me', { skipAuthRedirect: true });
     state.auth = payload.user;
     state.roles = payload.roles || [];
     clearRadiusOptionsCache();

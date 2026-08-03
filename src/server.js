@@ -92,7 +92,7 @@ const KTP_UPLOAD_ROOT = path.join(PRIVATE_ROOT, 'member-ktp');
 const WEB_PUSH_VAPID_PATH = path.join(APP_ROOT, 'data', 'webpush-vapid.json');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-07-26');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-08-03');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
@@ -7387,6 +7387,34 @@ function reportMatchesNas(row = {}, selectedNas = '') {
   return reportNasRowCandidates(row).some((value) => value.toLowerCase() === filter);
 }
 
+function memberDataValidation(customer = {}) {
+  const latitude = Number(customer.latitude ?? customer.memberLatitude ?? 0);
+  const longitude = Number(customer.longitude ?? customer.memberLongitude ?? 0);
+  const hasLocation = Number.isFinite(latitude)
+    && Number.isFinite(longitude)
+    && latitude !== 0
+    && longitude !== 0
+    && latitude >= -90
+    && latitude <= 90
+    && longitude >= -180
+    && longitude <= 180;
+  const ktpDigits = String(customer.ktp || customer.idCard || '').replace(/\D+/g, '');
+  const ktpPhoto = publicMemberKtpPhotoMeta(customer.ktpPhoto || customer.memberKtpPhoto || null);
+  const checks = {
+    name: Boolean(String(customer.name || customer.customerName || '').trim()),
+    ktpName: Boolean(String(customer.ktpName || '').trim()),
+    ktpNumber: ktpDigits.length === 16,
+    address: Boolean(String(customer.address || '').trim()),
+    location: hasLocation,
+    housePhoto: Boolean(String(customer.housePhotoUrl || customer.memberHousePhotoUrl || '').trim()),
+    ktpPhoto: Boolean(ktpPhoto?.hasPhoto)
+  };
+  return {
+    valid: Object.values(checks).every(Boolean),
+    checks
+  };
+}
+
 function localMonitoringMemberRows(data = {}, query = {}) {
   const status = String(query.status || 'all').trim().toLowerCase();
   const paymentType = String(query.paymentType || 'all').trim().toLowerCase();
@@ -7430,6 +7458,7 @@ function localMonitoringMemberRows(data = {}, query = {}) {
       whatsapp: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
       phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
       email: customer.email || '',
+      ktpName: customer.ktpName || '',
       ktp: customer.ktp || customer.idCard || '',
       address: customer.address || '',
       latitude: customer.latitude || '',
@@ -7437,6 +7466,8 @@ function localMonitoringMemberRows(data = {}, query = {}) {
       locationAccuracy: customer.locationAccuracy || '',
       locationUrl: customer.locationUrl || (customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${customer.latitude},${customer.longitude}`)}` : ''),
       housePhotoUrl: customer.housePhotoUrl || customer.memberHousePhotoUrl || '',
+      ktpPhoto: publicMemberKtpPhotoMeta(customer.ktpPhoto || customer.memberKtpPhoto || null),
+      dataValidation: memberDataValidation(customer),
       status: normalizedStatus,
       paymentType: memberPaymentType,
       billingPeriod: memberBillingPeriod,
@@ -7532,7 +7563,8 @@ function localMonitoringMemberRows(data = {}, query = {}) {
       member.longitude,
       member.createdByName,
       member.createdByUsername,
-      member.packageName
+      member.packageName,
+      member.dataValidation?.valid ? 'data valid' : 'belum valid'
     ].some((value) => String(value || '').toLowerCase().includes(search)));
   }
 
@@ -7565,12 +7597,14 @@ function monitoringMemberSearchText(member = {}) {
     member.siteName,
     member.status,
     member.paymentType,
-    member.billingPeriod
+    member.billingPeriod,
+    member.dataValidation?.valid ? 'data valid' : 'belum valid'
   ]);
 }
 
 function monitoringMemberBaseSignature(data = {}, user = {}, query = {}) {
   return [
+    'member-search-v2',
     runtimeDataSignature(data, ['customers', 'radiusUsers', 'monitoringTargets', 'invoices', 'payments']),
     runtimeUserCacheScope(data, user),
     String(query.status || 'all').trim().toLowerCase(),
@@ -11058,8 +11092,8 @@ async function runtimeJsonCacheSet(key = '', value = null, ttlSeconds = REPORT_R
 }
 
 function runtimeSearchRequestEnabled(url = {}, options = {}) {
-  if (options.force === true) return true;
   if (truthyQuery(url.searchParams?.get('refresh'))) return false;
+  if (options.force === true) return true;
   return String(url.searchParams?.get('search') || '').trim().length > 0;
 }
 
@@ -11089,7 +11123,8 @@ function runtimeUserCacheScope(data = {}, user = {}) {
 }
 
 function runtimeSearchCacheTtlSeconds(namespace = '') {
-  if (/radius|genieacs|monitoring-customers/i.test(namespace)) return Math.min(SEARCH_RUNTIME_CACHE_TTL_SECONDS, 12);
+  if (/genieacs/i.test(namespace)) return Math.max(30, Math.min(SEARCH_RUNTIME_CACHE_TTL_SECONDS * 2, 60));
+  if (/radius|monitoring-customers/i.test(namespace)) return Math.min(SEARCH_RUNTIME_CACHE_TTL_SECONDS, 12);
   if (/billing|payment-gateway/i.test(namespace)) return Math.max(10, Math.min(SEARCH_RUNTIME_CACHE_TTL_SECONDS, 25));
   if (/report|inventory|member/i.test(namespace)) return Math.max(15, Math.min(SEARCH_RUNTIME_CACHE_TTL_SECONDS * 2, REPORT_RUNTIME_CACHE_TTL_SECONDS));
   return SEARCH_RUNTIME_CACHE_TTL_SECONDS;
@@ -11499,12 +11534,55 @@ async function cachedVoucherReportBasePayload(data = {}, period = currentPeriod(
 
 function financeRecapBaseSignature(data = {}, period = currentPeriod()) {
   return [
+    'finance-recap-v2',
     normalizePeriod(period),
-    runtimeDataSignature(data, ['invoices', 'payments', 'externalIncomes', 'expenses'])
+    runtimeDataSignature(data, [
+      'invoices',
+      'payments',
+      'externalIncomes',
+      'expenses',
+      'hotspotVoucherOrders',
+      'hotspotVoucherSalesHistory',
+      'radiusUsers',
+      'radiusVoucherRecords',
+      'radiusProfiles'
+    ])
   ].join('|');
 }
 
-function buildFinanceRecapPayload(data = {}, period = currentPeriod()) {
+function financeRecapItemCategoryRows(record = {}, fallbackCategory = '-') {
+  const total = Math.max(0, Number(record.amount || 0));
+  const categoryAmounts = new Map();
+  const items = Array.isArray(record.items) ? record.items : [];
+  for (const item of items) {
+    const quantity = Math.max(1, Number(item.quantity || item.qty || item.pcs || 1) || 1);
+    const amount = Math.max(0, Number(
+      item.amount
+      ?? item.subtotal
+      ?? (Number(item.unitPrice || item.price || item.unitAmount || 0) * quantity)
+    ) || 0);
+    if (amount <= 0) continue;
+    const category = String(item.category || fallbackCategory || '-').trim() || '-';
+    categoryAmounts.set(category, (categoryAmounts.get(category) || 0) + amount);
+  }
+  if (!categoryAmounts.size) {
+    return [{ category: fallbackCategory || '-', count: 1, amount: total }];
+  }
+  const itemTotal = [...categoryAmounts.values()].reduce((sum, amount) => sum + amount, 0);
+  const remainder = Math.round(total - itemTotal);
+  if (remainder !== 0) {
+    const taxAmount = Math.max(0, Math.round(Number(record.taxAmount || record.ppnAmount || record.vatAmount || 0) || 0));
+    const category = taxAmount > 0 && Math.abs(remainder - taxAmount) <= 1
+      ? 'PPN'
+      : (fallbackCategory || '-');
+    categoryAmounts.set(category, (categoryAmounts.get(category) || 0) + remainder);
+  }
+  return [...categoryAmounts.entries()]
+    .filter(([, amount]) => amount !== 0)
+    .map(([category, amount]) => ({ category, count: 1, amount }));
+}
+
+async function buildFinanceRecapPayload(data = {}, period = currentPeriod()) {
   const selectedPeriod = normalizePeriod(period);
   const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
   const payments = activePayments(data)
@@ -11520,6 +11598,20 @@ function buildFinanceRecapPayload(data = {}, period = currentPeriod()) {
         date: paymentReportTimestamp(payment, invoice)
       };
     });
+  const voucherOrders = filterVoucherReportOrders(
+    data,
+    await paidVoucherOrdersForReport(data, selectedPeriod),
+    {},
+    {}
+  );
+  const voucherIncomes = voucherOrders.map((order) => ({
+    type: 'voucher',
+    category: 'Voucher Hotspot',
+    description: order.buyerName || order.voucherUsernames || order.reference || 'Penjualan voucher',
+    amount: Number(order.amount || 0),
+    paymentCategory: order.methodGroup || paymentCategoryForRecord(order, order.paymentMethod || order.method),
+    date: order.date || order.paidAt || order.updatedAt || order.createdAt || ''
+  }));
   const externalIncomes = (data.externalIncomes || [])
     .filter((income) => String(income.date || income.createdAt || '').slice(0, 7) === selectedPeriod && String(income.status || 'active') !== 'cancelled')
     .map((income) => ({
@@ -11528,7 +11620,8 @@ function buildFinanceRecapPayload(data = {}, period = currentPeriod()) {
       description: income.payerName || income.itemName || income.description || income.receiptNo || '',
       amount: Number(income.amount || 0),
       paymentCategory: paymentCategoryForRecord(income, income.paymentMethod || income.method),
-      date: income.date || income.createdAt || ''
+      date: income.date || income.createdAt || '',
+      categoryRows: financeRecapItemCategoryRows(income, income.category || 'Pemasukan Lain')
     }));
   const expenses = (data.expenses || [])
     .filter((expense) => String(expense.date || expense.createdAt || '').slice(0, 7) === selectedPeriod)
@@ -11536,15 +11629,16 @@ function buildFinanceRecapPayload(data = {}, period = currentPeriod()) {
       category: expense.category || 'Pengeluaran',
       description: expense.payee || expense.vendor || expense.itemName || expense.description || expense.noteNo || '',
       amount: Number(expense.amount || 0),
-      date: expense.date || expense.createdAt || ''
+      date: expense.date || expense.createdAt || '',
+      categoryRows: financeRecapItemCategoryRows(expense, expense.category || 'Pengeluaran')
     }));
-  const incomeRows = payments.concat(externalIncomes);
+  const incomeRows = payments.concat(voucherIncomes, externalIncomes);
   const groupRows = (rows) => {
     const groups = new Map();
-    rows.forEach((row) => {
+    rows.flatMap((row) => Array.isArray(row.categoryRows) && row.categoryRows.length ? row.categoryRows : [row]).forEach((row) => {
       const key = row.category || '-';
       const current = groups.get(key) || { category: key, count: 0, amount: 0 };
-      current.count += 1;
+      current.count += Number(row.count || 1);
       current.amount += Number(row.amount || 0);
       groups.set(key, current);
     });
@@ -11589,7 +11683,7 @@ async function cachedFinanceRecapPayload(data = {}, period = currentPeriod(), op
     const cached = await runtimeJsonCacheGet(key);
     if (cached) return cached;
   }
-  const payload = buildFinanceRecapPayload(data, period);
+  const payload = await buildFinanceRecapPayload(data, period);
   await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
   return payload;
 }
@@ -18275,6 +18369,31 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/genieacs/devices/recent-pending') {
+    const authContext = await requirePermission(req, res, 'genieacs:read');
+    if (!authContext) return;
+    const hours = Math.max(1, Math.min(720, Number(url.searchParams.get('hours') || 24) || 24));
+    const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 100) || 100));
+    const refresh = url.searchParams.get('refresh') === '1';
+    try {
+      const payload = await genieAcs.recentPendingDevices(authContext.data.settings || {}, {
+        hours,
+        limit,
+        refresh
+      });
+      sendJson(res, 200, payload);
+    } catch (error) {
+      sendJson(res, 200, {
+        ok: false,
+        devices: [],
+        summary: { total: 0, hours, scanned: 0 },
+        checkedAt: new Date().toISOString(),
+        error: error.message || 'ONT baru belum dapat dideteksi'
+      });
+    }
+    return;
+  }
+
   if (method === 'GET' && pathname === '/api/genieacs/devices') {
     const authContext = await requirePermission(req, res, 'genieacs:read');
     if (!authContext) return;
@@ -18322,9 +18441,10 @@ async function handleApi(req, res, url) {
               filtered: filteredRows.length
             },
             pagination,
-            settings: genieAcs.normalizeSettings(authContext.data.settings || {})
+            settings: publicGenieAcsSettings(authContext.data.settings || {})
           };
-        }
+        },
+        { force: true }
       );
       sendJson(res, 200, responsePayload);
     } catch (error) {
@@ -18347,7 +18467,7 @@ async function handleApi(req, res, url) {
           redamanAverageText: '-'
         },
         pagination: paginationPayload(page, limit, 0),
-        settings: genieAcs.normalizeSettings(authContext.data.settings || {}),
+        settings: publicGenieAcsSettings(authContext.data.settings || {}),
         error: error.message || 'GenieACS tidak bisa dibaca'
       });
     }
@@ -18438,6 +18558,108 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  const genieAcsWanListMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/wans$/);
+  if (method === 'GET' && genieAcsWanListMatch) {
+    const authContext = await requirePermission(req, res, 'genieacs:read');
+    if (!authContext) return;
+    const deviceId = decodeURIComponent(genieAcsWanListMatch[1]);
+    try {
+      const result = await genieAcs.getWanConfiguration(authContext.data.settings || {}, deviceId, {
+        preferredUsername: String(url.searchParams.get('username') || '').trim(),
+        refresh: url.searchParams.get('refresh') === '1'
+      });
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message || 'Konfigurasi WAN GenieACS tidak bisa dibaca' });
+    }
+    return;
+  }
+
+  const genieAcsWifiOptionsMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/wifi-options$/);
+  if (method === 'GET' && genieAcsWifiOptionsMatch) {
+    const authContext = await requirePermission(req, res, 'genieacs:read');
+    if (!authContext) return;
+    const deviceId = decodeURIComponent(genieAcsWifiOptionsMatch[1]);
+    try {
+      const result = await genieAcs.getWifiConfiguration(authContext.data.settings || {}, deviceId, {
+        preferredUsername: String(url.searchParams.get('username') || '').trim(),
+        refresh: url.searchParams.get('refresh') === '1'
+      });
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message || 'Konfigurasi WiFi GenieACS tidak bisa dibaca' });
+    }
+    return;
+  }
+
+  const genieAcsClientsMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/clients$/);
+  if (method === 'GET' && genieAcsClientsMatch) {
+    const authContext = await requirePermission(req, res, 'genieacs:read');
+    if (!authContext) return;
+    const deviceId = decodeURIComponent(genieAcsClientsMatch[1]);
+    try {
+      const device = await genieAcs.getDevice(authContext.data.settings || {}, deviceId, {
+        refresh: url.searchParams.get('refresh') === '1'
+      });
+      if (!device) throw new Error('Perangkat GenieACS tidak ditemukan');
+      const [enriched] = await enrichGenieAcsRowsWithLocalData(authContext.data, [device], currentPeriod());
+      sendJson(res, 200, { ok: true, device: enriched || device });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message || 'Client perangkat GenieACS tidak bisa dibaca' });
+    }
+    return;
+  }
+
+  const genieAcsWanConfigureMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/wan$/);
+  if (method === 'POST' && genieAcsWanConfigureMatch) {
+    const authContext = await requirePermission(req, res, 'genieacs:write');
+    if (!authContext) return;
+    const deviceId = decodeURIComponent(genieAcsWanConfigureMatch[1]);
+    const payload = await readBody(req);
+    try {
+      const result = await genieAcs.configureWan(authContext.data.settings || {}, deviceId, payload);
+      await mutate((store) => {
+        addActivity(store, 'monitoring', `Konfigurasi WAN GenieACS dikirim oleh ${authContext.user.name || authContext.user.username}`, {
+          action: 'genieacs-wan-configure',
+          status: result.verification?.verified === true ? 'verified' : 'pending',
+          deviceId,
+          bindingOnly: result.plan?.bindingOnly === true,
+          mode: result.plan?.mode || '',
+          vlan: result.plan?.vlan || '',
+          username: result.plan?.username || '',
+          bindings: result.plan?.bindings || [],
+          targetWan: result.plan?.targetWan || '',
+          isNew: result.plan?.isNew === true,
+          taskIds: result.taskIds || [],
+          verification: result.verification || {}
+        });
+      });
+      sendJson(res, 200, {
+        ok: true,
+        message: 'Konfigurasi WAN dikirim ke GenieACS',
+        plan: result.plan,
+        taskCount: result.taskCount,
+        taskIds: result.taskIds,
+        verification: result.verification
+      });
+    } catch (error) {
+      await mutate((store) => {
+        addActivity(store, 'monitoring', `Konfigurasi WAN GenieACS gagal oleh ${authContext.user.name || authContext.user.username}`, {
+          action: 'genieacs-wan-configure',
+          status: 'failed',
+          deviceId,
+          bindingOnly: payload.bindingOnly === true,
+          targetWan: String(payload.targetWan || ''),
+          taskIds: Array.isArray(error.taskIds) ? error.taskIds : (error.taskId ? [error.taskId] : []),
+          fault: error.fault || null,
+          error: String(error.message || 'Konfigurasi WAN GenieACS gagal').slice(0, 500)
+        });
+      }).catch(() => {});
+      sendJson(res, 400, { ok: false, error: error.message || 'Konfigurasi WAN GenieACS gagal' });
+    }
+    return;
+  }
+
   const genieAcsDeleteMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)$/);
   if (method === 'DELETE' && genieAcsDeleteMatch) {
     const authContext = await requirePermission(req, res, 'genieacs:write');
@@ -18458,7 +18680,7 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  const genieAcsDeviceActionMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/(refresh|reboot|wifi|wifi-password|wifi-ssid|pppoe)$/);
+  const genieAcsDeviceActionMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/(refresh|reboot|wifi|wifi-password|wifi-ssid|wifi-add-ssid|pppoe)$/);
   if (genieAcsDeviceActionMatch && method === 'POST') {
     const authContext = await requirePermission(req, res, 'genieacs:write');
     if (!authContext) return;
@@ -18466,27 +18688,69 @@ async function handleApi(req, res, url) {
     const action = genieAcsDeviceActionMatch[2];
     const payload = await readBody(req);
     try {
+      let actionResult = null;
       if (action === 'refresh') {
-        await genieAcs.refreshDevice(authContext.data.settings || {}, deviceId);
+        actionResult = await genieAcs.refreshDevice(authContext.data.settings || {}, deviceId);
       } else if (action === 'reboot') {
-        await genieAcs.reboot(authContext.data.settings || {}, deviceId);
+        actionResult = await genieAcs.reboot(authContext.data.settings || {}, deviceId);
       } else if (action === 'wifi') {
-        await genieAcs.setWifiCredentials(authContext.data.settings || {}, deviceId, payload);
+        actionResult = await genieAcs.setWifiCredentials(authContext.data.settings || {}, deviceId, payload);
       } else if (action === 'wifi-password') {
-        await genieAcs.setWifiPassword(authContext.data.settings || {}, deviceId, payload.password, payload.parameter);
+        actionResult = await genieAcs.setWifiPassword(authContext.data.settings || {}, deviceId, payload.password, payload.parameter);
       } else if (action === 'wifi-ssid') {
-        await genieAcs.setWifiSsid(authContext.data.settings || {}, deviceId, payload.ssid, payload.band, payload.parameter);
+        actionResult = await genieAcs.setWifiSsid(authContext.data.settings || {}, deviceId, payload.ssid, payload.band, payload.parameter);
+      } else if (action === 'wifi-add-ssid') {
+        const result = await genieAcs.addWifiSsid(authContext.data.settings || {}, deviceId, payload);
+        await mutate((store) => {
+          addActivity(store, 'monitoring', `SSID${result.ssid?.index || ''} ditambahkan melalui GenieACS oleh ${authContext.user.name || authContext.user.username}`, {
+            action: 'genieacs-wifi-add-ssid',
+            deviceId,
+            ssidIndex: result.ssid?.index || null,
+            ssid: result.ssid?.name || '',
+            band: result.ssid?.band || '',
+            security: result.ssid?.security || '',
+            verified: result.ssid?.verified === true,
+            targetWan: result.binding?.targetWan || '',
+            bindingVerified: result.binding?.verified === true,
+            taskIds: result.taskIds || []
+          });
+        });
+        sendJson(res, 200, {
+          ok: true,
+          message: result.binding
+            ? 'SSID ditambahkan dan binding WAN dikirim'
+            : 'SSID berhasil ditambahkan',
+          result
+        });
+        return;
       } else if (action === 'pppoe') {
-        await genieAcs.setPppCredentials(authContext.data.settings || {}, deviceId, payload);
+        actionResult = await genieAcs.setPppCredentials(authContext.data.settings || {}, deviceId, payload);
       }
       await mutate((store) => {
         addActivity(store, 'monitoring', `GenieACS ${action} dikirim oleh ${authContext.user.name || authContext.user.username}`, {
           action: `genieacs-${action}`,
-          deviceId
+          deviceId,
+          status: actionResult?.verification?.verified === true ? 'verified' : 'accepted',
+          taskId: actionResult?._id || '',
+          ...(action === 'wifi' ? {
+            ssid: String(payload.ssid || '').trim(),
+            enabled: payload.enabled !== false,
+            verified: actionResult?.verification?.verified === true
+          } : {})
         });
       });
-      sendJson(res, 200, { ok: true, message: 'Perintah GenieACS dikirim' });
+      sendJson(res, 200, { ok: true, message: 'Perintah GenieACS dikirim', result: actionResult });
     } catch (error) {
+      await mutate((store) => {
+        addActivity(store, 'monitoring', `GenieACS ${action} gagal oleh ${authContext.user.name || authContext.user.username}`, {
+          action: `genieacs-${action}`,
+          status: 'failed',
+          deviceId,
+          taskIds: Array.isArray(error.taskIds) ? error.taskIds : (error.taskId ? [error.taskId] : []),
+          fault: error.fault || null,
+          error: String(error.message || 'Perintah GenieACS gagal').slice(0, 500)
+        });
+      }).catch(() => {});
       sendJson(res, 400, { ok: false, error: error.message || 'Perintah GenieACS gagal' });
     }
     return;
@@ -22301,9 +22565,12 @@ module.exports = {
     isPaymentGatewayWebhookPath,
     invoiceWaTemplateValues,
     paymentMethodDisplayLabel,
+    buildFinanceRecapPayload,
+    financeRecapItemCategoryRows,
     localDailyReport,
     localBillingRevision,
     localBillingSite,
+    memberDataValidation,
     localMonitoringMemberRows,
     localManualInvoicePreview,
     monthlyBillingDailyRows,

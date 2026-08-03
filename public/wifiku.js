@@ -8,7 +8,8 @@ const state = {
   challengeId: '',
   phone: '',
   token: localStorage.getItem(TOKEN_KEY) || '',
-  portal: null
+  portal: null,
+  clientPage: 1
 };
 
 const byId = (id) => document.getElementById(id);
@@ -313,12 +314,18 @@ function usageDailyBarChart(rows = []) {
   `;
 }
 
-function openClientDialog() {
+function openClientDialog(options = {}) {
   const device = state.portal?.device || {};
   const rows = clientRows(device);
   const counts = clientSummaryCounts(device);
   const body = byId('clientDialogBody');
   if (!body) return;
+  if (options.reset === true) state.clientPage = 1;
+  const pageSize = 10;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  state.clientPage = Math.max(1, Math.min(totalPages, Number(state.clientPage || 1) || 1));
+  const offset = (state.clientPage - 1) * pageSize;
+  const visibleRows = rows.slice(offset, offset + pageSize);
   const summary = `
     <div class="client-summary-strip">
       <span>2.4G ${counts.count24}</span>
@@ -342,9 +349,9 @@ function openClientDialog() {
             </tr>
           </thead>
           <tbody>
-            ${rows.map((row, index) => `
+            ${visibleRows.map((row, index) => `
               <tr>
-                <td>${index + 1}</td>
+                <td>${offset + index + 1}</td>
                 <td><span class="client-type-badge ${clientBadgeClass(row.type)}">${escapeHtml(clientTypeKey(row.type))}</span></td>
                 <td>${escapeHtml(row.name || '-')}</td>
                 <td>${escapeHtml(row.ipAddress || '-')}</td>
@@ -353,6 +360,14 @@ function openClientDialog() {
             `).join('')}
           </tbody>
         </table>
+      </div>
+      <div class="client-detail-pager">
+        <span>${offset + 1}–${Math.min(offset + pageSize, rows.length)} dari ${rows.length} client</span>
+        <div>
+          <button type="button" data-client-page="${state.clientPage - 1}" ${state.clientPage <= 1 ? 'disabled' : ''}>Sebelumnya</button>
+          <strong>${state.clientPage} / ${totalPages}</strong>
+          <button type="button" data-client-page="${state.clientPage + 1}" ${state.clientPage >= totalPages ? 'disabled' : ''}>Berikutnya</button>
+        </div>
       </div>`;
   }
   const dialog = byId('clientDialog');
@@ -624,7 +639,13 @@ byId('logoutButton').addEventListener('click', () => {
 
 byId('closeAccountDialog').addEventListener('click', () => byId('accountDialog').close());
 byId('usageSummaryButton')?.addEventListener('click', openUsageDialog);
-byId('clientSummaryButton')?.addEventListener('click', openClientDialog);
+byId('clientSummaryButton')?.addEventListener('click', () => openClientDialog({ reset: true }));
+byId('clientDialogBody')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-client-page]');
+  if (!button || button.disabled) return;
+  state.clientPage = Math.max(1, Number(button.dataset.clientPage || 1));
+  openClientDialog();
+});
 byId('closeUsageDialog')?.addEventListener('click', () => byId('usageDialog')?.close());
 byId('closeClientDialog')?.addEventListener('click', () => byId('clientDialog')?.close());
 byId('accountForm').addEventListener('submit', async (event) => {

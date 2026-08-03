@@ -1,11 +1,22 @@
 'use strict';
 
+const genieAcsWan = require('./genieacs-wan');
+const genieAcsWifi = require('./genieacs-wifi');
+
 const DEFAULT_BASE_URL = 'http://127.0.0.1:7557';
 const HTTP_TIMEOUT_MS = Math.max(3000, Number(process.env.GENIEACS_HTTP_TIMEOUT_MS || 10000) || 10000);
 const HIGH_REDAMAN_THRESHOLD_DBM = -26.5;
-const DEVICE_LIST_CACHE_TTL_MS = Math.max(0, Number(process.env.GENIEACS_DEVICE_CACHE_MS || 8000) || 8000);
+const DEVICE_LIST_CACHE_TTL_MS = Math.max(10000, Number(process.env.GENIEACS_DEVICE_CACHE_MS || 60000) || 60000);
+const DEVICE_LIST_CACHE_STALE_MS = Math.max(
+  DEVICE_LIST_CACHE_TTL_MS,
+  Number(process.env.GENIEACS_DEVICE_STALE_MS || 300000) || 300000
+);
+const DEVICE_PROJECTION_MAX_CHARS = Math.max(1200, Number(process.env.GENIEACS_PROJECTION_MAX_CHARS || 3500) || 3500);
 const DEVICE_LIST_CACHE_MAX = 12;
 const deviceListCache = new Map();
+const deviceListInflight = new Map();
+const deviceMutationLocks = new Map();
+let deviceListCacheGeneration = 0;
 
 const DEFAULT_USERNAME_PARAMETERS = [
   'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username',
@@ -183,51 +194,165 @@ function pruneDeviceListCache() {
 }
 
 function clearDeviceListCache() {
+  deviceListCacheGeneration += 1;
   deviceListCache.clear();
+  deviceListInflight.clear();
 }
 
-function deviceListCacheKey(cfg = {}, query = {}, projection = '') {
+function deviceListCacheKey(cfg = {}, query = {}, projection = '', requestQuery = {}) {
   return [
     cfg.baseUrl,
     cfg.token ? `token:${cfg.token.length}:${cfg.token.slice(-6)}` : 'token:',
     JSON.stringify(query),
-    projection
+    projection,
+    JSON.stringify(requestQuery)
   ].join('|');
 }
 
-async function cachedDeviceRows(cfg = {}, query = {}, projection = '', refresh = false) {
-  const cacheKey = deviceListCacheKey(cfg, query, projection);
+function projectionChunks(projection = '', maxChars = DEVICE_PROJECTION_MAX_CHARS) {
+  const fields = [...new Set(String(projection || '').split(',').map(cleanText).filter(Boolean))];
+  if (!fields.length) return [];
+  const chunks = [];
+  let current = ['_id'];
+  let currentLength = 3;
+  for (const field of fields) {
+    if (field === '_id') continue;
+    const nextLength = currentLength + field.length + 1;
+    if (current.length > 1 && nextLength > maxChars) {
+      chunks.push(current.join(','));
+      current = ['_id'];
+      currentLength = 3;
+    }
+    current.push(field);
+    currentLength += field.length + 1;
+  }
+  if (current.length) chunks.push(current.join(','));
+  return chunks;
+}
+
+function mergeProjectedValue(target, source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return cloneJson(source);
+  const next = target && typeof target === 'object' && !Array.isArray(target) ? target : {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      next[key] = mergeProjectedValue(next[key], value);
+    } else {
+      next[key] = cloneJson(value);
+    }
+  }
+  return next;
+}
+
+function mergeProjectedRows(groups = []) {
+  const rows = new Map();
+  const order = [];
+  for (const group of groups) {
+    for (const row of Array.isArray(group) ? group : []) {
+      const id = cleanText(row?._id);
+      if (!id) continue;
+      if (!rows.has(id)) order.push(id);
+      rows.set(id, mergeProjectedValue(rows.get(id), row));
+    }
+  }
+  return order.map((id) => rows.get(id));
+}
+
+async function requestProjectedRows(cfg = {}, query = {}, projection = '', requestQuery = {}) {
+  if (!projection) {
+    return requestJson(cfg, '/devices/', {
+      query: { query: JSON.stringify(query), ...requestQuery }
+    });
+  }
+  const requestChunk = async (chunk = '') => {
+    try {
+      return await requestJson(cfg, '/devices/', {
+        query: {
+          query: JSON.stringify(query),
+          projection: chunk,
+          ...requestQuery
+        }
+      });
+    } catch (error) {
+      const fields = chunk.split(',').filter(Boolean);
+      const projectionTooLarge = [414, 431].includes(Number(error.status || 0))
+        || /HTTP (414|431)/.test(error.message || '');
+      if (!projectionTooLarge || fields.length <= 2) throw error;
+      const midpoint = Math.ceil((fields.length - 1) / 2);
+      const left = ['_id', ...fields.slice(1, midpoint + 1)].join(',');
+      const right = ['_id', ...fields.slice(midpoint + 1)].join(',');
+      const groups = [await requestChunk(left)];
+      if (right !== '_id') groups.push(await requestChunk(right));
+      return mergeProjectedRows(groups);
+    }
+  };
+  const groups = [];
+  for (const chunk of projectionChunks(projection)) {
+    groups.push(await requestChunk(chunk));
+  }
+  return mergeProjectedRows(groups);
+}
+
+async function cachedDeviceRows(cfg = {}, query = {}, projection = '', refresh = false, requestQuery = {}) {
+  const cacheKey = deviceListCacheKey(cfg, query, projection, requestQuery);
   const now = Date.now();
-  if (!refresh && DEVICE_LIST_CACHE_TTL_MS > 0) {
-    const cached = deviceListCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) return cloneJson(cached.rows);
+  const cached = deviceListCache.get(cacheKey);
+  if (!refresh && cached?.expiresAt > now) return cloneJson(cached.rows);
+  const inflightKey = `${cacheKey}|${refresh ? 'refresh' : 'normal'}`;
+  if (!refresh && cached?.staleUntil > now) {
+    if (!deviceListInflight.has(inflightKey)) {
+      const generation = deviceListCacheGeneration;
+      let background;
+      background = requestProjectedRows(cfg, query, projection, requestQuery)
+        .then((rows) => {
+          if (Array.isArray(rows) && generation === deviceListCacheGeneration) {
+            deviceListCache.set(cacheKey, {
+              expiresAt: Date.now() + DEVICE_LIST_CACHE_TTL_MS,
+              staleUntil: Date.now() + DEVICE_LIST_CACHE_STALE_MS,
+              rows: cloneJson(rows)
+            });
+            pruneDeviceListCache();
+          }
+          return rows;
+        })
+        .catch(() => {
+          cached.expiresAt = Date.now() + Math.min(15000, DEVICE_LIST_CACHE_TTL_MS);
+          return cached.rows;
+        })
+        .finally(() => {
+          if (deviceListInflight.get(inflightKey) === background) deviceListInflight.delete(inflightKey);
+        });
+      deviceListInflight.set(inflightKey, background);
+    }
+    return cloneJson(cached.rows);
   }
-  let rows;
+  if (deviceListInflight.has(inflightKey)) return cloneJson(await deviceListInflight.get(inflightKey));
+  const generation = deviceListCacheGeneration;
+  const operation = (async () => {
+    try {
+      const rows = await requestProjectedRows(cfg, query, projection, requestQuery);
+      if (Array.isArray(rows) && generation === deviceListCacheGeneration) {
+        deviceListCache.set(cacheKey, {
+          expiresAt: Date.now() + DEVICE_LIST_CACHE_TTL_MS,
+          staleUntil: Date.now() + DEVICE_LIST_CACHE_STALE_MS,
+          rows: cloneJson(rows)
+        });
+        pruneDeviceListCache();
+      }
+      return rows;
+    } catch (error) {
+      if (!refresh && cached?.staleUntil > Date.now()) {
+        cached.expiresAt = Date.now() + Math.min(15000, DEVICE_LIST_CACHE_TTL_MS);
+        return cloneJson(cached.rows);
+      }
+      throw error;
+    }
+  })();
+  deviceListInflight.set(inflightKey, operation);
   try {
-    rows = await requestJson(cfg, '/devices/', {
-      query: {
-        query: JSON.stringify(query),
-        ...(projection ? { projection } : {})
-      }
-    });
-  } catch (error) {
-    const status = Number(error.status || 0);
-    const projectionTooLarge = projection && ([414, 431].includes(status) || /HTTP (414|431)/.test(error.message || ''));
-    if (!projectionTooLarge) throw error;
-    rows = await requestJson(cfg, '/devices/', {
-      query: {
-        query: JSON.stringify(query)
-      }
-    });
+    return cloneJson(await operation);
+  } finally {
+    if (deviceListInflight.get(inflightKey) === operation) deviceListInflight.delete(inflightKey);
   }
-  if (DEVICE_LIST_CACHE_TTL_MS > 0 && Array.isArray(rows)) {
-    deviceListCache.set(cacheKey, {
-      expiresAt: now + DEVICE_LIST_CACHE_TTL_MS,
-      rows: cloneJson(rows)
-    });
-    pruneDeviceListCache();
-  }
-  return rows;
 }
 
 function urlFor(cfg, pathname, params = {}) {
@@ -516,6 +641,7 @@ function deviceListProjection(cfg = normalizeSettings({})) {
   const paths = new Set([
     '_id',
     '_tags',
+    '_registered',
     '_lastInform',
     '_deviceId',
     'InternetGatewayDevice.DeviceInfo.SerialNumber',
@@ -529,8 +655,6 @@ function deviceListProjection(cfg = normalizeSettings({})) {
     cfg.usernameParameters,
     cfg.rxPowerParameters,
     cfg.temperatureParameters,
-    cfg.wifiSsidParameters,
-    cfg.wifi5gSsidParameters,
     cfg.wifiClientCountParameters,
     cfg.wifi5gClientCountParameters,
     cfg.lanClientCountParameters
@@ -538,21 +662,42 @@ function deviceListProjection(cfg = normalizeSettings({})) {
   (cfg.usernameParameters || []).forEach((path) => {
     pppIpParameterCandidates(path).forEach((candidate) => paths.add(candidate));
   });
-  for (const index of WIFI_CONFIGURATION_INDEXES) {
-    const base = wifiConfigBase(index);
+  return [...paths].join(',');
+}
+
+function recentPendingProjection(cfg = normalizeSettings({})) {
+  const paths = new Set([
+    '_id',
+    '_tags',
+    '_registered',
+    '_lastInform',
+    '_deviceId',
+    'InternetGatewayDevice.DeviceInfo.SerialNumber',
+    'InternetGatewayDevice.DeviceInfo.ProductClass',
+    'InternetGatewayDevice.DeviceInfo.Manufacturer',
+    'Device.DeviceInfo.SerialNumber',
+    'Device.DeviceInfo.ProductClass',
+    'Device.DeviceInfo.Manufacturer'
+  ]);
+  (cfg.usernameParameters || []).forEach((path) => {
+    const usernamePath = cleanText(path);
+    if (!usernamePath) return;
+    paths.add(usernamePath);
+    const base = usernamePath.replace(/\.Username$/, '');
+    if (base === usernamePath) return;
+    if (/^Device\.PPP\.Interface\./.test(base)) {
+      paths.add(`${base}.IPCP.LocalIPAddress`);
+      paths.add(`${base}.Status`);
+      return;
+    }
     [
-      `${base}.SSID`,
-      `${base}.Enable`,
-      `${base}.Status`,
-      `${base}.BeaconType`,
-      `${base}.BasicAuthenticationMode`,
-      `${base}.WPAAuthenticationMode`,
-      `${base}.WPAEncryptionModes`,
-      `${base}.IEEE11iAuthenticationMode`,
-      `${base}.IEEE11iEncryptionModes`,
-      ...wifiClientCountCandidates(index)
-    ].forEach((path) => paths.add(path));
-  }
+      `${base}.ExternalIPAddress`,
+      `${base}.X_HW_ExternalIPAddress`,
+      `${base}.X_ZTE-COM_ExternalIPAddress`,
+      `${base}.X_FH_ExternalIPAddress`,
+      `${base}.ConnectionStatus`
+    ].forEach((candidate) => paths.add(candidate));
+  });
   return [...paths].join(',');
 }
 
@@ -569,6 +714,26 @@ function firstExistingParameter(device = {}, paths = []) {
     if (state.exists) return state;
   }
   return { exists: false, path: '', value: '', writable: false };
+}
+
+function wifiSecurityEnabled(device = {}, base = '', password = {}) {
+  const beacon = cleanText(getPathState(device, `${base}.BeaconType`).value).toLowerCase();
+  const basicAuthentication = cleanText(getPathState(device, `${base}.BasicAuthenticationMode`).value).toLowerCase();
+  const basicEncryption = cleanText(getPathState(device, `${base}.BasicEncryptionModes`).value).toLowerCase();
+  const advancedSecurity = [
+    getPathState(device, `${base}.WPAAuthenticationMode`).value,
+    getPathState(device, `${base}.WPAEncryptionModes`).value,
+    getPathState(device, `${base}.IEEE11iAuthenticationMode`).value,
+    getPathState(device, `${base}.IEEE11iEncryptionModes`).value
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  // Reused SSID slots often retain old WPA values. BeaconType is the effective
+  // mode used by the CPE, so an explicit Basic/Open mode must win over stale keys.
+  if (/wpa|11i/.test(beacon)) return true;
+  if (/basic|none|open/.test(beacon)) return false;
+  if (/open|none/.test(basicAuthentication) && (!basicEncryption || /none/.test(basicEncryption))) return false;
+  if (/aes|tkip|wep/.test(basicEncryption) || /psk|wpa|11i|aes|tkip/.test(advancedSecurity)) return true;
+  return Boolean(password.value);
 }
 
 function normalizeWifiNetworks(device = {}) {
@@ -592,7 +757,7 @@ function normalizeWifiNetworks(device = {}) {
       getPathState(device, `${base}.IEEE11iEncryptionModes`).value
     ].filter(Boolean);
     const securityText = securityValues.join(' / ');
-    const securityEnabled = Boolean(password.value) || /wpa|11i|psk/i.test(securityText);
+    const securityEnabled = wifiSecurityEnabled(device, base, password);
     const clients = firstParameter(device, wifiClientCountCandidates(index));
     const band = wifiBandForIndex(index, ssid.value);
     return {
@@ -921,6 +1086,7 @@ function normalizeDevice(device = {}, settings = {}) {
     || getPathValue(device, 'Device.DeviceInfo.Manufacturer')
     || cleanText(device._deviceId?._Manufacturer);
   const lastInform = cleanText(device._lastInform);
+  const registered = cleanText(device._registered);
   const lastInformTime = Date.parse(lastInform);
   const online = Number.isFinite(lastInformTime) && Date.now() - lastInformTime <= 15 * 60 * 1000;
   const tags = safeTags(device._tags);
@@ -958,22 +1124,131 @@ function normalizeDevice(device = {}, settings = {}) {
     wifiClientsTotal: clientsTotal,
     connectedClients: clientSummary.connectedClients,
     wifiNetworks,
+    registered,
     lastInform,
     online,
     status: online ? 'online' : 'offline'
   };
 }
 
+function recentPppState(device = {}, row = {}) {
+  const usernamePath = cleanText(row.usernameParameter);
+  if (!usernamePath || !usernamePath.endsWith('.Username')) return null;
+  const base = usernamePath.replace(/\.Username$/, '');
+  const status = firstExistingParameter(device, [
+    `${base}.ConnectionStatus`,
+    `${base}.Status`
+  ]).value;
+  const vlanValue = firstExistingParameter(device, [
+    `${base}.X_HW_VLAN`,
+    `${base}.X_ZTE-COM_VLANID`,
+    `${base}.X_FH_VLANID`,
+    `${base}.VLANIDMark`
+  ]).value;
+  const vlan = Number(vlanValue);
+  return {
+    username: row.username,
+    status,
+    ip: row.ipAddress,
+    vlan: Number.isInteger(vlan) && vlan >= 1 && vlan <= 4094 ? vlan : null
+  };
+}
+
+function recentPendingCandidate(device = {}, cfg = normalizeSettings({})) {
+  const row = normalizeDevice(device, cfg);
+  if (!row.registered) return null;
+  const vendor = genieAcsWan.detectWanVendor(device);
+  const pppoe = recentPppState(device, row);
+  let wanPending = null;
+  if (!pppoe || !cleanText(pppoe.username)) {
+    wanPending = {
+      code: 'no_wan_ppp',
+      label: 'WAN PPP belum ada',
+      pppoe: null
+    };
+  } else if (
+    !validIpv4(pppoe.ip)
+    || pppoe.ip === '0.0.0.0'
+    || /disconnect|down|disabled|unconfigured/i.test(pppoe.status)
+  ) {
+    wanPending = {
+      code: 'wan_ppp_not_ready',
+      label: 'WAN PPP belum online',
+      pppoe
+    };
+  }
+  if (!wanPending) return null;
+  return {
+    id: row.id,
+    serialNumber: row.serialNumber,
+    productClass: row.productClass,
+    model: row.productClass,
+    manufacturer: row.manufacturer,
+    detectedVendor: vendor.label,
+    tags: row.tags,
+    registered: row.registered,
+    lastInform: row.lastInform,
+    wanPending,
+    wanSummary: { pppoe }
+  };
+}
+
+async function recentPendingDevices(settings = {}, options = {}) {
+  const cfg = normalizeSettings(settings);
+  const hours = Math.max(1, Math.min(720, Number(options.hours || 24) || 24));
+  const limit = Math.max(1, Math.min(100, Number(options.limit || 100) || 100));
+  const scanLimit = Math.max(limit, Math.min(300, limit * 3));
+  const checkedAt = new Date().toISOString();
+  const minimumRegisteredAt = Date.now() - (hours * 60 * 60 * 1000);
+  const rawRows = await cachedDeviceRows(
+    cfg,
+    {},
+    recentPendingProjection(cfg),
+    options.refresh === true,
+    {
+      sort: JSON.stringify({ _registered: -1 }),
+      limit: String(scanLimit)
+    }
+  );
+  const devices = (Array.isArray(rawRows) ? rawRows : [])
+    .map((device) => recentPendingCandidate(device, cfg))
+    .filter((device) => device && Date.parse(device.registered) >= minimumRegisteredAt)
+    .slice(0, limit);
+  return {
+    ok: true,
+    devices,
+    summary: {
+      total: devices.length,
+      hours,
+      scanned: Array.isArray(rawRows) ? rawRows.length : 0
+    },
+    checkedAt
+  };
+}
+
 function searchQuery(search = '') {
   const text = cleanText(search);
   if (!text) return {};
+  if (text.length < 3) return { _id: { $in: [] } };
   const matcher = { $regex: text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
   return {
     $or: [
       { _id: matcher },
+      { _tags: matcher },
       { '_deviceId._SerialNumber': matcher },
       { '_deviceId._ProductClass': matcher },
       { 'InternetGatewayDevice.DeviceInfo.SerialNumber._value': matcher },
+      { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID._value': matcher },
+      { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID._value': matcher },
+      { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.SSID._value': matcher },
+      { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.SSID._value': matcher },
+      { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID._value': matcher },
+      { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.6.SSID._value': matcher },
+      { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.7.SSID._value': matcher },
+      { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.8.SSID._value': matcher },
+      { 'Device.WiFi.SSID.1.SSID._value': matcher },
+      { 'Device.WiFi.SSID.2.SSID._value': matcher },
+      { 'Device.WiFi.SSID.5.SSID._value': matcher },
       { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username._value': matcher },
       { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username._value': matcher },
       { 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.Username._value': matcher },
@@ -1002,10 +1277,20 @@ function filterRowsByNas(rows = [], selectedNas = 'all') {
 
 async function listDevices(settings = {}, options = {}) {
   const cfg = normalizeSettings(settings);
-  const query = searchQuery(options.search || '');
+  const search = cleanText(options.search || '');
+  const query = searchQuery(search);
   const status = cleanText(options.status || 'all').toLowerCase();
   const redaman = cleanText(options.redaman || 'all').toLowerCase();
-  const rawRows = await cachedDeviceRows(cfg, query, deviceListProjection(cfg), options.refresh === true);
+  const rawRows = await cachedDeviceRows(
+    cfg,
+    query,
+    deviceListProjection(cfg),
+    options.refresh === true,
+    search.length >= 3 ? {
+      sort: JSON.stringify({ _registered: -1 }),
+      limit: '20'
+    } : {}
+  );
   const rows = (Array.isArray(rawRows) ? rawRows.map((device) => normalizeDevice(device, cfg)) : [])
     .filter((row) => !rowExcludedByUsernameSuffix(row, cfg.excludeUsernameSuffixes));
   const filteredRows = rows.filter((row) => {
@@ -1071,6 +1356,59 @@ async function getDevice(settings = {}, deviceId = '', options = {}) {
   return device ? normalizeDevice(device, cfg) : null;
 }
 
+async function getRawDevice(settings = {}, deviceId = '', options = {}) {
+  const cfg = normalizeSettings(settings);
+  const cleanId = cleanText(deviceId);
+  if (!cleanId) throw new Error('ID perangkat GenieACS tidak tersedia');
+  const rows = await cachedDeviceRows(cfg, { _id: cleanId }, '', options.refresh === true);
+  const device = Array.isArray(rows) ? rows[0] : null;
+  return device ? cloneJson(device) : null;
+}
+
+async function getWanConfiguration(settings = {}, deviceId = '', options = {}) {
+  const raw = await getRawDevice(settings, deviceId, { refresh: options.refresh === true });
+  if (!raw) throw new Error('Perangkat GenieACS tidak ditemukan');
+  const summary = genieAcsWan.summarizeWanConnections(raw, options.preferredUsername || '');
+  return {
+    ok: true,
+    deviceId: cleanText(deviceId),
+    vendor: summary.vendor,
+    bridgeTarget: genieAcsWan.bridgeTarget(raw, summary.vendor),
+    rows: summary.rows,
+    primary: summary.primary,
+    management: summary.management,
+    defaultTargetId: genieAcsWan.defaultWanTarget(summary)?.id || 'new',
+    defaultTargetIds: {
+      pppoe: genieAcsWan.defaultWanTarget(summary, 'pppoe')?.id || 'new',
+      bridge: genieAcsWan.defaultWanTarget(summary, 'bridge')?.id || 'new'
+    },
+    bindings: genieAcsWan.availableWanBindings(raw)
+  };
+}
+
+async function getWifiConfiguration(settings = {}, deviceId = '', options = {}) {
+  const raw = await getRawDevice(settings, deviceId, { refresh: options.refresh === true });
+  if (!raw) throw new Error('Perangkat GenieACS tidak ditemukan');
+  const normalized = normalizeDevice(raw, normalizeSettings(settings));
+  const wanSummary = genieAcsWan.summarizeWanConnections(raw, options.preferredUsername || normalized.username || '');
+  return {
+    ok: true,
+    deviceId: cleanText(deviceId),
+    vendor: wanSummary.vendor,
+    networks: normalized.wifiNetworks || [],
+    addSsid: genieAcsWifi.addSsidOptions(raw),
+    wanOptions: wanSummary.rows.filter((row) => row.editable).map((row) => ({
+      id: row.id,
+      label: row.label,
+      mode: row.mode,
+      vlan: row.vlan,
+      username: row.username,
+      bindings: row.bindings,
+      primary: row.primary === true
+    }))
+  };
+}
+
 async function findDevice(settings = {}, search = '', options = {}) {
   const result = await listDevices(settings, { search, page: 1, limit: 1, refresh: options.refresh === true });
   const row = result.rows[0] || null;
@@ -1089,6 +1427,310 @@ async function task(settings = {}, deviceId = '', body = {}) {
     method: 'POST',
     query,
     body
+  });
+}
+
+async function addObject(settings = {}, deviceId = '', objectName = '') {
+  const cleanObjectName = cleanText(objectName);
+  if (!cleanObjectName) throw new Error('Object WAN GenieACS tidak tersedia');
+  return task(settings, deviceId, { name: 'addObject', objectName: cleanObjectName });
+}
+
+async function setParameterValues(settings = {}, deviceId = '', parameterValues = []) {
+  if (!Array.isArray(parameterValues) || !parameterValues.length) {
+    throw new Error('Parameter WAN GenieACS tidak tersedia');
+  }
+  return task(settings, deviceId, { name: 'setParameterValues', parameterValues });
+}
+
+function delay(ms = 0) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
+}
+
+async function getTaskFault(settings = {}, deviceId = '', taskResult = {}) {
+  const taskId = cleanText(taskResult?._id);
+  if (!taskId) return null;
+  const cfg = normalizeSettings(settings);
+  const faults = await requestJson(cfg, '/faults/', {
+    query: {
+      query: JSON.stringify({ _id: `${cleanText(deviceId)}:task_${taskId}` }),
+      limit: 1
+    }
+  });
+  return Array.isArray(faults) ? faults[0] || null : null;
+}
+
+async function assertNoTaskFault(settings = {}, deviceId = '', taskResult = {}, label = 'Task GenieACS') {
+  if (!taskResult?._id) return;
+  await delay(1600);
+  const fault = await getTaskFault(settings, deviceId, taskResult);
+  if (!fault) return;
+  const error = new Error(`${label} ditolak modem: ${fault.code || 'fault'} ${fault.message || ''}`.trim());
+  error.taskId = cleanText(taskResult._id);
+  error.fault = {
+    code: cleanText(fault.code || 'fault'),
+    message: cleanText(fault.message || ''),
+    timestamp: cleanText(fault.timestamp || fault._timestamp || '')
+  };
+  throw error;
+}
+
+async function withDeviceMutationLock(deviceId = '', label = 'Konfigurasi', callback) {
+  const cleanId = cleanText(deviceId);
+  if (!cleanId) throw new Error('ID perangkat GenieACS tidak tersedia');
+  if (deviceMutationLocks.has(cleanId)) throw new Error(`${label} perangkat ini sedang diproses`);
+  const operation = Promise.resolve().then(callback);
+  deviceMutationLocks.set(cleanId, operation);
+  try {
+    return await operation;
+  } finally {
+    if (deviceMutationLocks.get(cleanId) === operation) deviceMutationLocks.delete(cleanId);
+  }
+}
+
+function sameStringSet(left = [], right = []) {
+  const normalize = (items) => [...new Set((Array.isArray(items) ? items : [])
+    .map((item) => cleanText(item).toUpperCase())
+    .filter(Boolean))].sort();
+  const expected = normalize(left);
+  const actual = normalize(right);
+  return expected.length === actual.length && expected.every((item, index) => item === actual[index]);
+}
+
+function wanReadbackVerification(plan = {}, updated = null) {
+  const targetVerified = Boolean(updated);
+  const modeVerified = targetVerified && updated.mode === plan.mode;
+  const vlanVerified = targetVerified && Number(updated.vlan) === Number(plan.vlan);
+  const usernameVerified = plan.mode !== 'pppoe'
+    || (targetVerified && cleanText(updated.username) === cleanText(plan.username));
+  const bindingsVerified = targetVerified && sameStringSet(updated.bindings, plan.bindings);
+  return {
+    verified: targetVerified && modeVerified && vlanVerified && usernameVerified && bindingsVerified,
+    informed: targetVerified,
+    checks: {
+      target: targetVerified,
+      mode: modeVerified,
+      vlan: vlanVerified,
+      username: usernameVerified,
+      bindings: bindingsVerified
+    },
+    status: updated?.status || '',
+    connected: updated?.connected === true,
+    actualVlan: updated?.vlan ?? null,
+    actualBindings: Array.isArray(updated?.bindings) ? updated.bindings : []
+  };
+}
+
+async function configureWan(settings = {}, deviceId = '', payload = {}) {
+  const cleanId = cleanText(deviceId);
+  return withDeviceMutationLock(cleanId, 'Konfigurasi', async () => {
+    const raw = await getRawDevice(settings, cleanId, { refresh: true });
+    if (!raw) throw new Error('Perangkat GenieACS tidak ditemukan');
+    const plan = payload.bindingOnly === true
+      ? genieAcsWan.prepareWanBinding(raw, payload)
+      : genieAcsWan.prepareWanProvision(raw, payload);
+    const tasks = [];
+    try {
+      if (plan.isNew) {
+        const connectionTask = await addObject(settings, cleanId, plan.connectionRootPath);
+        tasks.push(connectionTask);
+        await assertNoTaskFault(settings, cleanId, connectionTask, 'Tambah WANConnectionDevice');
+        genieAcsWan.rebaseNewWanPlan(plan, {
+          connectionIndex: Number(connectionTask?.instanceNumber || plan.connectionIndex)
+        });
+        const wanObjectTask = await addObject(settings, cleanId, plan.objectRootPath);
+        tasks.push(wanObjectTask);
+        await assertNoTaskFault(settings, cleanId, wanObjectTask, `Tambah ${plan.objectType}`);
+        genieAcsWan.rebaseNewWanPlan(plan, {
+          connectionIndex: plan.connectionIndex,
+          instance: Number(wanObjectTask?.instanceNumber || plan.instance)
+        });
+      }
+      if (plan.parameterValues.length) tasks.push(await setParameterValues(settings, cleanId, plan.parameterValues));
+      if (plan.enableBindingValues.length) {
+        tasks.push(await setParameterValues(settings, cleanId, plan.enableBindingValues));
+        await delay(1400);
+      }
+      if (plan.bindingValues.length) tasks.push(await setParameterValues(settings, cleanId, plan.bindingValues));
+      if (plan.cleanupValues.length) tasks.push(await setParameterValues(settings, cleanId, plan.cleanupValues));
+      if (plan.activationValues.length) {
+        const activationTask = await setParameterValues(settings, cleanId, plan.activationValues);
+        tasks.push(activationTask);
+        await assertNoTaskFault(settings, cleanId, activationTask, 'Aktifkan WAN');
+      }
+      clearDeviceListCache();
+      try {
+        await refreshDevice(settings, cleanId);
+      } catch {
+        // Provisioning sudah masuk antrean; refresh berikutnya dapat dilakukan manual.
+      }
+      let verification = { verified: false, informed: false };
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        await delay(attempt === 1 ? 1200 : 1000);
+        try {
+          const updatedRaw = await getRawDevice(settings, cleanId, { refresh: true });
+          const rows = genieAcsWan.summarizeWanConnections(updatedRaw, plan.username || '').rows;
+          const updated = rows.find((row) => (
+            (!plan.isNew && row.id === plan.existing?.id)
+            || (plan.isNew
+              && row.mode === plan.mode
+              && Number(row.vlan) === Number(plan.vlan)
+              && (plan.mode !== 'pppoe' || row.username === plan.username))
+          ));
+          verification = { ...wanReadbackVerification(plan, updated), attempt };
+          if (verification.verified) break;
+        } catch {
+          verification.attempt = attempt;
+        }
+      }
+      return {
+        ok: true,
+        plan: genieAcsWan.publicWanPlan(plan),
+        taskCount: tasks.length,
+        taskIds: tasks.map((taskResult) => cleanText(taskResult?._id)).filter(Boolean),
+        verification
+      };
+    } catch (error) {
+      error.taskIds = tasks.map((taskResult) => cleanText(taskResult?._id)).filter(Boolean);
+      error.plan = genieAcsWan.publicWanPlan(plan);
+      throw error;
+    }
+  });
+}
+
+async function addWifiSsid(settings = {}, deviceId = '', payload = {}) {
+  const cleanId = cleanText(deviceId);
+  return withDeviceMutationLock(cleanId, 'Konfigurasi WiFi/WAN', async () => {
+    let raw = await getRawDevice(settings, cleanId, { refresh: true });
+    if (!raw) throw new Error('Perangkat GenieACS tidak ditemukan');
+    const plan = genieAcsWifi.prepareAddSsid(raw, payload);
+    const tasks = [];
+    if (plan.needsObject) {
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const addTask = await addObject(settings, cleanId, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration');
+        tasks.push({ step: 'add-object', task: addTask });
+        await assertNoTaskFault(settings, cleanId, addTask, 'Tambah object SSID');
+        await delay(1800);
+        raw = await getRawDevice(settings, cleanId, { refresh: true });
+        if (genieAcsWifi.wlanConfiguration(raw, plan.index)) break;
+      }
+    }
+    if (!genieAcsWifi.wlanConfiguration(raw, plan.index)) {
+      throw new Error(`WLANConfiguration.${plan.index} belum tersedia setelah addObject`);
+    }
+    const currentOptions = genieAcsWifi.addSsidOptions(raw);
+    const currentBand = currentOptions.bands.find((item) => item.value === plan.band);
+    if (Number(currentBand?.nextIndex || 0) !== Number(plan.index)) {
+      throw new Error(`SSID${plan.index} sudah dipakai sebelum konfigurasi selesai`);
+    }
+
+    const batches = genieAcsWifi.addSsidBatches(raw, plan.index, plan);
+    for (const batch of batches) {
+      const taskResult = await setParameterValues(settings, cleanId, batch.values);
+      tasks.push({ step: batch.name, task: taskResult });
+      await assertNoTaskFault(settings, cleanId, taskResult, `Tambah SSID tahap ${batch.name}`);
+    }
+    clearDeviceListCache();
+
+    try {
+      await refreshDevice(settings, cleanId);
+      await delay(1200);
+    } catch {
+      // Inform task berikutnya tetap dapat memperbarui hasil provisioning.
+    }
+
+    let readback = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      if (attempt > 1) await delay(1200);
+      raw = await getRawDevice(settings, cleanId, { refresh: true });
+      readback = { ...genieAcsWifi.readbackStatus(raw, plan), attempt };
+      if (readback.verified) break;
+    }
+
+    let binding = null;
+    const targetWan = cleanText(payload.targetWan);
+    if (payload.bindToWan === true && targetWan) {
+      if (!readback?.verified) {
+        binding = {
+          targetWan,
+          pending: true,
+          verified: false,
+          message: `SSID${plan.index} belum terverifikasi sehingga binding WAN belum diterapkan`
+        };
+      } else {
+        const summary = genieAcsWan.summarizeWanConnections(raw, payload.preferredUsername || '');
+        const target = summary.rows.find((row) => row.id === targetWan);
+        if (!target || !target.editable || target.protected) throw new Error('Target WAN binding tidak tersedia atau dilindungi');
+        const bindings = [...new Set([...(target.bindings || []), `SSID${plan.index}`])];
+        const bindingPlan = genieAcsWan.prepareWanProvision(raw, {
+          targetWan,
+          mode: target.mode,
+          vlan: target.vlan,
+          username: target.username,
+          bindings,
+          moveBindings: payload.moveBindings === true,
+          preferredUsername: payload.preferredUsername || ''
+        });
+        if (bindingPlan.enableBindingValues.length) {
+          const enableTask = await setParameterValues(settings, cleanId, bindingPlan.enableBindingValues);
+          tasks.push({ step: 'binding-enable', task: enableTask });
+          await assertNoTaskFault(settings, cleanId, enableTask, 'Aktifkan SSID sebelum binding');
+          await delay(1400);
+        }
+        const bindingTask = await setParameterValues(settings, cleanId, bindingPlan.bindingValues);
+        tasks.push({ step: 'binding', task: bindingTask });
+        await assertNoTaskFault(settings, cleanId, bindingTask, 'Binding SSID ke WAN');
+        if (bindingPlan.cleanupValues.length) {
+          const cleanupTask = await setParameterValues(settings, cleanId, bindingPlan.cleanupValues);
+          tasks.push({ step: 'binding-cleanup', task: cleanupTask });
+          await assertNoTaskFault(settings, cleanId, cleanupTask, 'Bersihkan binding WAN lama');
+        }
+        binding = {
+          targetWan,
+          targetLabel: target.label,
+          bindings,
+          verified: false
+        };
+        clearDeviceListCache();
+        try {
+          await refreshDevice(settings, cleanId);
+          await delay(1200);
+        } catch {
+          // Readback akan memakai inform modem terakhir yang tersedia.
+        }
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          if (attempt > 1) await delay(1200);
+          const bindingRaw = await getRawDevice(settings, cleanId, { refresh: true });
+          const updated = genieAcsWan.summarizeWanConnections(bindingRaw, payload.preferredUsername || '').rows
+            .find((row) => row.id === targetWan);
+          const bindingReadback = wanReadbackVerification(bindingPlan, updated);
+          binding.verified = bindingReadback.verified;
+          binding.checks = bindingReadback.checks;
+          binding.attempt = attempt;
+          if (binding.verified) break;
+        }
+      }
+    }
+
+    clearDeviceListCache();
+    try {
+      await refreshDevice(settings, cleanId);
+    } catch {
+      // Task utama sudah diterima; refresh berikutnya dapat dilakukan manual.
+    }
+    return {
+      ok: true,
+      ssid: {
+        index: plan.index,
+        name: plan.ssid,
+        band: plan.bandLabel,
+        security: plan.security,
+        verified: readback?.verified === true
+      },
+      binding,
+      taskCount: tasks.length,
+      taskIds: tasks.map((item) => cleanText(item?.task?._id || item?._id)).filter(Boolean)
+    };
   });
 }
 
@@ -1170,18 +1812,24 @@ function wifiBaseFromPasswordParameter(path = '') {
   ]).replace(/(\.PreSharedKey\.1\.KeyPassphrase|\.KeyPassphrase)$/, '');
 }
 
-async function setWifiCredentials(settings = {}, deviceId = '', payload = {}) {
+function wifiCredentialsPlan(device = {}, payload = {}) {
   const cleanSsid = cleanText(payload.ssid);
   if (cleanSsid.length < 1 || cleanSsid.length > 32) {
     throw new Error('Nama WiFi/SSID wajib 1-32 karakter');
   }
   const ssidParameter = assertWifiParameter(payload.ssidParameter || payload.parameter, ['.SSID']);
   const base = wifiBaseFromSsidParameter(ssidParameter);
+  const index = Number(base.match(/\.WLANConfiguration\.(\d+)$/)?.[1] || 0);
+  const enabled = payload.enabled !== false;
+  const security = payload.usePassword === false ? 'none' : 'pass';
   const values = [
-    [`${base}.Enable`, true, 'xsd:boolean'],
+    [`${base}.Enable`, enabled, 'xsd:boolean'],
     [ssidParameter, cleanSsid, 'xsd:string'],
     [`${base}.BasicEncryptionModes`, payload.usePassword === false ? 'None' : 'AESEncryption', 'xsd:string']
   ];
+  if (enabled && getPathState(device, `${base}.RadioEnabled`).exists) {
+    values.push([`${base}.RadioEnabled`, true, 'xsd:boolean']);
+  }
   const cleanPassword = cleanText(payload.password);
   if (payload.usePassword !== false && cleanPassword) {
     if (cleanPassword.length < 8 || cleanPassword.length > 63) {
@@ -1208,12 +1856,72 @@ async function setWifiCredentials(settings = {}, deviceId = '', payload = {}) {
       [`${base}.BasicAuthenticationMode`, 'OpenSystem', 'xsd:string']
     );
   }
-  const result = await task(settings, deviceId, {
-    name: 'setParameterValues',
-    parameterValues: values
+  return {
+    base,
+    cleanSsid,
+    enabled,
+    index,
+    security,
+    password: security === 'pass' ? cleanPassword : '',
+    ssidParameter,
+    values
+  };
+}
+
+async function setWifiCredentials(settings = {}, deviceId = '', payload = {}) {
+  const cleanId = cleanText(deviceId);
+  return withDeviceMutationLock(cleanId, 'Konfigurasi WiFi', async () => {
+    let raw = await getRawDevice(settings, cleanId, { refresh: true });
+    if (!raw) throw new Error('Perangkat GenieACS tidak ditemukan');
+    const plan = wifiCredentialsPlan(raw, payload);
+    const taskResult = await task(settings, cleanId, {
+      name: 'setParameterValues',
+      parameterValues: plan.values
+    });
+    await assertNoTaskFault(settings, cleanId, taskResult, 'Konfigurasi WiFi');
+    clearDeviceListCache();
+    try {
+      await refreshDevice(settings, cleanId);
+    } catch {
+      // Task utama tetap berada di antrean GenieACS.
+    }
+    let verification = {
+      verified: false,
+      informed: false
+    };
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await delay(attempt === 1 ? 1200 : 1000);
+      try {
+        raw = await getRawDevice(settings, cleanId, { refresh: true });
+        const actualSsid = cleanText(getPathState(raw, plan.ssidParameter).value);
+        const enableState = getPathState(raw, `${plan.base}.Enable`);
+        const actualEnabled = enableState.exists ? truthyWifiValue(enableState.value) : null;
+        const config = genieAcsWifi.wlanConfiguration(raw, plan.index);
+        const security = genieAcsWifi._internal.readbackSecurity(config || {}, plan);
+        verification = {
+          verified: actualSsid === plan.cleanSsid
+            && actualEnabled === plan.enabled
+            && security.securityVerified
+            && security.passwordVerified,
+          informed: Boolean(actualSsid || enableState.exists),
+          attempt,
+          actualSsid,
+          actualEnabled,
+          ...security
+        };
+        if (verification.verified) break;
+      } catch {
+        verification.attempt = attempt;
+      }
+    }
+    return {
+      ok: true,
+      ssid: plan.cleanSsid,
+      enabled: plan.enabled,
+      verification,
+      taskId: cleanText(taskResult?._id)
+    };
   });
-  clearDeviceListCache();
-  return result;
 }
 
 async function setWifiSsidAndOptionalPassword(settings = {}, deviceId = '', payload = {}) {
@@ -1312,18 +2020,38 @@ module.exports = {
   DEFAULT_WIFI_PASSWORD_PARAMETERS,
   DEFAULT_WIFI_SSID_PARAMETERS,
   configured,
+  configureWan,
+  addWifiSsid,
   deleteDevice,
   findDevice,
   filterRowsByNas,
   getDevice,
+  getRawDevice,
+  getWanConfiguration,
+  getWifiConfiguration,
   listDevices,
   normalizeDevice,
   normalizeSettings,
+  recentPendingDevices,
   reboot,
   refreshDevice,
   setPppCredentials,
   setWifiCredentials,
   setWifiSsidAndOptionalPassword,
   setWifiPassword,
-  setWifiSsid
+  setWifiSsid,
+  _internal: {
+    clearDeviceListCache,
+    deviceListProjection,
+    mergeProjectedRows,
+    projectionChunks,
+    recentPendingCandidate,
+    recentPendingProjection,
+    recentPppState,
+    searchQuery,
+    sameStringSet,
+    wanReadbackVerification,
+    wifiCredentialsPlan,
+    wifiSecurityEnabled
+  }
 };
