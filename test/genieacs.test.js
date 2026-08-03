@@ -1022,6 +1022,7 @@ test('keeps GenieACS popup feedback mobile-safe without exposing WiFi passwords'
   assert.match(appSource, /id="genieWifiSecurity"/);
   assert.match(appSource, /submitButton\.textContent = 'Sudah dikirim'/);
   assert.match(appSource, /element\.scrollIntoView/);
+  assert.match(appSource, /const layoutClasses = \['field', 'full'\]/);
   assert.match(wanSource, /const sortedWanRows = \[\.\.\.wanRows\]\.sort/);
   assert.match(wanSource, /id="genieWanFormTitle"/);
   assert.match(wanSource, /Edit WAN \$\{selected\.label\}/);
@@ -1056,6 +1057,7 @@ test('keeps GenieACS popup feedback mobile-safe without exposing WiFi passwords'
   assert.match(serverSource, /genieAcsClientsMatch/);
   assert.match(serverSource, /Konfigurasi WAN GenieACS gagal/);
   assert.match(styleSource, /\.genie-operation-status\[data-state="loading"\]/);
+  assert.match(styleSource, /\.genie-wan-form-layout > \.genie-operation-status \{[\s\S]*?grid-column: 1 \/ -1;[\s\S]*?width: 100%;/);
   assert.match(styleSource, /\.genie-wan-row\.is-protected/);
   assert.match(styleSource, /\.genieacs-provision-table/);
   assert.match(styleSource, /\.genieacs-provision-row/);

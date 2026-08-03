@@ -15868,9 +15868,12 @@ dialog::backdrop {
 
 .genie-wan-form-layout > .genie-operation-status {
   align-items: center;
+  box-sizing: border-box;
   column-gap: 16px;
+  grid-column: 1 / -1;
   grid-template-columns: minmax(210px, auto) minmax(0, 1fr);
   margin-bottom: 0;
+  width: 100%;
 }
 
 .genie-wan-form-layout > .genie-operation-status strong,

@@ -14445,7 +14445,8 @@ function genieAcsRedamanLabel(value = 'all') {
 function setGenieModalStatus(element, state = 'loading', title = '', detail = '') {
   if (!element) return;
   const tone = state === 'success' ? 'positive' : (state === 'error' ? 'error' : (state === 'pending' ? 'warning' : ''));
-  element.className = `notice genie-operation-status ${tone}`.trim();
+  const layoutClasses = ['field', 'full'].filter((className) => element.classList.contains(className));
+  element.className = ['notice', 'genie-operation-status', ...layoutClasses, tone].filter(Boolean).join(' ');
   element.dataset.state = state;
   element.setAttribute('role', state === 'error' ? 'alert' : 'status');
   element.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false');
