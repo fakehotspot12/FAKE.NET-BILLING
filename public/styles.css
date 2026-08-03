@@ -15858,7 +15858,19 @@ dialog::backdrop {
 }
 
 .genie-wan-form-layout > .genie-operation-status {
+  align-items: center;
+  column-gap: 16px;
+  grid-template-columns: minmax(210px, auto) minmax(0, 1fr);
   margin-bottom: 0;
+}
+
+.genie-wan-form-layout > .genie-operation-status strong,
+.genie-wan-form-layout > .genie-operation-status span {
+  min-width: 0;
+}
+
+.genie-wan-form-layout > .genie-operation-status strong {
+  white-space: nowrap;
 }
 
 .genie-wan-device {
@@ -16044,6 +16056,15 @@ dialog::backdrop {
 @media (max-width: 760px) {
   .genie-wan-form-layout {
     grid-template-columns: 1fr;
+  }
+
+  .genie-wan-form-layout > .genie-operation-status {
+    align-items: initial;
+    grid-template-columns: 1fr;
+  }
+
+  .genie-wan-form-layout > .genie-operation-status strong {
+    white-space: normal;
   }
 
   .genie-wan-row {
