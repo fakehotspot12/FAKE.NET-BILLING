@@ -132,7 +132,7 @@ Installer juga menyiapkan Tesseract OCR untuk pembacaan Nomor KTP dari foto pela
 - Payment Gateway terpusat untuk paket bulanan dan voucher. Provider awal: Tripay, struktur siap untuk provider lain.
 - Whatsapp Gateway API memakai WAHA lokal: template, pesan terkirim, resend, broadcast, dan notifikasi tagihan/voucher.
 - Monitoring: Site/NAS, pelanggan online, tagihan pelanggan, member, dan GenieACS.
-- GenieACS lokal: manajemen ONU, redaman, suhu, status perangkat, SSID/password, reboot, dan portal WifiKu.
+- GenieACS lokal: manajemen ONU, redaman, suhu, status perangkat, provisioning WAN, binding LAN/SSID, pengaturan WiFi, reboot, dan portal WifiKu.
 - Portal publik:
   - Isolir untuk pelanggan yang ditangguhkan.
   - Voucher untuk pembelian voucher Hotspot.

@@ -510,7 +510,7 @@ test('defaults WAN editing to an existing connection and keeps the earliest brid
   assert.equal(genieAcsWan.defaultWanTarget(bridgeOnly, 'pppoe'), null);
 });
 
-test('detects newly registered ONT from registration and WAN readiness like Portal Tech', () => {
+test('detects newly registered ONT from registration and WAN readiness', () => {
   const noWanDevice = huaweiMultiWanDevice();
   noWanDevice._registered = '2026-08-02T15:39:39.287Z';
   delete noWanDevice.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[2];
@@ -575,7 +575,7 @@ test('searches GenieACS by SN, tag, SSID, and PPPoE while rejecting short scans'
   assert.equal(fields.includes('InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username._value'), true);
 });
 
-test('recognizes Portal Tech bridge profiles stored below WANPPPConnection', () => {
+test('recognizes bridge profiles stored below WANPPPConnection', () => {
   const device = huaweiMultiWanDevice();
   device.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[4] = {
     WANPPPConnection: {
@@ -625,7 +625,7 @@ test('updates WAN bindings without rewriting VLAN or PPPoE credentials', () => {
   assert.equal(publicPlan.bindingOnly, true);
 });
 
-test('selects the matching WAN automatically like Portal Tech Set WAN', () => {
+test('selects the matching WAN automatically during provisioning', () => {
   const device = huaweiMultiWanDevice();
   const pppoe = genieAcsWan.prepareWanProvision(device, {
     targetWan: 'auto',
@@ -666,7 +666,7 @@ test('rebases a new WAN plan to instance numbers returned by the modem', () => {
   assert.equal(plan.parameterValues.some(([path]) => path.endsWith('.Enable')), false);
 });
 
-test('chooses the bridge container used by Portal Tech devices in production', () => {
+test('chooses the bridge container used by supported devices in production', () => {
   const huawei = genieAcsWan.bridgeTarget(huaweiMultiWanDevice());
   const fiberhome = genieAcsWan.bridgeTarget({
     _deviceId: {
@@ -706,7 +706,7 @@ test('blocks ZTE F67x Set WAN until its separate PortBinding table is available'
   }), /PortBinding LANInterface\/WANInterface/);
 });
 
-test('keeps Portal Tech LAN and SSID bindings together for bridge WAN', () => {
+test('keeps LAN and SSID bindings together for bridge WAN', () => {
   const device = huaweiMultiWanDevice();
   const summary = genieAcsWan.summarizeWanConnections(device);
   const bridge = summary.rows.find((row) => row.mode === 'bridge');
@@ -730,7 +730,7 @@ test('keeps Portal Tech LAN and SSID bindings together for bridge WAN', () => {
   assert.equal(parameters.get('InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Enable'), true);
 });
 
-test('allows an empty binding selection like Portal Tech Set WAN', () => {
+test('allows an empty binding selection during WAN provisioning', () => {
   const device = huaweiMultiWanDevice();
   const bridge = genieAcsWan.summarizeWanConnections(device).rows
     .find((row) => row.mode === 'bridge');
@@ -943,7 +943,7 @@ test('builds explicit enable and disable values when editing an SSID', () => {
   assert.equal(enabledValues.get(`${base}.PreSharedKey.1.KeyPassphrase`), 'passwordbaru');
 });
 
-test('builds Portal Tech SSID task order and verifies readback', () => {
+test('builds the SSID task order and verifies readback', () => {
   const device = wifiAddDevice('FiberHome');
   const plan = genieAcsWifi.prepareAddSsid(device, {
     band: '2.4ghz',
