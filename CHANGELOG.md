@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.1] - 2026-08-09
+
+### Fixed
+
+- Navigasi mobile disamakan dengan pola Billcob: hamburger atas disembunyikan dan drawer menu hanya dibuka melalui navigasi bawah.
+- Navigasi desktop tetap mempertahankan tombol hamburger untuk membuka atau menciutkan sidebar.
+
 ## [4.1.0] - 2026-08-09
 
 ### Changed

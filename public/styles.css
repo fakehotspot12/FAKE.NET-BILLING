@@ -16407,6 +16407,10 @@ dialog::backdrop {
 
 /* Final mobile containment: late legacy table rules must not widen card views. */
 @media (max-width: 760px) {
+  .menu-toggle {
+    display: none;
+  }
+
   #app,
   #app > *,
   .stack,
