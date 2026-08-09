@@ -12,7 +12,41 @@ const USAGE_STATE_TABLE = 'fakenet_radius_usage_state';
 const DEFAULT_USAGE_RETENTION_DAYS = 370;
 const DEFAULT_USAGE_15M_RETENTION_HOURS = 72;
 const DEFAULT_USAGE_DAILY_VIEW_DAYS = 31;
+const RESTRICTED_SESSION_CACHE_MS = Math.max(2_000, Math.min(15_000, Number(process.env.RADIUS_RESTRICTED_SESSION_CACHE_MS || 8_000) || 8_000));
 let memorySessionCache = null;
+const restrictedSessionCache = new Map();
+
+function restrictedSessionCacheKey(usernames = []) {
+  return [...new Set((usernames || []).map((username) => cleanText(username).toLowerCase()).filter(Boolean))]
+    .sort()
+    .join('\u0000');
+}
+
+function getRestrictedSessionCache(usernames = [], maxAgeSeconds = 0) {
+  const key = restrictedSessionCacheKey(usernames);
+  const cached = key ? restrictedSessionCache.get(key) : null;
+  const maxAgeMs = maxAgeSeconds > 0
+    ? Math.min(RESTRICTED_SESSION_CACHE_MS, maxAgeSeconds * 1000)
+    : RESTRICTED_SESSION_CACHE_MS;
+  if (!cached || Date.now() - cached.at > maxAgeMs) {
+    if (key) restrictedSessionCache.delete(key);
+    return null;
+  }
+  return {
+    ...cached.payload,
+    cacheAgeSeconds: Math.max(0, Math.round((Date.now() - cached.at) / 1000)),
+    source: 'freeradius-radacct-page-cache'
+  };
+}
+
+function setRestrictedSessionCache(usernames = [], payload = {}) {
+  const key = restrictedSessionCacheKey(usernames);
+  if (!key) return;
+  restrictedSessionCache.set(key, { at: Date.now(), payload });
+  while (restrictedSessionCache.size > 100) {
+    restrictedSessionCache.delete(restrictedSessionCache.keys().next().value);
+  }
+}
 
 function enabled() {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env.FREERADIUS_SYNC_ENABLED || '').toLowerCase());
@@ -110,8 +144,13 @@ function cloneJson(value = {}) {
   }
 }
 
-function activeSessionsQuery(limit, columns = new Set()) {
+function activeSessionsQuery(limit, columns = new Set(), usernames = []) {
   const rowLimit = clampLimit(limit);
+  const usernameValues = [...new Set((usernames || []).map((username) => cleanText(username).toLowerCase()).filter(Boolean))]
+    .slice(0, 5000);
+  const usernameFilter = usernameValues.length
+    ? `AND lower(radacct.username) IN (${usernameValues.map(sqlLiteral).join(',')})`
+    : '';
   const staleSeconds = sessionStaleSeconds();
   const staleFilter = staleSeconds > 0
     ? `AND COALESCE(radacct.acctupdatetime, radacct.acctstarttime) >= (now() - (${staleSeconds} * interval '1 second'))`
@@ -148,6 +187,7 @@ WITH active_ranked AS (
     ) AS active_rank
   FROM radacct
   WHERE radacct.acctstoptime IS NULL
+    ${usernameFilter}
     ${staleFilter}
 )
 SELECT COALESCE(json_agg(row_to_json(active_sessions)), '[]'::json)::text
@@ -1095,7 +1135,12 @@ async function activeSessions(options = {}) {
       error: 'FREERADIUS_DATABASE_URL belum diisi'
     };
   }
-  if (options.preferCache && options.allowCache !== false) {
+  const restrictedUsernames = [...new Set((options.usernames || []).map((username) => cleanText(username)).filter(Boolean))];
+  if (restrictedUsernames.length && options.allowCache !== false) {
+    const cached = getRestrictedSessionCache(restrictedUsernames, Number(options.maxCacheAgeSeconds || 0));
+    if (cached) return cached;
+  }
+  if (!restrictedUsernames.length && options.preferCache && options.allowCache !== false) {
     const cached = await cachedSessions('');
     const maxCacheAgeSeconds = Math.max(0, Number(options.maxCacheAgeSeconds || 0) || 0);
     if (cached && (!maxCacheAgeSeconds || Number(cached.cacheAgeSeconds || 0) <= maxCacheAgeSeconds)) {
@@ -1108,7 +1153,7 @@ async function activeSessions(options = {}) {
   }
   try {
     const columns = await radacctColumns();
-    const rows = await psqlJson(activeSessionsQuery(options.limit || 1000, columns));
+    const rows = await psqlJson(activeSessionsQuery(options.limit || 1000, columns, restrictedUsernames));
     const payload = {
       ok: true,
       enabled: true,
@@ -1117,11 +1162,14 @@ async function activeSessions(options = {}) {
       staleCutoffSeconds: sessionStaleSeconds(),
       rows: rows.map(normalizeSession)
     };
-    await cacheSessions(payload);
+    if (restrictedUsernames.length) setRestrictedSessionCache(restrictedUsernames, payload);
+    else await cacheSessions(payload);
     return payload;
   } catch (error) {
     if (options.allowCache !== false) {
-      const cached = await cachedSessions(error.message || 'Session FreeRADIUS tidak bisa dibaca');
+      const cached = restrictedUsernames.length
+        ? getRestrictedSessionCache(restrictedUsernames)
+        : await cachedSessions(error.message || 'Session FreeRADIUS tidak bisa dibaca');
       if (cached) return cached;
     }
     return {

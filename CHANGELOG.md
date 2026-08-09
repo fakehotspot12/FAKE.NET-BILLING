@@ -2,6 +2,38 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.0.0] - 2026-08-09
+
+### Changed
+
+- Navigasi desktop dan mobile dikelompokkan ulang menjadi Dashboard, Pelanggan, RADIUS, Keuangan, Monitoring, Pengaturan, dan Admin Sistem tanpa mengubah izin role yang sudah berlaku.
+- Pengaturan siklus billing dipisahkan dari Isolir Radius agar setiap halaman hanya memuat konfigurasi yang relevan.
+- Tabel operasional utama berubah menjadi daftar kartu ringkas pada layar kecil; kolom teknis disembunyikan tanpa menghilangkan aksi penting.
+- Pilihan jumlah baris dibatasi ke 10, 25, 50, atau 100. Opsi `All` dihapus dari daftar besar agar browser dan API tidak memuat seluruh data sekaligus.
+
+### Performance
+
+- Pelanggan, aktivitas, pemasukan, dan pengeluaran memakai pagination langsung dari tabel PostgreSQL dengan filter dan pencarian terindeks.
+- Pelanggan online hanya mengambil sesi FreeRADIUS untuk user pada halaman aktif, bukan seluruh sesi pada setiap refresh.
+- Hasil sesi halaman aktif disimpan maksimal delapan detik dalam cache memory terbatas agar refresh berulang tidak membebani SQL Radius.
+- GenieACS memakai projection ringkas untuk summary dan mengambil detail perangkat per halaman langsung dari NBI, dengan fallback kompatibel bila NBI lama menolak paging.
+- Payment Gateway, laporan, invoice, member, dan daftar operasional lain mengirim maksimal 100 baris per request serta memakai cache server yang sudah dibatasi.
+
+### Data Safety
+
+- Koleksi pengeluaran dan pemasukan eksternal dipindahkan ke tabel terpisah dengan migrasi schema v3 yang mempertahankan seluruh data schema v2.
+- Indeks PostgreSQL ditambahkan untuk status, periode, tanggal, nama, username, invoice, pembayaran, pesan Whatsapp, dan log aktivitas.
+
+### Security
+
+- `sharp` dan `brace-expansion` diperbarui ke rilis aman; audit dependency produksi tidak menyisakan advisory yang diketahui.
+
+### Fixed
+
+- Monitoring pelanggan online, GenieACS, Payment Gateway, pemasukan, dan pengeluaran tidak lagi mengirim payload penuh ke browser hanya untuk dipotong di frontend.
+- Migrasi storage menjaga koleksi lama tetap menjadi sumber otoritatif sekaligus membawa kas yang sebelumnya masih tersimpan di core.
+- Hash atau last-page kosong tidak lagi membuat Dashboard menampilkan halaman tidak tersedia setelah login atau refresh.
+
 ## [3.1.1] - 2026-08-03
 
 ### Performance

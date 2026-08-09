@@ -665,6 +665,13 @@ function deviceListProjection(cfg = normalizeSettings({})) {
   return [...paths].join(',');
 }
 
+function deviceSummaryProjection(cfg = normalizeSettings({})) {
+  const paths = new Set(['_id', '_lastInform']);
+  (cfg.usernameParameters || []).forEach((path) => cleanText(path) && paths.add(cleanText(path)));
+  (cfg.rxPowerParameters || []).forEach((path) => cleanText(path) && paths.add(cleanText(path)));
+  return [...paths].join(',');
+}
+
 function recentPendingProjection(cfg = normalizeSettings({})) {
   const paths = new Set([
     '_id',
@@ -1268,6 +1275,18 @@ function searchQuery(search = '') {
   };
 }
 
+function usernameSuffixExclusionQuery(cfg = normalizeSettings({})) {
+  const suffixes = Array.isArray(cfg.excludeUsernameSuffixes) ? cfg.excludeUsernameSuffixes.map(cleanText).filter(Boolean) : [];
+  const paths = Array.isArray(cfg.usernameParameters) ? cfg.usernameParameters.map(cleanText).filter(Boolean) : [];
+  if (!suffixes.length || !paths.length) return {};
+  const escapedSuffixes = suffixes.map((suffix) => suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return {
+    $nor: paths.flatMap((path) => escapedSuffixes.map((suffix) => ({
+      [`${path}._value`]: { $regex: `${suffix}$`, $options: 'i' }
+    })))
+  };
+}
+
 function filterRowsByNas(rows = [], selectedNas = 'all') {
   const selected = cleanText(selectedNas).toLowerCase();
   if (!selected || selected === 'all') return rows;
@@ -1281,6 +1300,87 @@ async function listDevices(settings = {}, options = {}) {
   const query = searchQuery(search);
   const status = cleanText(options.status || 'all').toLowerCase();
   const redaman = cleanText(options.redaman || 'all').toLowerCase();
+  const page = Math.max(1, Number(options.page || 1) || 1);
+  const requestedLimit = cleanText(options.limit).toLowerCase() === 'all'
+    ? Number.MAX_SAFE_INTEGER
+    : Number(options.limit || 10) || 10;
+  const limit = requestedLimit >= 1000000
+    ? Number.MAX_SAFE_INTEGER
+    : Math.max(1, Math.min(100, requestedLimit));
+  const sourcePagination = options.sourcePagination === true
+    && !search
+    && status === 'all'
+    && redaman === 'all'
+    && limit !== Number.MAX_SAFE_INTEGER;
+  if (sourcePagination) {
+    try {
+      const sourceQuery = usernameSuffixExclusionQuery(cfg);
+      const summaryRawRows = await cachedDeviceRows(
+        cfg,
+        sourceQuery,
+        deviceSummaryProjection(cfg),
+        options.refresh === true,
+        { sort: JSON.stringify({ _registered: -1 }) }
+      );
+      const summaryRows = (Array.isArray(summaryRawRows) ? summaryRawRows : [])
+        .map((device) => normalizeDevice(device, cfg))
+        .filter((row) => !rowExcludedByUsernameSuffix(row, cfg.excludeUsernameSuffixes));
+      const total = summaryRows.length;
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      const currentPage = Math.min(page, totalPages);
+      const rawRows = await cachedDeviceRows(
+        cfg,
+        sourceQuery,
+        deviceListProjection(cfg),
+        options.refresh === true,
+        {
+          sort: JSON.stringify({ _registered: -1 }),
+          skip: String((currentPage - 1) * limit),
+          limit: String(limit)
+        }
+      );
+      const rows = (Array.isArray(rawRows) ? rawRows : [])
+        .map((device) => normalizeDevice(device, cfg))
+        .filter((row) => !rowExcludedByUsernameSuffix(row, cfg.excludeUsernameSuffixes));
+      const rxValues = summaryRows
+        .map((row) => row.rxPowerValue)
+        .filter((value) => Number.isFinite(Number(value)));
+      const rxAverage = rxValues.length
+        ? rxValues.reduce((sum, value) => sum + Number(value), 0) / rxValues.length
+        : null;
+      return {
+        ok: true,
+        enabled: cfg.enabled,
+        configured: configured(cfg),
+        baseUrl: cfg.baseUrl,
+        rows,
+        summary: {
+          total,
+          online: summaryRows.filter((row) => row.online).length,
+          offline: summaryRows.filter((row) => !row.online).length,
+          filtered: total,
+          redamanCount: rxValues.length,
+          redamanHighCount: highRedamanCount(rxValues),
+          redamanGoodCount: rxValues.filter((value) => redamanQuality(value) === 'good').length,
+          redamanNormalCount: rxValues.filter((value) => redamanQuality(value) === 'normal').length,
+          redamanHighThreshold: HIGH_REDAMAN_THRESHOLD_DBM,
+          redamanHighThresholdText: rxPowerSummaryText(HIGH_REDAMAN_THRESHOLD_DBM),
+          redamanAverage: rxAverage,
+          redamanAverageText: rxPowerSummaryText(rxAverage)
+        },
+        pagination: {
+          page: currentPage,
+          limit,
+          total,
+          totalPages,
+          hasPrev: currentPage > 1,
+          hasNext: currentPage < totalPages
+        }
+      };
+    } catch {
+      clearDeviceListCache();
+    }
+  }
   const rawRows = await cachedDeviceRows(
     cfg,
     query,
@@ -1307,13 +1407,6 @@ async function listDevices(settings = {}, options = {}) {
     ? rxValues.reduce((sum, value) => sum + Number(value), 0) / rxValues.length
     : null;
   const redamanHighCount = highRedamanCount(rxValues);
-  const page = Math.max(1, Number(options.page || 1) || 1);
-  const requestedLimit = cleanText(options.limit).toLowerCase() === 'all'
-    ? Number.MAX_SAFE_INTEGER
-    : Number(options.limit || 10) || 10;
-  const limit = requestedLimit >= 1000000
-    ? Number.MAX_SAFE_INTEGER
-    : Math.max(1, Math.min(100, requestedLimit));
   const total = filteredRows.length;
   const totalPages = limit === Number.MAX_SAFE_INTEGER ? 1 : Math.max(1, Math.ceil(total / limit));
   const currentPage = Math.min(page, totalPages);
@@ -2043,6 +2136,7 @@ module.exports = {
   _internal: {
     clearDeviceListCache,
     deviceListProjection,
+    deviceSummaryProjection,
     mergeProjectedRows,
     projectionChunks,
     recentPendingCandidate,
@@ -2050,6 +2144,7 @@ module.exports = {
     recentPppState,
     searchQuery,
     sameStringSet,
+    usernameSuffixExclusionQuery,
     wanReadbackVerification,
     wifiCredentialsPlan,
     wifiSecurityEnabled

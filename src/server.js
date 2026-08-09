@@ -72,7 +72,7 @@ const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
 const { BoundedJsonCache } = require('./bounded-json-cache');
 const { WhatsAppQueue } = require('./whatsapp-queue');
-const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
+const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, queryNormalizedPage, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
 
 const PORT = Number(process.env.PORT || 8891);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -106,7 +106,7 @@ const KTP_UPLOAD_ROOT = path.join(PRIVATE_ROOT, 'member-ktp');
 const WEB_PUSH_VAPID_PATH = path.join(APP_ROOT, 'data', 'webpush-vapid.json');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-08-03');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-08-09');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
@@ -1162,6 +1162,30 @@ function activityDateRangeFromQuery(url, settings = {}) {
     return from <= to ? { from, to } : { from: to, to: from };
   }
   return { from: '', to: '' };
+}
+
+function zonedDayBoundaryIso(dateIso = '', settings = {}, endOfDay = false) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateIso || ''))) return '';
+  const boundaryDate = endOfDay ? addDaysIso(dateIso, 1) : dateIso;
+  const [year, month, day] = boundaryDate.split('-').map(Number);
+  const desiredUtc = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  let guess = desiredUtc;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = localDateParts(new Date(guess), appTimeZone(settings || {}));
+    const representedUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour === '24' ? 0 : parts.hour),
+      Number(parts.minute),
+      0,
+      0
+    );
+    const nextGuess = guess + (desiredUtc - representedUtc);
+    if (nextGuess === guess) break;
+    guess = nextGuess;
+  }
+  return new Date(endOfDay ? guess - 1 : guess).toISOString();
 }
 
 function parseLocalTransactionTime(value) {
@@ -2544,6 +2568,16 @@ function paginationPayload(page, limit, total) {
     hasPrev: currentPage > 1,
     hasNext: currentPage < totalPages
   };
+}
+
+async function normalizedPageOrNull(collection = '', options = {}) {
+  if (!['postgres', 'postgresql'].includes(String(STORAGE_MODE || '').toLowerCase())) return null;
+  try {
+    return await queryNormalizedPage(collection, options);
+  } catch (error) {
+    console.error(`[pagination:${collection}] ${error.message || error}`);
+    return null;
+  }
 }
 
 function normalizeCustomerStatusLocal(value) {
@@ -7211,6 +7245,55 @@ function applyRadiusSessionsToMonitoringCustomers(data = {}, payload = {}, sessi
       sessionError: ''
     },
     sites
+  };
+}
+
+function monitoringCustomerPagePayload(payload = {}, options = {}) {
+  const type = String(options.type || 'pppoe').toLowerCase() === 'hotspot' ? 'hotspot' : 'pppoe';
+  const selectedSite = String(options.site || 'all').trim().toLowerCase();
+  const search = String(options.search || '').trim().toLowerCase();
+  const key = type === 'hotspot' ? 'hotspotUsers' : 'pppoeUsers';
+  const rows = (payload.sites || []).flatMap((site) => (Array.isArray(site[key]) ? site[key] : []).map((row, index) => ({
+    ...row,
+    id: row.id || `${site.id || site.name || 'site'}:${index}`,
+    siteId: row.siteId || site.id || site.name || 'site',
+    siteName: row.siteName || site.name || '-',
+    siteLocation: row.siteLocation || site.location || site.host || '',
+    host: row.host || site.host || ''
+  }))).filter((row) => {
+    if (selectedSite !== 'all' && ![row.siteId, row.siteName].some((value) => String(value || '').trim().toLowerCase() === selectedSite)) return false;
+    if (!search) return true;
+    return [
+      row.username,
+      row.interfaceName,
+      row.customerName,
+      row.profile,
+      row.ipAddress,
+      row.framedIpAddress,
+      row.staticIp,
+      row.macAddress,
+      row.nasIpAddress,
+      row.siteName,
+      row.siteLocation,
+      row.host
+    ].some((value) => String(value || '').toLowerCase().includes(search));
+  }).sort((left, right) => `${left.siteName || ''} ${left.username || ''}`.localeCompare(`${right.siteName || ''} ${right.username || ''}`, 'id', {
+    numeric: true,
+    sensitivity: 'base'
+  }));
+  const pagination = paginationPayload(options.page, options.limit, rows.length);
+  const offset = (pagination.page - 1) * pagination.limit;
+  return {
+    ...payload,
+    sites: (payload.sites || []).map((site) => {
+      const { pppoeUsers, hotspotUsers, ...summarySite } = site;
+      return summarySite;
+    }),
+    rows: rows.slice(offset, offset + pagination.limit),
+    type,
+    site: options.site || 'all',
+    search: options.search || '',
+    pagination
   };
 }
 
@@ -18016,7 +18099,38 @@ async function handleApi(req, res, url) {
     const type = String(url.searchParams.get('type') || 'all').trim().toLowerCase();
     const category = String(url.searchParams.get('category') || 'all').trim().toLowerCase();
     const dateRange = activityDateRangeFromQuery(url, data.settings || {});
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
+    const activityRole = String(authContext.user?.role || '').trim().toLowerCase();
+    if (category === 'all' && !TECHNICAL_ACTIVITY_ROLES.has(activityRole)) {
+      const directFilters = [];
+      if (type !== 'all') directFilters.push({ field: 'type', value: type, caseInsensitive: true });
+      if (dateRange.from) directFilters.push({ field: 'at', operator: 'gte', value: zonedDayBoundaryIso(dateRange.from, data.settings, false) });
+      if (dateRange.to) directFilters.push({ field: 'at', operator: 'lte', value: zonedDayBoundaryIso(dateRange.to, data.settings, true) });
+      const databasePage = await normalizedPageOrNull('activity', {
+        page,
+        limit,
+        filters: directFilters,
+        search,
+        searchFields: ['type', 'message', 'at'],
+        searchJson: true,
+        sortField: 'at',
+        sortDirection: 'desc'
+      });
+      if (databasePage) {
+        sendJson(res, 200, {
+          activity: databasePage.rows,
+          pagination: databasePage.pagination,
+          filters: {
+            range: String(url.searchParams.get('range') || 'all').trim().toLowerCase(),
+            category: 'all',
+            from: dateRange.from,
+            to: dateRange.to
+          },
+          checkedAt: new Date().toISOString()
+        });
+        return;
+      }
+    }
     const base = await cachedActivityBasePayload(data, authContext.user, {
       type,
       category,
@@ -18205,7 +18319,7 @@ async function handleApi(req, res, url) {
     const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
     const selectedNas = String(url.searchParams.get('nas') || url.searchParams.get('site') || 'all').trim();
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const base = await cachedMonthlyBillingBasePayload(data, period, selectedNas, authContext.user, {
       force: truthyQuery(url.searchParams.get('refresh'))
     });
@@ -18247,7 +18361,7 @@ async function handleApi(req, res, url) {
       profile: String(url.searchParams.get('profile') || '').trim(),
       method: String(url.searchParams.get('method') || '').trim()
     };
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const base = await cachedVoucherReportBasePayload(data, date.slice(0, 7), authContext.user, {
       force: truthyQuery(url.searchParams.get('refresh'))
     });
@@ -18315,7 +18429,7 @@ async function handleApi(req, res, url) {
     const methodFilter = String(url.searchParams.get('method') || 'all').trim().toLowerCase();
     const selectedNas = String(url.searchParams.get('nas') || url.searchParams.get('site') || 'all').trim();
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const base = await cachedMonthlyTransactionsBasePayload(data, period, authContext.user, {
       force: truthyQuery(url.searchParams.get('refresh'))
     });
@@ -18372,7 +18486,7 @@ async function handleApi(req, res, url) {
     const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
     const type = movementTypeFilter(url.searchParams.get('type'));
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const base = await cachedInventoryStockBasePayload(data, period, type, {
       force: truthyQuery(url.searchParams.get('refresh'))
     });
@@ -18397,13 +18511,29 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const data = authContext.data;
     const { status, search } = normalizeListQuery(url);
+    const { page, limit } = paginationParams(url, 10, 100);
+    const databasePage = await normalizedPageOrNull('customers', {
+      page,
+      limit,
+      filters: status === 'all' ? [] : [{ field: 'status', value: status, caseInsensitive: true }],
+      search,
+      searchFields: ['name', 'username', 'phone', 'whatsapp', 'address', 'packageName', 'code'],
+      sortField: 'name',
+      sortDirection: 'asc'
+    });
+    if (databasePage) {
+      sendJson(res, 200, { customers: databasePage.rows, pagination: databasePage.pagination });
+      return;
+    }
     let customers = [...data.customers];
     if (status !== 'all') {
       customers = customers.filter((customer) => customer.status === status);
     }
     customers = filterSearch(customers, search, ['name', 'username', 'phone', 'address', 'packageName']);
     customers.sort((a, b) => String(a.name || a.username).localeCompare(String(b.name || b.username)));
-    sendJson(res, 200, { customers });
+    const pagination = paginationPayload(page, limit, customers.length);
+    const offset = (pagination.page - 1) * limit;
+    sendJson(res, 200, { customers: customers.slice(offset, offset + limit), pagination });
     return;
   }
 
@@ -18428,6 +18558,7 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const data = authContext.data;
     const { period, status, search } = normalizeListQuery(url);
+    const { page, limit } = paginationParams(url, 10, 100);
     let invoices = data.invoices
       .filter((invoice) => invoiceCoversPeriod(invoice, period))
       .map((invoice) => ({
@@ -18447,7 +18578,9 @@ async function handleApi(req, res, url) {
         || String(a.dueDate || '').localeCompare(String(b.dueDate || ''))
         || String(a.customerName || a.username).localeCompare(String(b.customerName || b.username));
     });
-    sendJson(res, 200, { invoices });
+    const pagination = paginationPayload(page, limit, invoices.length);
+    const offset = (pagination.page - 1) * limit;
+    sendJson(res, 200, { invoices: invoices.slice(offset, offset + limit), pagination });
     return;
   }
 
@@ -18569,7 +18702,7 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/genieacs/devices') {
     const authContext = await requirePermission(req, res, 'genieacs:read');
     if (!authContext) return;
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const search = String(url.searchParams.get('search') || '').trim();
     const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
     const redaman = String(url.searchParams.get('redaman') || 'all').trim().toLowerCase();
@@ -18582,21 +18715,23 @@ async function handleApi(req, res, url) {
         url,
         ['customers', 'radiusUsers', 'monitoringTargets'],
         async () => {
+          const sourcePagination = !nas || nas.toLowerCase() === 'all';
           const payload = await genieAcs.listDevices(authContext.data.settings || {}, {
-            page: 1,
-            limit: 'all',
+            page: sourcePagination ? page : 1,
+            limit: sourcePagination ? limit : 'all',
             search,
             status,
             redaman,
-            refresh
+            refresh,
+            sourcePagination
           });
           const enrichedRows = await enrichGenieAcsRowsWithLocalData(authContext.data, payload.rows || [], currentPeriod());
-          const filteredRows = genieAcs.filterRowsByNas(enrichedRows, nas);
-          const pagination = paginationPayload(page, limit, filteredRows.length);
-          const offset = limit === Number.MAX_SAFE_INTEGER ? 0 : (pagination.page - 1) * limit;
-          const rows = limit === Number.MAX_SAFE_INTEGER
-            ? filteredRows
-            : filteredRows.slice(offset, offset + limit);
+          const filteredRows = sourcePagination ? enrichedRows : genieAcs.filterRowsByNas(enrichedRows, nas);
+          const pagination = sourcePagination
+            ? (payload.pagination || paginationPayload(page, limit, filteredRows.length))
+            : paginationPayload(page, limit, filteredRows.length);
+          const offset = sourcePagination ? 0 : (pagination.page - 1) * limit;
+          const rows = sourcePagination ? filteredRows : filteredRows.slice(offset, offset + limit);
           const nasOptions = freeradius.radiusNasEntries(authContext.data, { includeUnconfigured: true })
             .filter((item) => item.active !== false)
             .map((item) => ({
@@ -18610,7 +18745,7 @@ async function handleApi(req, res, url) {
             nasOptions,
             summary: {
               ...(payload.summary || {}),
-              filtered: filteredRows.length
+              filtered: sourcePagination ? Number(payload.pagination?.total || filteredRows.length) : filteredRows.length
             },
             pagination,
             settings: publicGenieAcsSettings(authContext.data.settings || {})
@@ -18996,6 +19131,21 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const data = authContext.data;
     const { period, search } = normalizeListQuery(url);
+    const { page, limit } = paginationParams(url, 10, 100);
+    const databasePage = await normalizedPageOrNull('expenses', {
+      page,
+      limit,
+      filters: [{ field: 'date', operator: 'prefix', value: period }],
+      search,
+      searchFields: ['category', 'payee', 'vendor', 'noteNo', 'itemName', 'description', 'paymentMethod'],
+      searchJson: true,
+      sortField: 'date',
+      sortDirection: 'desc'
+    });
+    if (databasePage) {
+      sendJson(res, 200, { expenses: databasePage.rows, pagination: databasePage.pagination });
+      return;
+    }
     const payload = await runtimeSearchCachedPayload(
       authContext,
       'expenses',
@@ -19013,7 +19163,10 @@ async function handleApi(req, res, url) {
             ].filter(Boolean).join(' ')).join(' ')
           }));
         expenses = filterSearch(expenses, search, ['category', 'payee', 'vendor', 'noteNo', 'itemName', 'description', 'paymentMethod', 'itemSearch']);
-        return { expenses: sortByDateDesc(expenses, 'date') };
+        const sorted = sortByDateDesc(expenses, 'date');
+        const pagination = paginationPayload(page, limit, sorted.length);
+        const offset = (pagination.page - 1) * limit;
+        return { expenses: sorted.slice(offset, offset + limit), pagination };
       }
     );
     sendJson(res, 200, payload);
@@ -19025,6 +19178,21 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const data = authContext.data;
     const { period, search } = normalizeListQuery(url);
+    const { page, limit } = paginationParams(url, 10, 100);
+    const databasePage = await normalizedPageOrNull('externalIncomes', {
+      page,
+      limit,
+      filters: [{ field: 'date', operator: 'prefix', value: period }],
+      search,
+      searchFields: ['receiptNo', 'category', 'payerName', 'itemName', 'description', 'paymentMethod'],
+      searchJson: true,
+      sortField: 'date',
+      sortDirection: 'desc'
+    });
+    if (databasePage) {
+      sendJson(res, 200, { externalIncomes: databasePage.rows, pagination: databasePage.pagination });
+      return;
+    }
     const payload = await runtimeSearchCachedPayload(
       authContext,
       'external-incomes',
@@ -19042,7 +19210,10 @@ async function handleApi(req, res, url) {
             ].filter(Boolean).join(' ')).join(' ')
           }));
         externalIncomes = filterSearch(externalIncomes, search, ['receiptNo', 'category', 'payerName', 'itemName', 'description', 'paymentMethod', 'itemSearch']);
-        return { externalIncomes: sortByDateDesc(externalIncomes, 'date') };
+        const sorted = sortByDateDesc(externalIncomes, 'date');
+        const pagination = paginationPayload(page, limit, sorted.length);
+        const offset = (pagination.page - 1) * limit;
+        return { externalIncomes: sorted.slice(offset, offset + limit), pagination };
       }
     );
     sendJson(res, 200, payload);
@@ -19158,7 +19329,7 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const data = authContext.data;
     const { status, search } = normalizeListQuery(url);
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const payload = await runtimeSearchCachedPayload(
       authContext,
       'inventory',
@@ -19452,7 +19623,49 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'monitoring:read');
     if (!authContext) return;
     const forceRefresh = truthyQuery(url.searchParams.get('refresh'));
+    const { page, limit } = paginationParams(url, 10, 100);
+    const pageOptions = {
+      page,
+      limit,
+      type: url.searchParams.get('type') || 'pppoe',
+      site: url.searchParams.get('site') || 'all',
+      search: url.searchParams.get('search') || ''
+    };
     try {
+      if (String(pageOptions.type).toLowerCase() === 'pppoe' && !String(pageOptions.search || '').trim()) {
+        const snmpPayload = await operations.mikrotikCustomerSummary(authContext.data.monitoringTargets || [], {
+          forceRefresh,
+          allowStale: !forceRefresh,
+          refreshInBackground: !forceRefresh
+        });
+        const pagedPayload = monitoringCustomerPagePayload(snmpPayload, pageOptions);
+        const usernames = (pagedPayload.rows || []).map((row) => row.username || row.interfaceName).filter(Boolean);
+        const sessionPayload = usernames.length
+          ? await freeradiusSessions.activeSessions({
+            usernames,
+            limit: Math.min(500, Math.max(25, usernames.length * 3)),
+            allowCache: !forceRefresh,
+            maxCacheAgeSeconds: forceRefresh ? 0 : 8
+          })
+          : { ok: true, source: 'freeradius-radacct', rows: [] };
+        const radiusRows = monitoringRadiusSessionRows(authContext.data, sessionPayload.rows || []);
+        const radiusRowsByKey = new Map(radiusRows
+          .map((row) => [monitoringCustomerRowKey(row, 'pppoe'), row])
+          .filter(([key]) => key));
+        pagedPayload.rows = (pagedPayload.rows || []).map((row) => enrichMonitoringCustomerRow(
+          row,
+          radiusRowsByKey.get(monitoringCustomerRowKey(row, 'pppoe')) || null,
+          'pppoe'
+        ));
+        pagedPayload.source = 'mikrotik-snmp+freeradius-radacct-page';
+        pagedPayload.summary = {
+          ...(pagedPayload.summary || {}),
+          sessionSource: sessionPayload.source || 'freeradius-radacct',
+          sessionError: sessionPayload.ok === false ? (sessionPayload.error || 'Session FreeRADIUS tidak bisa dibaca') : ''
+        };
+        sendJson(res, 200, pagedPayload);
+        return;
+      }
       const [snmpPayload, sessionPayload] = await Promise.all([
         operations.mikrotikCustomerSummary(authContext.data.monitoringTargets || [], {
           forceRefresh,
@@ -19471,7 +19684,8 @@ async function handleApi(req, res, url) {
           error: error.message || 'Session FreeRADIUS tidak bisa dibaca'
         }))
       ]);
-      sendJson(res, 200, applyRadiusSessionsToMonitoringCustomers(authContext.data, snmpPayload, sessionPayload));
+      const combinedPayload = applyRadiusSessionsToMonitoringCustomers(authContext.data, snmpPayload, sessionPayload);
+      sendJson(res, 200, monitoringCustomerPagePayload(combinedPayload, pageOptions));
     } catch (error) {
       sendJson(res, 200, {
         ok: false,
@@ -19493,7 +19707,9 @@ async function handleApi(req, res, url) {
           sessionSource: 'freeradius-radacct',
           sessionError: error.message || 'Session FreeRADIUS tidak bisa dibaca'
         },
-        sites: []
+        sites: [],
+        rows: [],
+        pagination: paginationPayload(page, limit, 0)
       });
     }
     return;
@@ -19517,7 +19733,7 @@ async function handleApi(req, res, url) {
       forbidden(res);
       return;
     }
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const result = await runtimeSearchCachedPayload(
       authContext,
       'radius-ppp-dhcp',
@@ -19858,7 +20074,7 @@ async function handleApi(req, res, url) {
       });
       return;
     }
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const lockedNas = resolveUserLockedNasList(authContext.data, authContext.user).filter((nas) => nas && nas.all !== true);
     const requestedNas = String(url.searchParams.get('nas') || '').trim();
     let resellerNasFilter = requestedNas;
@@ -20237,7 +20453,7 @@ async function handleApi(req, res, url) {
       forbidden(res);
       return;
     }
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const rows = radiusFilterRows(radiusNasRowsLocal(authContext.data), {
       search: String(url.searchParams.get('search') || '').trim()
     });
@@ -20338,7 +20554,7 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/monitoring/billing-unpaid') {
     const authContext = await requirePermission(req, res, 'billing-monitor:read');
     if (!authContext) return;
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+    const { page, limit } = paginationParams(url, 10, 100);
     const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
     const customerStatus = String(url.searchParams.get('customerStatus') || 'all').trim().toLowerCase();
     const site = String(url.searchParams.get('site') || 'all').trim();
@@ -20918,7 +21134,7 @@ async function handleApi(req, res, url) {
     const authContext = await requireAnyPermission(req, res, ['billing-monitor:read', 'members:read']);
     if (!authContext) return;
     if (standaloneMode(authContext.data)) {
-      const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
+      const { page, limit } = paginationParams(url, 10, 100);
       const query = {
         status: url.searchParams.get('status') || 'all',
         paymentType: url.searchParams.get('paymentType') || 'all',
@@ -21817,14 +22033,20 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'wa-gateway:manage');
     if (!authContext) return;
     const messages = Array.isArray(authContext.data.waMessages) ? authContext.data.waMessages : [];
-    const { page, limit } = paginationParams(url, 10, 100, { allowAll: true });
-    const pagination = paginationPayload(page, limit, messages.length);
+    const { page, limit } = paginationParams(url, 10, 100);
+    const databasePage = await normalizedPageOrNull('waMessages', {
+      page,
+      limit,
+      sortField: 'createdAt',
+      sortDirection: 'desc'
+    });
+    const pagination = databasePage?.pagination || paginationPayload(page, limit, messages.length);
     const offset = (pagination.page - 1) * limit;
     const queue = await waGatewayQueueStatus();
     sendJson(res, 200, {
       ok: true,
       settings: publicWaGatewaySettings(authContext.data.settings?.waGateway || {}),
-      messages: messages.slice(offset, offset + limit),
+      messages: databasePage?.rows || messages.slice(offset, offset + limit),
       pagination,
       queue,
       summary: {
@@ -22120,6 +22342,9 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const reportData = authContext.data;
     const currentSettings = reportData.settings?.paymentGateway || {};
+    const requestedTab = String(url.searchParams.get('tab') || 'transactions').trim().toLowerCase();
+    const tab = ['transactions', 'balance', 'pending', 'fees'].includes(requestedTab) ? requestedTab : 'transactions';
+    const { page, limit } = paginationParams(url, 10, 100);
     const historySync = {
       ok: !currentSettings.lastHistorySyncError,
       syncedAt: currentSettings.lastHistorySyncAt || '',
@@ -22136,6 +22361,16 @@ async function handleApi(req, res, url) {
       kind: url.searchParams.get('kind') || 'all',
       search: url.searchParams.get('search') || ''
     });
+    const rowsByTab = {
+      transactions: (report.transactions || []).filter((row) => !['pending', 'waiting', 'unpaid'].includes(String(row.status || '').toLowerCase())),
+      balance: report.balanceHistory || [],
+      pending: report.pending || [],
+      fees: report.reports || []
+    };
+    const selectedRows = rowsByTab[tab] || rowsByTab.transactions;
+    const pagination = paginationPayload(page, limit, selectedRows.length);
+    const offset = (pagination.page - 1) * limit;
+    const pagedRows = selectedRows.slice(offset, offset + limit);
     sendJson(res, 200, {
       ok: true,
       settings: publicPaymentGatewaySettings(reportData.settings?.paymentGateway || {}),
@@ -22149,7 +22384,14 @@ async function handleApi(req, res, url) {
         { value: 'ipaymu', label: 'iPaymu' },
         { value: 'custom', label: 'Custom' }
       ],
-      ...report,
+      transactions: tab === 'transactions' ? pagedRows : [],
+      balanceHistory: tab === 'balance' ? pagedRows : [],
+      pending: tab === 'pending' ? pagedRows : [],
+      reports: tab === 'fees' ? pagedRows : [],
+      summary: report.summary,
+      tab,
+      tabTotals: Object.fromEntries(Object.entries(rowsByTab).map(([key, rows]) => [key, rows.length])),
+      pagination,
       checkedAt: base.checkedAt || new Date().toISOString()
     });
     return;

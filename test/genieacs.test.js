@@ -9,6 +9,24 @@ const genieAcs = require('../src/genieacs');
 const genieAcsWan = require('../src/genieacs-wan');
 const genieAcsWifi = require('../src/genieacs-wifi');
 
+test('builds a compact GenieACS paging projection and suffix exclusion query', () => {
+  const settings = genieAcs.normalizeSettings({
+    usernameParameters: ['VirtualParameters.pppoeUsername'],
+    rxPowerParameters: ['VirtualParameters.RXPower'],
+    excludeUsernameSuffixes: ['@internal']
+  });
+  const projection = genieAcs._internal.deviceSummaryProjection(settings);
+  const query = genieAcs._internal.usernameSuffixExclusionQuery(settings);
+
+  assert.match(projection, /_id/);
+  assert.match(projection, /_lastInform/);
+  assert.match(projection, /WANPPPConnection\.1\.Username/);
+  assert.doesNotMatch(projection, /DeviceInfo\.Manufacturer/);
+  assert.ok(Array.isArray(query.$nor));
+  assert.ok(query.$nor.length >= 1);
+  assert.equal(query.$nor[0]['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username._value'].$regex, '@internal$');
+});
+
 test('normalizes GenieACS device wifi and optical parameters', () => {
   const lastInform = new Date().toISOString();
   const device = genieAcs.normalizeDevice({

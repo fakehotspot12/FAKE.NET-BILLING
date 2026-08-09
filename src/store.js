@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const fs = require('fs/promises');
 const path = require('path');
+const { Pool } = require('pg');
 const { promisify } = require('util');
 const redisCache = require('./redis-cache');
 
@@ -19,15 +20,25 @@ const APP_MODE = String(process.env.APP_MODE || 'standalone').toLowerCase();
 const BILLING_SOURCE = String(process.env.BILLING_SOURCE || 'local').toLowerCase();
 const STORE_CACHE_KEY = process.env.REDIS_STORE_KEY || `fakenet-billing:${process.env.NODE_ENV || 'dev'}:${STORAGE_MODE}:store:main`;
 const PSQL_MAX_BUFFER_BYTES = Math.min(256, Math.max(16, Number(process.env.STORE_PSQL_MAX_BUFFER_MB || 64) || 64)) * 1024 * 1024;
-const STORE_SCHEMA_VERSION = 2;
+const STORE_SCHEMA_VERSION = 3;
 const NORMALIZED_COLLECTIONS = Object.freeze({
   customers: 'app_customers',
   invoices: 'app_invoices',
   payments: 'app_payments',
   waMessages: 'app_wa_messages',
-  activity: 'app_activity'
+  activity: 'app_activity',
+  expenses: 'app_expenses',
+  externalIncomes: 'app_external_incomes'
 });
+const NORMALIZED_COLLECTIONS_V2 = new Set([
+  'customers',
+  'invoices',
+  'payments',
+  'waMessages',
+  'activity'
+]);
 let postgresReady = false;
+let postgresPoolInstance = null;
 let memoryStore = null;
 let memoryLoadPromise = null;
 let storeWriteQueue = Promise.resolve();
@@ -739,6 +750,110 @@ function databaseUrl() {
   return process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 }
 
+function postgresPool() {
+  if (!postgresEnabled()) return null;
+  if (postgresPoolInstance) return postgresPoolInstance;
+  const connectionString = databaseUrl();
+  if (!connectionString) {
+    throw new Error('DATABASE_URL wajib diisi untuk STORAGE=postgres');
+  }
+  postgresPoolInstance = new Pool({
+    connectionString,
+    max: Math.max(2, Math.min(20, Number(process.env.POSTGRES_POOL_MAX || 8) || 8)),
+    min: 0,
+    idleTimeoutMillis: Math.max(5_000, Number(process.env.POSTGRES_POOL_IDLE_MS || 30_000) || 30_000),
+    connectionTimeoutMillis: Math.max(1_000, Number(process.env.POSTGRES_POOL_CONNECT_MS || 5_000) || 5_000),
+    allowExitOnIdle: false
+  });
+  postgresPoolInstance.on('error', (error) => {
+    console.error(`[postgres-pool] ${error.message || error}`);
+  });
+  return postgresPoolInstance;
+}
+
+function normalizedCollectionTable(collection = '') {
+  return NORMALIZED_COLLECTIONS[String(collection || '')] || '';
+}
+
+function jsonFieldExpression(field = '') {
+  const pathParts = String(field || '').split('.').filter(Boolean);
+  if (!pathParts.length || pathParts.some((part) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(part))) {
+    throw new Error(`Field query tidak valid: ${field}`);
+  }
+  return pathParts.length === 1
+    ? `(data->>'${pathParts[0]}')`
+    : `(data#>>'{${pathParts.join(',')}}')`;
+}
+
+function normalizedPageWhere(options = {}) {
+  const clauses = [];
+  const values = [];
+  const addValue = (value) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  for (const filter of Array.isArray(options.filters) ? options.filters : []) {
+    if (!filter || filter.value === undefined || filter.value === null || filter.value === '' || filter.value === 'all') continue;
+    const expression = jsonFieldExpression(filter.field);
+    const operator = String(filter.operator || 'eq').toLowerCase();
+    if (operator === 'in') {
+      const list = Array.isArray(filter.value) ? filter.value.map(String).filter(Boolean) : [String(filter.value)];
+      if (list.length) clauses.push(`${filter.caseInsensitive ? `lower(${expression})` : expression} = any(${addValue(filter.caseInsensitive ? list.map((value) => value.toLowerCase()) : list)}::text[])`);
+    } else if (operator === 'prefix') {
+      clauses.push(`${filter.caseInsensitive ? `lower(${expression})` : expression} like ${addValue(`${filter.caseInsensitive ? String(filter.value).toLowerCase() : String(filter.value)}%`)}`);
+    } else if (operator === 'gte' || operator === 'lte') {
+      clauses.push(`${expression} ${operator === 'gte' ? '>=' : '<='} ${addValue(String(filter.value))}`);
+    } else {
+      clauses.push(`${filter.caseInsensitive ? `lower(${expression})` : expression} = ${addValue(filter.caseInsensitive ? String(filter.value).toLowerCase() : String(filter.value))}`);
+    }
+  }
+  const search = String(options.search || '').trim().toLowerCase();
+  const searchFields = Array.isArray(options.searchFields) ? options.searchFields.filter(Boolean) : [];
+  if (search && searchFields.length) {
+    const placeholder = addValue(`%${search}%`);
+    const searchExpressions = searchFields.map((field) => `lower(coalesce(${jsonFieldExpression(field)}, '')) like ${placeholder}`);
+    if (options.searchJson === true) searchExpressions.push(`lower(data::text) like ${placeholder}`);
+    clauses.push(`(${searchExpressions.join(' or ')})`);
+  }
+  return {
+    sql: clauses.length ? `where ${clauses.join(' and ')}` : '',
+    values
+  };
+}
+
+async function queryNormalizedPage(collection = '', options = {}) {
+  if (!postgresEnabled()) return null;
+  const table = normalizedCollectionTable(collection);
+  if (!table) return null;
+  const pool = postgresPool();
+  const requestedPage = Math.max(1, Number(options.page || 1) || 1);
+  const limit = Math.max(1, Math.min(100, Number(options.limit || 10) || 10));
+  const where = normalizedPageWhere(options);
+  const countResult = await pool.query(`select count(*)::bigint as total from ${table} ${where.sql}`, where.values);
+  const total = Number(countResult.rows[0]?.total || 0);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const page = Math.min(requestedPage, totalPages);
+  const sortField = String(options.sortField || 'createdAt');
+  const sortExpression = sortField === 'position' ? 'position' : jsonFieldExpression(sortField);
+  const direction = String(options.sortDirection || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+  const values = [...where.values, limit, (page - 1) * limit];
+  const rowsResult = await pool.query(
+    `select data from ${table} ${where.sql} order by ${sortExpression} ${direction} nulls last, position ${direction} limit $${values.length - 1} offset $${values.length}`,
+    values
+  );
+  return {
+    rows: rowsResult.rows.map((row) => row.data),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasPrev: page > 1,
+      hasNext: page < totalPages
+    }
+  };
+}
+
 async function runPsql(args) {
   const url = databaseUrl();
   if (!url) {
@@ -788,6 +903,24 @@ async function ensurePostgresStore() {
         updated_at timestamptz not null default now()
       );
       ${normalizedTablesSql}
+      create index if not exists app_customers_status_json_idx on app_customers ((data->>'status'));
+      create index if not exists app_customers_created_json_idx on app_customers ((data->>'createdAt') desc);
+      create index if not exists app_customers_name_lower_json_idx on app_customers (lower(data->>'name'));
+      create index if not exists app_customers_username_lower_json_idx on app_customers (lower(data->>'username'));
+      create index if not exists app_invoices_period_json_idx on app_invoices ((data->>'period'));
+      create index if not exists app_invoices_status_json_idx on app_invoices ((data->>'status'));
+      create index if not exists app_invoices_due_date_json_idx on app_invoices ((data->>'dueDate'));
+      create index if not exists app_invoices_customer_json_idx on app_invoices ((data->>'customerId'));
+      create index if not exists app_payments_paid_at_json_idx on app_payments ((data->>'paidAt') desc);
+      create index if not exists app_payments_status_json_idx on app_payments ((data->>'status'));
+      create index if not exists app_payments_invoice_json_idx on app_payments ((data->>'invoiceId'));
+      create index if not exists app_wa_messages_created_json_idx on app_wa_messages ((data->>'createdAt') desc);
+      create index if not exists app_wa_messages_status_json_idx on app_wa_messages ((data->>'status'));
+      create index if not exists app_activity_at_json_idx on app_activity ((data->>'at') desc);
+      create index if not exists app_activity_type_json_idx on app_activity ((data->>'type'));
+      create index if not exists app_expenses_date_json_idx on app_expenses ((data->>'date') desc);
+      create index if not exists app_external_incomes_date_json_idx on app_external_incomes ((data->>'date') desc);
+      create index if not exists app_external_incomes_receipt_json_idx on app_external_incomes ((data->>'receiptNo'));
       commit;
   `);
   postgresReady = true;
@@ -902,6 +1035,23 @@ function storeCore(data = {}) {
     delete core[collection];
   }
   return core;
+}
+
+function mergeLegacyNormalizedCollections(parsed = {}, existing = {}) {
+  const sourceVersion = Number(parsed.storageSchemaVersion || 0);
+  const merged = { ...parsed };
+  for (const collection of Object.keys(NORMALIZED_COLLECTIONS)) {
+    const parsedRows = Array.isArray(parsed[collection]) ? parsed[collection] : null;
+    const existingRows = Array.isArray(existing[collection]) ? existing[collection] : [];
+    if (sourceVersion >= 2 && NORMALIZED_COLLECTIONS_V2.has(collection)) {
+      merged[collection] = existingRows;
+    } else if (parsedRows) {
+      merged[collection] = parsedRows;
+    } else {
+      merged[collection] = existingRows;
+    }
+  }
+  return merged;
 }
 
 function coreFingerprint(data = {}) {
@@ -1023,7 +1173,13 @@ async function loadPostgresStore() {
 
   const parsed = JSON.parse(raw);
   if (Number(parsed.storageSchemaVersion || 0) < STORE_SCHEMA_VERSION) {
-    const legacy = ensureShape(parsed);
+    // Schema v2 already stored core collections outside the main blob. Merge
+    // those rows before writing the expanded schema so an upgrade cannot wipe
+    // existing customers, invoices, payments, messages, or activity records.
+    const existingCollections = Number(parsed.storageSchemaVersion || 0) >= 2
+      ? await loadNormalizedCollections()
+      : {};
+    const legacy = ensureShape(mergeLegacyNormalizedCollections(parsed, existingCollections));
     await migrateLegacyPostgresStore(legacy);
     rememberPersistedState(legacy);
     return legacy;
@@ -1225,6 +1381,7 @@ module.exports = {
   loadStore,
   peekStore,
   publicSettings,
+  queryNormalizedPage,
   redisStatus: () => ({
     ...redisCache.safeStatus(),
     key: postgresEnabled() ? '' : STORE_CACHE_KEY,
@@ -1234,6 +1391,7 @@ module.exports = {
   __test: {
     collectionSnapshot,
     coreFingerprint,
+    mergeLegacyNormalizedCollections,
     storeCore
   }
 };

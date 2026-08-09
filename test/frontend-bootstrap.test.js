@@ -15,8 +15,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v310-wan-status-20260803"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v310-wan-status-20260803"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v400-pagination-mobile-20260809"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v400-pagination-mobile-20260809"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
@@ -48,4 +48,20 @@ test('keeps the login viewport dark through bootstrap and authenticated app hand
   assert.match(html, /apple-mobile-web-app-status-bar-style" content="black-translucent"/);
   assert.match(bootCss, /html:has\(body\.is-bootstrap-login\)[\s\S]*?background:\s*#020a22/);
   assert.match(appCss, /html:has\(body\.is-login\)[\s\S]*?background:\s*#020a22/);
+});
+
+test('uses the compact navigation and bounded paging contract', () => {
+  const html = publicSource('index.html');
+  const appSource = publicSource('app.js');
+
+  for (const group of ['customers', 'radius', 'financeManagement', 'monitoring', 'configuration', 'adminSystem']) {
+    assert.match(html, new RegExp(`data-nav-group="${group}"`));
+  }
+  assert.match(html, /data-view="billingSettings">Pengaturan Billing/);
+  assert.match(html, /data-view="radiusSettings">Isolir Radius/);
+  assert.equal((html.match(/class="bottom-item/g) || []).length, 5);
+  assert.match(appSource, /const PAGER_LIMIT_OPTIONS = \[10, 25, 50, 100\]/);
+  assert.doesNotMatch(appSource, /const PAGER_LIMIT_OPTIONS = \[[^\]]*['"]all['"]/);
+  assert.match(appSource, /const MOBILE_CARD_TABLE_VIEWS = new Set/);
+  assert.match(appSource, /if \(!view \|\| !Object\.prototype\.hasOwnProperty\.call\(viewPermissions, view\)\) return false/);
 });

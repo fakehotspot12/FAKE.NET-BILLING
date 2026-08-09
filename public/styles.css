@@ -1891,8 +1891,14 @@ input[type="checkbox"] {
   mask: var(--menu-icon) center / contain no-repeat;
 }
 
-[data-view="dashboard"] {
+[data-view="dashboard"],
+[data-nav-toggle="dashboardNav"] {
   --menu-icon: var(--icon-dashboard);
+}
+
+[data-nav-toggle="customers"],
+[data-open-nav-group="customers"] {
+  --menu-icon: var(--icon-member);
 }
 
 [data-nav-toggle="radius"] {
@@ -1922,6 +1928,10 @@ input[type="checkbox"] {
 [data-nav-toggle="financeManagement"],
 [data-open-nav-group="financeManagement"] {
   --menu-icon: var(--icon-finance);
+}
+
+[data-open-nav-group="radius"] {
+  --menu-icon: var(--icon-radius);
 }
 
 [data-view="externalIncomes"] {
@@ -1991,6 +2001,15 @@ input[type="checkbox"] {
 
 [data-nav-toggle="monitoring"] {
   --menu-icon: var(--icon-monitoring);
+}
+
+[data-nav-toggle="configuration"] {
+  --menu-icon: var(--icon-settings);
+}
+
+[data-nav-toggle="adminSystem"],
+[data-open-menu] {
+  --menu-icon: var(--icon-users);
 }
 
 [data-view="monitoringSite"] {
@@ -11757,7 +11776,7 @@ dialog::backdrop {
   }
 
   .content {
-    padding: 12px 12px 18px;
+    padding: 12px 12px calc(82px + env(safe-area-inset-bottom, 0px));
   }
 
   .metrics,
@@ -12215,11 +12234,26 @@ dialog::backdrop {
   }
 
   .bottom-nav {
-    display: none;
+    position: fixed;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    left: 8px;
+    z-index: 55;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 3px;
+    min-height: 58px;
+    padding: 5px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: 0 12px 34px rgba(8, 32, 79, 0.2);
+    backdrop-filter: blur(12px);
   }
 
   .bottom-item {
-    min-height: 46px;
+    min-width: 0;
+    min-height: 48px;
     display: grid;
     place-items: center;
     align-content: center;
@@ -12228,7 +12262,7 @@ dialog::backdrop {
     border-radius: 8px;
     color: var(--muted);
     background: transparent;
-    font-size: 10px;
+    font-size: 10.5px;
     font-weight: 800;
     line-height: 1.1;
     white-space: nowrap;
@@ -12236,8 +12270,8 @@ dialog::backdrop {
   }
 
   .bottom-item::before {
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
   }
 
   .bottom-item.is-active {
@@ -12507,6 +12541,135 @@ dialog::backdrop {
 
   .transaction-note .receipt-lines {
     grid-template-columns: 1fr;
+  }
+
+  .table-wrap:has(.mobile-card-table) {
+    border: 0;
+    overflow: visible;
+    background: transparent;
+  }
+
+  .table-top-scroll[data-for-mobile-card="true"] {
+    display: none;
+  }
+
+  table.mobile-card-table {
+    display: block;
+    min-width: 0;
+    width: 100%;
+    border-collapse: separate;
+    background: transparent;
+  }
+
+  .mobile-card-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .mobile-card-table tbody {
+    display: grid;
+    gap: 9px;
+    width: 100%;
+  }
+
+  .mobile-card-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 6px 10px;
+    width: 100%;
+    padding: 11px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 5px 16px rgba(8, 32, 79, 0.06);
+  }
+
+  .mobile-card-table tbody tr[hidden] {
+    display: none;
+  }
+
+  .mobile-card-table td {
+    display: grid;
+    grid-template-columns: minmax(82px, 38%) minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    min-width: 0;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .mobile-card-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.35;
+    text-transform: uppercase;
+  }
+
+  .mobile-card-table td[data-mobile-primary="true"],
+  .mobile-card-table td[data-label="Nama"],
+  .mobile-card-table td[data-label="Nama Pelanggan"],
+  .mobile-card-table td[data-label="Username"],
+  .mobile-card-table td[data-label="User"],
+  .mobile-card-table td[data-label="Referensi"] {
+    grid-column: 1 / -1;
+  }
+
+  .mobile-card-table td[data-mobile-primary="true"] {
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+    font-weight: 750;
+  }
+
+  .mobile-card-table td[data-mobile-select="true"] {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .mobile-card-table td[data-mobile-select="true"]::before,
+  .mobile-card-table td[data-label="No"]::before,
+  .mobile-card-table td[data-label="Aksi"]::before,
+  .mobile-card-table td[data-label="Action"]::before {
+    display: none;
+  }
+
+  .mobile-card-table td[data-label="No"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .mobile-card-table td[data-label="Aksi"],
+  .mobile-card-table td[data-label="Action"] {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 7px;
+    border-top: 1px solid var(--line);
+  }
+
+  .mobile-card-table td.mobile-technical-cell {
+    display: none;
+  }
+
+  .mobile-card-table .action-menu summary {
+    min-height: 34px;
+    height: 34px;
   }
 }
 

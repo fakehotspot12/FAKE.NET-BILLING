@@ -13,13 +13,15 @@ test('storeCore memisahkan koleksi transaksi besar dari blob inti', () => {
     payments: [{ id: 'payment-1' }],
     waMessages: [{ id: 'wa-1' }],
     activity: [{ id: 'activity-1' }],
+    expenses: [{ id: 'expense-1' }],
+    externalIncomes: [{ id: 'income-1' }],
     radiusUsers: [{ id: 'radius-1' }]
   };
 
   const core = store.__test.storeCore(data);
-  assert.equal(core.storageSchemaVersion, 2);
+  assert.equal(core.storageSchemaVersion, 3);
   assert.deepEqual(core.radiusUsers, data.radiusUsers);
-  for (const collection of ['customers', 'invoices', 'payments', 'waMessages', 'activity']) {
+  for (const collection of ['customers', 'invoices', 'payments', 'waMessages', 'activity', 'expenses', 'externalIncomes']) {
     assert.equal(Object.hasOwn(core, collection), false);
   }
 });
@@ -54,6 +56,24 @@ test('coreFingerprint tidak berubah hanya karena updatedAt', () => {
     updatedAt: '2026-07-19T01:00:00.000Z'
   });
   assert.equal(first, second);
+});
+
+test('migrasi schema v2 mempertahankan kas dari core dan koleksi lama dari tabel', () => {
+  const parsed = {
+    storageSchemaVersion: 2,
+    customers: [],
+    expenses: [{ id: 'expense-core' }],
+    externalIncomes: [{ id: 'income-core' }]
+  };
+  const existing = {
+    customers: [{ id: 'customer-table' }],
+    expenses: [],
+    externalIncomes: []
+  };
+  const merged = store.__test.mergeLegacyNormalizedCollections(parsed, existing);
+  assert.deepEqual(merged.customers, existing.customers);
+  assert.deepEqual(merged.expenses, parsed.expenses);
+  assert.deepEqual(merged.externalIncomes, parsed.externalIncomes);
 });
 
 test('billing default timers use daytime WA and isolation schedules', () => {

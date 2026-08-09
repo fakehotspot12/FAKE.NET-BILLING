@@ -42,7 +42,7 @@ const buildVersion = document.getElementById('buildVersion');
 const mobileMenuQuery = window.matchMedia('(max-width: 760px)');
 const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
-const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100, 'all'];
+const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100];
 const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
 const APP_TIME_ZONE_LABELS = {
   'Asia/Jakarta': 'WIB',
@@ -78,18 +78,18 @@ let activeClientTimeZone = DEFAULT_APP_TIME_ZONE;
 
 const titles = {
   dashboard: 'Dashboard',
-  radiusPppDhcp: 'Radius PPP-DHCP',
-  radiusHotspot: 'Radius Hotspot',
-  radiusSettings: 'Radius Settings',
+  radiusPppDhcp: 'PPPoE DHCP',
+  radiusHotspot: 'Voucher Hotspot',
+  radiusSettings: 'Isolir Radius',
   genieAcs: 'GenieACS',
   monitoringSite: 'Monitoring Site',
-  monitoringMembers: 'Member',
-  monitoringCustomers: 'Pelanggan Online',
+  monitoringMembers: 'Data Pelanggan',
+  monitoringCustomers: 'Sesi Online',
   monitoringBilling: 'Tagihan Pelanggan',
   monitoringServices: 'Layanan',
   externalIncomes: 'Pemasukan',
   expenses: 'Pengeluaran',
-  billingSettings: 'Billing Settings',
+  billingSettings: 'Pengaturan Billing',
   reportsDaily: 'Tagihan Harian',
   reportsMonthlyBilling: 'Tagihan Bulanan',
   reportsStatistics: 'Statistik',
@@ -98,7 +98,7 @@ const titles = {
   reportsTransactions: 'Mutasi Bulanan',
   reportsFinanceRecap: 'Rekapitulasi',
   reportsInventoryStock: 'Stok Inventaris',
-  activity: 'Log',
+  activity: 'Log Audit',
   waGateway: 'Whatsapp Gateway',
   paymentGateway: 'Payment Gateway',
   inventory: 'Inventaris',
@@ -167,7 +167,11 @@ const state = {
   view: 'dashboard',
   period: todayInput().slice(0, 7),
   externalIncomePeriod: todayInput().slice(0, 7),
+  externalIncomePage: 1,
+  externalIncomeLimit: 10,
   expensePeriod: todayInput().slice(0, 7),
+  expensePage: 1,
+  expenseLimit: 10,
   receiptPrintMode: 'a4',
   invoiceStatus: 'all',
   customerStatus: 'all',
@@ -1966,6 +1970,7 @@ function startTopWaStatusTimer() {
 }
 
 function canView(view) {
+  if (!view || !Object.prototype.hasOwnProperty.call(viewPermissions, view)) return false;
   const role = state.auth?.role || '';
   if (role === 'reseller_voucher') {
     return ['dashboard', 'radiusHotspot', 'reportsVoucherDaily', 'reportsVoucherMonthly'].includes(view) && can(viewPermissions[view]);
@@ -2251,6 +2256,10 @@ function configureShell() {
     button.hidden = !visible;
     button.classList.toggle('is-active', visible && active);
   });
+  document.querySelectorAll('[data-open-menu]').forEach((button) => {
+    button.hidden = !loggedIn;
+    button.classList.toggle('is-active', loggedIn && !['dashboard', 'monitoringMembers', 'monitoringBilling', 'radiusPppDhcp', 'radiusHotspot', 'monitoringCustomers', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'reportsDaily', 'reportsMonthlyBilling', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsStatistics'].includes(state.view));
+  });
   updateMenuButton();
 }
 
@@ -2384,6 +2393,58 @@ function formData(form) {
   return data;
 }
 
+const MOBILE_CARD_TABLE_VIEWS = new Set([
+  'monitoringBilling',
+  'monitoringMembers',
+  'radiusPppDhcp',
+  'radiusHotspot',
+  'monitoringCustomers',
+  'reportsDaily',
+  'reportsTransactions',
+  'reportsVoucherDaily',
+  'reportsVoucherMonthly'
+]);
+
+const MOBILE_TECHNICAL_COLUMNS = Object.freeze({
+  monitoringBilling: new Set(['nas', 'terakhir aktif', 'last active']),
+  radiusPppDhcp: new Set(['password', 'mac', 'mac address']),
+  radiusHotspot: new Set(['password', 'mac', 'mac address'])
+});
+
+function normalizedTableLabel(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function decorateResponsiveTables(root = document, view = state.view) {
+  if (!MOBILE_CARD_TABLE_VIEWS.has(view)) return;
+  const technicalColumns = MOBILE_TECHNICAL_COLUMNS[view] || new Set();
+  root.querySelectorAll('.table-wrap table, .detail-table-wrap table').forEach((table) => {
+    if (table.closest('.receipt-preview, .daily-billing-receipt-stack, .hotspot-voucher-print-stack')) return;
+    const headers = [...table.querySelectorAll('thead th')].map((header) => normalizedTableLabel(header.textContent));
+    if (!headers.length) return;
+    table.classList.add('mobile-card-table');
+    table.closest('.table-wrap, .detail-table-wrap')?.classList.add('mobile-card-wrap');
+    table.querySelectorAll('tbody tr').forEach((row) => {
+      const cells = [...row.children].filter((cell) => cell.tagName === 'TD');
+      if (!cells.length || cells.some((cell) => Number(cell.colSpan || 1) > 1)) return;
+      let primaryAssigned = false;
+      cells.forEach((cell, index) => {
+        const label = headers[index] || '';
+        const labelKey = label.toLowerCase();
+        cell.dataset.label = label || (cell.querySelector('input[type="checkbox"]') ? 'Pilih' : 'Detail');
+        if (cell.querySelector('input[type="checkbox"]')) {
+          cell.dataset.mobileSelect = 'true';
+        }
+        if (!primaryAssigned && /^(nama|nama pelanggan|username|user|referensi|invoice|no invoice)$/i.test(label)) {
+          cell.dataset.mobilePrimary = 'true';
+          primaryAssigned = true;
+        }
+        cell.classList.toggle('mobile-technical-cell', technicalColumns.has(labelKey));
+      });
+    });
+  });
+}
+
 function enhanceTableTopScrollbars(root = document) {
   const scope = root || document;
   const wrappers = [...scope.querySelectorAll('.table-wrap, .detail-table-wrap')]
@@ -2399,12 +2460,14 @@ function enhanceTableTopScrollbars(root = document) {
       wrapper.parentNode?.insertBefore(topScroll, wrapper);
     }
     wrapper.classList.add('has-top-scrollbar');
+    const mobileCard = mobileMenuQuery.matches && wrapper.classList.contains('mobile-card-wrap');
+    topScroll.dataset.forMobileCard = mobileCard ? 'true' : 'false';
     const inner = topScroll.firstElementChild;
     const update = () => {
       if (!inner) return;
       const width = Math.max(wrapper.scrollWidth, wrapper.clientWidth);
       inner.style.width = `${width}px`;
-      topScroll.hidden = wrapper.scrollWidth <= wrapper.clientWidth + 2;
+      topScroll.hidden = mobileCard || wrapper.scrollWidth <= wrapper.clientWidth + 2;
       topScroll.scrollLeft = wrapper.scrollLeft;
     };
     if (topScroll.dataset.topScrollBound !== 'true') {
@@ -2439,6 +2502,7 @@ function enhanceTableTopScrollbars(root = document) {
 function scheduleTableTopScrollbars(root = document) {
   const scope = root || document;
   const run = () => {
+    decorateResponsiveTables(scope, state.view);
     enhanceTableTopScrollbars(scope);
     restoreSearchFocusIntent();
   };
@@ -3673,9 +3737,9 @@ function pagerJumpControl(kind, pagination = {}) {
 }
 
 function pagerLimitValue(value, fallback = RADIUS_PAGE_SIZE) {
-  if (String(value || '').toLowerCase() === 'all') return 'all';
+  if (String(value || '').toLowerCase() === 'all') return fallback;
   const limit = Number(value || fallback);
-  if (limit >= 1000000) return 'all';
+  if (limit >= 1000000) return fallback;
   return PAGER_LIMIT_OPTIONS.includes(limit) ? limit : fallback;
 }
 
@@ -7405,9 +7469,14 @@ async function renderExpenses(options = {}) {
   state.expensePeriod = period;
   const params = queryString({
     period,
-    search: state.search
+    search: state.search,
+    page: state.expensePage,
+    limit: state.expenseLimit
   });
-  const { expenses } = await api(`/api/expenses?${params}`);
+  const payload = await api(`/api/expenses?${params}`);
+  const expenses = payload.expenses || [];
+  const pagination = payload.pagination || { page: 1, limit: state.expenseLimit, total: expenses.length, totalPages: 1 };
+  state.expensePage = Number(pagination.page || 1);
   const writeAllowed = can('expenses:write');
 
   app.innerHTML = `
@@ -7462,12 +7531,14 @@ async function renderExpenses(options = {}) {
           </tbody>
         </table>
       </div>
+      ${radiusPaginationControls('expense', pagination, 'pengeluaran')}
     </div>
   `;
 
   document.getElementById('addExpense')?.addEventListener('click', () => openExpenseModal());
   bindPeriodFilter('expensePeriod', (nextPeriod) => {
     state.expensePeriod = normalizedPeriod(nextPeriod);
+    state.expensePage = 1;
     renderExpenses();
   });
   if (writeAllowed) {
@@ -7494,7 +7565,21 @@ async function renderExpenses(options = {}) {
       });
     });
   }
-  bindSearch(renderExpenses);
+  bindSearch((renderOptions = {}) => {
+    state.expensePage = 1;
+    return renderExpenses(renderOptions);
+  });
+  app.querySelectorAll('[data-expense-page]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.expensePage = Math.max(1, Number(button.dataset.expensePage || 1));
+      renderExpenses();
+    });
+  });
+  bindPagerLimit('expense', (limit) => {
+    state.expenseLimit = limit;
+  }, (page) => {
+    state.expensePage = page;
+  }, renderExpenses, 10);
 }
 
 function optionList(values, selected) {
@@ -8010,9 +8095,14 @@ async function renderExternalIncomes(options = {}) {
   state.externalIncomePeriod = period;
   const params = queryString({
     period,
-    search: state.search
+    search: state.search,
+    page: state.externalIncomePage,
+    limit: state.externalIncomeLimit
   });
-  const { externalIncomes } = await api(`/api/external-incomes?${params}`);
+  const payload = await api(`/api/external-incomes?${params}`);
+  const externalIncomes = payload.externalIncomes || [];
+  const pagination = payload.pagination || { page: 1, limit: state.externalIncomeLimit, total: externalIncomes.length, totalPages: 1 };
+  state.externalIncomePage = Number(pagination.page || 1);
   const writeAllowed = can('external-incomes:write');
   const rows = externalIncomes.length ? externalIncomes.map((income) => {
     const cancelled = incomeIsCancelled(income);
@@ -8069,12 +8159,14 @@ async function renderExternalIncomes(options = {}) {
           </tbody>
         </table>
       </div>
+      ${radiusPaginationControls('external-income', pagination, 'pemasukan')}
     </div>
   `;
 
   document.getElementById('addExternalIncome')?.addEventListener('click', () => openExternalIncomeModal());
   bindPeriodFilter('externalIncomePeriod', (nextPeriod) => {
     state.externalIncomePeriod = normalizedPeriod(nextPeriod);
+    state.externalIncomePage = 1;
     renderExternalIncomes();
   });
   app.querySelectorAll('[data-receipt-income]').forEach((button) => {
@@ -8109,7 +8201,21 @@ async function renderExternalIncomes(options = {}) {
       });
     });
   }
-  bindSearch(renderExternalIncomes);
+  bindSearch((renderOptions = {}) => {
+    state.externalIncomePage = 1;
+    return renderExternalIncomes(renderOptions);
+  });
+  app.querySelectorAll('[data-external-income-page]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.externalIncomePage = Math.max(1, Number(button.dataset.externalIncomePage || 1));
+      renderExternalIncomes();
+    });
+  });
+  bindPagerLimit('external-income', (limit) => {
+    state.externalIncomeLimit = limit;
+  }, (page) => {
+    state.externalIncomePage = page;
+  }, renderExternalIncomes, 10);
 }
 
 function externalIncomeFormBody(income = {}) {
@@ -13643,16 +13749,11 @@ function openRadiusIsolirGuideModal() {
 }
 
 async function renderRadiusSettings(options = {}) {
-  app.innerHTML = '<div class="empty">Memuat Radius Settings...</div>';
-  const writeBilling = can('billing-settings:manage');
-  const [payload, billingPayload] = await Promise.all([
-    api(`/api/radius/settings?${queryString({ page: 1, limit: 1, refresh: options.refresh ? '1' : '' })}`),
-    writeBilling ? api('/api/billing/settings') : Promise.resolve({ settings: {} })
-  ]);
+  app.innerHTML = '<div class="empty">Memuat Isolir Radius...</div>';
+  const payload = await api(`/api/radius/settings?${queryString({ page: 1, limit: 1, refresh: options.refresh ? '1' : '' })}`);
   const sync = payload.sync || {};
   const radius = payload.radius || {};
-  const writeSettings = can('settings:write');
-  const billing = billingPayload.settings || {};
+  const writeSettings = can('radius:write') || can('settings:write');
 
   app.innerHTML = `
     <div class="stack">
@@ -13662,7 +13763,7 @@ async function renderRadiusSettings(options = {}) {
         <section class="form-panel">
           <div class="section-head">
             <div>
-              <h3>Pengaturan Isolir</h3>
+              <h3>Isolir Radius</h3>
               <p>Override Radius saat user PPP-DHCP atau Hotspot diberi status isolir.</p>
             </div>
           </div>
@@ -13694,89 +13795,10 @@ async function renderRadiusSettings(options = {}) {
           </form>
         </section>
       ` : ''}
-      ${writeBilling ? `
-        <section class="form-panel">
-          <div class="section-head">
-            <div>
-              <h3>Billing Settings</h3>
-              <p>Atur siklus tagihan, jatuh tempo, reminder, dan suspend otomatis.</p>
-            </div>
-          </div>
-          <form id="billingSettingsForm" class="form-grid">
-            <label class="field">
-              <span>Due date postpaid</span>
-              <input name="postpaidDueDay" type="number" min="1" max="28" value="${escapeHtml(billing.postpaidDueDay || 10)}">
-            </label>
-            <label class="field">
-              <span>Generate invoice sebelum tempo</span>
-              <input name="fixedInvoiceAdvanceDays" type="number" min="0" max="31" step="1" value="${escapeHtml(billing.fixedInvoiceAdvanceDays ?? 7)}">
-            </label>
-            <label class="field">
-              <span>Grace suspend setelah tempo</span>
-              <input name="suspendGraceDays" type="number" min="0" max="365" value="${escapeHtml(billing.suspendGraceDays || 0)}">
-            </label>
-            <label class="field">
-              <span>Terminate otomatis setelah isolir</span>
-              <input name="autoTerminateAfterDays" type="number" min="0" max="3650" step="1" value="${escapeHtml(billing.autoTerminateAfterDays || 0)}">
-              <small class="muted">Hari sejak isolir karena tunggakan. Isi 0 agar tetap isolir dan invoice berikutnya terus berjalan.</small>
-            </label>
-            <label class="field">
-              <span>Reminder sebelum tempo</span>
-              <input name="notificationBeforeDueDays" type="number" min="0" max="31" value="${escapeHtml(billing.notificationBeforeDueDays || 0)}">
-            </label>
-            <label class="field">
-              <span>Jam kirim invoice/reminder</span>
-              <input name="notificationSendTime" type="time" value="${escapeHtml(billing.notificationSendTime || '08:00')}">
-              <small class="muted">Dipakai untuk WA invoice terbit dan reminder otomatis (${escapeHtml(appTimeZoneLabel())}).</small>
-            </label>
-            <label class="field">
-              <span>Jam isolir otomatis</span>
-              <input name="autoSuspendTime" type="time" value="${escapeHtml(billing.autoSuspendTime || '13:30')}">
-            </label>
-            <label class="field checkbox-field">
-              <input name="notifyInvoiceIssued" type="checkbox" value="true" ${billing.notifyInvoiceIssued !== false ? 'checked' : ''}>
-              <span>Kirim notifikasi invoice terbit</span>
-            </label>
-            <label class="field checkbox-field">
-              <input name="notifyPaymentStatus" type="checkbox" value="true" ${billing.notifyPaymentStatus !== false ? 'checked' : ''}>
-              <span>Kirim notifikasi status bayar</span>
-            </label>
-            <label class="field checkbox-field">
-              <input name="notifyMemberStatus" type="checkbox" value="true" ${billing.notifyMemberStatus !== false ? 'checked' : ''}>
-              <span>Kirim notifikasi status member</span>
-            </label>
-            <label class="field checkbox-field full">
-              <input name="mergeInvoice" type="checkbox" value="true" ${billing.mergeInvoice ? 'checked' : ''}>
-              <span>Merge invoice bulan sebelumnya jika belum dibayar</span>
-            </label>
-            <label class="field checkbox-field">
-              <input name="bhpUsoEnabled" type="checkbox" value="true" ${billing.bhpUsoEnabled === true ? 'checked' : ''}>
-              <span>Aktifkan BHP USO</span>
-            </label>
-            <label class="field">
-              <span>BHP USO (%)</span>
-              <input name="bhpUsoRate" type="number" min="0" max="100" step="0.01" value="${escapeHtml(billing.bhpUsoRate ?? 1.25)}">
-              <small class="muted">Default 1,25%. Berlaku pada invoice baru dan invoice yang masih belum lunas.</small>
-            </label>
-            <div class="modal-actions field full">
-              <button class="ghost-button" id="refreshRadiusSettings" type="button">Refresh</button>
-              <button class="button" type="submit">Simpan Billing</button>
-            </div>
-          </form>
-        </section>
-      ` : `
-        <section class="section">
-          <div>
-            <h3>Billing Settings</h3>
-            <p class="muted">Role login tidak memiliki akses mengubah billing settings.</p>
-          </div>
-        </section>
-      `}
     </div>
   `;
 
   document.getElementById('openIsolirRouterGuide')?.addEventListener('click', () => openRadiusIsolirGuideModal());
-  document.getElementById('refreshRadiusSettings')?.addEventListener('click', () => renderRadiusSettings({ refresh: true }));
   document.getElementById('radiusSettingsForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -13786,15 +13808,6 @@ async function renderRadiusSettings(options = {}) {
     });
     clearRadiusOptionsCache();
     setToast('Pengaturan Radius tersimpan');
-    renderRadiusSettings({ refresh: true });
-  });
-  document.getElementById('billingSettingsForm')?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    await api('/api/billing/settings', {
-      method: 'PUT',
-      body: JSON.stringify(formData(event.currentTarget))
-    });
-    setToast('Billing settings tersimpan');
     renderRadiusSettings({ refresh: true });
   });
 }
@@ -15704,14 +15717,20 @@ function filteredMonitoringCustomers(rows = []) {
 
 async function renderMonitoringCustomers(options = {}) {
   clearRealtimeTimers();
-  const shouldFetch = options.refresh || (!options.liveSearch && options.silent) || !state.monitoringCustomersPayload;
-  if (shouldFetch && shouldShowPageLoading(options)) {
+  if (shouldShowPageLoading(options)) {
     app.innerHTML = '<div class="empty">Memuat pelanggan online...</div>';
   }
-  const endpoint = options.refresh ? '/api/monitoring/customers?refresh=1' : '/api/monitoring/customers';
-  const payload = shouldFetch
-    ? await api(endpoint)
-    : state.monitoringCustomersPayload;
+  const customerType = state.monitoringCustomerType === 'hotspot' ? 'hotspot' : 'pppoe';
+  const customerLimit = pagerLimitValue(state.monitoringCustomerLimit || CUSTOMER_PAGE_SIZE, CUSTOMER_PAGE_SIZE);
+  const params = queryString({
+    page: state.monitoringCustomerPage,
+    limit: customerLimit,
+    type: customerType,
+    site: state.monitoringCustomerSite,
+    search: state.search,
+    refresh: options.refresh ? '1' : ''
+  });
+  const payload = await api(`/api/monitoring/customers?${params}`);
   state.monitoringCustomersPayload = payload;
   const summary = payload.summary || {};
   const sites = Array.isArray(payload.sites) ? payload.sites : [];
@@ -15721,29 +15740,15 @@ async function renderMonitoringCustomers(options = {}) {
   if (state.monitoringCustomerSite !== selectedSite) {
     state.monitoringCustomerSite = selectedSite;
   }
-  const customerType = state.monitoringCustomerType === 'hotspot' ? 'hotspot' : 'pppoe';
   if (state.monitoringCustomerType !== customerType) {
     state.monitoringCustomerType = customerType;
   }
   const customerTypeLabel = customerType === 'hotspot' ? 'Hotspot' : 'PPPoE';
-  const allCustomerUsers = monitoringCustomerRows(sites, customerType);
-  const filteredCustomerUsers = filteredMonitoringCustomers(allCustomerUsers);
-  const total = filteredCustomerUsers.length;
-  const customerLimit = pagerLimitValue(state.monitoringCustomerLimit || CUSTOMER_PAGE_SIZE, CUSTOMER_PAGE_SIZE);
-  const effectiveLimit = effectivePagerLimit(customerLimit, total, CUSTOMER_PAGE_SIZE);
-  const totalPages = Math.max(1, Math.ceil(total / effectiveLimit));
-  const currentPage = Math.min(Math.max(1, Number(state.monitoringCustomerPage || 1)), totalPages);
-  state.monitoringCustomerPage = currentPage;
-  const offset = (currentPage - 1) * effectiveLimit;
-  const pageUsers = filteredCustomerUsers.slice(offset, offset + effectiveLimit);
-  const pagination = {
-    page: currentPage,
-    limit: customerLimit,
-    total,
-    totalPages,
-    hasPrev: currentPage > 1,
-    hasNext: currentPage < totalPages
-  };
+  const pageUsers = Array.isArray(payload.rows) ? payload.rows : monitoringCustomerRows(sites, customerType);
+  const pagination = payload.pagination || { page: 1, limit: customerLimit, total: pageUsers.length, totalPages: 1, hasPrev: false, hasNext: false };
+  state.monitoringCustomerPage = Number(pagination.page || 1);
+  state.monitoringCustomerLimit = pagerLimitValue(pagination.limit || customerLimit, CUSTOMER_PAGE_SIZE);
+  const offset = (state.monitoringCustomerPage - 1) * Number(pagination.limit || CUSTOMER_PAGE_SIZE);
 
   app.innerHTML = `
     <div class="stack">
@@ -21206,12 +21211,16 @@ function paymentGatewayPager(total = 0, limit = 10, page = 1) {
 
 async function renderPaymentGateway(options = {}) {
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat Payment Gateway...</div>';
+  const limit = pagerLimitValue(state.paymentGatewayLimit || 10, 10);
   const params = queryString({
     from: state.xenditFrom,
     to: state.xenditTo,
     method: state.xenditMethod,
     kind: state.paymentGatewayKind,
-    search: state.search
+    search: state.search,
+    tab: state.paymentGatewayTab,
+    page: state.paymentGatewayPage,
+    limit
   });
   const payload = await api(`/api/payment-gateway?${params}`);
   const settings = payload.settings || {};
@@ -21219,11 +21228,12 @@ async function renderPaymentGateway(options = {}) {
   const provider = settings.provider || 'tripay';
   const callbackExampleBase = String(settings.publicBaseUrl || '').trim().replace(/\/+$/, '') || 'https://billing.example.net';
   const callbackExample = `${callbackExampleBase}/payment-gateway/webhook`;
+  const tabTotals = payload.tabTotals || {};
   const pendingRows = payload.pending || [];
   const tabs = [
     { value: 'transactions', label: 'Transaksi' },
     { value: 'balance', label: 'Riwayat Saldo' },
-    { value: 'pending', label: `Tertunda (${displayNumber(pendingRows.length)})` },
+    { value: 'pending', label: `Tertunda (${displayNumber(tabTotals.pending || pendingRows.length)})` },
     { value: 'fees', label: 'Laporan Biaya' }
   ];
   const rowsByTab = {
@@ -21233,12 +21243,10 @@ async function renderPaymentGateway(options = {}) {
     fees: payload.reports || []
   };
   const tabRows = rowsByTab[state.paymentGatewayTab] || rowsByTab.transactions;
-  const limit = pagerLimitValue(state.paymentGatewayLimit || 10, 10);
-  const effectiveLimit = effectivePagerLimit(limit, tabRows.length, 10);
-  const totalPages = Math.max(1, Math.ceil(tabRows.length / effectiveLimit));
-  state.paymentGatewayPage = Math.min(Math.max(1, Number(state.paymentGatewayPage || 1)), totalPages);
-  const offset = (state.paymentGatewayPage - 1) * effectiveLimit;
-  const pageRows = tabRows.slice(offset, offset + effectiveLimit);
+  const pagination = payload.pagination || { page: 1, limit, total: tabRows.length, totalPages: 1 };
+  state.paymentGatewayPage = Number(pagination.page || 1);
+  state.paymentGatewayLimit = pagerLimitValue(pagination.limit || limit, 10);
+  const pageRows = tabRows;
   const summary = payload.summary || {};
   const historySync = payload.historySync || {};
   const historySyncText = historySync.syncedAt
@@ -21353,7 +21361,7 @@ async function renderPaymentGateway(options = {}) {
             <tbody>${pageRows.length ? paymentGatewayRows(pageRows) : '<tr class="payment-gateway-empty"><td colspan="8">Belum ada transaksi payment gateway.</td></tr>'}</tbody>
           </table>
         </div>
-        ${paymentGatewayPager(tabRows.length, limit, state.paymentGatewayPage)}
+        ${paymentGatewayPager(pagination.total || 0, state.paymentGatewayLimit, state.paymentGatewayPage)}
       </section>
     </div>
   `;
@@ -22333,6 +22341,16 @@ document.querySelectorAll('[data-open-nav-group]').forEach((button) => {
     window.requestAnimationFrame(() => {
       group.scrollIntoView({ block: 'nearest' });
     });
+  });
+});
+
+document.querySelectorAll('[data-open-menu]').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('[data-nav-group]').forEach((group) => {
+      group.classList.remove('is-open');
+      group.querySelector('[data-nav-toggle]')?.setAttribute('aria-expanded', 'false');
+    });
+    setMenuOpen(true);
   });
 });
 
