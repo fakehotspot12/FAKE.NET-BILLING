@@ -1426,6 +1426,12 @@ function customerSummaryRedisKey(signature = '') {
   return `fakenet:runtime:customer-summary:${digest}`;
 }
 
+function customerSummaryCacheAgeMs(payload = {}) {
+  const generatedAt = Date.parse(payload.summary?.generatedAt || payload.generatedAt || payload.checkedAt || '');
+  if (!Number.isFinite(generatedAt)) return 0;
+  return Math.max(0, Date.now() - generatedAt);
+}
+
 async function getCustomerSummaryRedisCache(signature = '') {
   if (!redisCache.enabled() || !signature) return null;
   try {
@@ -1685,16 +1691,31 @@ async function mikrotikCustomerSummary(targets = [], options = {}) {
     }
     const redisCached = await getCustomerSummaryRedisCache(cacheKey);
     if (redisCached) {
+      const ageMs = customerSummaryCacheAgeMs(redisCached);
+      const fresh = ageMs <= CUSTOMER_SUMMARY_CACHE_MS;
+      const stale = ageMs <= CUSTOMER_SUMMARY_STALE_MS;
       customerSummaryCache.set(cacheKey, {
-        expiresAt: Date.now() + CUSTOMER_SUMMARY_CACHE_MS,
-        staleAt: Date.now() + CUSTOMER_SUMMARY_STALE_MS,
+        expiresAt: Date.now() + Math.max(0, CUSTOMER_SUMMARY_CACHE_MS - ageMs),
+        staleAt: Date.now() + Math.max(0, CUSTOMER_SUMMARY_STALE_MS - ageMs),
         value: structuredClone(redisCached)
       });
-      return decorateCustomerSummaryPayload(redisCached, {
-        cached: true,
-        stale: false,
-        refreshing: customerSummaryRefreshPromises.has(cacheKey)
-      });
+      if (fresh) {
+        return decorateCustomerSummaryPayload(redisCached, {
+          cached: true,
+          stale: false,
+          refreshing: customerSummaryRefreshPromises.has(cacheKey)
+        });
+      }
+      if (allowStale && stale) {
+        if (refreshInBackground) {
+          refreshMikrotikCustomerSummary(activeTargets, cacheKey).catch(() => null);
+        }
+        return decorateCustomerSummaryPayload(redisCached, {
+          cached: true,
+          stale: true,
+          refreshing: refreshInBackground || customerSummaryRefreshPromises.has(cacheKey)
+        });
+      }
     }
   }
   if (!forceRefresh && allowStale && refreshInBackground) {

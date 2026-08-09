@@ -105,6 +105,10 @@ const ROUTER_DASHBOARD_BACKGROUND_INTERVAL_MS = Math.max(
   5000,
   Math.min(60000, Number(process.env.ROUTER_DASHBOARD_BACKGROUND_INTERVAL_MS || 10000) || 10000)
 );
+const CUSTOMER_SUMMARY_BACKGROUND_INTERVAL_MS = Math.max(
+  60000,
+  Math.min(600000, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_BACKGROUND_INTERVAL_MS || 180000) || 180000)
+);
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const APP_ROOT = path.join(__dirname, '..');
 const UPLOAD_ROOT = path.join(APP_ROOT, 'data', 'uploads');
@@ -4456,10 +4460,14 @@ function radiusSessionRowsLocal(data = {}, serviceType = 'pppoe', sessions = [])
 
 function radiusFilterRows(rows = [], query = {}) {
   const search = String(query.search || '').trim().toLowerCase();
-  const nas = String(query.nas || '').trim().toLowerCase();
-  const status = String(query.status || '').trim().toLowerCase();
-  const profile = String(query.profile || '').trim().toLowerCase();
-  const internet = String(query.internet || query.online || '').trim().toLowerCase();
+  const normalizeAllFilter = (value = '') => {
+    const text = String(value || '').trim().toLowerCase();
+    return text === 'all' ? '' : text;
+  };
+  const nas = normalizeAllFilter(query.nas);
+  const status = normalizeAllFilter(query.status);
+  const profile = normalizeAllFilter(query.profile);
+  const internet = normalizeAllFilter(query.internet || query.online);
   return rows.filter((row) => {
     if (nas && ![row.nas, row.nasId, row.ipAddress, row.site].some((value) => String(value || '').toLowerCase() === nas)) return false;
     if (status === 'psb') {
@@ -16528,6 +16536,8 @@ function startPaymentGatewayHistorySync() {
 
 let routerDashboardBackgroundRunning = false;
 let routerDashboardBackgroundTimer = null;
+let customerSummaryBackgroundRunning = false;
+let customerSummaryBackgroundTimer = null;
 
 async function warmRouterDashboardCache(reason = 'interval') {
   if (routerDashboardBackgroundRunning) {
@@ -16562,6 +16572,41 @@ function startRouterDashboardBackgroundPolling() {
   routerDashboardBackgroundTimer = setInterval(() => run('interval'), ROUTER_DASHBOARD_BACKGROUND_INTERVAL_MS);
   routerDashboardBackgroundTimer.unref?.();
   console.log(`NAS Dashboard cache aktif setiap ${Math.round(ROUTER_DASHBOARD_BACKGROUND_INTERVAL_MS / 1000)} detik`);
+}
+
+async function warmCustomerSummaryCache(reason = 'interval') {
+  if (customerSummaryBackgroundRunning) {
+    return { skipped: true, reason: 'already-running' };
+  }
+  customerSummaryBackgroundRunning = true;
+  try {
+    const data = await loadStore();
+    const targets = data.monitoringTargets || [];
+    if (!targets.length) return { skipped: true, reason: 'no-targets' };
+    const payload = await operations.mikrotikCustomerSummary(targets, { forceRefresh: true });
+    return {
+      ok: payload.ok,
+      online: payload.summary?.online || 0,
+      pppoe: payload.summary?.pppoe || 0,
+      hotspot: payload.summary?.hotspot || 0,
+      reason
+    };
+  } finally {
+    customerSummaryBackgroundRunning = false;
+  }
+}
+
+function startCustomerSummaryBackgroundPolling() {
+  const run = (reason) => {
+    warmCustomerSummaryCache(reason).catch((error) => {
+      console.error(`Pelanggan Online cache gagal: ${error.message || error}`);
+    });
+  };
+  const initialTimer = setTimeout(() => run('startup'), 8_000);
+  initialTimer.unref?.();
+  customerSummaryBackgroundTimer = setInterval(() => run('interval'), CUSTOMER_SUMMARY_BACKGROUND_INTERVAL_MS);
+  customerSummaryBackgroundTimer.unref?.();
+  console.log(`Pelanggan Online cache aktif setiap ${Math.round(CUSTOMER_SUMMARY_BACKGROUND_INTERVAL_MS / 1000)} detik`);
 }
 
 async function paymentGatewayChannels(data = {}, options = {}) {
@@ -19997,7 +20042,8 @@ async function handleApi(req, res, url) {
         profile: String(url.searchParams.get('profile') || '').trim(),
         internet: String(url.searchParams.get('internet') || '').trim(),
         viewer: authContext.user
-      })
+      }),
+      { force: true }
     );
     sendJson(res, 200, result);
     return;
@@ -20348,7 +20394,8 @@ async function handleApi(req, res, url) {
         profile: String(url.searchParams.get('profile') || '').trim(),
         internet: String(url.searchParams.get('internet') || '').trim(),
         viewer: authContext.user
-      })
+      }),
+      { force: true }
     );
     sendJson(res, 200, {
       ...result,
@@ -23168,6 +23215,7 @@ if (require.main === module) {
       startWaGatewaySender();
       startPaymentGatewayHistorySync();
       startRouterDashboardBackgroundPolling();
+      startCustomerSummaryBackgroundPolling();
       imageCleanupTimer = setInterval(() => {
         runImageCleanup().catch((error) => console.error(`Pembersihan upload gagal: ${error.message || error}`));
       }, IMAGE_ORPHAN_CLEANUP_INTERVAL_MS);
@@ -23188,6 +23236,7 @@ if (require.main === module) {
     if (billingAutomationTimer) clearInterval(billingAutomationTimer);
     if (paymentGatewayHistorySyncTimer) clearInterval(paymentGatewayHistorySyncTimer);
     if (routerDashboardBackgroundTimer) clearInterval(routerDashboardBackgroundTimer);
+    if (customerSummaryBackgroundTimer) clearInterval(customerSummaryBackgroundTimer);
     if (imageCleanupTimer) clearInterval(imageCleanupTimer);
     server.close();
     await waGatewayQueue?.close().catch((error) => {

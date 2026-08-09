@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.4] - 2026-08-09
+
+### Performance
+
+- Cache Pelanggan Online dari Redis kini menghitung umur data dengan benar, sehingga data stale bisa dipakai sementara refresh SNMP berjalan di belakang layar.
+- Pelanggan Online dipanaskan otomatis setelah service start dan berkala tiap beberapa menit agar menu tidak kosong/lambat setelah restart.
+- Daftar PPP-DHCP dan Hotspot default ikut memakai runtime cache singkat agar buka menu/filter berulang tidak menghitung ulang dataset besar terus-menerus.
+
 ## [4.1.3] - 2026-08-09
 
 ### Fixed
