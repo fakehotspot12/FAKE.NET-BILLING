@@ -7587,15 +7587,13 @@ function memberDataValidation(customer = {}) {
     && longitude >= -180
     && longitude <= 180;
   const ktpDigits = String(customer.ktp || customer.idCard || '').replace(/\D+/g, '');
-  const ktpPhoto = publicMemberKtpPhotoMeta(customer.ktpPhoto || customer.memberKtpPhoto || null);
   const checks = {
     name: Boolean(String(customer.name || customer.customerName || '').trim()),
     ktpName: Boolean(String(customer.ktpName || '').trim()),
     ktpNumber: ktpDigits.length === 16,
     address: Boolean(String(customer.address || '').trim()),
     location: hasLocation,
-    housePhoto: Boolean(String(customer.housePhotoUrl || customer.memberHousePhotoUrl || '').trim()),
-    ktpPhoto: Boolean(ktpPhoto?.hasPhoto)
+    housePhoto: Boolean(String(customer.housePhotoUrl || customer.memberHousePhotoUrl || '').trim())
   };
   return {
     valid: Object.values(checks).every(Boolean),

@@ -17125,14 +17125,12 @@ function memberDataValidationState(member = {}) {
       ktpNumber: serverChecks.ktpNumber === true,
       address: serverChecks.address === true,
       location: serverChecks.location === true,
-      housePhoto: serverChecks.housePhoto === true,
-      ktpPhoto: serverChecks.ktpPhoto === true
+      housePhoto: serverChecks.housePhoto === true
     };
     return { valid: Object.values(checks).every(Boolean), checks };
   }
   const latitude = Number(member.latitude ?? member.memberLatitude ?? 0);
   const longitude = Number(member.longitude ?? member.memberLongitude ?? 0);
-  const photo = member.ktpPhoto || member.memberKtpPhoto || null;
   const checks = {
     name: Boolean(String(member.fullName || member.customerName || member.name || '').trim()),
     ktpName: Boolean(String(member.ktpName || member.memberKtpName || '').trim()),
@@ -17146,12 +17144,7 @@ function memberDataValidationState(member = {}) {
       && latitude <= 90
       && longitude >= -180
       && longitude <= 180,
-    housePhoto: Boolean(memberHousePhotoUrl(member)),
-    ktpPhoto: Boolean(
-      member.ktpPhotoUrl
-      || member.memberKtpPhotoUrl
-      || (photo && typeof photo === 'object' && (photo.hasPhoto || photo.id))
-    )
+    housePhoto: Boolean(memberHousePhotoUrl(member))
   };
   return { valid: Object.values(checks).every(Boolean), checks };
 }
@@ -17164,8 +17157,7 @@ function memberDataValidationModalBody(member = {}) {
     ['ktpNumber', 'No KTP'],
     ['address', 'Alamat'],
     ['location', 'Data Lokasi'],
-    ['housePhoto', 'Foto Rumah'],
-    ['ktpPhoto', 'Foto KTP']
+    ['housePhoto', 'Foto Rumah']
   ];
   return `
     <div class="member-validation-modal">

@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.6] - 2026-08-09
+
+### Fixed
+
+- Foto KTP tidak lagi dihitung sebagai syarat `Data Valid` member.
+- Upload Foto KTP tetap tersedia untuk OCR/manual arsip jika pelanggan bersedia melengkapi data.
+
 ## [4.1.5] - 2026-08-09
 
 ### Fixed

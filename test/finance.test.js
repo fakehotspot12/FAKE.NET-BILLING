@@ -6110,7 +6110,7 @@ test('monitoring members are sorted by newest created date first', () => {
   assert.deepEqual(az.members.map((member) => member.fullName), ['Alpha Old', 'Beta Fallback', 'Zeta New']);
 });
 
-test('member data validation requires complete identity, location, and photos', () => {
+test('member data validation requires identity, location, and house photo', () => {
   const completeCustomer = {
     id: 'member-complete',
     username: 'member-complete',
@@ -6129,7 +6129,14 @@ test('member data validation requires complete identity, location, and photos', 
   };
   const complete = serverInternals.memberDataValidation(completeCustomer);
   assert.equal(complete.valid, true);
-  assert.deepEqual(Object.values(complete.checks), [true, true, true, true, true, true, true]);
+  assert.deepEqual(Object.values(complete.checks), [true, true, true, true, true, true]);
+
+  const withoutKtpPhoto = serverInternals.memberDataValidation({
+    ...completeCustomer,
+    ktpPhoto: null
+  });
+  assert.equal(withoutKtpPhoto.valid, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(withoutKtpPhoto.checks, 'ktpPhoto'), false);
 
   const incomplete = serverInternals.memberDataValidation({
     name: 'Pelanggan Belum Lengkap',
@@ -6144,7 +6151,7 @@ test('member data validation requires complete identity, location, and photos', 
   assert.equal(incomplete.checks.ktpNumber, false);
   assert.equal(incomplete.checks.location, false);
   assert.equal(incomplete.checks.housePhoto, false);
-  assert.equal(incomplete.checks.ktpPhoto, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(incomplete.checks, 'ktpPhoto'), false);
 
   const data = createDefaultStore();
   data.customers = [completeCustomer, {
