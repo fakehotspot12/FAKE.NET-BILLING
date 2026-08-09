@@ -39,7 +39,10 @@ const ROUTER_DASHBOARD_INTERFACE_CACHE_MS = Math.max(
 );
 const CUSTOMER_SUMMARY_CACHE_MS = Math.max(5000, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_CACHE_MS || 20000) || 20000);
 const CUSTOMER_SUMMARY_STALE_MS = Math.max(30000, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_STALE_MS || 90000) || 90000);
-const CUSTOMER_SUMMARY_REDIS_TTL_SECONDS = Math.max(5, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_REDIS_TTL_SECONDS || 20) || 20);
+const CUSTOMER_SUMMARY_REDIS_TTL_SECONDS = Math.max(
+  Math.ceil(CUSTOMER_SUMMARY_STALE_MS / 1000),
+  Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_REDIS_TTL_SECONDS || 120) || 120
+);
 const CUSTOMER_SUMMARY_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.MIKROTIK_CUSTOMER_SUMMARY_CONCURRENCY || 3) || 3));
 
 function cleanText(value) {
@@ -354,6 +357,9 @@ function trafficRateForSample(targetId = '', interfaceIndex = '', counters = {})
     inputOctets: Number(counters.inputOctets || 0),
     outputOctets: Number(counters.outputOctets || 0)
   });
+  while (dashboardTrafficSamples.size > 128) {
+    dashboardTrafficSamples.delete(dashboardTrafficSamples.keys().next().value);
+  }
   if (!previous) {
     return { uploadBps: 0, downloadBps: 0, sampled: false };
   }
@@ -1453,6 +1459,44 @@ function decorateCustomerSummaryPayload(payload = {}, options = {}) {
   return next;
 }
 
+function customerSummaryPlaceholder(activeTargets = []) {
+  const sites = activeTargets.map((target) => ({
+    id: target.id || '',
+    name: target.name || target.host || 'NAS',
+    host: target.host || '',
+    status: 'checking',
+    online: 0,
+    pppoe: 0,
+    hotspot: 0,
+    interfaceCount: 0,
+    totalCustomerInterfaces: 0,
+    rows: [],
+    checkedAt: '',
+    error: ''
+  }));
+  return {
+    ok: false,
+    source: 'mikrotik-snmp',
+    summary: {
+      online: 0,
+      pppoe: 0,
+      hotspot: 0,
+      interfaceCount: 0,
+      totalCustomerInterfaces: 0,
+      upCount: 0,
+      downCount: 0,
+      checkingCount: sites.length,
+      siteCount: sites.length,
+      customerMode: 'summary-and-per-site',
+      onlineMeaning: 'pppoe-only',
+      generatedAt: '',
+      sourceMode: 'mikrotik-snmp'
+    },
+    sites,
+    rows: []
+  };
+}
+
 async function refreshMikrotikCustomerSummary(activeTargets = [], cacheKey = '') {
   if (customerSummaryRefreshPromises.has(cacheKey)) {
     return customerSummaryRefreshPromises.get(cacheKey);
@@ -1652,6 +1696,14 @@ async function mikrotikCustomerSummary(targets = [], options = {}) {
         refreshing: customerSummaryRefreshPromises.has(cacheKey)
       });
     }
+  }
+  if (!forceRefresh && allowStale && refreshInBackground) {
+    refreshMikrotikCustomerSummary(activeTargets, cacheKey).catch(() => null);
+    return decorateCustomerSummaryPayload(customerSummaryPlaceholder(activeTargets), {
+      cached: false,
+      stale: true,
+      refreshing: true
+    });
   }
   const payload = await refreshMikrotikCustomerSummary(activeTargets, cacheKey);
   return decorateCustomerSummaryPayload(payload, {

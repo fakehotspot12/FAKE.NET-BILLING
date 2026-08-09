@@ -785,6 +785,16 @@ function jsonFieldExpression(field = '') {
     : `(data#>>'{${pathParts.join(',')}}')`;
 }
 
+function jsonFieldJsonExpression(field = '') {
+  const pathParts = String(field || '').split('.').filter(Boolean);
+  if (!pathParts.length || pathParts.some((part) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(part))) {
+    throw new Error(`Field query tidak valid: ${field}`);
+  }
+  return pathParts.length === 1
+    ? `(data->'${pathParts[0]}')`
+    : `(data#>'{${pathParts.join(',')}}')`;
+}
+
 function normalizedPageWhere(options = {}) {
   const clauses = [];
   const values = [];
@@ -796,9 +806,12 @@ function normalizedPageWhere(options = {}) {
     if (!filter || filter.value === undefined || filter.value === null || filter.value === '' || filter.value === 'all') continue;
     const expression = jsonFieldExpression(filter.field);
     const operator = String(filter.operator || 'eq').toLowerCase();
-    if (operator === 'in') {
+    if (operator === 'contains') {
+      const value = Array.isArray(filter.value) ? filter.value : [filter.value];
+      clauses.push(`${jsonFieldJsonExpression(filter.field)} @> ${addValue(JSON.stringify(value))}::jsonb`);
+    } else if (operator === 'in' || operator === 'notin') {
       const list = Array.isArray(filter.value) ? filter.value.map(String).filter(Boolean) : [String(filter.value)];
-      if (list.length) clauses.push(`${filter.caseInsensitive ? `lower(${expression})` : expression} = any(${addValue(filter.caseInsensitive ? list.map((value) => value.toLowerCase()) : list)}::text[])`);
+      if (list.length) clauses.push(`${operator === 'notin' ? 'not ' : ''}(${filter.caseInsensitive ? `lower(${expression})` : expression} = any(${addValue(filter.caseInsensitive ? list.map((value) => value.toLowerCase()) : list)}::text[]))`);
     } else if (operator === 'prefix') {
       clauses.push(`${filter.caseInsensitive ? `lower(${expression})` : expression} like ${addValue(`${filter.caseInsensitive ? String(filter.value).toLowerCase() : String(filter.value)}%`)}`);
     } else if (operator === 'gte' || operator === 'lte') {
@@ -819,6 +832,23 @@ function normalizedPageWhere(options = {}) {
     sql: clauses.length ? `where ${clauses.join(' and ')}` : '',
     values
   };
+}
+
+async function queryNormalizedRows(collection = '', options = {}) {
+  if (!postgresEnabled()) return null;
+  const table = normalizedCollectionTable(collection);
+  if (!table) return null;
+  const where = normalizedPageWhere(options);
+  const sortField = String(options.sortField || 'position');
+  const sortExpression = sortField === 'position' ? 'position' : jsonFieldExpression(sortField);
+  const direction = String(options.sortDirection || 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  const limit = Math.max(1, Math.min(25000, Number(options.limit || 10000) || 10000));
+  const values = [...where.values, limit];
+  const result = await postgresPool().query(
+    `select data from ${table} ${where.sql} order by ${sortExpression} ${direction} nulls last, position ${direction} limit $${values.length}`,
+    values
+  );
+  return result.rows.map((row) => row.data);
 }
 
 async function queryNormalizedPage(collection = '', options = {}) {
@@ -911,6 +941,7 @@ async function ensurePostgresStore() {
       create index if not exists app_invoices_status_json_idx on app_invoices ((data->>'status'));
       create index if not exists app_invoices_due_date_json_idx on app_invoices ((data->>'dueDate'));
       create index if not exists app_invoices_customer_json_idx on app_invoices ((data->>'customerId'));
+      create index if not exists app_invoices_covered_periods_json_idx on app_invoices using gin ((data->'coveredPeriods'));
       create index if not exists app_payments_paid_at_json_idx on app_payments ((data->>'paidAt') desc);
       create index if not exists app_payments_status_json_idx on app_payments ((data->>'status'));
       create index if not exists app_payments_invoice_json_idx on app_payments ((data->>'invoiceId'));
@@ -1139,39 +1170,26 @@ async function migrateLegacyPostgresStore(data = {}) {
 }
 
 async function loadNormalizedCollections() {
-  const pairs = Object.entries(NORMALIZED_COLLECTIONS).map(([collection, table]) => `
-    ${sqlText(collection)}, coalesce((select jsonb_agg(data order by position) from ${table}), '[]'::jsonb)
-  `);
-  const raw = (await runPsql([
-    '-v',
-    'ON_ERROR_STOP=1',
-    '-t',
-    '-A',
-    '-c',
-    `select jsonb_build_object(${pairs.join(',')})::text;`
-  ])).trim();
-  return raw ? JSON.parse(raw) : {};
+  const pool = postgresPool();
+  const entries = await Promise.all(Object.entries(NORMALIZED_COLLECTIONS).map(async ([collection, table]) => {
+    const result = await pool.query(`select data from ${table} order by position`);
+    return [collection, result.rows.map((row) => row.data)];
+  }));
+  return Object.fromEntries(entries);
 }
 
 async function loadPostgresStore() {
   await ensurePostgresStore();
   const table = postgresTableName();
-  const raw = (await runPsql([
-    '-v',
-    'ON_ERROR_STOP=1',
-    '-t',
-    '-A',
-    '-c',
-    `select data::text from ${table} where id = 'main';`
-  ])).trim();
+  const result = await postgresPool().query(`select data from ${table} where id = 'main'`);
+  const parsed = result.rows[0]?.data || null;
 
-  if (!raw) {
+  if (!parsed) {
     const data = ensureShape(createDefaultStore());
     await savePostgresStore(data);
     return data;
   }
 
-  const parsed = JSON.parse(raw);
   if (Number(parsed.storageSchemaVersion || 0) < STORE_SCHEMA_VERSION) {
     // Schema v2 already stored core collections outside the main blob. Merge
     // those rows before writing the expanded schema so an upgrade cannot wipe
@@ -1382,6 +1400,7 @@ module.exports = {
   peekStore,
   publicSettings,
   queryNormalizedPage,
+  queryNormalizedRows,
   redisStatus: () => ({
     ...redisCache.safeStatus(),
     key: postgresEnabled() ? '' : STORE_CACHE_KEY,

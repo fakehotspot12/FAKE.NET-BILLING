@@ -25,6 +25,7 @@ const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard:read',
       'activity:read',
+      'diagnostics:read',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',
@@ -62,6 +63,7 @@ const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard:read',
       'activity:read',
+      'diagnostics:read',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',
@@ -119,6 +121,7 @@ const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard:read',
       'activity:read',
+      'diagnostics:read',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',

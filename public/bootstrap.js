@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'ui-v401-mobile-sidebar-20260809';
+  const assetRevision = 'ui-v410-audit-performance-mobile-20260809';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {

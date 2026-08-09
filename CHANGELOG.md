@@ -2,6 +2,28 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.0] - 2026-08-09
+
+### Changed
+
+- Audit UI menyeluruh diterapkan pada navigasi, kartu mobile, Tagihan Pelanggan, laporan, RADIUS, GenieACS, Whatsapp, inventaris, dan manajemen user.
+- Deteksi Log memakai izin khusus dan tersedia untuk Admin, Owner, serta Sekretaris tanpa membuka Pengaturan Sistem.
+- Tagihan Bulanan, Statistik, dan transaksi bulanan memakai indeks lookup serta kandidat periode agar tidak memindai relasi invoice, pembayaran, pelanggan, dan voucher berulang kali.
+
+### Performance
+
+- Statistik 12 bulan membangun indeks pelanggan, invoice terakhir, transaksi, dan voucher satu kali per request.
+- Konversi tanggal untuk zona waktu Indonesia memakai offset tanpa DST dan tidak lagi membuat formatter `Intl` ribuan kali pada laporan besar.
+- Ringkasan NAS dan pelanggan online memakai stale cache serta refresh background; sesi FreeRADIUS hanya diperkaya untuk halaman aktif bila memungkinkan.
+- Cache runtime dibatasi dan dapat diaudit dari Deteksi Log, sedangkan health endpoint tidak lagi mengekspos lokasi storage.
+
+### Fixed
+
+- Kartu mobile Tagihan Bulanan tidak lagi menumpuk label dan nominal.
+- Tanggal Member, nomor Whatsapp, waktu pesan, dan nama User tidak lagi terpotong pada layar 320 px.
+- Sidebar, tabel, chart, dan toolbar tidak lagi memperlebar halaman pada viewport ponsel kecil.
+- Query pembayaran tidak lagi membuat object gabungan besar untuk setiap invoice dan pencarian site/NAS memakai resolver terindeks.
+
 ## [4.0.1] - 2026-08-09
 
 ### Fixed

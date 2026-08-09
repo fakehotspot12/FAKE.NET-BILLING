@@ -72,11 +72,18 @@ const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
 const { BoundedJsonCache } = require('./bounded-json-cache');
 const { WhatsAppQueue } = require('./whatsapp-queue');
-const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, queryNormalizedPage, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
+const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, queryNormalizedPage, queryNormalizedRows, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
 
 const PORT = Number(process.env.PORT || 8891);
 const HOST = process.env.HOST || '0.0.0.0';
 const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
+const APP_TIME_ZONE_UTC_OFFSET_HOURS = Object.freeze({
+  'Asia/Jakarta': 7,
+  'Asia/Pontianak': 7,
+  'Asia/Makassar': 8,
+  'Asia/Kuala_Lumpur': 8,
+  'Asia/Jayapura': 9
+});
 let activeAppTimeZone = DEFAULT_APP_TIME_ZONE;
 const dateTimeFormatterCache = new Map();
 
@@ -2580,6 +2587,50 @@ async function normalizedPageOrNull(collection = '', options = {}) {
   }
 }
 
+async function normalizedRowsOrNull(collection = '', options = {}) {
+  if (!['postgres', 'postgresql'].includes(String(STORAGE_MODE || '').toLowerCase())) return null;
+  try {
+    return await queryNormalizedRows(collection, options);
+  } catch (error) {
+    console.error(`[query:${collection}] ${error.message || error}`);
+    return null;
+  }
+}
+
+function mergeRowsById(...collections) {
+  const rows = new Map();
+  for (const collection of collections) {
+    for (const row of Array.isArray(collection) ? collection : []) {
+      const key = String(row?.id || row?.invoiceNo || row?.externalId || '').trim();
+      if (key) rows.set(key, row);
+    }
+  }
+  return [...rows.values()];
+}
+
+async function invoiceCandidatesForPeriod(data = {}, period = currentPeriod(), options = {}) {
+  const selectedPeriod = normalizePeriod(period);
+  const exactRows = await normalizedRowsOrNull('invoices', {
+    filters: [{ field: 'period', value: selectedPeriod }],
+    limit: 25000
+  });
+  if (exactRows === null) return Array.isArray(data.invoices) ? data.invoices : [];
+  const coveredRows = await normalizedRowsOrNull('invoices', {
+    filters: [{ field: 'coveredPeriods', operator: 'contains', value: selectedPeriod }],
+    limit: 25000
+  });
+  let collectibleRows = [];
+  if (options.includeCollectible === true) {
+    collectibleRows = await normalizedRowsOrNull('invoices', {
+      filters: [{ field: 'status', operator: 'in', value: ['pending', 'unpaid', 'overdue'] }],
+      limit: 25000
+    });
+    if (collectibleRows === null) return Array.isArray(data.invoices) ? data.invoices : [];
+  }
+  if (coveredRows === null) return Array.isArray(data.invoices) ? data.invoices : [];
+  return mergeRowsById(exactRows, coveredRows, collectibleRows);
+}
+
 function normalizeCustomerStatusLocal(value) {
   const status = String(value || '').trim().toLowerCase();
   if (['active', 'aktif', 'enabled', ''].includes(status)) return 'active';
@@ -3184,46 +3235,54 @@ function reconcileRadiusCustomerStatuses(data = {}) {
   return data;
 }
 
-function localBillingSite(data = {}, customer = {}, invoice = {}) {
+function createLocalBillingSiteResolver(data = {}) {
   const targets = (data.monitoringTargets || []).filter((target) => target.status !== 'inactive');
-  const candidates = [
-    customer.nasId,
-    customer.nas,
-    customer.siteName,
-    customer.site,
-    invoice.siteId,
-    invoice.siteName,
-    invoice.site
-  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
-  const target = targets.find((item) => {
-    const aliases = [
+  const targetDirectory = targets.map((item) => ({
+    item,
+    aliases: new Set([
       item.id,
       item.name,
       item.host,
       item.location,
       item.radius?.name,
       item.radius?.address
+    ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))
+  }));
+  return (customer = {}, invoice = {}) => {
+    const candidates = [
+      customer.nasId,
+      customer.nas,
+      customer.siteName,
+      customer.site,
+      invoice.siteId,
+      invoice.siteName,
+      invoice.site
     ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
-    return candidates.some((candidate) => aliases.includes(candidate));
-  });
-  if (target) {
+    const matched = targetDirectory.find(({ aliases }) => candidates.some((candidate) => aliases.has(candidate)))?.item;
+    if (matched) {
+      return {
+        id: String(matched.id),
+        name: String(matched.name || matched.id),
+        location: String(matched.location || '')
+      };
+    }
+    const name = String(customer.nas || customer.siteName || customer.site || invoice.siteName || invoice.site || '').trim();
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || name || 'default';
     return {
-      id: String(target.id),
-      name: String(target.name || target.id),
-      location: String(target.location || '')
+      id,
+      name,
+      location: String(customer.siteLocation || '')
     };
-  }
-  const name = String(customer.nas || customer.siteName || customer.site || invoice.siteName || invoice.site || '').trim();
-  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || name || 'default';
-  return {
-    id,
-    name,
-    location: String(customer.siteLocation || '')
   };
+}
+
+function localBillingSite(data = {}, customer = {}, invoice = {}) {
+  return createLocalBillingSiteResolver(data)(customer, invoice);
 }
 
 function localBillingSites(data = {}) {
   const sites = new Map();
+  const resolveSite = createLocalBillingSiteResolver(data);
   (data.monitoringTargets || [])
     .filter((target) => target.status !== 'inactive')
     .forEach((target) => {
@@ -3234,7 +3293,7 @@ function localBillingSites(data = {}) {
       });
     });
   (data.customers || []).forEach((customer) => {
-    const site = localBillingSite(data, customer);
+    const site = resolveSite(customer);
     if (!site.name) return;
     if (!sites.has(site.id)) {
       sites.set(site.id, site);
@@ -3291,32 +3350,37 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod(), options = 
   const selectedPeriod = normalizePeriod(period);
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const resolver = radiusStatusResolver(data);
+  const resolveSite = createLocalBillingSiteResolver(data);
   const includeInvoice = typeof options.includeInvoice === 'function'
     ? options.includeInvoice
     : (invoice) => invoiceCoversPeriod(invoice, selectedPeriod);
   const keepInvoicePeriod = options.keepInvoicePeriod === true;
+  const sourceInvoices = Array.isArray(options.invoices) ? options.invoices : (data.invoices || []);
+  const filteredInvoices = sourceInvoices.filter((invoice) => includeInvoice(invoice, selectedPeriod));
+  const invoiceStatuses = new Map(filteredInvoices
+    .map((invoice) => [String(invoice.id || ''), invoiceRuntimeStatus(invoice)])
+    .filter(([id]) => id));
   const paymentsByInvoice = new Map();
   const onlinePaymentInvoiceIds = new Set();
-  for (const payment of activePayments(data)) {
+  for (const payment of data.payments || []) {
+    if (!paymentIsActive(payment)) continue;
     const invoiceId = String(payment.invoiceId || '');
-    if (!invoiceId) continue;
+    if (!invoiceId || invoiceStatuses.get(invoiceId) !== 'paid') continue;
     if (onlinePaymentRecord(payment)) onlinePaymentInvoiceIds.add(invoiceId);
     const current = paymentsByInvoice.get(invoiceId);
     if (!current || String(payment.createdAt || payment.paidAt || '') > String(current.createdAt || current.paidAt || '')) {
       paymentsByInvoice.set(invoiceId, payment);
     }
   }
-  return (data.invoices || [])
-    .filter((invoice) => includeInvoice(invoice, selectedPeriod))
-    .map((invoice) => {
+  return filteredInvoices.map((invoice) => {
       const customer = customers.get(invoice.customerId) || {};
       const payment = paymentsByInvoice.get(invoice.id) || {};
       const storedInvoiceNo = invoice.externalId || invoice.invoiceNo || invoice.id;
       const publicInvoiceNo = displayBillingInvoiceNo(storedInvoiceNo);
       const runtimeStatus = invoiceRuntimeStatus(invoice);
       const customerStatus = resolver.statusForInvoice(invoice, customer);
-      const site = localBillingSite(data, customer, invoice);
-      const paymentCategory = paymentCategoryForRecord({ ...invoice, ...payment }, invoice.paymentMethod || payment.method || '');
+      const site = resolveSite(customer, invoice);
+      const paymentCategory = paymentCategoryForRecord(payment, invoice.paymentMethod || payment.method || '', invoice);
       const addOns = invoiceBillingAddons(invoice, customer);
       const addOnsTotal = billingAddonsTotal(addOns);
       const rowPeriod = keepInvoicePeriod ? invoicePrimaryPeriod(invoice, selectedPeriod) : selectedPeriod;
@@ -3523,14 +3587,18 @@ function billingMonitorSummaryFromRows(periodRows = [], summaryRows = [], filter
   };
 }
 
-function buildBillingMonitorBasePayload(data = {}, period = currentPeriod(), scope = 'collectible') {
+async function buildBillingMonitorBasePayload(data = {}, period = currentPeriod(), scope = 'collectible') {
   const selectedPeriod = normalizePeriod(period);
   const selectedScope = billingMonitorScope(scope || 'collectible');
+  const sourceInvoices = await invoiceCandidatesForPeriod(data, selectedPeriod, {
+    includeCollectible: selectedScope !== 'month'
+  });
   const allRows = localBillingInvoiceRows(data, selectedPeriod, {
     includeInvoice: (invoice) => billingMonitorInvoiceIncluded(invoice, selectedPeriod, selectedScope),
-    keepInvoicePeriod: selectedScope !== 'month'
+    keepInvoicePeriod: selectedScope !== 'month',
+    invoices: sourceInvoices
   }).filter((invoice) => invoice.status !== 'cancelled').map(enrichBillingMonitorInvoiceRow);
-  const periodRows = localBillingInvoiceRows(data, selectedPeriod)
+  const periodRows = localBillingInvoiceRows(data, selectedPeriod, { invoices: sourceInvoices })
     .filter((invoice) => invoice.status !== 'cancelled')
     .map(enrichBillingMonitorInvoiceRow);
   return {
@@ -3552,7 +3620,7 @@ async function cachedBillingMonitorBasePayload(data = {}, period = currentPeriod
     const cached = await runtimeJsonCacheGet(key);
     if (cached) return cached;
   }
-  const payload = buildBillingMonitorBasePayload(data, period, scope);
+  const payload = await buildBillingMonitorBasePayload(data, period, scope);
   await runtimeJsonCacheSet(key, payload, REPORT_BASE_CACHE_TTL_SECONDS);
   return payload;
 }
@@ -6508,6 +6576,13 @@ function normalizedTimestampIso(value) {
 function timestampLocalDateKey(value) {
   const timestamp = normalizedTimestampIso(value);
   if (!timestamp) return '';
+  const offsetHours = APP_TIME_ZONE_UTC_OFFSET_HOURS[activeAppTimeZone];
+  if (Number.isFinite(offsetHours)) {
+    const timestampMs = Date.parse(timestamp);
+    if (Number.isFinite(timestampMs)) {
+      return new Date(timestampMs + (offsetHours * 3_600_000)).toISOString().slice(0, 10);
+    }
+  }
   const parts = localDateParts(new Date(timestamp));
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
@@ -6963,7 +7038,7 @@ function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period 
   return counts;
 }
 
-const DASHBOARD_RADIUS_SUMMARY_CACHE_MS = 10000;
+const DASHBOARD_RADIUS_SUMMARY_CACHE_MS = 30000;
 const dashboardRadiusSummaryCache = new Map();
 
 function dashboardRadiusSummaryCacheKey(data = {}, period = currentPeriod()) {
@@ -7012,7 +7087,7 @@ async function dashboardRadiusSummary(data = {}, period = currentPeriod()) {
       limit: 5000,
       preferCache: true,
       allowCache: true,
-      maxCacheAgeSeconds: 8
+      maxCacheAgeSeconds: 30
     });
     const sessions = Array.isArray(sessionPayload.rows) ? sessionPayload.rows : [];
     const usersByUsername = new Map((data.radiusUsers || []).map((user) => [radiusSessionUsername(user.username), user]));
@@ -10148,41 +10223,41 @@ function normalizePaymentCategory(value = '') {
   return '';
 }
 
-function paymentCategoryForRecord(record = {}, fallbackMethod = '') {
+function paymentCategoryForRecord(record = {}, fallbackMethod = '', secondary = {}) {
+  const field = (...names) => {
+    for (const name of names) {
+      const primary = record?.[name];
+      if (primary !== undefined && primary !== null && primary !== '') return primary;
+      const fallback = secondary?.[name];
+      if (fallback !== undefined && fallback !== null && fallback !== '') return fallback;
+    }
+    return '';
+  };
   const rawMethod = String(
     fallbackMethod
-    || record.method
-    || record.paymentMethod
-    || record.payment_method
+    || field('method', 'paymentMethod', 'payment_method')
     || ''
   ).trim().toLowerCase();
   if (rawMethod.includes('loket')) return 'transfer';
   const explicit = normalizePaymentCategory(
-    record.paymentCategory
-    || record.payment_category
-    || record.methodGroup
-    || record.method_group
+    field('paymentCategory', 'payment_category', 'methodGroup', 'method_group')
   );
   if (explicit) return explicit;
 
-  const source = String(record.source || record.sourceType || record.type || '').trim().toLowerCase();
+  const source = String(field('source', 'sourceType', 'type')).trim().toLowerCase();
   const actor = String(
-    record.createdByUsername
-    || record.paidByUsername
-    || record.updatedByUsername
-    || record.admin
-    || ''
+    field('createdByUsername', 'paidByUsername', 'updatedByUsername', 'admin')
   ).trim().toLowerCase();
   const gatewayMarker = [
-    record.paymentProvider,
-    record.provider,
-    record.gatewayProvider,
-    record.paymentGatewayReference,
-    record.gatewayReference,
-    record.onlineOrderId,
-    record.onlineOrderReference
+    field('paymentProvider'),
+    field('provider'),
+    field('gatewayProvider'),
+    field('paymentGatewayReference'),
+    field('gatewayReference'),
+    field('onlineOrderId'),
+    field('onlineOrderReference')
   ].some((value) => String(value || '').trim());
-  const notes = String(record.notes || record.description || '').trim().toLowerCase();
+  const notes = String(field('notes', 'description')).trim().toLowerCase();
   if (
     source === 'online'
     || source === 'payment-gateway'
@@ -10267,11 +10342,16 @@ function monthlyBillingDailyRows(data = {}, period = currentPeriod(), options = 
   const groups = options.includeExpenses === false || scopedNas ? new Map() : periodExpenseDailyGroups(data, period);
   const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
-  const payments = Array.isArray(options.payments) ? options.payments : activePayments(data);
+  const resolveSite = createLocalBillingSiteResolver(data);
+  const payments = Array.isArray(options.payments) ? options.payments : (data.payments || []);
   for (const payment of payments) {
+    if (!paymentIsActive(payment)) continue;
     const invoice = invoices.get(payment.invoiceId) || {};
+    if (payment.invoiceId && invoice.id && invoiceRuntimeStatus(invoice) !== 'paid') continue;
+    const date = paymentDateKey(payment, invoice);
+    if (date.slice(0, 7) !== period) continue;
     const customer = customers.get(payment.customerId || invoice.customerId) || {};
-    const site = localBillingSite(data, customer, invoice);
+    const site = resolveSite(customer, invoice);
     if (scopedNas && !reportMatchesNas({
       ...invoice,
       ...customer,
@@ -10280,9 +10360,7 @@ function monthlyBillingDailyRows(data = {}, period = currentPeriod(), options = 
       nasId: site.id,
       nasName: site.name
     }, selectedNas)) continue;
-    const date = paymentDateKey(payment, invoice);
-    if (date.slice(0, 7) !== period) continue;
-    const method = paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod);
+    const method = paymentCategoryForRecord(payment, payment.method || invoice.paymentMethod, invoice);
     const amount = Number(payment.amount || invoice.amount || 0);
     const field = method === 'cash' ? 'incomeCash' : method === 'online' ? 'incomeOnline' : 'incomeTransfer';
     addDailyFinanceAmount(groups, date, field, amount, 1);
@@ -10334,7 +10412,27 @@ async function generatedVoucherFirstOnlineMap(data = {}) {
 }
 
 function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUsername = new Map()) {
+  const requestedPeriods = new Set((Array.isArray(period) ? period : [period])
+    .map((value) => normalizePeriod(value || currentPeriod()))
+    .filter(Boolean));
+  const matchesRequestedPeriod = (date = '') => requestedPeriods.has(String(date || '').slice(0, 7));
   const reportUsers = hotspotVoucherReportUsers(data);
+  const usersById = new Map();
+  const usersByOnlineOrderId = new Map();
+  const usersByOnlineReference = new Map();
+  const appendIndexedUser = (directory, key, user) => {
+    const normalized = String(key || '').trim();
+    if (!normalized) return;
+    const rows = directory.get(normalized) || [];
+    rows.push(user);
+    directory.set(normalized, rows);
+  };
+  for (const user of reportUsers) {
+    const id = String(user.id || '').trim();
+    if (id) usersById.set(id, user);
+    appendIndexedUser(usersByOnlineOrderId, user.onlineOrderId, user);
+    appendIndexedUser(usersByOnlineReference, user.onlineOrderReference, user);
+  }
   const voucherUsersForOrder = (order = {}) => {
     const seen = new Set();
     const rows = [];
@@ -10354,11 +10452,9 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
     const ids = new Set((Array.isArray(order.voucherUserIds) ? order.voucherUserIds : [])
       .map((id) => String(id || '').trim())
       .filter(Boolean));
-    reportUsers
-      .filter((user) => ids.has(String(user.id || ''))
-        || (order.id && user.onlineOrderId === order.id)
-        || (order.reference && user.onlineOrderReference === order.reference))
-      .forEach(add);
+    ids.forEach((id) => add(usersById.get(id) || {}));
+    (usersByOnlineOrderId.get(String(order.id || '').trim()) || []).forEach(add);
+    (usersByOnlineReference.get(String(order.reference || '').trim()) || []).forEach(add);
     return rows;
   };
   const onlineOrders = [
@@ -10391,7 +10487,7 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
         updatedByUsername: order.updatedByUsername || order.paidByUsername || ''
       };
     })
-    .filter((order) => order.date.slice(0, 7) === period);
+    .filter((order) => matchesRequestedPeriod(order.date));
   const profileById = new Map((data.radiusProfiles || []).map((profile) => [profile.id, profile]));
   const nasById = new Map(radiusNasRowsLocal(data).map((nas) => [nas.id, nas]));
   const manualOrders = reportUsers
@@ -10450,7 +10546,7 @@ function paidVoucherOrders(data = {}, period = currentPeriod(), firstOnlineByUse
         updatedAt: reportTimestampValue(user.updatedAt)
       };
     })
-    .filter((order) => order.date.slice(0, 7) === period);
+    .filter((order) => matchesRequestedPeriod(order.date));
   return [...onlineOrders, ...manualOrders];
 }
 
@@ -10807,6 +10903,13 @@ function statisticsActivePppCustomerCountAtMonthEnd(data = {}, period = currentP
 }
 
 async function reportStatisticsPayload(data = {}, period = currentPeriod(), options = {}) {
+  const statisticsStartedAt = Date.now();
+  let statisticsStageAt = statisticsStartedAt;
+  const statisticsTimings = {};
+  const markStatisticsStage = (name) => {
+    statisticsTimings[`${name}Ms`] = Date.now() - statisticsStageAt;
+    statisticsStageAt = Date.now();
+  };
   const selectedPeriod = normalizePeriod(period);
   const selectedNas = String(options.nas || options.site || 'all').trim();
   const scopedNas = selectedNas && selectedNas.toLowerCase() !== 'all';
@@ -10840,12 +10943,50 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
   const removedKeys = new Set();
   const customersById = new Map();
   const customersByRadiusUserId = new Map();
+  const customersByUsername = new Map();
+  const customersByCode = new Map();
   for (const customer of data.customers || []) {
     const customerId = String(customer.id || '').trim();
     if (customerId && !customersById.has(customerId)) customersById.set(customerId, customer);
     const radiusUserId = String(customer.radiusUserId || '').trim();
     if (radiusUserId && !customersByRadiusUserId.has(radiusUserId)) customersByRadiusUserId.set(radiusUserId, customer);
+    const username = String(customer.username || '').trim().toLowerCase();
+    if (username && !customersByUsername.has(username)) customersByUsername.set(username, customer);
+    const code = String(customer.code || customer.accountId || '').trim().toLowerCase();
+    if (code && !customersByCode.has(code)) customersByCode.set(code, customer);
   }
+  const latestInvoiceByKey = new Map();
+  for (const invoice of data.invoices || []) {
+    if (invoiceRuntimeStatus(invoice) === 'cancelled') continue;
+    const stamp = String(invoice.period || invoice.dueDate || invoice.invoiceDate || invoice.createdAt || '');
+    const amount = Math.max(0, Math.round(toNumber(invoice.totalAmount || invoice.total || invoice.amount || 0)));
+    const keys = [
+      invoice.customerId ? `id:${String(invoice.customerId).trim()}` : '',
+      invoice.username ? `username:${String(invoice.username).trim().toLowerCase()}` : '',
+      (invoice.accountId || invoice.memberCode) ? `code:${String(invoice.accountId || invoice.memberCode).trim().toLowerCase()}` : ''
+    ].filter(Boolean);
+    for (const key of keys) {
+      const current = latestInvoiceByKey.get(key);
+      if (!current || stamp > current.stamp) latestInvoiceByKey.set(key, { stamp, amount });
+    }
+  }
+  const removedRecurringAmount = (record = {}) => {
+    const customerId = String(record.customerId || '').trim();
+    const username = String(record.username || '').trim().toLowerCase();
+    const memberCode = String(record.memberCode || record.accountId || '').trim().toLowerCase();
+    const customer = customersById.get(customerId)
+      || customersByUsername.get(username)
+      || customersByCode.get(memberCode)
+      || null;
+    if (customer) return statisticsCustomerRecurringAmount(data, customer, record);
+    const stored = Math.max(0, Math.round(toNumber(record.monthlyAmount || record.billingAmount || record.recurringAmount || 0)));
+    if (stored > 0) return stored;
+    const latest = latestInvoiceByKey.get(customerId ? `id:${customerId}` : '')
+      || latestInvoiceByKey.get(username ? `username:${username}` : '')
+      || latestInvoiceByKey.get(memberCode ? `code:${memberCode}` : '');
+    if (Number(latest?.amount || 0) > 0) return latest.amount;
+    return statisticsCustomerRecurringAmount(data, record);
+  };
   const pppStatisticRows = (data.radiusUsers || [])
     .filter((user) => String(user.serviceType || '').trim().toLowerCase() === 'pppoe')
     .map((user) => {
@@ -10874,6 +11015,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
       };
     })
     .filter((row) => !scopedNas || reportMatchesNas(row, selectedNas));
+  markStatisticsStage('setup');
   const addRow = (date = '', field = '', amount = 1) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return;
     const rowPeriod = date.slice(0, 7);
@@ -10934,6 +11076,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
     addRow(date, 'newInstallCount', 1);
     addRow(date, 'newInstallAmount', statisticsCustomerRecurringAmount(data, customer, user));
   }
+  markStatisticsStage('newInstall');
 
   for (const record of data.radiusRemovedRecords || []) {
     const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
@@ -10946,7 +11089,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
       if (key && !removedKeys.has(key)) {
         removedKeys.add(key);
         addRow(removedDate, 'removedCount', 1);
-        addRow(removedDate, 'removedAmount', statisticsRemovedRecurringAmount(data, record));
+        addRow(removedDate, 'removedAmount', removedRecurringAmount(record));
       }
     }
     const installedDate = pppInstallDateForRemovedRecord(record);
@@ -10955,17 +11098,23 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
       if (key && !newInstallKeys.has(key)) {
         newInstallKeys.add(key);
         addRow(installedDate, 'newInstallCount', 1);
-        addRow(installedDate, 'newInstallAmount', statisticsRemovedRecurringAmount(data, record));
+        addRow(installedDate, 'newInstallAmount', removedRecurringAmount(record));
       }
     }
   }
+  markStatisticsStage('removed');
 
   const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
   const paymentCustomers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
-  for (const payment of activePayments(data)) {
+  const resolveBillingSite = createLocalBillingSiteResolver(data);
+  for (const payment of data.payments || []) {
+    if (!paymentIsActive(payment)) continue;
     const invoice = invoices.get(payment.invoiceId) || {};
+    if (payment.invoiceId && invoice.id && invoiceRuntimeStatus(invoice) !== 'paid') continue;
+    const date = paymentDateKey(payment, invoice);
+    if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     const customer = paymentCustomers.get(payment.customerId || invoice.customerId) || {};
-    const site = localBillingSite(data, customer, invoice);
+    const site = resolveBillingSite(customer, invoice);
     if (scopedNas && !reportMatchesNas({
       ...invoice,
       ...customer,
@@ -10974,11 +11123,10 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
       nasId: site.id,
       nasName: site.name
     }, selectedNas)) continue;
-    const date = paymentDateKey(payment, invoice);
-    if (!monthPeriodSet.has(date.slice(0, 7))) continue;
-    const category = paymentCategoryForRecord({ ...invoice, ...payment }, payment.method || invoice.paymentMethod);
+    const category = paymentCategoryForRecord(payment, payment.method || invoice.paymentMethod, invoice);
     addRevenueRow(date, 'billingRevenueAmount', Number(payment.amount || invoice.amount || 0), 1, category);
   }
+  markStatisticsStage('payments');
 
   for (const income of data.externalIncomes || []) {
     const status = String(income.status || 'active').toLowerCase();
@@ -10996,20 +11144,20 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
     if (!monthPeriodSet.has(date.slice(0, 7))) continue;
     addExpenseRow(date, Number(expense.amount || 0));
   }
+  markStatisticsStage('cashflow');
 
   const firstOnlineByUsername = await generatedVoucherFirstOnlineMap(data);
-  for (const monthPeriod of monthPeriods) {
-    const voucherOrders = await paidVoucherOrdersForReport(data, monthPeriod, firstOnlineByUsername);
-    for (const order of voucherOrders) {
-      if (scopedNas && !reportMatchesNas(order, selectedNas)) continue;
-      const date = timestampLocalDateKey(order.date || order.paidAt || order.updatedAt || order.createdAt);
-      if (date.slice(0, 7) !== monthPeriod) continue;
-      addRow(date, 'voucherBuyerCount', 1);
-      addRow(date, 'voucherCount', Number(order.quantity || order.vouchers?.length || 0));
-      const category = paymentCategoryForRecord(order, order.paymentMethod || order.method);
-      addRevenueRow(date, 'voucherAmount', Number(order.amount || 0), 1, category);
-    }
+  const voucherOrders = await paidVoucherOrdersForReport(data, monthPeriods, firstOnlineByUsername);
+  for (const order of voucherOrders) {
+    if (scopedNas && !reportMatchesNas(order, selectedNas)) continue;
+    const date = timestampLocalDateKey(order.date || order.paidAt || order.updatedAt || order.createdAt);
+    if (!monthPeriodSet.has(date.slice(0, 7))) continue;
+    addRow(date, 'voucherBuyerCount', 1);
+    addRow(date, 'voucherCount', Number(order.quantity || order.vouchers?.length || 0));
+    const category = paymentCategoryForRecord(order, order.paymentMethod || order.method);
+    addRevenueRow(date, 'voucherAmount', Number(order.amount || 0), 1, category);
   }
+  markStatisticsStage('vouchers');
 
   const dailyRows = statisticsPeriodRows(selectedPeriod, dailyGroups);
   const monthlyRows = statisticsMonthlyRows(monthPeriods, monthlyGroups);
@@ -11032,6 +11180,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
   for (const row of monthlyRows) {
     row.activeCustomerCount = activePppCountAtMonthEnd(row.period);
   }
+  markStatisticsStage('activeCustomers');
   const summary = dailyRows.reduce((acc, row) => {
     acc.newInstallCount += Number(row.newInstallCount || 0);
     acc.newInstallAmount += Number(row.newInstallAmount || 0);
@@ -11082,6 +11231,17 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
     checkedAt: new Date().toISOString()
   };
   await runtimeJsonCacheSet(cacheKey, payload, REPORT_RUNTIME_CACHE_TTL_SECONDS);
+  markStatisticsStage('cache');
+  const statisticsDetails = {
+    period: selectedPeriod,
+    ...statisticsTimings,
+    pppRows: pppStatisticRows.length,
+    voucherRows: voucherOrders.length
+  };
+  const statisticsElapsedMs = Date.now() - statisticsStartedAt;
+  if (statisticsElapsedMs >= 500) {
+    console.log(`[performance] report-statistics-build total=${statisticsElapsedMs}ms ${Object.entries(statisticsDetails).map(([key, value]) => `${key}=${value}`).join(' ')}`);
+  }
   return payload;
 }
 
@@ -11571,14 +11731,21 @@ function monthlyBillingReportSummary(invoices = []) {
 }
 
 async function buildMonthlyBillingBasePayload(data = {}, period = currentPeriod(), selectedNas = 'all', user = {}) {
+  const startedAt = Date.now();
   const selectedPeriod = normalizePeriod(period);
+  const sourceInvoices = await invoiceCandidatesForPeriod(data, selectedPeriod);
+  const candidatesMs = Date.now() - startedAt;
+  let stageStartedAt = Date.now();
   const collectorReport = userIsCollector(user);
-  const reportPayments = collectorReportPayments(data, user);
+  const reportPayments = collectorReport ? collectorReportPayments(data, user) : [];
   const periodPaymentInvoiceIds = new Set(reportPayments
     .filter((payment) => paymentPeriodKey(payment) === selectedPeriod)
     .map((payment) => String(payment.invoiceId || ''))
     .filter(Boolean));
-  const baseInvoices = localBillingInvoiceRows(data, selectedPeriod).filter((invoice) => invoice.status !== 'cancelled');
+  const baseInvoices = localBillingInvoiceRows(data, selectedPeriod, { invoices: sourceInvoices })
+    .filter((invoice) => invoice.status !== 'cancelled');
+  const invoicesMs = Date.now() - stageStartedAt;
+  stageStartedAt = Date.now();
   const nasOptions = reportNasOptions(data, baseInvoices);
   let invoices = [...baseInvoices];
   if (collectorReport) {
@@ -11588,6 +11755,23 @@ async function buildMonthlyBillingBasePayload(data = {}, period = currentPeriod(
     invoices = invoices.filter((invoice) => reportMatchesNas(invoice, selectedNas));
   }
   invoices = invoices.map(enrichMonthlyBillingInvoiceRow);
+  const filterMs = Date.now() - stageStartedAt;
+  stageStartedAt = Date.now();
+  const dailyRows = monthlyBillingDailyRows(data, selectedPeriod, {
+    payments: collectorReport ? reportPayments : undefined,
+    includeExpenses: !collectorReport,
+    nas: selectedNas
+  });
+  const dailyMs = Date.now() - stageStartedAt;
+  logSlowOperation('monthly-billing-build', startedAt, {
+    period: selectedPeriod,
+    candidatesMs,
+    invoicesMs,
+    filterMs,
+    dailyMs,
+    sourceRows: sourceInvoices.length,
+    rows: invoices.length
+  });
   return {
     ok: true,
     period: selectedPeriod,
@@ -11595,11 +11779,7 @@ async function buildMonthlyBillingBasePayload(data = {}, period = currentPeriod(
     collector: collectorReport ? { scoped: true, name: user.name || '', username: user.username || '' } : null,
     nasOptions,
     invoices,
-    dailyRows: monthlyBillingDailyRows(data, selectedPeriod, {
-      payments: collectorReport ? reportPayments : undefined,
-      includeExpenses: !collectorReport,
-      nas: selectedNas
-    }),
+    dailyRows,
     checkedAt: new Date().toISOString()
   };
 }
@@ -11993,24 +12173,26 @@ async function cachedActivityBasePayload(data = {}, user = {}, filters = {}, opt
   return payload;
 }
 
-function dashboardBillingSummaryCacheKey(data = {}, period = currentPeriod()) {
+function dashboardBillingSummaryCacheKey(data = {}, period = currentPeriod(), invoiceRows = null) {
+  const invoices = Array.isArray(invoiceRows) ? invoiceRows : (data.invoices || []);
   return [
     packageInfo.version || '',
     normalizePeriod(period),
-    (data.invoices || []).length,
+    invoices.length,
     (data.payments || []).length,
     (data.customers || []).length,
     (data.radiusUsers || []).length,
-    collectionNewestTimestamp(data.invoices || []),
+    collectionNewestTimestamp(invoices),
     collectionNewestTimestamp(data.payments || []),
     collectionNewestTimestamp(data.customers || []),
     collectionNewestTimestamp(data.radiusUsers || [])
   ].join('|');
 }
 
-function dashboardBillingSummary(data = {}, period = currentPeriod()) {
+function dashboardBillingSummary(data = {}, period = currentPeriod(), options = {}) {
   const selectedPeriod = normalizePeriod(period);
-  const cacheKey = dashboardBillingSummaryCacheKey(data, selectedPeriod);
+  const sourceInvoices = Array.isArray(options.invoices) ? options.invoices : (data.invoices || []);
+  const cacheKey = dashboardBillingSummaryCacheKey(data, selectedPeriod, sourceInvoices);
   const cached = dashboardBillingSummaryCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return structuredClone(cached.value);
@@ -12047,7 +12229,7 @@ function dashboardBillingSummary(data = {}, period = currentPeriod()) {
     monthlyInvoiceAmount: 0
   };
 
-  for (const invoice of data.invoices || []) {
+  for (const invoice of sourceInvoices) {
     const runtimeStatus = invoiceRuntimeStatus(invoice, referenceDate);
     const invoiceId = String(invoice.id || '');
     if (invoiceId && !invoiceStatuses.has(invoiceId)) {
@@ -12103,7 +12285,8 @@ async function cachedDashboardBillingSummary(data = {}, period = currentPeriod()
   const cacheKey = runtimeCacheKey('dashboard-billing-summary', signature);
   const cached = await runtimeJsonCacheGet(cacheKey);
   if (cached) return cached;
-  const summary = dashboardBillingSummary(data, selectedPeriod);
+  const sourceInvoices = await invoiceCandidatesForPeriod(data, selectedPeriod, { includeCollectible: true });
+  const summary = dashboardBillingSummary(data, selectedPeriod, { invoices: sourceInvoices });
   await runtimeJsonCacheSet(cacheKey, summary, DASHBOARD_RUNTIME_CACHE_TTL_SECONDS);
   return structuredClone(summary);
 }
@@ -16982,8 +17165,72 @@ async function handleApi(req, res, url) {
       storage: STORAGE_MODE,
       cache: CACHE_MODE,
       redis: redisStatus(),
+      whatsappQueue
+    });
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/system/diagnostics') {
+    const authContext = await requirePermission(req, res, 'diagnostics:read');
+    if (!authContext) return;
+    const databaseStartedAt = Date.now();
+    const databaseProbe = await normalizedPageOrNull('activity', {
+      page: 1,
+      limit: 1,
+      sortField: 'createdAt',
+      sortDirection: 'desc'
+    });
+    const memory = process.memoryUsage();
+    const [whatsappQueue, redisAvailable] = await Promise.all([
+      waGatewayQueueStatus(),
+      redisCache.enabled()
+        ? redisCache.ping().then(() => true).catch(() => false)
+        : Promise.resolve(false)
+    ]);
+    const redis = { ...redisStatus(), available: redisAvailable };
+    sendJson(res, 200, {
+      ok: true,
+      checkedAt: new Date().toISOString(),
+      system: publicSystemInfo(),
+      process: {
+        uptimeSeconds: Math.max(0, Math.floor(process.uptime())),
+        pid: process.pid,
+        memory: {
+          rss: memory.rss,
+          heapUsed: memory.heapUsed,
+          heapTotal: memory.heapTotal,
+          external: memory.external
+        }
+      },
+      database: {
+        mode: STORAGE_MODE,
+        available: ['postgres', 'postgresql'].includes(String(STORAGE_MODE || '').toLowerCase())
+          ? Boolean(databaseProbe)
+          : true,
+        latencyMs: Date.now() - databaseStartedAt
+      },
+      cache: {
+        mode: CACHE_MODE,
+        redis,
+        runtime: runtimeJsonMemoryCache.stats()
+      },
       whatsappQueue,
-      storePath: STORE_PATH
+      automation: {
+        billing: {
+          active: Boolean(billingAutomationTimer),
+          running: billingAutomationRunning,
+          intervalSeconds: Math.max(1, Math.round(BILLING_AUTOMATION_INTERVAL_MS / 1000))
+        },
+        paymentGateway: {
+          active: Boolean(paymentGatewayHistorySyncTimer),
+          running: paymentGatewayHistorySyncRunning,
+          intervalSeconds: Math.max(1, Math.round(PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS / 1000))
+        },
+        routerMonitoring: {
+          active: Boolean(routerDashboardBackgroundTimer),
+          running: routerDashboardBackgroundRunning
+        }
+      }
     });
     return;
   }
@@ -18559,7 +18806,8 @@ async function handleApi(req, res, url) {
     const data = authContext.data;
     const { period, status, search } = normalizeListQuery(url);
     const { page, limit } = paginationParams(url, 10, 100);
-    let invoices = data.invoices
+    const sourceInvoices = await invoiceCandidatesForPeriod(data, period);
+    let invoices = sourceInvoices
       .filter((invoice) => invoiceCoversPeriod(invoice, period))
       .map((invoice) => ({
         ...invoice,

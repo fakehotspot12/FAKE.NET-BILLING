@@ -98,6 +98,7 @@ const titles = {
   reportsTransactions: 'Mutasi Bulanan',
   reportsFinanceRecap: 'Rekapitulasi',
   reportsInventoryStock: 'Stok Inventaris',
+  diagnostics: 'Deteksi Log',
   activity: 'Log Audit',
   waGateway: 'Whatsapp Gateway',
   paymentGateway: 'Payment Gateway',
@@ -120,6 +121,7 @@ const viewPermissions = {
   reportsTransactions: 'reports:daily:read',
   reportsFinanceRecap: 'reports:daily:read',
   reportsInventoryStock: 'inventory:read',
+  diagnostics: 'diagnostics:read',
   activity: 'activity:read',
   waGateway: 'wa-gateway:manage',
   paymentGateway: 'payment-gateway:manage',
@@ -1982,7 +1984,7 @@ function canView(view) {
 }
 
 function firstAvailableView() {
-  return ['dashboard', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'genieAcs', 'monitoringSite', 'monitoringMembers', 'monitoringCustomers', 'monitoringBilling', 'monitoringServices', 'externalIncomes', 'expenses', 'reportsDaily', 'reportsMonthlyBilling', 'reportsStatistics', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsTransactions', 'reportsFinanceRecap', 'reportsInventoryStock', 'activity', 'waGateway', 'paymentGateway', 'inventory', 'networkAssets', 'users', 'settings'].find(canView) || 'dashboard';
+  return ['dashboard', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'genieAcs', 'monitoringSite', 'monitoringMembers', 'monitoringCustomers', 'monitoringBilling', 'monitoringServices', 'externalIncomes', 'expenses', 'reportsDaily', 'reportsMonthlyBilling', 'reportsStatistics', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsTransactions', 'reportsFinanceRecap', 'reportsInventoryStock', 'diagnostics', 'activity', 'waGateway', 'paymentGateway', 'inventory', 'networkAssets', 'users', 'settings'].find(canView) || 'dashboard';
 }
 
 function normalizeView(view) {
@@ -2394,6 +2396,17 @@ function formData(form) {
 }
 
 const MOBILE_CARD_TABLE_VIEWS = new Set([
+  'externalIncomes',
+  'expenses',
+  'reportsFinanceRecap',
+  'reportsMonthlyBilling',
+  'monitoringSite',
+  'genieAcs',
+  'networkAssets',
+  'waGateway',
+  'inventory',
+  'reportsInventoryStock',
+  'users',
   'monitoringBilling',
   'monitoringMembers',
   'radiusPppDhcp',
@@ -4540,6 +4553,92 @@ async function renderDashboard(options = {}) {
   }
 }
 
+function diagnosticsStatusBadge(active, activeLabel = 'Aktif', inactiveLabel = 'Tidak aktif') {
+  return `<span class="badge ${active ? 'active' : 'inactive'}">${escapeHtml(active ? activeLabel : inactiveLabel)}</span>`;
+}
+
+function diagnosticsUptimeText(seconds = 0) {
+  const totalMinutes = Math.max(0, Math.floor(Number(seconds || 0) / 60));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return [days ? `${days} hari` : '', hours ? `${hours} jam` : '', `${minutes} menit`].filter(Boolean).join(' ');
+}
+
+async function renderDiagnostics(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memeriksa sistem...</div>';
+  const payload = await api(`/api/system/diagnostics${options.refresh ? '?refresh=1' : ''}`);
+  const processInfo = payload.process || {};
+  const memory = processInfo.memory || {};
+  const database = payload.database || {};
+  const cache = payload.cache || {};
+  const redis = cache.redis || {};
+  const runtimeCache = cache.runtime || {};
+  const queue = payload.whatsappQueue || {};
+  const automation = payload.automation || {};
+  const queuedMessages = Number(queue.waiting || 0) + Number(queue.prioritized || 0) + Number(queue.delayed || 0);
+  const redisAvailable = redis.available === true || redis.connected === true || redis.ready === true || redis.status === 'ready';
+
+  app.innerHTML = `
+    <div class="stack diagnostics-page">
+      <div class="toolbar compact-toolbar diagnostics-toolbar">
+        <div>
+          <strong>Status komponen aplikasi</strong>
+          <span class="muted">Pemeriksaan ${escapeHtml(dateTimeText(payload.checkedAt || new Date().toISOString()))}</span>
+        </div>
+        <button class="ghost-button compact" id="refreshDiagnostics" type="button">Periksa Ulang</button>
+      </div>
+
+      <section class="metrics diagnostics-metrics">
+        ${metric('Aplikasi', 'Online', `Uptime ${diagnosticsUptimeText(processInfo.uptimeSeconds)}`, 'positive')}
+        ${metric('Database', database.available ? 'Terhubung' : 'Gangguan', `${String(database.mode || '-').toUpperCase()} · ${displayNumber(database.latencyMs || 0)} ms`, database.available ? 'positive' : 'negative')}
+        ${metric('Redis', redisAvailable ? 'Terhubung' : 'Tidak siap', String(cache.mode || '-').toUpperCase(), redisAvailable ? 'positive' : 'warning-card')}
+        ${metric('Antrean WA', displayNumber(queuedMessages), queue.available ? 'BullMQ aktif' : 'Worker tidak tersedia', queue.available ? 'positive' : 'warning-card')}
+      </section>
+
+      <section class="diagnostics-grid">
+        <article class="diagnostics-card">
+          <div class="section-head"><h2>Proses Aplikasi</h2>${diagnosticsStatusBadge(true, 'Berjalan')}</div>
+          <dl>
+            <div><dt>RSS</dt><dd>${escapeHtml(statisticsCompactBytes(memory.rss || 0))}</dd></div>
+            <div><dt>Heap terpakai</dt><dd>${escapeHtml(statisticsCompactBytes(memory.heapUsed || 0))}</dd></div>
+            <div><dt>Heap tersedia</dt><dd>${escapeHtml(statisticsCompactBytes(memory.heapTotal || 0))}</dd></div>
+            <div><dt>PID</dt><dd>${displayNumber(processInfo.pid || 0)}</dd></div>
+          </dl>
+        </article>
+        <article class="diagnostics-card">
+          <div class="section-head"><h2>Cache</h2>${diagnosticsStatusBadge(redisAvailable, 'Siap', 'Periksa Redis')}</div>
+          <dl>
+            <div><dt>Cache proses</dt><dd>${displayNumber(runtimeCache.entries || 0)} entri</dd></div>
+            <div><dt>Ukuran cache</dt><dd>${escapeHtml(statisticsCompactBytes(runtimeCache.bytes || 0))}</dd></div>
+            <div><dt>Batas entri</dt><dd>${displayNumber(runtimeCache.maxEntries || 0)}</dd></div>
+            <div><dt>Batas memori</dt><dd>${escapeHtml(statisticsCompactBytes(runtimeCache.maxBytes || 0))}</dd></div>
+          </dl>
+        </article>
+        <article class="diagnostics-card">
+          <div class="section-head"><h2>Antrean Whatsapp</h2>${diagnosticsStatusBadge(queue.available === true, 'Aktif', 'Tidak siap')}</div>
+          <dl>
+            <div><dt>Menunggu</dt><dd>${displayNumber(Number(queue.waiting || 0) + Number(queue.prioritized || 0))}</dd></div>
+            <div><dt>Terjadwal</dt><dd>${displayNumber(queue.delayed || 0)}</dd></div>
+            <div><dt>Diproses</dt><dd>${displayNumber(queue.active || 0)}</dd></div>
+            <div><dt>Gagal</dt><dd>${displayNumber(queue.failed || 0)}</dd></div>
+          </dl>
+        </article>
+        <article class="diagnostics-card">
+          <div class="section-head"><h2>Otomasi</h2>${diagnosticsStatusBadge(automation.billing?.active === true, 'Scheduler aktif', 'Scheduler mati')}</div>
+          <dl>
+            <div><dt>Invoice dan isolir</dt><dd>${diagnosticsStatusBadge(automation.billing?.active === true, automation.billing?.running ? 'Memproses' : 'Siap')}</dd></div>
+            <div><dt>Interval billing</dt><dd>${displayNumber(automation.billing?.intervalSeconds || 0)} detik</dd></div>
+            <div><dt>Sinkron payment</dt><dd>${diagnosticsStatusBadge(automation.paymentGateway?.active === true, automation.paymentGateway?.running ? 'Memproses' : 'Siap')}</dd></div>
+            <div><dt>Monitoring router</dt><dd>${diagnosticsStatusBadge(automation.routerMonitoring?.active === true, automation.routerMonitoring?.running ? 'Memproses' : 'Siap')}</dd></div>
+          </dl>
+        </article>
+      </section>
+    </div>
+  `;
+  document.getElementById('refreshDiagnostics')?.addEventListener('click', () => renderDiagnostics({ refresh: true }));
+}
+
 async function renderActivity(options = {}) {
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat log...</div>';
   state.activityCategory = normalizeActivityCategoryForRole(state.activityCategory);
@@ -5153,7 +5252,7 @@ function financeDailyRowsTable(rows = [], emptyText = 'Belum ada data harian.') 
   }, { incomeCash: 0, incomeTransfer: 0, incomeOnline: 0, expenseCash: 0, expenseTransfer: 0, incomeTotal: 0 });
   return `
     <div class="table-wrap">
-      <table>
+      <table class="finance-daily-table">
         <thead>
           <tr>
             <th>No</th>
@@ -10878,7 +10977,7 @@ function radiusTemplateRows(rows = [], writeAllowed = false) {
         <td><span class="badge ${row.active === false ? 'inactive' : 'active'}">${row.active === false ? 'Nonaktif' : 'Aktif'}</span></td>
         ${writeAllowed ? `
           <td>
-            <div class="row-actions">
+            <div class="row-actions wa-template-actions">
               <button class="ghost-button compact" type="button" data-edit-radius-hotspot-template="${escapeHtml(row.id)}">Edit</button>
               ${row.builtin === true ? '' : `<button class="danger-button compact" type="button" data-delete-radius-hotspot-template="${escapeHtml(row.id)}" data-radius-template-name="${escapeHtml(row.name || '')}">Hapus</button>`}
               <button class="ghost-button compact" type="button" data-edit-radius-hotspot-template-html="${escapeHtml(row.id)}">Edit HTML</button>
@@ -15599,6 +15698,7 @@ async function renderGenieAcs(options = {}) {
 function scheduleMonitoringCustomerRefresh() {
   clearRealtimeTimers();
   if (state.view !== 'monitoringCustomers') return;
+  const refreshDelay = state.monitoringCustomersPayload?.refreshing === true ? 3000 : 20000;
   monitoringCustomersTimer = window.setTimeout(() => {
     if (state.view === 'monitoringCustomers') {
       if (['searchInput', 'customerSiteFilter'].includes(document.activeElement?.id)) {
@@ -15607,7 +15707,7 @@ function scheduleMonitoringCustomerRefresh() {
       }
       renderMonitoringCustomers({ silent: true });
     }
-  }, 20000);
+  }, refreshDelay);
 }
 
 function monitoringCustomerRows(sites = [], type = 'pppoe') {
@@ -18294,7 +18394,11 @@ async function renderMonitoringMembers(options = {}) {
             </button>
           </div>
         </td>
-        <td>${dateLines.length ? dateLines.map((line) => `<div class="nowrap">${escapeHtml(line)}</div>`).join('') : '<span class="muted">-</span>'}</td>
+        <td class="member-date-cell">
+          ${dateLines.length
+            ? `<div class="cell-stack member-date-lines">${dateLines.map((line) => `<span>${escapeHtml(line)}</span>`).join('')}</div>`
+            : '<span class="muted">-</span>'}
+        </td>
         <td>
           <div class="row-actions compact-actions">
             <button class="ghost-button compact" type="button" data-member-contact="${index}" ${id ? '' : 'disabled'}>${contactEditable ? 'Edit Contact' : 'Contact'}</button>
@@ -18642,6 +18746,15 @@ async function renderMonitoringBilling(options = {}) {
         </section>
       `}
 
+      <section class="billing-mobile-primary" aria-label="Pencarian dan status tagihan">
+        <input class="control" id="billingMobileSearchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, invoice, UID, WA" autocomplete="off">
+        <div class="billing-mobile-status-tabs" role="group" aria-label="Status tagihan cepat">
+          <button class="${['collectible', 'unpaid'].includes(state.monitoringBillingStatus) ? 'is-active' : ''}" type="button" data-billing-mobile-status="collectible">Terbuka</button>
+          <button class="${state.monitoringBillingStatus === 'overdue' ? 'is-active' : ''}" type="button" data-billing-mobile-status="overdue">Terlambat</button>
+          <button class="${state.monitoringBillingStatus === 'paid' ? 'is-active' : ''}" type="button" data-billing-mobile-status="paid">Lunas</button>
+        </div>
+      </section>
+
       ${collectorBillingView ? `
         ${collectorScope?.targetReady ? '' : `
           <section class="notice warning">
@@ -18691,7 +18804,7 @@ async function renderMonitoringBilling(options = {}) {
             <option value="overdue" ${state.monitoringBillingStatus === 'overdue' ? 'selected' : ''}>Lewat tempo</option>
             <option value="paid" ${state.monitoringBillingStatus === 'paid' ? 'selected' : ''}>Lunas</option>
           </select>
-          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, invoice, UID, WA" autocomplete="off">
+          <input class="control billing-desktop-search" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, invoice, UID, WA" autocomplete="off">
         </div>
         <div class="row-actions">
           ${can('invoices:manage') ? '<button class="button" id="manualInvoiceButton" type="button">Invoice Manual</button>' : ''}
@@ -18778,6 +18891,13 @@ async function renderMonitoringBilling(options = {}) {
   });
   document.getElementById('refreshBilling')?.addEventListener('click', () => renderMonitoringBilling({ refresh: true }));
   document.getElementById('manualInvoiceButton')?.addEventListener('click', () => openManualInvoiceModal());
+  app.querySelectorAll('[data-billing-mobile-status]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.monitoringBillingStatus = button.dataset.billingMobileStatus || 'collectible';
+      state.monitoringBillingPage = 1;
+      renderMonitoringBilling({ silent: true });
+    });
+  });
   const selectedBillingInvoices = () => [...app.querySelectorAll('[data-billing-select]:checked')]
     .map((checkbox) => invoices[Number(checkbox.dataset.billingSelect || -1)])
     .filter(Boolean);
@@ -18870,6 +18990,23 @@ async function renderMonitoringBilling(options = {}) {
     state.monitoringBillingPage = 1;
     return renderMonitoringBilling(renderOptions);
   });
+  const mobileBillingSearch = document.getElementById('billingMobileSearchInput');
+  if (mobileBillingSearch) {
+    bindLiveTextSearch(mobileBillingSearch, {
+      getValue: () => state.search,
+      setValue: (value) => { state.search = value; },
+      handler: (renderOptions = {}) => {
+        state.monitoringBillingPage = 1;
+        return renderMonitoringBilling(renderOptions);
+      },
+      refocusSelector: '#billingMobileSearchInput'
+    });
+    bindSearchClearButton(mobileBillingSearch, () => {
+      state.search = '';
+      state.monitoringBillingPage = 1;
+      renderMonitoringBilling({ silent: true, liveSearch: true });
+    });
+  }
   app.querySelectorAll('[data-billing-page]').forEach((button) => {
     button.addEventListener('click', () => {
       state.monitoringBillingPage = Math.max(1, Number(button.dataset.billingPage || 1));
@@ -20244,8 +20381,8 @@ function waMessageRows(messages = [], startNo = 1) {
         <input type="checkbox" data-wa-message-select="${escapeHtml(message.id)}" aria-label="Pilih pesan ${displayNumber(startNo + index)}">
         <span>${displayNumber(startNo + index)}</span>
       </td>
-      <td class="nowrap">${escapeHtml(dateTimeText(message.sentAt || message.updatedAt || message.createdAt || message.scheduledAt))}</td>
-      <td>
+      <td class="nowrap wa-message-time-cell">${escapeHtml(dateTimeText(message.sentAt || message.updatedAt || message.createdAt || message.scheduledAt))}</td>
+      <td class="wa-message-phone-cell">
         <strong>${escapeHtml(message.phone || '-')}</strong>
       </td>
       <td>${escapeHtml(waMessageSubject(message))}</td>
@@ -22182,6 +22319,7 @@ async function render(options = {}) {
     else if (state.view === 'reportsTransactions') await renderReportsTransactions(renderOptions);
     else if (state.view === 'reportsFinanceRecap') await renderReportsFinanceRecap();
     else if (state.view === 'reportsInventoryStock') await renderReportsInventoryStock();
+    else if (state.view === 'diagnostics') await renderDiagnostics(renderOptions);
     else if (state.view === 'activity') await renderActivity(renderOptions);
     else if (state.view === 'waGateway') await renderWaGateway();
     else if (state.view === 'paymentGateway') await renderPaymentGateway();

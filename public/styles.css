@@ -6136,6 +6136,64 @@ body.is-loading-auth .content::before {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.billing-mobile-primary {
+  display: none;
+}
+
+.diagnostics-toolbar > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.diagnostics-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.diagnostics-card .section-head {
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.diagnostics-card .section-head h2 {
+  font-size: 15px;
+}
+
+.diagnostics-card dl {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.diagnostics-card dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.diagnostics-card dt {
+  color: var(--muted);
+}
+
+.diagnostics-card dd {
+  min-width: 0;
+  margin: 0;
+  font-weight: 800;
+  text-align: right;
+}
+
 .member-contact-preview-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
@@ -12533,6 +12591,10 @@ dialog::backdrop {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .diagnostics-grid {
+    grid-template-columns: 1fr;
+  }
+
   .transaction-note .receipt-lines {
     grid-template-columns: 1fr;
   }
@@ -12573,7 +12635,7 @@ dialog::backdrop {
 
   .mobile-card-table tbody tr {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
     gap: 6px 10px;
     width: 100%;
@@ -12582,6 +12644,7 @@ dialog::backdrop {
     border-radius: 8px;
     background: var(--surface);
     box-shadow: 0 5px 16px rgba(8, 32, 79, 0.06);
+    position: relative;
   }
 
   .mobile-card-table tbody tr[hidden] {
@@ -12607,7 +12670,9 @@ dialog::backdrop {
     font-size: 10px;
     font-weight: 800;
     line-height: 1.35;
+    overflow-wrap: break-word;
     text-transform: uppercase;
+    white-space: normal;
   }
 
   .mobile-card-table td[data-mobile-primary="true"],
@@ -12621,16 +12686,20 @@ dialog::backdrop {
 
   .mobile-card-table td[data-mobile-primary="true"] {
     padding-bottom: 7px;
+    padding-right: 34px;
     border-bottom: 1px solid var(--line);
     font-size: 14px;
     font-weight: 750;
   }
 
   .mobile-card-table td[data-mobile-select="true"] {
-    grid-column: 2;
+    grid-column: 1;
     grid-row: 1;
     display: flex;
     justify-content: flex-end;
+    position: absolute;
+    right: 11px;
+    top: 11px;
   }
 
   .mobile-card-table td[data-mobile-select="true"]::before,
@@ -12664,6 +12733,92 @@ dialog::backdrop {
   .mobile-card-table .action-menu summary {
     min-height: 34px;
     height: 34px;
+  }
+
+  .mobile-card-table.finance-daily-table td {
+    grid-template-columns: minmax(116px, 46%) minmax(0, 1fr);
+  }
+
+  .mobile-card-table.finance-daily-table td.amount {
+    font-size: 12.5px;
+    overflow-wrap: normal;
+    white-space: nowrap;
+    word-break: normal;
+  }
+
+  .mobile-card-table.finance-daily-table td.amount > strong,
+  .mobile-card-table.finance-daily-table td.amount {
+    text-align: right;
+  }
+
+  .mobile-card-table .member-date-lines {
+    gap: 2px;
+    width: 100%;
+  }
+
+  .mobile-card-table td.member-date-cell {
+    grid-template-columns: minmax(82px, 32%) minmax(0, 1fr);
+  }
+
+  .mobile-card-table .member-date-lines span {
+    overflow-wrap: normal;
+    white-space: nowrap;
+    word-break: normal;
+  }
+
+  .mobile-card-table.wa-message-table td,
+  .mobile-card-table.wa-message-table td:nth-child(2),
+  .mobile-card-table.wa-message-table td:nth-child(3) {
+    width: 100%;
+  }
+
+  .mobile-card-table .wa-message-time-cell,
+  .mobile-card-table .wa-message-phone-cell strong {
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
+
+  .billing-mobile-primary {
+    display: grid;
+    gap: 7px;
+    order: -2;
+  }
+
+  .billing-mobile-primary .search-input-wrap,
+  .billing-mobile-primary .control {
+    width: 100%;
+  }
+
+  .billing-mobile-status-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface-soft);
+  }
+
+  .billing-mobile-status-tabs button {
+    min-width: 0;
+    min-height: 36px;
+    border: 0;
+    border-radius: 6px;
+    color: var(--muted);
+    background: transparent;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .billing-mobile-status-tabs button.is-active {
+    color: #fff;
+    background: var(--primary);
+  }
+
+  .billing-desktop-search,
+  .filters .search-input-wrap:has(.billing-desktop-search) {
+    display: none;
   }
 }
 
@@ -12819,7 +12974,7 @@ dialog::backdrop {
   }
 
   .member-summary-metrics {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -16247,5 +16402,133 @@ dialog::backdrop {
 
   .genie-wan-binding-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Final mobile containment: late legacy table rules must not widen card views. */
+@media (max-width: 760px) {
+  #app,
+  #app > *,
+  .stack,
+  .section,
+  .toolbar,
+  .filters,
+  .metrics,
+  .form-panel,
+  .panel {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .table-wrap:has(table.mobile-card-table) {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+  }
+
+  .table-wrap table.mobile-card-table,
+  .report-transactions-table-wrap table.report-transactions-table.mobile-card-table,
+  .table-wrap .billing-table.mobile-card-table,
+  .table-wrap .monitoring-customer-table.mobile-card-table,
+  .table-wrap .radius-user-table.mobile-card-table,
+  .table-wrap .daily-report-table.mobile-card-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .mobile-card-table tbody,
+  .mobile-card-table tbody tr,
+  .mobile-card-table tbody td {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .table-wrap:not(.payment-gateway-table-wrap) .mobile-card-table tbody td {
+    justify-self: stretch;
+    max-width: none;
+    width: 100%;
+  }
+
+  .mobile-card-table tbody tr {
+    width: 100%;
+  }
+
+  .mobile-card-table tbody tr:has(> td[colspan]) {
+    display: block;
+  }
+
+  .mobile-card-table tbody tr > td[colspan] {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    text-align: center;
+  }
+
+  .mobile-card-table tbody tr > td[colspan]::before {
+    display: none;
+  }
+
+  .mobile-card-table .user-table-details,
+  .mobile-card-table .user-table-contact,
+  .mobile-card-table .user-nas-target {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .mobile-card-table .user-table-details strong,
+  .mobile-card-table .user-table-details span,
+  .mobile-card-table .user-last-login,
+  .mobile-card-table .nas-badge {
+    max-width: 100%;
+    overflow-wrap: normal;
+    text-overflow: clip;
+    white-space: normal;
+    word-break: normal;
+  }
+
+  .mobile-card-table .user-table-details > strong {
+    font-size: 13px;
+  }
+
+  .mobile-card-table.user-management-table td {
+    grid-template-columns: minmax(78px, 32%) minmax(0, 1fr);
+  }
+
+  .mobile-card-table .user-table-name {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .mobile-card-table .user-table-name > div {
+    min-width: 0;
+  }
+
+  .mobile-card-table .user-table-name strong,
+  .mobile-card-table .user-table-name .muted {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .wa-template-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .wa-template-actions > button {
+    width: 100%;
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .wa-template-actions > button:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 }
