@@ -8,6 +8,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 - Foto KTP tidak lagi dihitung sebagai syarat `Data Valid` member.
 - Upload Foto KTP tetap tersedia untuk OCR/manual arsip jika pelanggan bersedia melengkapi data.
+- Role Sekretaris dapat input/edit data operasional RADIUS dan GenieACS, tetap tanpa akses admin sensitif.
 
 ## [4.1.5] - 2026-08-09
 

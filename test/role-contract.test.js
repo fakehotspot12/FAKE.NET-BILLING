@@ -55,3 +55,16 @@ test('reseller voucher remains blocked from Radius settings and profile administ
 test('viewer remains a dashboard-only role', () => {
   assert.deepEqual(role('viewer').permissions, ['dashboard:read']);
 });
+
+test('secretary can input operational data without sensitive admin access', () => {
+  const permissions = role('secretary').permissions;
+  assert.ok(permissions.includes('radius:write'));
+  assert.ok(permissions.includes('genieacs:write'));
+  assert.ok(permissions.includes('customers:manage'));
+  assert.ok(permissions.includes('invoices:manage'));
+  assert.equal(permissions.includes('settings:write'), false);
+  assert.equal(permissions.includes('users:manage'), false);
+  assert.equal(permissions.includes('payment-gateway:manage'), false);
+  assert.equal(permissions.includes('wa-gateway:manage'), false);
+  assert.equal(permissions.includes('xendit:withdraw'), false);
+});

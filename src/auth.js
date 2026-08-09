@@ -137,7 +137,9 @@ const ROLE_DEFINITIONS = {
       'network-assets:read',
       'network-assets:write',
       'radius:read',
+      'radius:write',
       'genieacs:read',
+      'genieacs:write',
       'monitoring:read',
       'monitoring:write',
       'monitoring:check'

@@ -7828,9 +7828,9 @@ test('auth creates default admin and protects admin role', () => {
   assert.equal(hasPermission(publicUser(secretary), 'inventory:write'), true);
   assert.equal(hasPermission(publicUser(secretary), 'network-assets:write'), true);
   assert.equal(hasPermission(publicUser(secretary), 'radius:read'), true);
-  assert.equal(hasPermission(publicUser(secretary), 'radius:write'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'radius:write'), true);
   assert.equal(hasPermission(publicUser(secretary), 'genieacs:read'), true);
-  assert.equal(hasPermission(publicUser(secretary), 'genieacs:write'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'genieacs:write'), true);
   assert.equal(hasPermission(publicUser(secretary), 'monitoring:write'), true);
   assert.equal(hasPermission(publicUser(secretary), 'settings:write'), false);
   assert.equal(hasPermission(publicUser(secretary), 'users:manage'), false);
