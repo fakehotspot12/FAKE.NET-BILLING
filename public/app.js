@@ -2097,7 +2097,9 @@ function updateMenuButton() {
 }
 
 function setMenuOpen(open) {
-  document.body.classList.toggle('is-menu-open', Boolean(open) && menuIsMobile());
+  const nextOpen = Boolean(open) && menuIsMobile();
+  document.body.classList.toggle('is-menu-open', nextOpen);
+  if (!nextOpen) document.body.classList.remove('is-menu-full');
   updateMenuButton();
 }
 
@@ -22468,6 +22470,7 @@ document.querySelectorAll('[data-open-nav-group]').forEach((button) => {
   button.addEventListener('click', () => {
     const group = document.querySelector(`[data-nav-group="${button.dataset.openNavGroup}"]`);
     if (!group) return;
+    document.body.classList.remove('is-menu-full');
     document.querySelectorAll('[data-nav-group]').forEach((item) => {
       const open = item === group;
       item.classList.toggle('is-open', open);
@@ -22484,11 +22487,17 @@ document.querySelectorAll('[data-open-nav-group]').forEach((button) => {
 
 document.querySelectorAll('[data-open-menu]').forEach((button) => {
   button.addEventListener('click', () => {
+    document.body.classList.add('is-menu-full');
+    const fullGroups = new Set(['monitoring', 'configuration', 'adminSystem']);
     document.querySelectorAll('[data-nav-group]').forEach((group) => {
-      group.classList.remove('is-open');
-      group.querySelector('[data-nav-toggle]')?.setAttribute('aria-expanded', 'false');
+      const open = fullGroups.has(group.dataset.navGroup || '');
+      group.classList.toggle('is-open', open);
+      group.querySelector('[data-nav-toggle]')?.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
     setMenuOpen(true);
+    window.requestAnimationFrame(() => {
+      document.querySelector('[data-nav-group="monitoring"]')?.scrollIntoView({ block: 'nearest' });
+    });
   });
 });
 

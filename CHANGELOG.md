@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.2] - 2026-08-09
+
+### Fixed
+
+- Drawer mobile dari tombol navigasi bawah kini muncul sebagai panel naik dari bawah, mengikuti pola Billcob/Cempaka.
+- Tombol Menu mobile membuka grup Monitoring, Pengaturan, dan Admin Sistem dalam satu panel bawah.
+- Revision aset frontend diperbarui agar browser mengambil CSS/JS mobile terbaru.
+
 ## [4.1.1] - 2026-08-09
 
 ### Fixed

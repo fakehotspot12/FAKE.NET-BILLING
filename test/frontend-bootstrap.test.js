@@ -15,8 +15,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v411-bottom-navigation-20260809"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v411-bottom-navigation-20260809"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v412-mobile-bottom-sheet-20260809"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v412-mobile-bottom-sheet-20260809"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
@@ -64,4 +64,17 @@ test('uses the compact navigation and bounded paging contract', () => {
   assert.doesNotMatch(appSource, /const PAGER_LIMIT_OPTIONS = \[[^\]]*['"]all['"]/);
   assert.match(appSource, /const MOBILE_CARD_TABLE_VIEWS = new Set/);
   assert.match(appSource, /if \(!view \|\| !Object\.prototype\.hasOwnProperty\.call\(viewPermissions, view\)\) return false/);
+});
+
+test('opens mobile navigation as a bottom sheet instead of a side drawer', () => {
+  const appSource = publicSource('app.js');
+  const styles = publicSource('styles.css');
+
+  assert.match(appSource, /document\.body\.classList\.add\('is-menu-full'\)/);
+  assert.match(appSource, /new Set\(\['monitoring', 'configuration', 'adminSystem'\]\)/);
+  assert.match(styles, /body\.is-authenticated \.sidebar[\s\S]*?bottom:\s*calc\(82px \+ env\(safe-area-inset-bottom, 0px\)\)/);
+  assert.match(styles, /body\.is-authenticated \.sidebar[\s\S]*?transform:\s*translateY\(calc\(100% \+ 110px\)\)/);
+  assert.match(styles, /body\.is-authenticated\.is-menu-open \.sidebar[\s\S]*?transform:\s*translateY\(0\)/);
+  assert.match(styles, /body\.is-authenticated\.is-menu-full \.sidebar \.nav-group\[data-nav-group="adminSystem"\]/);
+  assert.doesNotMatch(styles, /body\.is-authenticated \.sidebar[\s\S]*?translate3d\(calc\(-100%/);
 });
