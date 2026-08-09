@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.0.1] - 2026-08-09
+
+### Fixed
+
+- Sidebar mobile kini benar-benar menjadi overlay dan tidak lagi menggeser konten hingga menimbulkan slider horizontal.
+- Sidebar yang tertutup tidak lagi menyisakan bayangan atau area interaktif di sisi kiri layar.
+
 ## [4.0.0] - 2026-08-09
 
 ### Changed

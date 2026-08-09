@@ -11587,15 +11587,23 @@ dialog::backdrop {
     width: var(--mobile-menu-width);
     height: 100dvh;
     padding: 14px 12px;
-    transform: translateX(-104%);
-    transition: transform 180ms ease;
-    box-shadow: 18px 0 44px rgba(2, 10, 34, 0.32);
+    transform: translate3d(calc(-100% - 24px), 0, 0);
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      transform 180ms ease,
+      visibility 0s linear 180ms;
+    box-shadow: none;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 
   .is-menu-open .sidebar {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
+    box-shadow: 18px 0 44px rgba(2, 10, 34, 0.32);
   }
 
   .menu-backdrop {
@@ -11617,20 +11625,6 @@ dialog::backdrop {
 
   body.is-menu-open {
     overflow: hidden;
-  }
-
-  .topbar,
-  .content {
-    transition: transform 180ms ease;
-  }
-
-  .is-menu-open .topbar,
-  .is-menu-open .content {
-    transform: translateX(var(--mobile-menu-width));
-  }
-
-  .is-menu-open .topbar {
-    z-index: 31;
   }
 
   .topbar {
