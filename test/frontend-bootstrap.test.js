@@ -15,8 +15,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v412-mobile-bottom-sheet-20260809"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v412-mobile-bottom-sheet-20260809"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v415-cempaka-shell-20260809"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v415-cempaka-shell-20260809"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
@@ -54,9 +54,12 @@ test('uses the compact navigation and bounded paging contract', () => {
   const html = publicSource('index.html');
   const appSource = publicSource('app.js');
 
-  for (const group of ['customers', 'radius', 'financeManagement', 'monitoring', 'configuration', 'adminSystem']) {
+  for (const group of ['main', 'customers', 'radius', 'finance', 'monitoring', 'settings-menu', 'admin']) {
     assert.match(html, new RegExp(`data-nav-group="${group}"`));
   }
+  assert.match(html, /class="nav-group nav-section"/);
+  assert.match(html, /data-open-full-menu/);
+  assert.match(html, /data-related-views="reportsMonthlyBilling"/);
   assert.match(html, /data-view="billingSettings">Pengaturan Billing/);
   assert.match(html, /data-view="radiusSettings">Isolir Radius/);
   assert.equal((html.match(/class="bottom-item/g) || []).length, 5);
@@ -71,10 +74,10 @@ test('opens mobile navigation as a bottom sheet instead of a side drawer', () =>
   const styles = publicSource('styles.css');
 
   assert.match(appSource, /document\.body\.classList\.add\('is-menu-full'\)/);
-  assert.match(appSource, /new Set\(\['monitoring', 'configuration', 'adminSystem'\]\)/);
+  assert.match(appSource, /new Set\(\['monitoring', 'settings-menu', 'admin', 'configuration', 'adminSystem'\]\)/);
   assert.match(styles, /body\.is-authenticated \.sidebar[\s\S]*?bottom:\s*calc\(82px \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.match(styles, /body\.is-authenticated \.sidebar[\s\S]*?transform:\s*translateY\(calc\(100% \+ 110px\)\)/);
   assert.match(styles, /body\.is-authenticated\.is-menu-open \.sidebar[\s\S]*?transform:\s*translateY\(0\)/);
-  assert.match(styles, /body\.is-authenticated\.is-menu-full \.sidebar \.nav-group\[data-nav-group="adminSystem"\]/);
+  assert.match(styles, /body\.is-authenticated\.is-menu-full \.sidebar \.nav-group\[data-nav-group="admin"\]/);
   assert.doesNotMatch(styles, /body\.is-authenticated \.sidebar[\s\S]*?translate3d\(calc\(-100%/);
 });

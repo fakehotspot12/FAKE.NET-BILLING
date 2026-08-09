@@ -1971,6 +1971,16 @@ function startTopWaStatusTimer() {
   topWaStatusTimer = window.setInterval(() => refreshTopWaStatus(), 60000);
 }
 
+function navButtonMatchesView(button, view) {
+  if (!button) return false;
+  if (button.dataset.view === view) return true;
+  return String(button.dataset.relatedViews || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .includes(view);
+}
+
 function canView(view) {
   if (!view || !Object.prototype.hasOwnProperty.call(viewPermissions, view)) return false;
   const role = state.auth?.role || '';
@@ -2236,12 +2246,12 @@ function configureShell() {
   document.querySelectorAll('[data-view]').forEach((button) => {
     const visible = loggedIn && canView(button.dataset.view);
     button.hidden = !visible;
-    button.classList.toggle('is-active', visible && button.dataset.view === state.view);
+    button.classList.toggle('is-active', visible && navButtonMatchesView(button, state.view));
   });
   document.querySelectorAll('[data-nav-group]').forEach((group) => {
     const children = [...group.querySelectorAll('[data-view]')];
     const visible = children.some((button) => !button.hidden);
-    const active = children.some((button) => !button.hidden && button.dataset.view === state.view);
+    const active = children.some((button) => !button.hidden && navButtonMatchesView(button, state.view));
     const open = visible && group.classList.contains('is-open');
     const toggle = group.querySelector('[data-nav-toggle]');
     group.hidden = !visible;
@@ -2256,13 +2266,14 @@ function configureShell() {
     const group = document.querySelector(`[data-nav-group="${button.dataset.openNavGroup}"]`);
     const children = group ? [...group.querySelectorAll('[data-view]')] : [];
     const visible = loggedIn && children.some((item) => canView(item.dataset.view));
-    const active = children.some((item) => canView(item.dataset.view) && item.dataset.view === state.view);
+    const active = children.some((item) => canView(item.dataset.view) && navButtonMatchesView(item, state.view));
     button.hidden = !visible;
     button.classList.toggle('is-active', visible && active);
   });
-  document.querySelectorAll('[data-open-menu]').forEach((button) => {
+  const fullMenuViews = new Set(['monitoringSite', 'monitoringServices', 'genieAcs', 'networkAssets', 'billingSettings', 'radiusSettings', 'paymentGateway', 'waGateway', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'diagnostics', 'activity']);
+  document.querySelectorAll('[data-open-menu], [data-open-full-menu]').forEach((button) => {
     button.hidden = !loggedIn;
-    button.classList.toggle('is-active', loggedIn && !['dashboard', 'monitoringMembers', 'monitoringBilling', 'radiusPppDhcp', 'radiusHotspot', 'monitoringCustomers', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'reportsDaily', 'reportsMonthlyBilling', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsStatistics'].includes(state.view));
+    button.classList.toggle('is-active', loggedIn && fullMenuViews.has(state.view));
   });
   updateMenuButton();
 }
@@ -22485,16 +22496,16 @@ document.querySelectorAll('[data-open-nav-group]').forEach((button) => {
   });
 });
 
-document.querySelectorAll('[data-open-menu]').forEach((button) => {
+document.querySelectorAll('[data-open-menu], [data-open-full-menu]').forEach((button) => {
   button.addEventListener('click', () => {
     document.body.classList.add('is-menu-full');
-    const fullGroups = new Set(['monitoring', 'configuration', 'adminSystem']);
+    const fullGroups = new Set(['monitoring', 'settings-menu', 'admin', 'configuration', 'adminSystem']);
     document.querySelectorAll('[data-nav-group]').forEach((group) => {
       const open = fullGroups.has(group.dataset.navGroup || '');
       group.classList.toggle('is-open', open);
       group.querySelector('[data-nav-toggle]')?.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
-    setMenuOpen(true);
+    if (menuIsMobile()) setMenuOpen(true);
     window.requestAnimationFrame(() => {
       document.querySelector('[data-nav-group="monitoring"]')?.scrollIntoView({ block: 'nearest' });
     });

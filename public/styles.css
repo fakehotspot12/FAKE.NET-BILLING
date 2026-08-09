@@ -1786,6 +1786,47 @@ input[type="checkbox"] {
   display: grid;
 }
 
+.nav-section {
+  gap: 4px;
+}
+
+.nav-section-label {
+  display: grid;
+  grid-template-columns: minmax(12px, 1fr) auto minmax(12px, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 9px 4px 4px;
+  color: rgba(201, 232, 255, 0.62);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
+
+.nav-section-label::before,
+.nav-section-label::after {
+  content: "";
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0),
+    rgba(148, 163, 184, 0.38),
+    rgba(148, 163, 184, 0)
+  );
+}
+
+.nav-section .nav-submenu {
+  display: grid;
+  margin-top: 0;
+}
+
+.nav-section.is-open .nav-submenu {
+  display: grid;
+}
+
 .nav-subitem {
   position: relative;
   min-height: 30px;
@@ -1892,7 +1933,8 @@ input[type="checkbox"] {
 }
 
 [data-view="dashboard"],
-[data-nav-toggle="dashboardNav"] {
+[data-nav-toggle="dashboardNav"],
+[data-nav-group="main"] {
   --menu-icon: var(--icon-dashboard);
 }
 
@@ -1926,6 +1968,7 @@ input[type="checkbox"] {
 }
 
 [data-nav-toggle="financeManagement"],
+[data-open-nav-group="finance"],
 [data-open-nav-group="financeManagement"] {
   --menu-icon: var(--icon-finance);
 }
@@ -2008,7 +2051,8 @@ input[type="checkbox"] {
 }
 
 [data-nav-toggle="adminSystem"],
-[data-open-menu] {
+[data-open-menu],
+[data-open-full-menu] {
   --menu-icon: var(--icon-users);
 }
 
@@ -16621,7 +16665,8 @@ dialog::backdrop {
 
   body.is-authenticated .sidebar .side-brand,
   body.is-authenticated .sidebar .app-footer,
-  body.is-authenticated .sidebar [data-nav-group="dashboardNav"] {
+  body.is-authenticated .sidebar [data-nav-group="dashboardNav"],
+  body.is-authenticated .sidebar [data-nav-group="main"] {
     display: none !important;
   }
 
@@ -16638,6 +16683,8 @@ dialog::backdrop {
   }
 
   body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="monitoring"],
+  body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="settings-menu"],
+  body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="admin"],
   body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="configuration"],
   body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="adminSystem"] {
     display: grid;

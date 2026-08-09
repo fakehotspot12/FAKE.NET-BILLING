@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.5] - 2026-08-09
+
+### Fixed
+
+- Struktur sidebar dan navigasi bawah diselaraskan dengan shell Cempaka yang stabil, tanpa menimpa fitur billing terbaru.
+- Tombol Menu mobile membuka Monitoring, Pengaturan, dan Admin Sistem sebagai panel bawah, bukan drawer menyamping.
+- Laporan Tagihan dan Laporan Voucher di sidebar digabungkan dengan status aktif yang tetap benar saat masuk halaman harian/bulanan.
+
 ## [4.1.4] - 2026-08-09
 
 ### Performance

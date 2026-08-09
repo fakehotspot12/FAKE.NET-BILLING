@@ -12,7 +12,7 @@
     <link id="appFavicon" rel="icon" href="__FAKENET_META_ICON__">
     <link id="appleTouchIcon" rel="apple-touch-icon" href="__FAKENET_META_ICON__">
     <link rel="manifest" href="/manifest.webmanifest?v=fakenet-billing-__FAKENET_APP_VERSION__">
-    <link rel="stylesheet" href="/boot.css?ui=ui-v412-mobile-bottom-sheet-20260809">
+    <link rel="stylesheet" href="/boot.css?ui=ui-v415-cempaka-shell-20260809">
   </head>
   <body class="is-loading-auth">
     <div class="app-shell">
@@ -69,58 +69,41 @@
             <span>__FAKENET_META_DESCRIPTION__</span>
           </div>
         </div>
-        <div class="nav-group is-open" data-nav-group="dashboardNav">
-          <button class="nav-item nav-toggle is-active" type="button" data-nav-toggle="dashboardNav" aria-expanded="true">
-            <span class="nav-mark">D</span>
-            <span>Dashboard</span>
-          </button>
+        <div class="nav-group nav-section is-open" data-nav-group="main">
+          <div class="nav-section-label"><span>Dashboard</span></div>
           <div class="nav-submenu">
             <button class="nav-subitem is-active" type="button" data-view="dashboard">Ringkasan</button>
           </div>
         </div>
-        <div class="nav-group" data-nav-group="customers">
-          <button class="nav-item nav-toggle" type="button" data-nav-toggle="customers" aria-expanded="false">
-            <span class="nav-mark">P</span>
-            <span>Pelanggan</span>
-          </button>
+        <div class="nav-group nav-section" data-nav-group="customers">
+          <div class="nav-section-label"><span>Pelanggan</span></div>
           <div class="nav-submenu">
             <button class="nav-subitem" type="button" data-view="monitoringMembers">Data Pelanggan</button>
             <button class="nav-subitem" type="button" data-view="monitoringBilling">Tagihan Pelanggan</button>
           </div>
         </div>
-        <div class="nav-group" data-nav-group="radius">
-          <button class="nav-item nav-toggle" type="button" data-nav-toggle="radius" aria-expanded="false">
-            <span class="nav-mark">R</span>
-            <span>RADIUS</span>
-          </button>
+        <div class="nav-group nav-section" data-nav-group="radius">
+          <div class="nav-section-label"><span>RADIUS</span></div>
           <div class="nav-submenu">
             <button class="nav-subitem" type="button" data-view="radiusPppDhcp">PPPoE DHCP</button>
             <button class="nav-subitem" type="button" data-view="radiusHotspot">Voucher Hotspot</button>
             <button class="nav-subitem" type="button" data-view="monitoringCustomers">Sesi Online</button>
           </div>
         </div>
-        <div class="nav-group" data-nav-group="financeManagement">
-          <button class="nav-item nav-toggle" type="button" data-nav-toggle="financeManagement" aria-expanded="false">
-            <span class="nav-mark">K</span>
-            <span>Keuangan</span>
-          </button>
+        <div class="nav-group nav-section" data-nav-group="finance">
+          <div class="nav-section-label"><span>Keuangan</span></div>
           <div class="nav-submenu">
             <button class="nav-subitem" type="button" data-view="externalIncomes">Pemasukan</button>
             <button class="nav-subitem" type="button" data-view="expenses">Pengeluaran</button>
             <button class="nav-subitem" type="button" data-view="reportsTransactions">Mutasi Bulanan</button>
             <button class="nav-subitem" type="button" data-view="reportsFinanceRecap">Rekapitulasi</button>
-            <button class="nav-subitem" type="button" data-view="reportsDaily">Tagihan Harian</button>
-            <button class="nav-subitem" type="button" data-view="reportsMonthlyBilling">Tagihan Bulanan</button>
-            <button class="nav-subitem" type="button" data-view="reportsVoucherDaily">Voucher Harian</button>
-            <button class="nav-subitem" type="button" data-view="reportsVoucherMonthly">Voucher Bulanan</button>
+            <button class="nav-subitem" type="button" data-view="reportsDaily" data-related-views="reportsMonthlyBilling">Laporan Tagihan</button>
+            <button class="nav-subitem" type="button" data-view="reportsVoucherDaily" data-related-views="reportsVoucherMonthly">Laporan Voucher</button>
             <button class="nav-subitem" type="button" data-view="reportsStatistics">Statistik</button>
           </div>
         </div>
-        <div class="nav-group" data-nav-group="monitoring">
-          <button class="nav-item nav-toggle" type="button" data-nav-toggle="monitoring" aria-expanded="false">
-            <span class="nav-mark">M</span>
-            <span>Monitoring</span>
-          </button>
+        <div class="nav-group nav-section" data-nav-group="monitoring">
+          <div class="nav-section-label"><span>Monitoring</span></div>
           <div class="nav-submenu">
             <button class="nav-subitem" type="button" data-view="monitoringSite">Pemantauan NAS</button>
             <button class="nav-subitem" type="button" data-view="monitoringServices">Status Layanan</button>
@@ -128,11 +111,8 @@
             <button class="nav-subitem" type="button" data-view="networkAssets">Aset Jaringan</button>
           </div>
         </div>
-        <div class="nav-group" data-nav-group="configuration">
-          <button class="nav-item nav-toggle" type="button" data-nav-toggle="configuration" aria-expanded="false">
-            <span class="nav-mark">P</span>
-            <span>Pengaturan</span>
-          </button>
+        <div class="nav-group nav-section" data-nav-group="settings-menu">
+          <div class="nav-section-label"><span>Pengaturan</span></div>
           <div class="nav-submenu">
             <button class="nav-subitem" type="button" data-view="billingSettings">Pengaturan Billing</button>
             <button class="nav-subitem" type="button" data-view="radiusSettings">Isolir Radius</button>
@@ -140,11 +120,8 @@
             <button class="nav-subitem" type="button" data-view="waGateway">Whatsapp Gateway</button>
           </div>
         </div>
-        <div class="nav-group" data-nav-group="adminSystem">
-          <button class="nav-item nav-toggle" type="button" data-nav-toggle="adminSystem" aria-expanded="false">
-            <span class="nav-mark">A</span>
-            <span>Admin Sistem</span>
-          </button>
+        <div class="nav-group nav-section" data-nav-group="admin">
+          <div class="nav-section-label"><span>Admin Sistem</span></div>
           <div class="nav-submenu">
             <button class="nav-subitem" type="button" data-view="inventory">Inventaris</button>
             <button class="nav-subitem" type="button" data-view="reportsInventoryStock">Stok Inventaris</button>
@@ -168,8 +145,8 @@
         <button class="bottom-item is-active" type="button" data-view="dashboard">Dasbor</button>
         <button class="bottom-item" type="button" data-open-nav-group="customers">Pelanggan</button>
         <button class="bottom-item" type="button" data-open-nav-group="radius">RADIUS</button>
-        <button class="bottom-item" type="button" data-open-nav-group="financeManagement">Keuangan</button>
-        <button class="bottom-item" type="button" data-open-menu>Menu</button>
+        <button class="bottom-item" type="button" data-open-nav-group="finance">Keuangan</button>
+        <button class="bottom-item" type="button" data-open-full-menu>Menu</button>
       </nav>
     </div>
 
@@ -185,6 +162,6 @@
       </form>
     </dialog>
 
-    <script src="/bootstrap.js?ui=ui-v412-mobile-bottom-sheet-20260809" defer></script>
+    <script src="/bootstrap.js?ui=ui-v415-cempaka-shell-20260809" defer></script>
   </body>
 </html>
