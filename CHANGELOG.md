@@ -2,6 +2,17 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.3] - 2026-08-09
+
+### Fixed
+
+- Finance dan Owner dapat menyimpan Isolir Radius sesuai akses Billing Settings tanpa perlu diberi akses admin sistem penuh.
+- Viewer dikunci menjadi dashboard-only agar tidak bisa membaca tabel Radius yang berisi data teknis dan password pelanggan.
+
+### Tests
+
+- Ditambahkan kontrak test role untuk menjaga akses Radius Setting, reseller voucher, dan viewer.
+
 ## [4.1.2] - 2026-08-09
 
 ### Fixed

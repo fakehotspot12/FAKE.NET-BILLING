@@ -20720,8 +20720,12 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'PUT' && pathname === '/api/radius/settings') {
-    const authContext = await requirePermission(req, res, 'settings:write');
+    const authContext = await requireAnyPermission(req, res, ['settings:write', 'billing-settings:manage', 'radius:write']);
     if (!authContext) return;
+    if (!radiusSectionAllowedForUser(authContext.user, 'settings')) {
+      forbidden(res);
+      return;
+    }
     const payload = await readBody(req);
     try {
       const { data } = await mutate(async (store) => {
@@ -20747,8 +20751,12 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'POST' && pathname === '/api/radius/sync') {
-    const authContext = await requirePermission(req, res, 'settings:write');
+    const authContext = await requireAnyPermission(req, res, ['settings:write', 'billing-settings:manage']);
     if (!authContext) return;
+    if (!radiusSectionAllowedForUser(authContext.user, 'settings')) {
+      forbidden(res);
+      return;
+    }
     try {
       const { data, result } = await mutate(async (store) => {
         const sync = await freeradiusSql.syncAll(store, {

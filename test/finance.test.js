@@ -7801,7 +7801,7 @@ test('auth creates default admin and protects admin role', () => {
   assert.equal(hasPermission(publicUser(data.users[4]), 'dashboard:read'), true);
   assert.equal(hasPermission(publicUser(data.users[5]), 'dashboard:read'), true);
   assert.equal(hasPermission(publicUser(data.users[4]), 'radius:read'), true);
-  assert.equal(hasPermission(publicUser(data.users[5]), 'radius:read'), true);
+  assert.equal(hasPermission(publicUser(data.users[5]), 'radius:read'), false);
   assert.equal(hasPermission(publicUser(data.users[4]), 'radius:write'), true);
   assert.equal(hasPermission(publicUser(data.users[5]), 'radius:write'), false);
   assert.equal(hasPermission(publicUser(data.users[4]), 'xendit:read'), false);

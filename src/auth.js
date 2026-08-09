@@ -206,8 +206,7 @@ const ROLE_DEFINITIONS = {
     label: 'Viewer',
     description: 'Lihat dashboard tanpa akses buku kas, laporan tagihan, atau pengaturan.',
     permissions: [
-      'dashboard:read',
-      'radius:read'
+      'dashboard:read'
     ]
   }
 };
