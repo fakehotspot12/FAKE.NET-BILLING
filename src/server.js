@@ -14766,7 +14766,7 @@ async function markOnlinePaymentPushAttempt(payload = {}, result = {}) {
     transaction.webPushRemoved = Number(result.removed || 0);
     transaction.webPushPayloadId = String(payload.id || '');
     return transaction;
-  }, { collections: ['paymentGatewayTransactions'], includeCore: false });
+  }, { collections: [], includeCore: true });
 }
 
 function eligibleWebPushSubscriptions(data = {}) {

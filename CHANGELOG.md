@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.9] - 2026-08-10
+
+### Fixed
+
+- Penanda Web Push pembayaran online disimpan permanen agar notifikasi Chrome tidak muncul ulang setelah restart atau update service.
+
 ## [4.1.8] - 2026-08-10
 
 ### Changed
