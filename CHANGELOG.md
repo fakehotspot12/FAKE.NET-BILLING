@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.7] - 2026-08-10
+
+### Changed
+
+- Portal WifiKu memakai navigasi bawah seperti mobile billing dengan tab Beranda, Tagihan, Wifi, dan Akun.
+- Tab WifiKu kini hanya menampilkan konten sesuai menu aktif agar tampilan mobile lebih fokus.
+
 ## [4.1.6] - 2026-08-09
 
 ### Fixed

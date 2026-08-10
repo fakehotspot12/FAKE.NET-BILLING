@@ -1,14 +1,17 @@
 'use strict';
 
 const TOKEN_KEY = 'wifikuToken';
+const PANEL_KEY = 'wifikuActivePanel';
 const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 const PORTAL_REFRESH_MS = 30000;
+const WIFIKU_PANELS = new Set(['home', 'billing', 'wifi', 'account']);
 const state = {
   settings: {},
   challengeId: '',
   phone: '',
   token: localStorage.getItem(TOKEN_KEY) || '',
   portal: null,
+  activePanel: WIFIKU_PANELS.has(localStorage.getItem(PANEL_KEY)) ? localStorage.getItem(PANEL_KEY) : 'home',
   clientPage: 1
 };
 
@@ -68,18 +71,44 @@ function setLoading(form, loading) {
 function showLogin() {
   byId('loginView').hidden = false;
   byId('portalView').hidden = true;
-  byId('logoutButton').hidden = true;
   byId('accountMenuWrap').hidden = true;
+  byId('wifikuBottomNav').hidden = true;
+  document.body.classList.remove('is-wifiku-authenticated');
   syncOtpFormVisibility(Boolean(state.challengeId));
 }
 
 function showPortal() {
   byId('loginView').hidden = true;
   byId('portalView').hidden = false;
-  byId('logoutButton').hidden = false;
   byId('accountMenuWrap').hidden = false;
+  byId('wifikuBottomNav').hidden = false;
+  document.body.classList.add('is-wifiku-authenticated');
+  setWifikuPanel(state.activePanel || 'home', { persist: false });
   state.challengeId = '';
   syncOtpFormVisibility(false);
+}
+
+function setWifikuPanel(panel = 'home', options = {}) {
+  const nextPanel = WIFIKU_PANELS.has(panel) ? panel : 'home';
+  state.activePanel = nextPanel;
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem(PANEL_KEY, nextPanel);
+    } catch {
+      // Storage browser yang ditolak tidak boleh mengganggu navigasi portal.
+    }
+  }
+  document.querySelectorAll('[data-wifiku-panel]').forEach((section) => {
+    section.hidden = section.dataset.wifikuPanel !== nextPanel;
+  });
+  document.querySelectorAll('[data-wifiku-nav]').forEach((button) => {
+    const active = button.dataset.wifikuNav === nextPanel;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-current', active ? 'page' : 'false');
+  });
+  window.requestAnimationFrame(() => {
+    window.scrollTo({ top: 0, behavior: options.smooth === false ? 'auto' : 'smooth' });
+  });
 }
 
 function otpRequired() {
@@ -427,6 +456,10 @@ function renderPortal(payload) {
   byId('memberName').textContent = memberName;
   byId('memberPackage').textContent = customer.packageName || '-';
   byId('accountMenuName').textContent = memberName;
+  byId('accountTabName').textContent = memberName;
+  byId('accountTabPhone').textContent = customer.phone || '-';
+  byId('accountTabEmail').textContent = customer.email || '-';
+  byId('accountTabAddress').textContent = customer.address || '-';
   const hasLocation = Boolean(customer.latitude && customer.longitude);
   const hasHousePhoto = Boolean(customer.housePhotoUrl);
   const locationNotice = byId('customerLocationNotice');
@@ -457,7 +490,13 @@ function renderPortal(payload) {
   byId('usageTotal').textContent = usage.totalUsageText || '0 B';
   byId('usageDetail').textContent = `U ${usage.upload || '0 B'} / D ${usage.download || '0 B'}`;
   byId('rxPower').textContent = device.rxPowerText || '-';
-  byId('deviceStatus').textContent = device.id ? (device.online ? 'Online' : 'Offline') : (payload.genieAcs?.error || 'Device belum ditemukan');
+  const deviceStatusText = device.id ? (device.online ? 'Online' : 'Offline') : (payload.genieAcs?.error || 'Device belum ditemukan');
+  byId('deviceStatus').textContent = deviceStatusText;
+  byId('modemStatusLabel').textContent = device.id ? (device.online ? 'Online' : 'Offline') : '-';
+  byId('modemStatusLabel').className = `modem-status-pill ${device.online ? 'online' : 'offline'}`;
+  byId('modemStatusHint').textContent = device.id ? (device.online ? 'Modem sedang aktif' : 'Kontak terakhir belum aktif') : deviceStatusText;
+  byId('modemSerialNumber').textContent = device.serialNumber || device.sn || '-';
+  byId('wifiRxPower').textContent = device.rxPowerText || '-';
   const clients = clientSummaryCounts(device);
   const network24 = wifiNetworkForBand(device, '2.4g');
   const network5 = wifiNetworkForBand(device, '5g');
@@ -628,13 +667,18 @@ document.addEventListener('keydown', (event) => {
 
 byId('accountButton').addEventListener('click', () => {
   byId('accountMenu').hidden = true;
-  openAccountDialog();
+  setWifikuPanel('account');
 });
 
-byId('logoutButton').addEventListener('click', () => {
+function logoutWifiku() {
   state.token = '';
   localStorage.removeItem(TOKEN_KEY);
   showLogin();
+}
+
+byId('logoutButton').addEventListener('click', () => {
+  byId('accountMenu').hidden = true;
+  logoutWifiku();
 });
 
 byId('closeAccountDialog').addEventListener('click', () => byId('accountDialog').close());
@@ -684,6 +728,15 @@ byId('billingPayButton').addEventListener('click', () => {
   }
   window.location.href = url;
 });
+
+document.querySelectorAll('[data-wifiku-nav]').forEach((button) => {
+  button.addEventListener('click', () => {
+    setWifikuPanel(button.dataset.wifikuNav || 'home');
+  });
+});
+
+byId('accountTabDetailButton')?.addEventListener('click', openAccountDialog);
+byId('accountTabLogoutButton')?.addEventListener('click', logoutWifiku);
 
 const dialog = byId('actionDialog');
 const actionForm = byId('actionForm');

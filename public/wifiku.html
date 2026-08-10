@@ -7,7 +7,7 @@
     <title>WifiKu - __FAKENET_META_TITLE__</title>
     __FAKENET_META_TAGS__
     <link id="appFavicon" rel="icon" href="__FAKENET_META_ICON__">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-chart-touch-tooltip-v5-20260730">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-mobile-tabs-v2-20260810">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -52,14 +52,7 @@
       </section>
 
       <section id="portalView" class="portal-layout" hidden>
-        <div class="toolbar portal-toolbar">
-          <label class="period-picker-label" for="periodInput">
-            <span>Bulan Tagihan</span>
-            <input id="periodInput" type="month" aria-label="Filter bulan">
-          </label>
-        </div>
-
-        <section class="panel compact member-info-panel">
+        <section class="panel compact member-info-panel" data-wifiku-panel="home">
           <div>
             <span>ID Member</span>
             <strong id="memberId">-</strong>
@@ -74,39 +67,48 @@
           </div>
         </section>
 
-        <section id="billingSummary" class="panel compact checkout-panel">
-          <div class="checkout-status-row">
-            <div>
-              <span class="muted">Tagihan bulan ini</span>
-              <h2 id="billingTitle">Memuat tagihan...</h2>
-            </div>
-            <span id="billingBadge" class="billing-badge pending">-</span>
+        <div class="wifiku-tab-stack" data-wifiku-panel="billing" hidden>
+          <div class="toolbar portal-toolbar">
+            <label class="period-picker-label" for="periodInput">
+              <span>Bulan Tagihan</span>
+              <input id="periodInput" type="month" aria-label="Filter bulan">
+            </label>
           </div>
-          <div class="checkout-summary-grid">
-            <div>
-              <span>No Invoice</span>
-              <strong id="billingInvoiceNo">-</strong>
-            </div>
-            <div>
-              <span>Periode</span>
-              <strong id="billingPeriod">-</strong>
-            </div>
-            <div>
-              <span>Jatuh Tempo</span>
-              <strong id="billingDueDate">-</strong>
-            </div>
-            <div>
-              <span>Total Bayar</span>
-              <strong id="billingAmount">-</strong>
-            </div>
-          </div>
-          <p id="billingMessage">Ringkasan tagihan akan tampil setelah data pelanggan terbaca.</p>
-          <div class="checkout-actions">
-            <button id="billingPayButton" type="button" hidden>Bayar Tagihan</button>
-          </div>
-        </section>
 
-        <section class="grid stats-grid">
+          <section id="billingSummary" class="panel compact checkout-panel">
+            <div class="checkout-status-row">
+              <div>
+                <span class="muted">Tagihan bulan ini</span>
+                <h2 id="billingTitle">Memuat tagihan...</h2>
+              </div>
+              <span id="billingBadge" class="billing-badge pending">-</span>
+            </div>
+            <div class="checkout-summary-grid">
+              <div>
+                <span>No Invoice</span>
+                <strong id="billingInvoiceNo">-</strong>
+              </div>
+              <div>
+                <span>Periode</span>
+                <strong id="billingPeriod">-</strong>
+              </div>
+              <div>
+                <span>Jatuh Tempo</span>
+                <strong id="billingDueDate">-</strong>
+              </div>
+              <div>
+                <span>Total Bayar</span>
+                <strong id="billingAmount">-</strong>
+              </div>
+            </div>
+            <p id="billingMessage">Ringkasan tagihan akan tampil setelah data pelanggan terbaca.</p>
+            <div class="checkout-actions">
+              <button id="billingPayButton" type="button" hidden>Bayar Tagihan</button>
+            </div>
+          </section>
+        </div>
+
+        <section class="grid stats-grid" data-wifiku-panel="home">
           <button class="card primary metric-card" id="usageSummaryButton" type="button">
             <span>Total Usage</span>
             <strong id="usageTotal">0 B</strong>
@@ -124,11 +126,26 @@
           </button>
         </section>
 
-        <section class="panel compact wifi-panel">
+        <section class="panel compact wifi-panel" data-wifiku-panel="wifi" hidden>
           <div class="panel-title-row">
             <div>
               <span class="panel-kicker">Kontrol Modem</span>
               <h2>WiFi</h2>
+            </div>
+          </div>
+          <div class="modem-brief-grid">
+            <div class="modem-brief-card status-card">
+              <span>Status</span>
+              <strong id="modemStatusLabel" class="modem-status-pill offline">Offline</strong>
+              <small id="modemStatusHint">Device belum ditemukan</small>
+            </div>
+            <div class="modem-brief-card">
+              <span>SN Modem</span>
+              <strong id="modemSerialNumber">-</strong>
+            </div>
+            <div class="modem-brief-card">
+              <span>Redaman</span>
+              <strong id="wifiRxPower">-</strong>
             </div>
           </div>
           <div class="wifi-row" data-wifi-row="2.4g">
@@ -149,8 +166,46 @@
             <button id="rebootButton" class="danger" type="button">Reboot Modem</button>
           </div>
         </section>
+
+        <section class="panel compact account-tab-panel" data-wifiku-panel="account" hidden>
+          <div class="panel-title-row">
+            <div>
+              <span class="panel-kicker">Pelanggan</span>
+              <h2>Akun</h2>
+            </div>
+          </div>
+          <div class="account-summary-grid">
+            <div>
+              <span>Nama</span>
+              <strong id="accountTabName">-</strong>
+            </div>
+            <div>
+              <span>Nomor WhatsApp</span>
+              <strong id="accountTabPhone">-</strong>
+            </div>
+            <div>
+              <span>Email</span>
+              <strong id="accountTabEmail">-</strong>
+            </div>
+            <div>
+              <span>Alamat</span>
+              <strong id="accountTabAddress">-</strong>
+            </div>
+          </div>
+          <div class="actions account-tab-actions">
+            <button id="accountTabDetailButton" type="button">Detail Akun</button>
+            <button id="accountTabLogoutButton" class="secondary" type="button">Logout</button>
+          </div>
+        </section>
       </section>
     </main>
+
+    <nav id="wifikuBottomNav" class="wifiku-bottom-nav" aria-label="Menu WifiKu" hidden>
+      <button class="wifiku-bottom-item is-active" type="button" data-wifiku-nav="home">Beranda</button>
+      <button class="wifiku-bottom-item" type="button" data-wifiku-nav="billing">Tagihan</button>
+      <button class="wifiku-bottom-item" type="button" data-wifiku-nav="wifi">Wifi</button>
+      <button class="wifiku-bottom-item" type="button" data-wifiku-nav="account">Akun</button>
+    </nav>
 
     <dialog id="actionDialog">
       <form method="dialog" id="actionForm" class="dialog-card">
@@ -214,6 +269,6 @@
     </dialog>
 
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-chart-touch-tooltip-v5-20260730" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-mobile-tabs-v2-20260810" defer></script>
   </body>
 </html>
