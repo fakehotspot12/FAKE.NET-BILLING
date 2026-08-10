@@ -355,7 +355,7 @@ if [ -f "$APP_DIR/install.sh" ]; then
   if [ "${FAKENET_BUNDLED_GENIEACS:-0}" = "1" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
     INSTALL_GENIEACS_FOR_REPAIR=1
   fi
-  APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair || true
+  APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 GENIEACS_BOOTSTRAP_EXTERNAL=1 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair || true
 fi
 
 cleanup_obsolete_worker_runtime

@@ -15,8 +15,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v415-cempaka-shell-20260809"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v415-cempaka-shell-20260809"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=ui-v418-login-security-20260810"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-v418-login-security-20260810"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);

@@ -482,6 +482,71 @@ function huaweiMultiWanDevice() {
   };
 }
 
+function zteCmccWanDevice() {
+  return {
+    _id: 'zte-cmcc-wan',
+    _deviceId: {
+      _Manufacturer: 'ZTE',
+      _ProductClass: 'F663NV3A',
+      _SerialNumber: 'ZTE-CMCC-1'
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          WANConnectionDevice: {
+            1: {
+              WANIPConnection: {
+                1: {
+                  Enable: { _value: 'TRUE' },
+                  ConnectionType: { _value: 'IP_Routed' },
+                  Name: { _value: '1_TR069_R_VID_100' },
+                  X_CMCC_ServiceList: { _value: 'TR069' },
+                  X_CMCC_VLANIDMark: { _value: 100 }
+                }
+              },
+              WANPPPConnection: {
+                1: {
+                  Enable: { _value: 'TRUE' },
+                  ConnectionStatus: { _value: 'Connected' },
+                  ConnectionType: { _value: 'PPPoE_Routed' },
+                  Name: { _value: '2_INTERNET_R_VID_111' },
+                  Username: { _value: 'member-cmcc' },
+                  X_CMCC_ServiceList: { _value: 'INTERNET' },
+                  X_CMCC_VLANIDMark: { _value: 111 }
+                },
+                2: {
+                  Enable: { _value: 'TRUE' },
+                  ConnectionType: { _value: 'PPPoE_Bridged' },
+                  Name: { _value: '3_OTHER_B_VID_110' },
+                  X_CMCC_ServiceList: { _value: 'OTHER' },
+                  X_CMCC_VLANIDMark: { _value: 110 },
+                  X_CMCC_LanInterface: {
+                    _value: 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4,InternetGatewayDevice.LANDevice.1.WLANConfiguration.2'
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      LANDevice: {
+        1: {
+          LANEthernetInterfaceConfig: {
+            1: { Enable: { _value: true } },
+            2: { Enable: { _value: true } },
+            3: { Enable: { _value: true } },
+            4: { Enable: { _value: true } }
+          },
+          WLANConfiguration: {
+            1: { Enable: { _value: true }, SSID: { _value: 'Rumah' } },
+            2: { Enable: { _value: true }, SSID: { _value: 'Bridge-TV' } }
+          }
+        }
+      }
+    }
+  };
+}
+
 test('summarizes multi-WAN and protects GenieACS management WAN', () => {
   const device = huaweiMultiWanDevice();
   const connections = device.InternetGatewayDevice.WANDevice[1].WANConnectionDevice;
@@ -498,6 +563,40 @@ test('summarizes multi-WAN and protects GenieACS management WAN', () => {
   assert.equal(management.protected, true);
   assert.equal(management.editable, false);
   assert.deepEqual(bridge.bindings.sort(), ['LAN4', 'SSID2']);
+});
+
+test('reads and writes ZTE CMCC WAN VLAN and binding parameters', () => {
+  const device = zteCmccWanDevice();
+  const summary = genieAcsWan.summarizeWanConnections(device, 'member-cmcc');
+  const management = summary.rows.find((row) => row.mode === 'management');
+  const pppoe = summary.rows.find((row) => row.mode === 'pppoe');
+  const bridge = summary.rows.find((row) => row.mode === 'bridge');
+
+  assert.equal(summary.vendor.id, 'zte');
+  assert.equal(management.vlan, 100);
+  assert.equal(management.protected, true);
+  assert.equal(pppoe.vlan, 111);
+  assert.equal(pppoe.label, 'PPPoE - VLAN 111');
+  assert.equal(pppoe.parameterFamily, 'cmcc');
+  assert.equal(bridge.vlan, 110);
+  assert.deepEqual(bridge.bindings.sort(), ['LAN4', 'SSID2']);
+
+  const plan = genieAcsWan.prepareWanProvision(device, {
+    targetWan: pppoe.id,
+    mode: 'pppoe',
+    vlan: 111,
+    username: 'member-cmcc',
+    bindings: ['LAN3']
+  });
+  const parameters = new Map([
+    ...plan.parameterValues,
+    ...plan.bindingValues
+  ].map(([name, value]) => [name, value]));
+
+  assert.equal(parameters.get(`${pppoe.basePath}.X_CMCC_VLANIDMark`), 111);
+  assert.equal(parameters.get(`${pppoe.basePath}.X_CMCC_ServiceList`), 'INTERNET');
+  assert.equal(parameters.get(`${pppoe.basePath}.X_CMCC_LanInterface`), 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3');
+  assert.equal([...parameters.keys()].some((name) => name.includes('X_ZTE-COM_VLANID')), false);
 });
 
 test('defaults WAN editing to an existing connection and keeps the earliest bridge first', () => {

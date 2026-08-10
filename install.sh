@@ -321,6 +321,8 @@ verify_repository_payload() {
     deploy/fakenet-billing-waha.env
     deploy/fakenet-billing-genieacs.env
     deploy/genieacs/bootstrap.js
+    deploy/genieacs/virtual-parameters/LANActiveClients.js
+    deploy/genieacs/virtual-parameters/LANClients.js
     deploy/genieacs/virtual-parameters/RXPower.js
     deploy/genieacs/virtual-parameters/gettemp.js
     deploy/sql/freeradius-postgresql.sql
@@ -753,9 +755,16 @@ prepare_genieacs_runtime() {
   chmod 600 "$GENIEACS_ENV_FILE"
 }
 
+genieacs_bootstrap_allowed() {
+  [ -f "$GENIEACS_ENV_FILE" ] || return 1
+  [ "${INSTALL_GENIEACS:-1}" != "0" ] && return 0
+  [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] && return 0
+  [ "${GENIEACS_BOOTSTRAP_EXTERNAL:-1}" = "1" ] && port_is_listening "${GENIEACS_NBI_PORT:-7557}" && return 0
+  return 1
+}
+
 bootstrap_genieacs() {
-  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
-  [ -f "$GENIEACS_ENV_FILE" ] || return 0
+  genieacs_bootstrap_allowed || return 0
   load_genieacs_env
   local attempt bootstrap_status
   for attempt in $(seq 1 "${GENIEACS_BOOTSTRAP_ATTEMPTS:-3}"); do
@@ -1215,7 +1224,7 @@ install_openrc() {
 
 repair_install() {
   mkdir -p /var/log/fakenet-billing
-  if [ "${INSTALL_GENIEACS:-1}" = "0" ] && external_genieacs_unit_exists; then
+  if [ "${INSTALL_GENIEACS:-1}" = "0" ] && { external_genieacs_unit_exists || external_genieacs_process_exists || port_is_listening "${GENIEACS_NBI_PORT:-7557}"; }; then
     GENIEACS_EXTERNAL_DETECTED=1
     export GENIEACS_EXTERNAL_DETECTED
     cleanup_fakenet_genieacs_services
@@ -1257,6 +1266,10 @@ repair_install() {
     write_openrc_service fakenet-billing-radius-connector "src/radius-connector-service.js"
     write_openrc_waha_service
     install_openrc_genieacs 0
+  fi
+
+  if [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
+    bootstrap_genieacs
   fi
 
   if [ -f /etc/fakenet-billing.env ] && [ "${REPAIR_FREERADIUS:-1}" != "0" ]; then

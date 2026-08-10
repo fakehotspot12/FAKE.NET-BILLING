@@ -174,6 +174,26 @@ function compactBytes(value = 0) {
   return `${bytes.toFixed(precision)} ${units[unit]}`;
 }
 
+function setText(id, value = '') {
+  const element = byId(id);
+  if (element) element.textContent = value;
+}
+
+function serviceStatusLabel(value = '') {
+  const status = String(value || '').trim().toLowerCase();
+  if (['isolated', 'isolir', 'suspend', 'suspended'].includes(status)) return 'Isolir';
+  if (['terminated', 'terminate', 'disabled', 'inactive', 'nonaktif'].includes(status)) return 'Terminated';
+  if (['pending', 'unpaid', 'belum bayar', 'belum-bayar'].includes(status)) return 'Belum Aktif';
+  return 'Aktif';
+}
+
+function serviceStatusClass(value = '') {
+  const label = serviceStatusLabel(value).toLowerCase();
+  if (label === 'aktif') return 'active';
+  if (label === 'isolir') return 'isolated';
+  return 'inactive';
+}
+
 function chartRange(values = [], options = {}) {
   const clean = values.map((value) => Number(value || 0)).filter(Number.isFinite);
   const max = Math.max(0, ...clean);
@@ -380,11 +400,11 @@ function openClientDialog(options = {}) {
           <tbody>
             ${visibleRows.map((row, index) => `
               <tr>
-                <td>${offset + index + 1}</td>
-                <td><span class="client-type-badge ${clientBadgeClass(row.type)}">${escapeHtml(clientTypeKey(row.type))}</span></td>
-                <td>${escapeHtml(row.name || '-')}</td>
-                <td>${escapeHtml(row.ipAddress || '-')}</td>
-                <td>${escapeHtml(row.macAddress || '-')}</td>
+                <td data-label="No">${offset + index + 1}</td>
+                <td data-label="Koneksi"><span class="client-type-badge ${clientBadgeClass(row.type)}">${escapeHtml(clientTypeKey(row.type))}</span></td>
+                <td data-label="Nama / Device">${escapeHtml(row.name || '-')}</td>
+                <td data-label="IP Address">${escapeHtml(row.ipAddress || '-')}</td>
+                <td data-label="MAC">${escapeHtml(row.macAddress || '-')}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -424,6 +444,97 @@ function billingBadgeClass(status = '') {
   return 'none';
 }
 
+function billingStatusLabel(status = '', fallback = '') {
+  const value = String(status || '').toLowerCase();
+  if (fallback) return fallback;
+  if (value === 'paid') return 'Sudah dibayar';
+  if (value === 'overdue') return 'Lewat tempo';
+  if (['pending', 'unpaid'].includes(value)) return 'Belum dibayar';
+  return 'Tidak ada tagihan';
+}
+
+function renderHomeBillingSummary(billing = {}) {
+  const exists = billing.exists === true;
+  const status = String(billing.status || '').toLowerCase();
+  const dueText = exists && billing.dueDate ? `Jatuh tempo ${billing.dueDate}` : 'Tidak ada tagihan aktif';
+  const remainingText = exists && ['pending', 'overdue', 'unpaid'].includes(status)
+    ? (billing.gatewayAmountText || billing.amountText || 'Rp 0')
+    : 'Rp 0';
+  const canPay = Boolean(billing.canPay && (billing.checkoutUrl || billing.paymentGatewayLink));
+  const paid = exists && status === 'paid';
+  const noInvoice = !exists || status === 'none';
+  setText('homeBillingAmount', remainingText);
+  setText('homeBillingDue', paid ? `Lunas periode ${billing.period || '-'}` : dueText);
+  setText('homePaymentTitle', canPay ? 'Tagihan perlu dibayar' : (paid ? 'Tagihan lunas' : (noInvoice ? 'Tidak ada tagihan aktif' : 'Tagihan belum tersedia online')));
+  setText('homePaymentHint', billing.message || (canPay ? 'Silakan lakukan pembayaran dari tombol berikut.' : 'Status tagihan pelanggan sudah diperbarui.'));
+  const button = byId('homePayButton');
+  const checkoutUrl = billing.checkoutUrl || billing.paymentGatewayLink || '';
+  if (button) {
+    button.dataset.checkoutUrl = canPay ? checkoutUrl : '';
+    button.disabled = !canPay;
+    button.textContent = canPay ? 'Bayar Tagihan' : (paid ? 'Tagihan Lunas' : (noInvoice ? 'Tidak Ada Tagihan' : 'Hubungi Admin'));
+    button.classList.toggle('is-paid', paid || noInvoice);
+  }
+  const card = byId('homeBillingCard');
+  if (card) {
+    card.dataset.checkoutUrl = canPay ? checkoutUrl : '';
+    card.classList.toggle('is-paid', paid || noInvoice);
+  }
+}
+
+function billingHistoryStatusClass(status = '') {
+  const value = String(status || '').toLowerCase();
+  if (value === 'paid') return 'paid';
+  if (value === 'overdue') return 'overdue';
+  if (['pending', 'unpaid'].includes(value)) return 'pending';
+  return 'none';
+}
+
+function billingHistoryRowMarkup(row = {}, options = {}) {
+  const compact = options.compact === true;
+  const statusClass = billingHistoryStatusClass(row.status);
+  const meta = [
+    row.period || '-',
+    row.dueDate ? `Tempo ${row.dueDate}` : ''
+  ].filter(Boolean).join(' · ');
+  const paidInfo = String(row.status || '').toLowerCase() === 'paid'
+    ? [row.paymentMethod || '', row.paidAt ? `Bayar ${row.paidAt}` : ''].filter(Boolean).join(' · ')
+    : '';
+  return `
+    <article class="billing-log-row ${compact ? 'compact' : ''}">
+      <div>
+        <strong>${escapeHtml(row.invoiceNo || row.reference || '-')}</strong>
+        <span>${escapeHtml(meta || '-')}</span>
+        ${paidInfo ? `<small>${escapeHtml(paidInfo)}</small>` : ''}
+      </div>
+      <div class="billing-log-side">
+        <span class="billing-badge ${statusClass}">${escapeHtml(row.statusLabel || billingStatusLabel(row.status))}</span>
+        <strong>${escapeHtml(row.amountText || '-')}</strong>
+      </div>
+    </article>
+  `;
+}
+
+function renderBillingHistory(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  const home = byId('homeBillingLog');
+  const full = byId('billingHistoryList');
+  const button = byId('billingHistoryButton');
+  if (home) {
+    home.innerHTML = list.length
+      ? list.slice(0, 3).map((row) => billingHistoryRowMarkup(row, { compact: true })).join('')
+      : '<p class="empty-detail">Riwayat tagihan belum tersedia.</p>';
+  }
+  if (full) {
+    full.innerHTML = list.length
+      ? list.map((row) => billingHistoryRowMarkup(row)).join('')
+      : '<p class="empty-detail">Riwayat tagihan belum tersedia.</p>';
+  }
+  if (button) {
+    button.disabled = !list.length;
+  }
+}
+
 function renderBillingSummary(billing = {}) {
   const exists = billing.exists === true;
   const status = String(billing.status || '').toLowerCase();
@@ -444,6 +555,7 @@ function renderBillingSummary(billing = {}) {
   const checkoutUrl = billing.checkoutUrl || billing.paymentGatewayLink || '';
   payButton.hidden = !(billing.canPay && checkoutUrl);
   payButton.dataset.checkoutUrl = billing.canPay ? checkoutUrl : '';
+  renderHomeBillingSummary(billing);
 }
 
 function renderPortal(payload) {
@@ -452,14 +564,21 @@ function renderPortal(payload) {
   const usage = payload.usage || {};
   const device = payload.device || {};
   const memberName = customer.name || customer.username || '-';
-  byId('memberId').textContent = customer.memberId || customer.id || '-';
-  byId('memberName').textContent = memberName;
-  byId('memberPackage').textContent = customer.packageName || '-';
-  byId('accountMenuName').textContent = memberName;
-  byId('accountTabName').textContent = memberName;
-  byId('accountTabPhone').textContent = customer.phone || '-';
-  byId('accountTabEmail').textContent = customer.email || '-';
-  byId('accountTabAddress').textContent = customer.address || '-';
+  const serviceStatus = customer.status || payload.billing?.customerStatus || '';
+  setText('memberId', customer.memberId || customer.id || '-');
+  setText('memberName', memberName);
+  setText('memberPackage', customer.packageName || '-');
+  setText('accountMenuName', memberName);
+  setText('accountTabName', memberName);
+  setText('accountTabPhone', customer.phone || '-');
+  setText('accountTabEmail', customer.email || '-');
+  setText('accountTabAddress', customer.address || '-');
+  setText('accountServicePackage', customer.packageName || '-');
+  setText('accountActiveDate', customer.activeDate || '-');
+  setText('accountNextBilling', dateText(customer.dueDate || ''));
+  setText('homeServiceStatus', serviceStatusLabel(serviceStatus));
+  byId('homeServiceStatus')?.classList.remove('active', 'isolated', 'inactive');
+  byId('homeServiceStatus')?.classList.add(serviceStatusClass(serviceStatus));
   const hasLocation = Boolean(customer.latitude && customer.longitude);
   const hasHousePhoto = Boolean(customer.housePhotoUrl);
   const locationNotice = byId('customerLocationNotice');
@@ -487,23 +606,27 @@ function renderPortal(payload) {
   }
   housePhoto.hidden = !hasHousePhoto;
   if (hasHousePhoto) housePhoto.src = customer.housePhotoUrl;
-  byId('usageTotal').textContent = usage.totalUsageText || '0 B';
-  byId('usageDetail').textContent = `U ${usage.upload || '0 B'} / D ${usage.download || '0 B'}`;
-  byId('rxPower').textContent = device.rxPowerText || '-';
+  setText('usageTotal', usage.totalUsageText || '0 B');
+  setText('usageDetail', `U ${usage.upload || '0 B'} / D ${usage.download || '0 B'}`);
+  setText('rxPower', device.rxPowerText || '-');
   const deviceStatusText = device.id ? (device.online ? 'Online' : 'Offline') : (payload.genieAcs?.error || 'Device belum ditemukan');
-  byId('deviceStatus').textContent = deviceStatusText;
-  byId('modemStatusLabel').textContent = device.id ? (device.online ? 'Online' : 'Offline') : '-';
+  setText('deviceStatus', deviceStatusText);
+  byId('deviceStatus')?.classList.remove('online', 'offline');
+  byId('deviceStatus')?.classList.add(device.online ? 'online' : 'offline');
+  setText('modemStatusLabel', device.id ? (device.online ? 'Online' : 'Offline') : '-');
   byId('modemStatusLabel').className = `modem-status-pill ${device.online ? 'online' : 'offline'}`;
-  byId('modemStatusHint').textContent = device.id ? (device.online ? 'Modem sedang aktif' : 'Kontak terakhir belum aktif') : deviceStatusText;
-  byId('modemSerialNumber').textContent = device.serialNumber || device.sn || '-';
-  byId('wifiRxPower').textContent = device.rxPowerText || '-';
+  setText('modemStatusHint', device.id ? (device.online ? 'Modem sedang aktif' : 'Kontak terakhir belum aktif') : deviceStatusText);
+  setText('modemSerialNumber', device.serialNumber || device.sn || '-');
+  setText('homeModemSerialNumber', device.serialNumber || device.sn || '-');
+  setText('wifiRxPower', device.rxPowerText || '-');
   const clients = clientSummaryCounts(device);
   const network24 = wifiNetworkForBand(device, '2.4g');
   const network5 = wifiNetworkForBand(device, '5g');
   const hasWifi24 = wifiNetworkAvailable(device, '2.4g');
   const hasWifi5 = wifiNetworkAvailable(device, '5g');
-  byId('wifiTotal').textContent = `${clients.total} user`;
-  byId('wifiDetail').textContent = `2.4G ${clients.count24} / 5G ${clients.count5} / LAN ${clients.countLan}`;
+  setText('wifiTotal', `${clients.total} user`);
+  setText('wifiDetail', `2.4G ${clients.count24} / 5G ${clients.count5} / LAN ${clients.countLan}`);
+  setText('homeModemClients', `${clients.total} user`);
   const clientButton = byId('clientSummaryButton');
   if (clientButton) {
     clientButton.disabled = !device.id;
@@ -523,6 +646,7 @@ function renderPortal(payload) {
     button.title = available ? '' : 'SSID belum ditemukan di GenieACS';
   });
   renderBillingSummary(payload.billing || {});
+  renderBillingHistory(payload.billingHistory || []);
   showPortal();
 }
 
@@ -604,8 +728,8 @@ byId('phoneForm').addEventListener('submit', async (event) => {
     }
     state.challengeId = payload.challengeId || '';
     syncOtpFormVisibility(Boolean(state.challengeId));
-    byId('otpInput').focus();
-    toast('OTP dikirim via WhatsApp');
+    if (state.challengeId) byId('otpInput').focus();
+    toast(payload.message || 'OTP dikirim via WhatsApp');
   } catch (error) {
     toast(error.message);
   } finally {
@@ -694,30 +818,7 @@ byId('closeUsageDialog')?.addEventListener('click', () => byId('usageDialog')?.c
 byId('closeClientDialog')?.addEventListener('click', () => byId('clientDialog')?.close());
 byId('accountForm').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const form = event.currentTarget;
-  const field = (name) => form.elements.namedItem(name);
-  const payload = {
-    name: String(field('name')?.value || '').trim(),
-    ktp: String(field('ktp')?.value || '').trim(),
-    email: String(field('email')?.value || '').trim(),
-    address: String(field('address')?.value || '').trim()
-  };
-  const submitButton = form.querySelector('button[type="submit"]');
-  if (!payload.name) {
-    toast('Nama wajib diisi');
-    return;
-  }
-  if (submitButton) submitButton.disabled = true;
-  try {
-    await api('/api/public/wifiku/profile', { method: 'PATCH', body: JSON.stringify(payload) });
-    byId('accountDialog').close();
-    toast('Data Akun Saya berhasil diperbarui');
-    await loadMe();
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    if (submitButton) submitButton.disabled = false;
-  }
+  toast('Perubahan data pelanggan dilakukan oleh admin.');
 });
 
 byId('billingPayButton').addEventListener('click', () => {
@@ -728,6 +829,23 @@ byId('billingPayButton').addEventListener('click', () => {
   }
   window.location.href = url;
 });
+
+byId('homePayButton')?.addEventListener('click', () => {
+  const url = byId('homePayButton').dataset.checkoutUrl || '';
+  if (!url) return;
+  window.location.href = url;
+});
+
+byId('homeBillingCard')?.addEventListener('click', () => {
+  const url = byId('homeBillingCard').dataset.checkoutUrl || '';
+  if (url) {
+    window.location.href = url;
+    return;
+  }
+  setWifikuPanel('billing');
+});
+
+byId('billingHistoryButton')?.addEventListener('click', () => setWifikuPanel('billing'));
 
 document.querySelectorAll('[data-wifiku-nav]').forEach((button) => {
   button.addEventListener('click', () => {

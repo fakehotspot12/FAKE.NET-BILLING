@@ -11666,7 +11666,9 @@ dialog::backdrop {
   }
 
   .statistics-svg-wrap svg {
-    min-width: 520px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .statistics-column-chart {
@@ -16582,7 +16584,7 @@ dialog::backdrop {
 }
 
 /* Mobile bottom navigation drawer. Keep this late so it overrides legacy side-drawer rules. */
-@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   body.is-authenticated .app-shell {
     padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   }

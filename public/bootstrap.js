@@ -17,7 +17,7 @@
     copyrightName: document.title || 'FAKE.NET',
     appVersion,
     releaseDate: '__FAKENET_RELEASE_DATE__',
-    loginVerificationEnabled: false
+    loginVerificationEnabled: true
   };
   let branding = { ...defaultBranding };
   let applicationLoading = false;

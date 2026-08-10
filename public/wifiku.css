@@ -60,6 +60,7 @@ button.danger {
 
 button[value="cancel"],
 #logoutButton,
+.secondary,
 .wifi-row button {
   background: #e7eef4;
   color: var(--text);
@@ -349,8 +350,21 @@ body.is-wifiku-authenticated .wifiku-shell {
 
 .portal-toolbar,
 .member-info-panel,
+.home-welcome-panel,
+.home-summary-grid,
+.home-payment-panel,
+.home-billing-log-panel,
+.home-modem-status-panel,
 .checkout-panel {
   grid-column: 1;
+}
+
+.home-welcome-panel,
+.home-summary-grid,
+.home-payment-panel,
+.home-billing-log-panel,
+.home-modem-status-panel {
+  grid-column: 1 / -1;
 }
 
 .stats-grid,
@@ -359,7 +373,14 @@ body.is-wifiku-authenticated .wifiku-shell {
 }
 
 .wifi-panel {
-  grid-row: span 2;
+  grid-row: auto;
+  justify-self: center;
+  width: min(760px, 100%);
+}
+
+.account-tab-panel {
+  justify-self: center;
+  width: min(840px, 100%);
 }
 
 .panel h1,
@@ -413,6 +434,290 @@ body.is-wifiku-authenticated .wifiku-shell {
   max-width: none;
   color: var(--text);
   appearance: auto;
+}
+
+.portal-layout > [data-wifiku-panel] {
+  grid-column: 1 / -1;
+}
+
+.wifiku-tab-stack {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 12px;
+}
+
+.wifiku-tab-stack .portal-toolbar {
+  grid-column: 1 / -1;
+}
+
+.wifiku-tab-stack .checkout-panel,
+.wifiku-tab-stack .billing-history-panel {
+  grid-column: auto;
+}
+
+.section-helper {
+  margin: 2px 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+@media (min-width: 900px) {
+  .wifiku-tab-stack[data-wifiku-panel="billing"] {
+    grid-template-columns: minmax(0, .92fr) minmax(360px, 1.08fr);
+    align-items: start;
+  }
+}
+
+.home-welcome-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-color: color-mix(in srgb, var(--primary) 18%, var(--line));
+  background:
+    linear-gradient(135deg, rgba(11, 90, 168, .12), rgba(0, 168, 107, .10)),
+    var(--panel);
+}
+
+.home-welcome-copy {
+  min-width: 0;
+}
+
+.home-welcome-copy > span,
+.home-member-code span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.home-welcome-copy h1 {
+  margin: 3px 0 8px;
+  overflow: hidden;
+  font-size: clamp(25px, 4vw, 34px);
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-service-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.home-service-line strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.service-status-pill.active {
+  color: #087a51;
+  background: rgba(0, 168, 107, .14);
+}
+
+.service-status-pill.isolated {
+  color: #9a3412;
+  background: #fff7ed;
+}
+
+.service-status-pill.inactive {
+  color: #9f1f16;
+  background: rgba(180, 35, 24, .12);
+}
+
+.home-member-code {
+  min-width: 150px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--line));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .66);
+  text-align: right;
+}
+
+.home-member-code strong {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.home-billing-card.is-paid {
+  background: linear-gradient(135deg, #087a51, #0b5aa8);
+}
+
+.home-payment-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.home-payment-panel h2 {
+  margin-bottom: 4px;
+}
+
+.home-payment-panel p {
+  margin: 0;
+}
+
+.home-payment-panel button {
+  min-width: 170px;
+}
+
+.home-payment-panel button.is-paid {
+  background: #e7eef4;
+  color: var(--muted);
+  cursor: default;
+}
+
+.small-action {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.home-billing-log,
+.billing-history-dialog-list {
+  display: grid;
+  gap: 8px;
+}
+
+.billing-log-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfd;
+}
+
+.billing-history-panel .home-billing-log {
+  gap: 10px;
+}
+
+.billing-history-panel .billing-log-row {
+  padding: 12px;
+  background: linear-gradient(180deg, #ffffff, #f8fbfd);
+}
+
+.billing-log-row.compact {
+  padding: 9px 10px;
+}
+
+.billing-log-row > div:first-child,
+.billing-log-side {
+  min-width: 0;
+}
+
+.billing-log-row strong,
+.billing-log-row span,
+.billing-log-row small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.billing-log-row > div:first-child > strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.billing-log-row > div:first-child > span,
+.billing-log-row small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.billing-log-side {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+}
+
+.billing-log-side > strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.billing-history-panel .billing-log-side > strong {
+  font-size: 14px;
+}
+
+.home-modem-status-panel {
+  margin-bottom: 4px;
+}
+
+.home-modem-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.home-modem-grid > div {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfd;
+}
+
+.home-modem-grid span,
+.home-modem-grid strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-modem-grid span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.home-modem-grid strong {
+  margin-top: 5px;
+  color: var(--text);
+  font-size: 14px;
 }
 
 .member-info-panel {
@@ -627,6 +932,15 @@ button.card.metric-card:disabled {
   min-width: 78px;
 }
 
+.wifi-control-note {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(180, 35, 24, .14);
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
 .modem-brief-grid,
 .account-summary-grid {
   display: grid;
@@ -703,7 +1017,62 @@ button.card.metric-card:disabled {
 }
 
 .account-tab-actions {
-  justify-content: flex-start;
+  justify-content: center;
+}
+
+.account-service-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--line));
+  border-radius: 8px;
+  background: #f8fbfd;
+}
+
+.account-admin-inline-note {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 14%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 7%, #ffffff);
+  color: var(--text);
+}
+
+.account-service-card > span,
+.account-service-card > strong {
+  grid-column: 1 / -1;
+}
+
+.account-service-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.account-service-card strong {
+  display: block;
+  min-width: 0;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-service-card > strong {
+  margin-top: -2px;
+  font-size: 18px;
+}
+
+.account-tab-panel .actions button {
+  min-width: 150px;
 }
 
 .panel-title-row {
@@ -890,6 +1259,72 @@ dialog::backdrop {
 @media (max-width: 620px) {
   .client-summary-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-table-wrap {
+    overflow: visible;
+    border: 0;
+  }
+
+  .detail-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .detail-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .detail-table tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  .detail-table tr {
+    display: grid;
+    gap: 7px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+
+  .detail-table td {
+    display: grid;
+    grid-template-columns: minmax(86px, 36%) minmax(0, 1fr);
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 850;
+    line-height: 1.25;
+    text-transform: uppercase;
+  }
+
+  .detail-table td[data-label="No"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .detail-table td[data-label="No"]::before {
+    display: none;
   }
 
   .client-detail-pager {
@@ -1298,6 +1733,45 @@ dialog::backdrop {
     grid-template-columns: 1fr;
   }
 
+  .home-welcome-panel,
+  .home-payment-panel {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .home-welcome-copy h1 {
+    white-space: normal;
+  }
+
+  .home-member-code {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .home-summary-grid,
+  .home-modem-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .home-payment-panel button {
+    width: 100%;
+  }
+
+  .billing-log-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .billing-log-side {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    justify-items: start;
+  }
+
+  .billing-log-side > strong {
+    justify-self: end;
+  }
+
   .checkout-summary-grid > div {
     min-height: 68px;
   }
@@ -1357,7 +1831,8 @@ dialog::backdrop {
   }
 
   .modem-brief-grid,
-  .account-summary-grid {
+  .account-summary-grid,
+  .account-service-card {
     grid-template-columns: 1fr;
   }
 

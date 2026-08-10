@@ -41,11 +41,20 @@ input {
 
 body.is-loading-auth .topbar,
 body.is-loading-auth .sidebar,
+body.is-loading-auth .menu-backdrop,
 body.is-loading-auth .bottom-nav,
 body.is-bootstrap-login .topbar,
 body.is-bootstrap-login .sidebar,
+body.is-bootstrap-login .menu-backdrop,
 body.is-bootstrap-login .bottom-nav {
   display: none;
+}
+
+body.is-loading-auth .app-shell,
+body.is-bootstrap-login .app-shell {
+  display: block;
+  min-height: 100svh;
+  min-height: 100dvh;
 }
 
 body.is-loading-auth .content,

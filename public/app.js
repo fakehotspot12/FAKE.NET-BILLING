@@ -2427,6 +2427,7 @@ const MOBILE_CARD_TABLE_VIEWS = new Set([
   'monitoringCustomers',
   'reportsDaily',
   'reportsTransactions',
+  'paymentGateway',
   'reportsVoucherDaily',
   'reportsVoucherMonthly'
 ]);

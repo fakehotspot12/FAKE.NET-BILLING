@@ -19,6 +19,9 @@ const deviceMutationLocks = new Map();
 let deviceListCacheGeneration = 0;
 
 const DEFAULT_USERNAME_PARAMETERS = [
+  'VirtualParameters.pppoeUsername',
+  'VirtualParameters.pppoe',
+  'VirtualParameters.pppoeUsername2',
   'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username',
   'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username',
   'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.Username',
@@ -510,6 +513,8 @@ function pppIpParameterCandidates(usernameParameter = '') {
     }
   }
   candidates.push(
+    'VirtualParameters.pppoeIP',
+    'VirtualParameters.ip',
     'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress',
     'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.2.ExternalIPAddress',
     'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ExternalIPAddress',
@@ -1150,6 +1155,8 @@ function recentPppState(device = {}, row = {}) {
     `${base}.X_HW_VLAN`,
     `${base}.X_ZTE-COM_VLANID`,
     `${base}.X_FH_VLANID`,
+    `${base}.X_CMCC_VLANIDMark`,
+    `${base}.X_CMCC_VLANID`,
     `${base}.VLANIDMark`
   ]).value;
   const vlan = Number(vlanValue);
@@ -1277,7 +1284,13 @@ function searchQuery(search = '') {
 
 function usernameSuffixExclusionQuery(cfg = normalizeSettings({})) {
   const suffixes = Array.isArray(cfg.excludeUsernameSuffixes) ? cfg.excludeUsernameSuffixes.map(cleanText).filter(Boolean) : [];
-  const paths = Array.isArray(cfg.usernameParameters) ? cfg.usernameParameters.map(cleanText).filter(Boolean) : [];
+  const paths = (Array.isArray(cfg.usernameParameters) ? cfg.usernameParameters.map(cleanText).filter(Boolean) : [])
+    .sort((left, right) => {
+      const leftVirtual = left.startsWith('VirtualParameters.');
+      const rightVirtual = right.startsWith('VirtualParameters.');
+      if (leftVirtual === rightVirtual) return 0;
+      return leftVirtual ? 1 : -1;
+    });
   if (!suffixes.length || !paths.length) return {};
   const escapedSuffixes = suffixes.map((suffix) => suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   return {

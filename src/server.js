@@ -160,7 +160,14 @@ const WA_GATEWAY_PROVIDERS = {
 };
 const LOGIN_VERIFICATION_TTL_MS = Math.max(60_000, Number(process.env.LOGIN_VERIFICATION_TTL_MS || 180_000) || 180_000);
 const LOGIN_VERIFICATION_MAX_ATTEMPTS = Math.max(1, Number(process.env.LOGIN_VERIFICATION_MAX_ATTEMPTS || 3) || 3);
+const LOGIN_RATE_LIMIT_WINDOW_MS = Math.max(60_000, Number(process.env.LOGIN_RATE_LIMIT_WINDOW_SECONDS || 60) * 1000 || 60_000);
+const LOGIN_RATE_LIMIT_MAX_PER_WINDOW = Math.max(3, Number(process.env.LOGIN_RATE_LIMIT_MAX_PER_WINDOW || 5) || 5);
 const WIFIKU_OTP_MAX_ATTEMPTS = Math.max(1, Number(process.env.WIFIKU_OTP_MAX_ATTEMPTS || 5) || 5);
+const WIFIKU_OTP_COOLDOWN_MS = Math.max(15_000, Number(process.env.WIFIKU_OTP_COOLDOWN_SECONDS || 60) * 1000 || 60_000);
+const WIFIKU_OTP_RATE_WINDOW_MS = Math.max(5 * 60_000, Number(process.env.WIFIKU_OTP_RATE_WINDOW_SECONDS || 3600) * 1000 || 3600_000);
+const WIFIKU_OTP_MAX_PER_WINDOW = Math.max(3, Number(process.env.WIFIKU_OTP_MAX_PER_WINDOW || 8) || 8);
+const PUBLIC_INVOICE_LOOKUP_WINDOW_MS = Math.max(60_000, Number(process.env.PUBLIC_INVOICE_LOOKUP_WINDOW_SECONDS || 300) * 1000 || 300_000);
+const PUBLIC_INVOICE_LOOKUP_MAX_PER_WINDOW = Math.max(10, Number(process.env.PUBLIC_INVOICE_LOOKUP_MAX_PER_WINDOW || 80) || 80);
 const INDONESIAN_MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 const DEFAULT_WA_TEMPLATES = {
   invoiceIssued: 'Salam Bapak/Ibu [fullname]\nPelanggan [nama_usaha]\n\nKami informasikan Invoice anda telah terbit dan dapat dibayarkan, berikut rinciannya :\nID Pelanggan: [uid]\nNomor Invoice: [no_invoice]\nAmount: Rp [amount]\nTotal: Rp [total]\nItem: [pppoe_profile]\nAdd Ons : [add_ons]\nJatuh tempo: [due_date]\nPeriod: [period]\n\nMohon segera lakukan pembayaran sebelum jatuh tempo, jika tidak dibayarkan setelah *H+[suspend_grace_days] ([suspend_grace_days] hari)* dari tanggal jatuh tempo maka akan otomatis ditangguhkan *(ISOLIR).*\n\n*Metode Pembayaran Otomatis*\nBank Virtual Account, OVO, DANA, LinkAja, ShopeePay, QRIS, BRILink, Alfamart, Alfamidi dan Indomaret terdekat!\nKlik => [payment_gateway]\n\n*Jika sudah melakukan pembayaran mohon mengirim resi/konfirmasi ke whatsapp ini.*\n\nTerima kasih.',
@@ -176,7 +183,10 @@ const DEFAULT_WA_TEMPLATES = {
 
 const xenditWithdrawRequests = new Map();
 const wifiKuOtpChallenges = new Map();
+const wifiKuOtpRateLimits = new Map();
 const wifiKuSessions = new Map();
+const publicInvoiceLookupRateLimits = new Map();
+const loginRateLimits = new Map();
 let wahaApiKeyCache;
 
 const MIME_TYPES = {
@@ -197,7 +207,9 @@ const STATIC_COMPRESSIBLE_EXTENSIONS = new Set(['.html', '.css', '.js', '.json',
 const STATIC_RUNTIME_TOKEN_EXTENSIONS = new Set(['.html', '.js', '.webmanifest']);
 const STATIC_COMPRESSION_MIN_BYTES = 1024;
 const STATIC_COMPRESSION_CACHE_LIMIT = 32;
+const STATIC_SOURCE_CACHE_LIMIT = 32;
 const staticCompressionCache = new Map();
+const staticSourceCache = new Map();
 
 function staticCacheControl(ext) {
   if (ext === '.html') return 'no-store';
@@ -243,6 +255,17 @@ async function compressedStaticBody(filePath = '', stat = {}, body = Buffer.allo
   return compressed;
 }
 
+async function cachedStaticSourceBody(filePath = '', stat = {}) {
+  const key = `${filePath}:${Number(stat.size || 0)}:${Math.floor(Number(stat.mtimeMs || 0))}`;
+  if (staticSourceCache.has(key)) return staticSourceCache.get(key);
+  const body = await fs.readFile(filePath);
+  staticSourceCache.set(key, body);
+  while (staticSourceCache.size > STATIC_SOURCE_CACHE_LIMIT) {
+    staticSourceCache.delete(staticSourceCache.keys().next().value);
+  }
+  return body;
+}
+
 function escapeHtmlAttribute(value = '') {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -259,6 +282,27 @@ function requestOrigin(req = {}) {
   return `${proto}://${host}`;
 }
 
+function requestIsHttps(req = {}) {
+  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return forwardedProto === 'https' || req.socket?.encrypted === true;
+}
+
+function applySecurityHeaders(req = {}, res = {}) {
+  if (!res || typeof res.setHeader !== 'function') return;
+  const headers = {
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(self)'
+  };
+  if (requestIsHttps(req)) {
+    headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (!res.hasHeader?.(name)) res.setHeader(name, value);
+  }
+}
+
 function normalizeRequestIp(value = '') {
   let text = String(value || '').split(',')[0].trim();
   if (!text) return '';
@@ -272,13 +316,138 @@ function normalizeRequestIp(value = '') {
   return text;
 }
 
+function trustedForwardingPeer(ip = '') {
+  const text = normalizeRequestIp(ip);
+  if (!text) return false;
+  if (text === '127.0.0.1' || text === '::1') return true;
+  if (text.startsWith('10.')) return true;
+  if (text.startsWith('192.168.')) return true;
+  const private172 = text.match(/^172\.(\d{1,2})\./);
+  return private172 ? Number(private172[1]) >= 16 && Number(private172[1]) <= 31 : false;
+}
+
 function requestClientIp(req = {}) {
   const forwardedBy = String(req.headers?.['x-forwarded-by'] || '').toLowerCase();
   const directIp = normalizeRequestIp(req.socket?.remoteAddress || '');
-  if (forwardedBy.startsWith('fakenet-billing-')) {
+  if (forwardedBy.startsWith('fakenet-billing-') && trustedForwardingPeer(directIp)) {
     return normalizeRequestIp(req.headers?.['x-forwarded-for'] || '') || directIp;
   }
   return directIp;
+}
+
+function rateLimitBucket(map, key = '', options = {}) {
+  const bucketKey = String(key || '').trim();
+  if (!bucketKey) return { allowed: true, waitSeconds: 0 };
+  const now = Date.now();
+  const windowMs = Math.max(1000, Number(options.windowMs || 60_000) || 60_000);
+  const cooldownMs = Math.max(0, Number(options.cooldownMs || 0) || 0);
+  const max = Math.max(1, Number(options.max || 60) || 60);
+  const current = (map.get(bucketKey) || []).filter((timestamp) => now - Number(timestamp || 0) < windowMs);
+  const last = current[current.length - 1] || 0;
+  if (cooldownMs && last && now - last < cooldownMs) {
+    map.set(bucketKey, current);
+    return { allowed: false, waitSeconds: Math.max(1, Math.ceil((cooldownMs - (now - last)) / 1000)) };
+  }
+  if (current.length >= max) {
+    map.set(bucketKey, current);
+    const oldest = current[0] || now;
+    return { allowed: false, waitSeconds: Math.max(1, Math.ceil((windowMs - (now - oldest)) / 1000)) };
+  }
+  if (options.record !== false) {
+    current.push(now);
+    map.set(bucketKey, current);
+  } else {
+    map.set(bucketKey, current);
+  }
+  if (map.size > 5000) {
+    for (const [itemKey, values] of map.entries()) {
+      const nextValues = (values || []).filter((timestamp) => now - Number(timestamp || 0) < windowMs);
+      if (nextValues.length) map.set(itemKey, nextValues);
+      else map.delete(itemKey);
+    }
+  }
+  return { allowed: true, waitSeconds: 0 };
+}
+
+function wifiKuOtpRateLimit(req = {}, phone = '') {
+  const ip = requestClientIp(req) || 'unknown';
+  const keys = [`ip:${ip}`];
+  const phoneKey = normalizeIndonesianPhone(phone);
+  if (phoneKey) keys.push(`phone:${phoneKey}`);
+  for (const key of keys) {
+    const result = rateLimitBucket(wifiKuOtpRateLimits, key, {
+      windowMs: WIFIKU_OTP_RATE_WINDOW_MS,
+      cooldownMs: WIFIKU_OTP_COOLDOWN_MS,
+      max: WIFIKU_OTP_MAX_PER_WINDOW,
+      record: false
+    });
+    if (!result.allowed) return result;
+  }
+  for (const key of keys) {
+    rateLimitBucket(wifiKuOtpRateLimits, key, {
+      windowMs: WIFIKU_OTP_RATE_WINDOW_MS,
+      cooldownMs: 0,
+      max: WIFIKU_OTP_MAX_PER_WINDOW,
+      record: true
+    });
+  }
+  return { allowed: true, waitSeconds: 0 };
+}
+
+function publicInvoiceLookupRateLimit(req = {}) {
+  const ip = requestClientIp(req) || 'unknown';
+  return rateLimitBucket(publicInvoiceLookupRateLimits, `invoice:${ip}`, {
+    windowMs: PUBLIC_INVOICE_LOOKUP_WINDOW_MS,
+    cooldownMs: 0,
+    max: PUBLIC_INVOICE_LOOKUP_MAX_PER_WINDOW,
+    record: true
+  });
+}
+
+function enforcePublicInvoiceLookupRateLimit(req = {}, res = {}) {
+  const result = publicInvoiceLookupRateLimit(req);
+  if (result.allowed) return true;
+  sendJson(res, 429, {
+    ok: false,
+    error: `Terlalu banyak percobaan. Coba lagi dalam ${result.waitSeconds} detik.`
+  });
+  return false;
+}
+
+function loginRateLimitKeys(req = {}, username = '') {
+  const ip = requestClientIp(req) || 'unknown';
+  const cleanUsername = String(username || '').trim().toLowerCase();
+  const keys = [`login:ip:${ip}`];
+  if (cleanUsername) keys.push(`login:user:${cleanUsername}`);
+  return keys;
+}
+
+function checkLoginRateLimit(req = {}, username = '') {
+  for (const key of loginRateLimitKeys(req, username)) {
+    const result = rateLimitBucket(loginRateLimits, key, {
+      windowMs: LOGIN_RATE_LIMIT_WINDOW_MS,
+      max: LOGIN_RATE_LIMIT_MAX_PER_WINDOW,
+      record: false
+    });
+    if (!result.allowed) return result;
+  }
+  return { allowed: true, waitSeconds: 0 };
+}
+
+function recordLoginFailure(req = {}, username = '') {
+  for (const key of loginRateLimitKeys(req, username)) {
+    rateLimitBucket(loginRateLimits, key, {
+      windowMs: LOGIN_RATE_LIMIT_WINDOW_MS,
+      max: LOGIN_RATE_LIMIT_MAX_PER_WINDOW,
+      record: true
+    });
+  }
+}
+
+function clearLoginFailures(req = {}, username = '') {
+  for (const key of loginRateLimitKeys(req, username)) {
+    loginRateLimits.delete(key);
+  }
 }
 
 function absoluteRequestUrl(req = {}, value = '/') {
@@ -2891,6 +3060,7 @@ function publicWifiKuCustomer(data = {}, customer = {}, radiusUser = {}) {
     housePhotoUrl: customer.housePhotoUrl || '',
     status: customer.status || radiusUser.status || '',
     packageName: wifiKuPackageName(data, customer, radiusUser),
+    activeDate: dateDisplayText(customer.activeDate || customer.installedAt || radiusUser.activeDate || radiusUser.createdAt || ''),
     dueDate: customer.dueDate || customer.nextDue || ''
   };
 }
@@ -2976,6 +3146,47 @@ function wifiKuBillingSummary(data = {}, customer = {}, radiusUser = {}, period 
         ? `Tagihan ${publicInvoice.period || periodLabel} belum dibayar.`
         : 'Tagihan ditemukan, tetapi pembayaran online belum tersedia. Hubungi admin layanan.')
   };
+}
+
+function wifiKuBillingHistory(data = {}, customer = {}, radiusUser = {}, limit = 24) {
+  const safeLimit = Math.max(1, Math.min(60, Math.trunc(Number(limit || 24))));
+  return (data.invoices || [])
+    .filter((invoice) => invoiceBlocksPeriod(invoice))
+    .filter((invoice) => wifiKuInvoiceMatchesCustomer(invoice, customer, radiusUser))
+    .filter((invoice) => invoiceRuntimeStatus(invoice) !== 'cancelled')
+    .sort((a, b) => {
+      const timeOf = (invoice = {}) => reportTransactionTime({
+        paidAt: invoice.paidAt,
+        paymentAt: invoice.paymentAt,
+        submittedAt: invoice.submittedAt,
+        createdAt: invoice.createdAt,
+        updatedAt: invoice.updatedAt,
+        date: invoice.dueDate
+      }) || parseLocalTransactionTime(invoice.dueDate);
+      return timeOf(b) - timeOf(a)
+        || String(paymentGatewayInvoiceReference(b)).localeCompare(String(paymentGatewayInvoiceReference(a)));
+    })
+    .slice(0, safeLimit)
+    .map((invoice) => {
+      const publicInvoice = publicPaymentGatewayInvoicePayload(data, invoice);
+      const latestPayment = latestInvoicePayment(data, invoice);
+      return {
+        id: invoice.id || '',
+        invoiceNo: publicInvoice.invoiceNo || publicInvoice.reference || '',
+        reference: publicInvoice.reference || '',
+        status: publicInvoice.status || invoiceRuntimeStatus(invoice),
+        statusLabel: publicInvoice.statusLabel || (publicInvoice.status === 'paid' ? 'Sudah dibayar' : (publicInvoice.status === 'overdue' ? 'Lewat tempo' : 'Belum dibayar')),
+        period: publicInvoice.period || periodDisplayText(invoiceCoverageText(invoice) || invoice.period || ''),
+        dueDate: publicInvoice.dueDate || dateDisplayText(invoice.dueDate || ''),
+        paidAt: latestPayment.paidAt ? dateTimeDisplayText(latestPayment.paidAt) : '',
+        amountText: publicInvoice.gatewayAmountText || publicInvoice.amountText || formatCurrencyText(invoice.amount || 0),
+        paymentMethod: publicInvoice.status === 'paid' ? publicInvoice.paymentMethod : '',
+        canPay: publicInvoice.canPay === true,
+        checkoutUrl: publicInvoice.canPay === true && publicInvoice.reference
+          ? `${paymentGatewayPaymentPath(data.settings || {})}?id=${encodeURIComponent(publicInvoice.reference)}`
+          : ''
+      };
+    });
 }
 
 function usageRowForUsername(payload = {}, username = '') {
@@ -3155,6 +3366,7 @@ async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPer
     period: normalizePeriod(period),
     customer: publicWifiKuCustomer(data, customer, radiusUser),
     billing: wifiKuBillingSummary(data, customer, radiusUser, period),
+    billingHistory: wifiKuBillingHistory(data, customer, radiusUser, 24),
     usage,
     device,
     genieAcs: {
@@ -9033,12 +9245,13 @@ function hotspotVoucherTemplateValues(data = {}, order = {}, vouchers = [], user
   const baseLoginUrl = hotspotLoginUrlForNas(data, first.nasId || user.nasId || order.nasId || order.nas);
   const expiredVoucher = hotspotVoucherIsExpired(first) || hotspotVoucherIsExpired(user);
   const publicStatusUrl = hotspotVoucherPublicStatusUrl(data, order, expiredVoucher ? { status: 'expired' } : {});
+  const firstDirectLoginUrl = hotspotVoucherDirectLoginUrl(baseLoginUrl, first);
   const voucherList = rows.map((voucher, index) => {
     const password = voucher.password || voucher.voucherPassword || voucher.username || '';
     const directLoginUrl = hotspotVoucherDirectLoginUrl(baseLoginUrl, voucher);
     return `${index + 1}. ${voucher.username || ''}${password ? ` / ${password}` : ''}${directLoginUrl && directLoginUrl !== '-' ? `\n   ${directLoginUrl}` : ''}`;
   }).join('\n');
-  const loginUrl = expiredVoucher ? publicStatusUrl : (publicStatusUrl || hotspotVoucherDirectLoginUrl(baseLoginUrl, first));
+  const loginUrl = expiredVoucher ? publicStatusUrl : (firstDirectLoginUrl || publicStatusUrl);
   const amount = Number(order.amount || first.amount || user.amount || profile.price || 0);
   return {
     full_name: fullName,
@@ -15894,7 +16107,14 @@ function fulfillPaymentGatewayCallback(data = {}, payload = {}, actor = {}) {
   };
 }
 
-function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
+function maskPublicPhone(value = '') {
+  const phone = normalizeLocalPhone(value);
+  if (!phone) return '';
+  if (phone.length <= 6) return phone.replace(/\d(?=\d{2})/g, '*');
+  return `${phone.slice(0, 4)}${'*'.repeat(Math.max(3, phone.length - 7))}${phone.slice(-3)}`;
+}
+
+function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}, options = {}) {
   const customer = customerForInvoice(data, invoice);
   const radiusUser = radiusUserForInvoice(data, invoice, customer);
   const invoiceNo = paymentGatewayInvoiceReference(invoice);
@@ -15956,7 +16176,9 @@ function publicPaymentGatewayInvoicePayload(data = {}, invoice = {}) {
     terminatedByName: radiusUser.terminatedByName || customer.terminatedByName || '',
     customerName: customer.name || invoice.customerName || invoice.username || '',
     username: customer.username || invoice.username || '',
-    phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
+    phone: options.maskSensitive === true
+      ? maskPublicPhone(customer.phone || customer.whatsapp || '')
+      : normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
     packageName: invoice.packageName || customer.packageName || '',
     period: periodText,
     periodRaw: invoiceCoverageText(invoice) || invoice.period || '',
@@ -17201,15 +17423,7 @@ async function handleApi(req, res, url) {
   const pathname = url.pathname;
 
   if (method === 'GET' && pathname === '/api/health') {
-    const whatsappQueue = await waGatewayQueueStatus();
-    sendJson(res, 200, {
-      ok: true,
-      app: 'fakenet-billing',
-      storage: STORAGE_MODE,
-      cache: CACHE_MODE,
-      redis: redisStatus(),
-      whatsappQueue
-    });
+    sendJson(res, 200, { ok: true });
     return;
   }
 
@@ -17527,6 +17741,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/public/isolir/current-invoice') {
+    if (!enforcePublicInvoiceLookupRateLimit(req, res)) return;
     const data = await requestStore(req);
     const clientIp = requestClientIp(req);
     const sessionPayload = await freeradiusSessions.activeSessions({
@@ -17534,38 +17749,33 @@ async function handleApi(req, res, url) {
       preferCache: true,
       maxCacheAgeSeconds: 20
     }).catch((error) => ({ ok: false, rows: [], error: error.message || 'Session FreeRADIUS tidak bisa dibaca' }));
-    const { radiusUser, session } = radiusUserForClientIp(data, clientIp, sessionPayload.rows || []);
+    const { radiusUser } = radiusUserForClientIp(data, clientIp, sessionPayload.rows || []);
     const customer = customerForRadiusUser(data, radiusUser);
     const invoice = latestIsolirInvoiceForCustomer(data, customer, radiusUser);
     if (!invoice) {
       sendJson(res, 404, {
         ok: false,
-        error: 'Invoice pelanggan belum ditemukan dari IP isolir ini. Hubungi admin layanan.',
-        clientIp,
-        sessionFound: Boolean(session),
-        radiusUserFound: Boolean(radiusUser?.id || radiusUser?.username),
-        sessionError: sessionPayload.ok === false ? sessionPayload.error || '' : ''
+        error: 'Invoice pelanggan belum ditemukan dari koneksi ini. Hubungi admin layanan.'
       });
       return;
     }
     sendJson(res, 200, {
       ok: true,
-      resolvedBy: session ? 'radius-session-ip' : 'radius-user-static-ip',
-      clientIp,
-      invoice: publicPaymentGatewayInvoicePayload(data, invoice)
+      invoice: publicPaymentGatewayInvoicePayload(data, invoice, { maskSensitive: true })
     });
     return;
   }
 
   const publicGatewayInvoiceMatch = pathname.match(/^\/api\/public\/payment-gateway\/invoices\/([^/]+)$/);
   if (method === 'GET' && publicGatewayInvoiceMatch) {
+    if (!enforcePublicInvoiceLookupRateLimit(req, res)) return;
     const data = await requestStore(req);
     const invoice = findBillingInvoiceByReference(data, decodeURIComponent(publicGatewayInvoiceMatch[1]));
     if (!invoice) {
       sendJson(res, 404, { ok: false, error: 'Invoice tidak ditemukan' });
       return;
     }
-    const publicInvoice = publicPaymentGatewayInvoicePayload(data, invoice);
+    const publicInvoice = publicPaymentGatewayInvoicePayload(data, invoice, { maskSensitive: true });
     let channels = [];
     let channelError = '';
     if (data.settings?.paymentGateway?.enabled === true
@@ -17597,6 +17807,7 @@ async function handleApi(req, res, url) {
 
   const publicGatewayInvoiceCheckoutMatch = pathname.match(/^\/api\/public\/payment-gateway\/invoices\/([^/]+)\/checkout$/);
   if (method === 'POST' && publicGatewayInvoiceCheckoutMatch) {
+    if (!enforcePublicInvoiceLookupRateLimit(req, res)) return;
     const data = await requestStore(req);
     const invoice = findBillingInvoiceByReference(data, decodeURIComponent(publicGatewayInvoiceCheckoutMatch[1]));
     if (!invoice) {
@@ -17605,14 +17816,14 @@ async function handleApi(req, res, url) {
     }
     const publicInvoice = publicPaymentGatewayInvoicePayload(data, invoice);
     if (publicInvoice.status === 'paid') {
-      sendJson(res, 200, { ok: true, paid: true, invoice: publicInvoice });
+      sendJson(res, 200, { ok: true, paid: true, invoice: publicPaymentGatewayInvoicePayload(data, invoice, { maskSensitive: true }) });
       return;
     }
     if (!['pending', 'overdue', 'unpaid'].includes(publicInvoice.status) || publicInvoice.canPay === false) {
       sendJson(res, 400, {
         ok: false,
         error: publicInvoice.status === 'cancelled' ? 'Invoice sudah dibatalkan' : 'Invoice belum bisa dibayar',
-        invoice: publicInvoice
+        invoice: publicPaymentGatewayInvoicePayload(data, invoice, { maskSensitive: true })
       });
       return;
     }
@@ -17628,13 +17839,13 @@ async function handleApi(req, res, url) {
         adminFee: publicInvoice.adminFee,
         customerName: publicInvoice.customerName || 'Pelanggan',
         customerEmail: customer.email || '',
-        customerPhone: publicInvoice.phone || '',
+        customerPhone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
         itemName: `Tagihan ${publicInvoice.packageName || publicInvoice.period || publicInvoice.invoiceNo}`.trim(),
         returnUrl: publicInvoice.paymentGatewayLink
       });
       sendJson(res, 200, {
         ok: true,
-        invoice: publicInvoice,
+        invoice: publicPaymentGatewayInvoicePayload(data, invoice, { maskSensitive: true }),
         checkout
       });
     } catch (error) {
@@ -17713,9 +17924,26 @@ async function handleApi(req, res, url) {
       return;
     }
     const phone = normalizeIndonesianPhone(payload.phone);
+    if (!phone) {
+      sendJson(res, 400, { ok: false, error: 'Nomor WhatsApp wajib diisi' });
+      return;
+    }
+    const rateLimit = wifiKuOtpRateLimit(req, phone);
+    if (!rateLimit.allowed) {
+      sendJson(res, 429, {
+        ok: false,
+        error: `Terlalu sering meminta OTP. Coba lagi dalam ${rateLimit.waitSeconds} detik.`
+      });
+      return;
+    }
     const customer = findCustomerByPhone(data, phone);
     if (!customer) {
-      sendJson(res, 404, { ok: false, error: 'Nomor WhatsApp belum terdaftar sebagai pelanggan' });
+      sendJson(res, 200, {
+        ok: true,
+        requireOtp: true,
+        challengeId: '',
+        message: 'Jika nomor WhatsApp terdaftar, kode OTP akan dikirim.'
+      });
       return;
     }
     if (!settings.requireOtp) {
@@ -17813,34 +18041,10 @@ async function handleApi(req, res, url) {
   if (method === 'PATCH' && pathname === '/api/public/wifiku/profile') {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
-    const payload = await readBody(req);
-    try {
-      const { data } = await mutate((store) => {
-        const customer = (store.customers || []).find((item) => item.id === authContext.customer.id);
-        if (!customer) throw new Error('Data pelanggan tidak ditemukan');
-        const clean = (value, max = 500) => String(value || '').trim().slice(0, max);
-        const name = clean(payload.name, 120);
-        if (!name) throw new Error('Nama wajib diisi');
-        customer.name = name;
-        customer.customerName = name;
-        customer.ktp = clean(payload.ktp, 32);
-        customer.email = clean(payload.email, 160);
-        customer.address = clean(payload.address, 500);
-        customer.updatedAt = new Date().toISOString();
-        customer.updatedBy = 'WifiKu';
-        addActivity(store, 'customer', `Data Akun Saya ${customer.name} diperbarui melalui WifiKu`, {
-          action: 'wifiku-profile-update',
-          customerId: customer.id
-        });
-        return customer;
-      });
-      sendJson(res, 200, {
-        ok: true,
-        customer: publicWifiKuCustomer(data, data.customers.find((item) => item.id === authContext.customer.id), radiusUserForCustomer(data, authContext.customer) || {})
-      });
-    } catch (error) {
-      badRequest(res, error.message || 'Data Akun Saya tidak dapat diperbarui');
-    }
+    sendJson(res, 403, {
+      ok: false,
+      error: 'Perubahan data pelanggan dilakukan oleh admin. Silakan hubungi admin layanan.'
+    });
     return;
   }
 
@@ -18003,10 +18207,18 @@ async function handleApi(req, res, url) {
 
   if (method === 'POST' && pathname === '/api/auth/login') {
     const payload = await readBody(req);
+    const loginLimit = checkLoginRateLimit(req, payload.username);
+    if (!loginLimit.allowed) {
+      sendJson(res, 429, {
+        error: `Terlalu banyak percobaan login. Coba lagi dalam ${loginLimit.waitSeconds} detik.`
+      });
+      return;
+    }
     const settingsData = await requestStore(req);
     if (loginVerificationEnabled(settingsData.settings || {})) {
       const verification = verifyLoginVerificationChallenge(payload.verificationId, payload.verificationCode);
       if (!verification.ok) {
+        recordLoginFailure(req, payload.username);
         sendJson(res, 400, { error: verification.error || 'Kode verifikasi salah' });
         return;
       }
@@ -18023,10 +18235,12 @@ async function handleApi(req, res, url) {
     });
 
     if (!result) {
+      recordLoginFailure(req, payload.username);
       sendJson(res, 401, { error: 'Username atau password salah' });
       return;
     }
 
+    clearLoginFailures(req, payload.username);
     const sessionId = auth.createSession(result);
     sendJson(res, 200, {
       user: result,
@@ -23128,7 +23342,7 @@ async function serveStatic(req, res, url) {
     }
     const ext = path.extname(filePath);
     const encoding = staticResponseEncoding(req, ext, stat.size);
-    const sourceBody = await fs.readFile(filePath);
+    const sourceBody = await cachedStaticSourceBody(filePath, stat);
     const runtime = staticRuntimeBody(ext, sourceBody, req);
     const runtimeStat = runtime.dynamic
       ? { ...stat, size: runtime.body.length }
@@ -23156,7 +23370,9 @@ async function serveStatic(req, res, url) {
     res.end(body);
   } catch (error) {
     if (pathname !== '/index.html' && !pathname.includes('.')) {
-      const sourceBody = await fs.readFile(path.join(PUBLIC_DIR, 'index.html'));
+      const indexPath = path.join(PUBLIC_DIR, 'index.html');
+      const indexStat = await fs.stat(indexPath);
+      const sourceBody = await cachedStaticSourceBody(indexPath, indexStat);
       const runtime = staticRuntimeBody('.html', sourceBody, req);
       res.writeHead(200, {
         'Content-Type': MIME_TYPES['.html'],
@@ -23172,6 +23388,7 @@ async function serveStatic(req, res, url) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    applySecurityHeaders(req, res);
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     if (req.method === 'OPTIONS') {
       sendNoContent(res);

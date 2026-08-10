@@ -7,7 +7,7 @@
     <title>WifiKu - __FAKENET_META_TITLE__</title>
     __FAKENET_META_TAGS__
     <link id="appFavicon" rel="icon" href="__FAKENET_META_ICON__">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-mobile-tabs-v2-20260810">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-bottom-tabs-v5-layout-20260810">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -52,18 +52,18 @@
       </section>
 
       <section id="portalView" class="portal-layout" hidden>
-        <section class="panel compact member-info-panel" data-wifiku-panel="home">
-          <div>
+        <section class="panel compact home-welcome-panel" data-wifiku-panel="home">
+          <div class="home-welcome-copy">
+            <span>Selamat datang</span>
+            <h1 id="memberName">-</h1>
+            <div class="home-service-line">
+              <span id="homeServiceStatus" class="service-status-pill active">Aktif</span>
+              <strong id="memberPackage">-</strong>
+            </div>
+          </div>
+          <div class="home-member-code">
             <span>ID Member</span>
             <strong id="memberId">-</strong>
-          </div>
-          <div>
-            <span>Nama</span>
-            <strong id="memberName">-</strong>
-          </div>
-          <div>
-            <span>Paket</span>
-            <strong id="memberPackage">-</strong>
           </div>
         </section>
 
@@ -106,24 +106,83 @@
               <button id="billingPayButton" type="button" hidden>Bayar Tagihan</button>
             </div>
           </section>
+
+          <section class="panel compact billing-history-panel">
+            <div class="panel-title-row">
+              <div>
+                <span class="panel-kicker">Historis</span>
+                <h2>Histori Tagihan</h2>
+              </div>
+            </div>
+            <p class="section-helper">Daftar tagihan pelanggan sesuai bulan yang dipilih. Tagihan aktif tetap bisa dibayar dari ringkasan di atas.</p>
+            <div id="billingHistoryList" class="home-billing-log">
+              <p class="empty-detail">Riwayat tagihan belum tersedia.</p>
+            </div>
+          </section>
         </div>
 
-        <section class="grid stats-grid" data-wifiku-panel="home">
-          <button class="card primary metric-card" id="usageSummaryButton" type="button">
-            <span>Total Usage</span>
+        <section class="home-summary-grid" data-wifiku-panel="home">
+          <button class="card primary metric-card home-billing-card" id="homeBillingCard" type="button">
+            <span>Sisa Tagihan</span>
+            <strong id="homeBillingAmount">Rp 0</strong>
+            <small id="homeBillingDue">Tidak ada tagihan aktif</small>
+          </button>
+          <button class="card metric-card" id="clientSummaryButton" type="button">
+            <span>Perangkat</span>
+            <strong id="wifiTotal">0 user</strong>
+            <small><span id="wifiDetail">2.4G 0 / 5G 0 / LAN 0</span></small>
+          </button>
+          <button class="card metric-card" id="usageSummaryButton" type="button">
+            <span>Penggunaan</span>
             <strong id="usageTotal">0 B</strong>
             <small id="usageDetail">U 0 B / D 0 B</small>
           </button>
-          <article class="card">
-            <span>Redaman</span>
-            <strong id="rxPower">-</strong>
-            <small id="deviceStatus">-</small>
-          </article>
-          <button class="card metric-card" id="clientSummaryButton" type="button">
-            <span>Client Terkoneksi</span>
-            <strong id="wifiTotal">0 user</strong>
-            <small id="wifiDetail">2.4G 0 / 5G 0 / LAN 0</small>
-          </button>
+        </section>
+
+        <section class="panel compact home-payment-panel" data-wifiku-panel="home">
+          <div>
+            <span class="panel-kicker">Pembayaran</span>
+            <h2 id="homePaymentTitle">Memuat tagihan...</h2>
+            <p id="homePaymentHint">Status tagihan akan tampil setelah data pelanggan terbaca.</p>
+          </div>
+          <button id="homePayButton" type="button" disabled>Memuat</button>
+        </section>
+
+        <section class="panel compact home-billing-log-panel" data-wifiku-panel="home">
+          <div class="panel-title-row">
+            <div>
+              <span class="panel-kicker">Riwayat</span>
+              <h2>Log Tagihan Terbaru</h2>
+            </div>
+            <button id="billingHistoryButton" class="secondary small-action" type="button">Lihat Semua</button>
+          </div>
+          <div id="homeBillingLog" class="home-billing-log">
+            <p class="empty-detail">Riwayat tagihan belum tersedia.</p>
+          </div>
+        </section>
+
+        <section class="panel compact home-modem-status-panel" data-wifiku-panel="home">
+          <div class="panel-title-row">
+            <div>
+              <span class="panel-kicker">Modem</span>
+              <h2>Status Modem</h2>
+            </div>
+            <span id="deviceStatus" class="modem-status-pill offline">-</span>
+          </div>
+          <div class="home-modem-grid">
+            <div>
+              <span>SN Modem</span>
+              <strong id="homeModemSerialNumber">-</strong>
+            </div>
+            <div>
+              <span>Redaman</span>
+              <strong id="rxPower">-</strong>
+            </div>
+            <div>
+              <span>Perangkat Aktif</span>
+              <strong id="homeModemClients">0 user</strong>
+            </div>
+          </div>
         </section>
 
         <section class="panel compact wifi-panel" data-wifiku-panel="wifi" hidden>
@@ -133,6 +192,7 @@
               <h2>WiFi</h2>
             </div>
           </div>
+          <p class="section-helper">Ubah SSID atau password WiFi utama pelanggan. Perubahan modem diterapkan setelah perangkat merespons dari GenieACS.</p>
           <div class="modem-brief-grid">
             <div class="modem-brief-card status-card">
               <span>Status</span>
@@ -165,6 +225,7 @@
           <div class="actions">
             <button id="rebootButton" class="danger" type="button">Reboot Modem</button>
           </div>
+          <p class="section-helper wifi-control-note">Reboot hanya digunakan jika internet atau WiFi pelanggan perlu disegarkan.</p>
         </section>
 
         <section class="panel compact account-tab-panel" data-wifiku-panel="account" hidden>
@@ -192,8 +253,21 @@
               <strong id="accountTabAddress">-</strong>
             </div>
           </div>
+          <p id="accountAdminInlineNote" class="section-helper account-admin-inline-note">Pembaruan data pelanggan, lokasi, dan foto rumah dilakukan oleh admin.</p>
+          <div class="account-service-card">
+            <span>Layanan</span>
+            <strong id="accountServicePackage">-</strong>
+            <div>
+              <span>Sejak Aktif</span>
+              <strong id="accountActiveDate">-</strong>
+            </div>
+            <div>
+              <span>Tagihan Berikutnya</span>
+              <strong id="accountNextBilling">-</strong>
+            </div>
+          </div>
           <div class="actions account-tab-actions">
-            <button id="accountTabDetailButton" type="button">Detail Akun</button>
+            <button id="accountTabDetailButton" type="button">Lihat Detail Akun</button>
             <button id="accountTabLogoutButton" class="secondary" type="button">Logout</button>
           </div>
         </section>
@@ -238,7 +312,7 @@
     <dialog id="accountDialog">
       <form method="dialog" id="accountForm" class="dialog-card">
         <h2>Akun Saya</h2>
-        <p class="muted">Perbarui data pelanggan. Nomor WhatsApp tetap menjadi identitas OTP dan tidak dapat diubah di sini.</p>
+        <p class="muted">Data pelanggan hanya dapat diperbarui oleh admin. Nomor WhatsApp tetap menjadi identitas OTP.</p>
         <div class="account-form-grid">
           <label><span>Nama</span><input name="name" readonly required maxlength="120"></label>
           <label><span>Nomor KTP</span><input name="ktp" readonly inputmode="numeric" maxlength="32"></label>
@@ -269,6 +343,6 @@
     </dialog>
 
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-mobile-tabs-v2-20260810" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-bottom-tabs-v5-layout-20260810" defer></script>
   </body>
 </html>
