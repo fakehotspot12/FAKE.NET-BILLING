@@ -8546,7 +8546,7 @@ function roleOptions(selected) {
 const USER_POSITION_OPTIONS = Object.freeze({
   admin: ['CEO/Direktur'],
   owner: ['CEO/Direktur'],
-  finance: ['Kepala Subbagian Keuangan dan Aset'],
+  finance: ['Kepala Keuangan dan Aset'],
   secretary: ['Sekretaris'],
   technician: ['Kepala Teknisi dan Perlengkapan', 'Staf Teknisi dan Perlengkapan'],
   noc: ['Kepala Teknisi dan Perlengkapan', 'Staf Teknisi dan Perlengkapan'],
@@ -8555,9 +8555,18 @@ const USER_POSITION_OPTIONS = Object.freeze({
   viewer: ['Staf']
 });
 
+const LEGACY_USER_POSITION_LABELS = Object.freeze({
+  'Kepala Subbagian Keuangan dan Aset': 'Kepala Keuangan dan Aset'
+});
+
+function normalizeUserPositionLabel(position = '') {
+  const value = String(position || '').trim();
+  return LEGACY_USER_POSITION_LABELS[value] || value;
+}
+
 function userPositionOptions(role = 'viewer', selected = '') {
   const options = [...(USER_POSITION_OPTIONS[role] || ['Staf'])];
-  const current = String(selected || '').trim();
+  const current = normalizeUserPositionLabel(selected);
   const effective = options.includes(current) ? current : options[0];
   return options.map((position) => `
     <option value="${escapeHtml(position)}" ${position === effective ? 'selected' : ''}>${escapeHtml(position)}</option>
@@ -19531,7 +19540,7 @@ function filteredUserRows(users = []) {
         user.username,
         user.employeeId,
         user.nik,
-        user.position,
+        normalizeUserPositionLabel(user.position),
         user.unit,
         user.department,
         user.roleLabel,
@@ -19658,7 +19667,7 @@ async function renderUsers(options = {}) {
                 <td>
                   <div class="user-table-details">
                     <strong>${escapeHtml(user.employeeId || user.nik || '-')}</strong>
-                    <span>${escapeHtml(user.position || 'Jabatan belum diisi')}</span>
+                    <span>${escapeHtml(normalizeUserPositionLabel(user.position) || 'Jabatan belum diisi')}</span>
                   </div>
                 </td>
                 <td>
@@ -19978,7 +19987,7 @@ function bindUserRoleNasLock() {
       unitInput.value = roleLabel(selectedRole);
     }
     if (positionSelect) {
-      const current = positionSelect.value;
+      const current = normalizeUserPositionLabel(positionSelect.value);
       const allowed = USER_POSITION_OPTIONS[selectedRole] || ['Staf'];
       const next = allowed.includes(current) ? current : allowed[0];
       positionSelect.innerHTML = userPositionOptions(selectedRole, next);

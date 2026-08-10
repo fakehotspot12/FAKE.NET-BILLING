@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.1.8] - 2026-08-10
+
+### Changed
+
+- Label jabatan finance disederhanakan menjadi `Kepala Keuangan dan Aset`.
+
 ## [4.1.7] - 2026-08-10
 
 ### Changed
