@@ -19,8 +19,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=compact-mobile-rows-20260811"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=compact-mobile-rows-20260811"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=compact-mobile-rows-nas-fallback-20260811"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=compact-mobile-rows-nas-fallback-20260811"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);

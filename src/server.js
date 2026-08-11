@@ -4161,6 +4161,26 @@ function radiusFindNas(data = {}, value = '') {
   }) || null;
 }
 
+function nasDomainToken(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function usernameDomainNasLabel(username = '') {
+  const domain = String(username || '').split('@')[1] || '';
+  const clean = domain.trim().replace(/^www\./i, '');
+  return clean ? clean.toUpperCase() : '';
+}
+
+function inferNasFromUsernameDomain(data = {}, username = '') {
+  const domainLabel = usernameDomainNasLabel(username);
+  const domainToken = nasDomainToken(domainLabel);
+  if (!domainToken) return null;
+  return freeradius.radiusNasEntries(data, { includeUnconfigured: true }).find((nas) => {
+    const tokens = [nas.name, nas.site, nas.id].map(nasDomainToken).filter(Boolean);
+    return tokens.some((token) => token === domainToken || token.includes(domainToken) || domainToken.includes(token));
+  }) || null;
+}
+
 function radiusUserNas(data = {}, user = {}, profile = {}, session = null) {
   const packages = data.settings?.hotspotVoucherOnline?.packages;
   const onlinePackage = packages && typeof packages === 'object' && profile.id
@@ -7838,9 +7858,19 @@ function localMonitoringMemberRows(data = {}, query = {}) {
     const registeredAt = customer.activeDate || customer.installedAt || customer.createdAt || radiusUser.activeDate || radiusUser.createdAt || '';
     const registeredDate = safeDateKey(registeredAt);
     const serviceType = String(radiusUser.serviceType || customer.serviceType || 'pppoe').trim().toLowerCase();
-    const nas = radiusFindNas(data, radiusUser.nasId || customer.nasId || radiusUser.nasName || radiusUser.nas || customer.nas || customer.siteName || customer.site) || {};
+    const inferredNas = inferNasFromUsernameDomain(data, radiusUser.username || customer.username || customer.code || '');
+    const nas = radiusFindNas(data, radiusUser.nasId || customer.nasId || radiusUser.nasName || radiusUser.nas || customer.nas || customer.siteName || customer.site)
+      || inferredNas
+      || {};
     const nasId = nas.id || radiusUser.nasId || customer.nasId || '';
-    const nasName = nas.name || radiusUser.nasName || radiusUser.nas || customer.nas || customer.siteName || customer.site || '';
+    const nasName = nas.name
+      || radiusUser.nasName
+      || radiusUser.nas
+      || customer.nas
+      || customer.siteName
+      || customer.site
+      || usernameDomainNasLabel(radiusUser.username || customer.username || customer.code || '')
+      || '';
     const normalizedStatus = resolver.statusForCustomer(customer);
     const createdByName = customer.createdByName || radiusUser.createdByName || '';
     const createdByUsername = customer.createdByUsername || radiusUser.createdByUsername || '';

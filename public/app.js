@@ -19095,7 +19095,11 @@ function memberTitle(member = {}) {
 }
 
 function memberNasLabel(member = {}) {
-  return String(member.nasName || member.nas || member.siteName || member.site || '').trim();
+  const direct = String(member.nasName || member.nas || member.siteName || member.site || '').trim();
+  if (direct) return direct;
+  const username = String(member.username || member.internet || member.userId || member.accountId || '').trim();
+  const domain = username.includes('@') ? username.split('@').pop().trim().replace(/^www\./i, '') : '';
+  return domain ? domain.toUpperCase() : '';
 }
 
 function memberMeta(member = {}) {
