@@ -5643,7 +5643,6 @@ async function renderReportsDaily(options = {}) {
                 const statusValue = item.status || (Number(item.income || 0) > 0 ? 'paid' : 'pending');
                 const detailText = [
                   invoiceText && invoiceText !== '-' ? `Invoice ${invoiceText}` : '',
-                  siteText && siteText !== '-' ? siteText : '',
                   adminText && adminText !== '-' ? `Oleh ${adminText}` : ''
                 ].filter(Boolean).join(' · ') || '-';
                 return `
@@ -5652,7 +5651,10 @@ async function renderReportsDaily(options = {}) {
                     <input type="checkbox" data-daily-receipt-select="${index}" ${dailyReceiptAllowed(item) ? '' : 'disabled'} aria-label="Pilih kuitansi ${escapeHtml(item.invoiceNo || item.externalId || item.info || index + 1)}">
                   </td>
                   <td class="daily-report-info-cell" title="${escapeHtml([infoText, detailText].filter(Boolean).join(' - '))}">
-                    <strong class="daily-report-item-title">${escapeHtml(infoText)}</strong>
+                    <span class="daily-report-title-row">
+                      <strong class="daily-report-item-title">${escapeHtml(infoText)}</strong>
+                      ${siteText && siteText !== '-' ? `<span class="daily-report-nas-tag" title="${escapeHtml(siteText)}">${escapeHtml(siteText)}</span>` : ''}
+                    </span>
                     <span class="daily-report-item-subline">${escapeHtml(detailText)}</span>
                   </td>
                   <td class="site-cell daily-report-site-cell"><span class="site-pill" title="${escapeHtml(siteText)}">${escapeHtml(siteText)}</span></td>

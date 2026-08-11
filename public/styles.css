@@ -19390,10 +19390,38 @@ dialog::backdrop {
   white-space: nowrap;
 }
 
+.daily-report-title-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
 .daily-report-item-title {
   color: var(--text);
+  flex: 1 1 auto;
   font-weight: 850;
   line-height: 1.25;
+}
+
+.daily-report-nas-tag {
+  align-items: center;
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
+  border-radius: 999px;
+  color: var(--primary);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  max-width: 118px;
+  min-height: 20px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .daily-report-item-subline {
@@ -19402,6 +19430,10 @@ dialog::backdrop {
   font-weight: 700;
   line-height: 1.25;
   margin-top: 3px;
+}
+
+[data-theme="dark"] .daily-report-nas-tag {
+  background: color-mix(in srgb, var(--primary) 18%, var(--surface));
 }
 
 .daily-report-amount-cell strong {
