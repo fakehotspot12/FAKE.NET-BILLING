@@ -5026,6 +5026,38 @@ body.is-loading-auth .content::before {
   vertical-align: middle;
 }
 
+.member-title-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.member-title-row .cell-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.member-nas-tag {
+  align-items: center;
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
+  border-radius: 999px;
+  color: var(--primary);
+  display: none;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  max-width: 112px;
+  min-height: 20px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 [data-theme="dark"] .badge {
   color: #d9ecff;
   background: rgba(169, 216, 255, 0.13);
@@ -5065,6 +5097,10 @@ body.is-loading-auth .content::before {
   border-color: rgba(251, 191, 36, 0.36);
   color: #fde68a;
   background: rgba(245, 158, 11, 0.14);
+}
+
+[data-theme="dark"] .member-nas-tag {
+  background: color-mix(in srgb, var(--primary) 18%, var(--surface));
 }
 
 .site-cell {
@@ -17248,6 +17284,7 @@ dialog::backdrop {
   .member-mobile-table .member-status-stack { align-items: flex-end; }
   .member-mobile-table .compact-actions { justify-content: flex-end; }
   .member-mobile-table .compact-actions .ghost-button { min-height: 30px; padding: 0 8px; }
+  .member-mobile-table .member-nas-tag { display: inline-flex; }
 
   .radius-user-table.has-select tbody tr {
     grid-template-areas:

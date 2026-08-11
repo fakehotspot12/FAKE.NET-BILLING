@@ -19090,6 +19090,10 @@ function memberTitle(member = {}) {
   return member.fullName || member.customerName || member.userId || member.accountId || member.internet || '-';
 }
 
+function memberNasLabel(member = {}) {
+  return String(member.nasName || member.nas || member.siteName || member.site || '').trim();
+}
+
 function memberMeta(member = {}) {
   return [member.userId || member.accountId, member.internet || member.username].filter(Boolean).join(' / ') || '-';
 }
@@ -20858,6 +20862,7 @@ async function renderMonitoringMembers(options = {}) {
     const addOnText = memberAddonsDisplay(member.addOns || member.addons);
     const mapUrl = memberLocationUrl(member);
     const titleText = memberTitle(member);
+    const nasText = memberNasLabel(member);
     const internetText = member.internet || member.username || '';
     const showInternetLine = internetText && !sameMemberText(titleText, internetText);
     const creatorText = memberCreatorText(member);
@@ -20871,7 +20876,10 @@ async function renderMonitoringMembers(options = {}) {
       <tr>
         <td>
           <div class="cell-stack">
-            <strong class="cell-title" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</strong>
+            <span class="member-title-row">
+              <strong class="cell-title" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</strong>
+              ${nasText ? `<span class="member-nas-tag" title="${escapeHtml(nasText)}">${escapeHtml(nasText)}</span>` : ''}
+            </span>
             <span class="cell-subline member-id-line" title="${escapeHtml(memberDisplayId(member))}">
               <b>${escapeHtml(memberDisplayId(member))}</b>
             </span>
