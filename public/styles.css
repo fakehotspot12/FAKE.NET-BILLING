@@ -5038,6 +5038,18 @@ body.is-loading-auth .content::before {
   min-width: 0;
 }
 
+.member-meta-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.member-meta-row .member-id-line {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .member-nas-tag {
   align-items: center;
   background: color-mix(in srgb, var(--primary) 10%, var(--surface));
@@ -17269,9 +17281,11 @@ dialog::backdrop {
     grid-template-areas:
       "member status"
       "contact contact"
-      "payment payment"
+      "payment action"
       "date action";
     grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+    padding: 9px 10px;
   }
 
   .member-mobile-table tbody td:nth-child(1) { grid-area: member; }
@@ -17281,10 +17295,28 @@ dialog::backdrop {
   .member-mobile-table tbody td:nth-child(5) { grid-area: date; color: var(--muted); font-size: 11.5px; }
   .member-mobile-table tbody td:nth-child(6) { grid-area: action; justify-self: end; }
   .member-mobile-table .cell-map-link { display: none !important; }
-  .member-mobile-table .member-status-stack { align-items: flex-end; }
-  .member-mobile-table .compact-actions { justify-content: flex-end; }
-  .member-mobile-table .compact-actions .ghost-button { min-height: 30px; padding: 0 8px; }
+  .member-mobile-table .member-status-stack { align-items: flex-end; gap: 3px; }
+  .member-mobile-table .compact-actions { align-content: center; display: grid; gap: 4px; justify-content: flex-end; }
+  .member-mobile-table .compact-actions .ghost-button { min-height: 27px; padding: 0 7px; }
+  .member-mobile-table .member-creator-line { display: none !important; }
   .member-mobile-table .member-nas-tag { display: inline-flex; }
+  .member-mobile-table .member-data-validation-badge,
+  .member-mobile-table .badge {
+    min-height: 19px;
+    padding: 2px 6px;
+    font-size: 10px;
+  }
+  .member-mobile-table .cell-stack { gap: 2px; }
+  .member-mobile-table .cell-subline.clamp-2 {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .member-mobile-table tbody td:nth-child(3) .cell-subline:nth-of-type(n+2),
+  .member-mobile-table tbody td:nth-child(5) .nowrap:not(:last-child) {
+    display: none !important;
+  }
 
   .radius-user-table.has-select tbody tr {
     grid-template-areas:
@@ -19432,6 +19464,7 @@ dialog::backdrop {
   display: flex;
   gap: 6px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .daily-report-item-title {
@@ -19439,6 +19472,28 @@ dialog::backdrop {
   flex: 1 1 auto;
   font-weight: 850;
   line-height: 1.25;
+}
+
+.daily-report-meta-row {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  margin-top: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.daily-report-invoice-code {
+  color: var(--muted);
+  display: inline-block;
+  flex: 0 1 auto;
+  font-size: 10.5px;
+  font-weight: 850;
+  line-height: 1.15;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .daily-report-nas-tag {
@@ -19449,14 +19504,14 @@ dialog::backdrop {
   color: var(--primary);
   display: inline-flex;
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 850;
   line-height: 1;
-  max-width: 118px;
-  min-height: 20px;
+  max-width: 104px;
+  min-height: 18px;
   min-width: 0;
   overflow: hidden;
-  padding: 0 7px;
+  padding: 0 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -19485,17 +19540,18 @@ dialog::backdrop {
       "time status"
       "method action" !important;
     grid-template-columns: minmax(0, 1fr) auto !important;
-    padding-left: 44px !important;
+    gap: 5px 8px !important;
+    padding: 9px 10px 9px 38px !important;
     position: relative;
   }
 
   .daily-report-table tbody td.daily-report-check-cell {
     grid-area: auto !important;
-    left: 12px;
+    left: 10px;
     padding: 0 !important;
     position: absolute !important;
-    top: 14px;
-    width: 22px !important;
+    top: 11px;
+    width: 20px !important;
   }
 
   .daily-report-table tbody td.daily-report-info-cell {
@@ -19506,14 +19562,14 @@ dialog::backdrop {
 
   .daily-report-table tbody td.daily-report-time-cell {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     grid-area: time !important;
     line-height: 1.25;
   }
 
   .daily-report-table tbody td.daily-report-method-cell {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     grid-area: method !important;
     line-height: 1.25;
   }
@@ -19537,6 +19593,12 @@ dialog::backdrop {
     justify-self: end !important;
   }
 
+  .daily-report-table .badge {
+    min-height: 20px;
+    padding: 2px 7px;
+    font-size: 10.5px;
+  }
+
   .daily-report-method-cell strong,
   .daily-report-method-cell .daily-confirmed-by {
     display: block;
@@ -19549,14 +19611,14 @@ dialog::backdrop {
 
 @media (max-width: 520px) {
   .daily-report-table tbody tr {
-    gap: 8px 10px !important;
+    gap: 4px 8px !important;
     grid-template-areas:
       "info info"
       "amount status"
-      "time method"
-      "action action" !important;
+      "time action"
+      "method action" !important;
     grid-template-columns: minmax(0, 1fr) auto !important;
-    padding: 12px 12px 12px 40px !important;
+    padding: 8px 10px 8px 36px !important;
   }
 
   .daily-report-table tbody td.daily-report-amount-cell {
@@ -19565,11 +19627,18 @@ dialog::backdrop {
   }
 
   .daily-report-table tbody td.daily-report-action-cell {
-    justify-self: stretch !important;
+    align-self: center !important;
+    justify-self: end !important;
   }
 
   .daily-report-table .billing-action-stack {
     justify-content: flex-end !important;
+  }
+
+  .daily-report-table .billing-action-button {
+    min-height: 28px;
+    min-width: 30px;
+    padding: 0 7px;
   }
 }
 

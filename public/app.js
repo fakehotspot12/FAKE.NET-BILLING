@@ -5641,21 +5641,25 @@ async function renderReportsDaily(options = {}) {
                 const adminText = dailyAdminLabel(item, report || {});
                 const methodText = item.method || '-';
                 const statusValue = item.status || (Number(item.income || 0) > 0 ? 'paid' : 'pending');
-                const detailText = [
-                  invoiceText && invoiceText !== '-' ? `Invoice ${invoiceText}` : '',
-                  adminText && adminText !== '-' ? `Oleh ${adminText}` : ''
-                ].filter(Boolean).join(' · ') || '-';
+                const detailText = adminText && adminText !== '-' ? `Oleh ${adminText}` : '-';
                 return `
                 <tr>
                   <td class="daily-report-check-cell">
                     <input type="checkbox" data-daily-receipt-select="${index}" ${dailyReceiptAllowed(item) ? '' : 'disabled'} aria-label="Pilih kuitansi ${escapeHtml(item.invoiceNo || item.externalId || item.info || index + 1)}">
                   </td>
-                  <td class="daily-report-info-cell" title="${escapeHtml([infoText, detailText].filter(Boolean).join(' - '))}">
+                  <td class="daily-report-info-cell" title="${escapeHtml([
+                    infoText,
+                    invoiceText && invoiceText !== '-' ? `Invoice ${invoiceText}` : '',
+                    siteText && siteText !== '-' ? siteText : '',
+                    detailText && detailText !== '-' ? detailText : ''
+                  ].filter(Boolean).join(' - '))}">
                     <span class="daily-report-title-row">
                       <strong class="daily-report-item-title">${escapeHtml(infoText)}</strong>
+                    </span>
+                    <span class="daily-report-meta-row">
+                      ${invoiceText && invoiceText !== '-' ? `<span class="daily-report-invoice-code" title="Invoice ${escapeHtml(invoiceText)}">${escapeHtml(invoiceText)}</span>` : ''}
                       ${siteText && siteText !== '-' ? `<span class="daily-report-nas-tag" title="${escapeHtml(siteText)}">${escapeHtml(siteText)}</span>` : ''}
                     </span>
-                    <span class="daily-report-item-subline">${escapeHtml(detailText)}</span>
                   </td>
                   <td class="site-cell daily-report-site-cell"><span class="site-pill" title="${escapeHtml(siteText)}">${escapeHtml(siteText)}</span></td>
                   <td class="nowrap daily-report-time-cell">${escapeHtml(dailyPaymentTime(item))}</td>
@@ -20865,6 +20869,10 @@ async function renderMonitoringMembers(options = {}) {
     const nasText = memberNasLabel(member);
     const internetText = member.internet || member.username || '';
     const showInternetLine = internetText && !sameMemberText(titleText, internetText);
+    const identityText = [
+      memberDisplayId(member),
+      showInternetLine ? internetText : ''
+    ].filter(Boolean).join(' · ') || '-';
     const creatorText = memberCreatorText(member);
     const dataValidation = memberDataValidationState(member);
     const dateLines = [
@@ -20878,13 +20886,14 @@ async function renderMonitoringMembers(options = {}) {
           <div class="cell-stack">
             <span class="member-title-row">
               <strong class="cell-title" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</strong>
+            </span>
+            <span class="member-meta-row">
+              <span class="cell-subline member-id-line" title="${escapeHtml(identityText)}">
+                <b>${escapeHtml(identityText)}</b>
+              </span>
               ${nasText ? `<span class="member-nas-tag" title="${escapeHtml(nasText)}">${escapeHtml(nasText)}</span>` : ''}
             </span>
-            <span class="cell-subline member-id-line" title="${escapeHtml(memberDisplayId(member))}">
-              <b>${escapeHtml(memberDisplayId(member))}</b>
-            </span>
-            ${showInternetLine ? `<span class="cell-subline" title="${escapeHtml(internetText)}">${escapeHtml(internetText)}</span>` : ''}
-            ${creatorText ? `<span class="cell-subline muted" title="${escapeHtml(creatorText)}">${escapeHtml(creatorText)}</span>` : ''}
+            ${creatorText ? `<span class="cell-subline muted member-creator-line" title="${escapeHtml(creatorText)}">${escapeHtml(creatorText)}</span>` : ''}
           </div>
         </td>
         <td>
