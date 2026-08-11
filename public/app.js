@@ -14942,14 +14942,57 @@ function monitoringMapMarkerIcon(kind = 'customer', tone = 'active') {
   const infraLabel = safeKind === 'noc' ? 'SITE' : safeKind.toUpperCase();
   const html = safeKind === 'customer'
     ? `<span class="customer-map-pin-wrap customer-map-pin-wrap-${safeTone}">${safeTone === 'active' ? '<span class="customer-map-signal" aria-hidden="true"></span>' : ''}<span class="customer-map-pin customer-map-pin-${safeTone}"><span></span></span></span>`
-    : `<span class="fiber-map-pin fiber-map-pin-${safeKind} fiber-map-pin-${safeTone}">${infraLabel}</span>`;
+    : `<span class="fiber-map-pin fiber-map-pin-${safeKind} fiber-map-pin-${safeTone}" aria-label="${escapeHtml(infraLabel)}">${safeKind === 'noc' ? '<span class="fiber-map-rack-icon" aria-hidden="true"><i></i><i></i><i></i></span>' : '<span class="fiber-map-box-icon" aria-hidden="true"></span>'}<span class="fiber-map-pin-label">${infraLabel}</span></span>`;
+  const iconSize = safeKind === 'customer' ? [34, 36] : (safeKind === 'noc' ? [54, 44] : [50, 40]);
+  const iconAnchor = safeKind === 'customer' ? [17, 32] : (safeKind === 'noc' ? [27, 38] : [25, 35]);
   return window.L.divIcon({
     className: 'monitoring-map-div-icon',
     html,
-    iconSize: safeKind === 'customer' ? [34, 36] : [46, 30],
-    iconAnchor: safeKind === 'customer' ? [17, 32] : [23, 15],
+    iconSize,
+    iconAnchor,
     popupAnchor: [0, -14]
   });
+}
+
+function monitoringMapMarkerZIndex(kind = 'customer') {
+  if (kind === 'noc') return 1600;
+  if (kind === 'odc') return 1450;
+  if (kind === 'odp') return 1300;
+  return -500;
+}
+
+function monitoringCustomerMapTone(row = {}) {
+  const value = String(row.tone || row.accessState || row.status || 'active').toLowerCase();
+  if (value === 'isolated' || value === 'inactive' || value === 'maintenance') return value;
+  return 'active';
+}
+
+function monitoringCustomerMapCircleStyle(row = {}, renderer = null) {
+  const tone = monitoringCustomerMapTone(row);
+  const colors = {
+    active: '#22c55e',
+    isolated: '#f59e0b',
+    inactive: '#64748b',
+    maintenance: '#f59e0b'
+  };
+  return {
+    renderer: renderer || undefined,
+    radius: tone === 'active' ? 6 : 5,
+    stroke: true,
+    color: '#ffffff',
+    weight: 1.5,
+    opacity: 0.92,
+    fill: true,
+    fillColor: colors[tone] || colors.active,
+    fillOpacity: tone === 'inactive' ? 0.68 : 0.9
+  };
+}
+
+function monitoringCustomerPopupAccountText(row = {}) {
+  const username = String(row.username || '').trim();
+  if (username) return username;
+  const customerNumber = String(row.customerNumber || '').trim();
+  return /^cus_[a-z0-9_-]+$/i.test(customerNumber) ? '' : customerNumber;
 }
 
 function monitoringCustomerPopup(row = {}) {
@@ -14957,10 +15000,11 @@ function monitoringCustomerPopup(row = {}) {
   const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Buka Google Maps</a>` : '';
   const canEditCoordinate = row.id && canAny(['customers:manage', 'members:contact:write']);
   const canEditWifi = row.id && row.username && can('genieacs:write');
+  const accountText = monitoringCustomerPopupAccountText(row);
   return `
     <div class="monitoring-map-popup">
       <strong>${escapeHtml(row.name || '-')}</strong>
-      <span>${escapeHtml(row.customerNumber || row.username || '-')}</span>
+      ${accountText ? `<span>${escapeHtml(accountText)}</span>` : ''}
       <span>${escapeHtml(row.currentPlan || '-')}</span>
       <span>${monitoringCustomerStatusBadge(row.status)}</span>
       <span class="${monitoringCoordinateOutsideEastKalimantan(row) ? 'warning-text' : ''}">${escapeHtml(monitoringCoordinateText(row))}</span>
@@ -14991,6 +15035,75 @@ function monitoringFiberPopup(row = {}) {
   `;
 }
 
+function monitoringMapMobileScrollGuardEnabled() {
+  return window.matchMedia?.('(max-width: 760px), (hover: none) and (pointer: coarse)')?.matches === true;
+}
+
+function setLeafletMapInteraction(map, enabled = true) {
+  const method = enabled ? 'enable' : 'disable';
+  map?.dragging?.[method]?.();
+  map?.touchZoom?.[method]?.();
+  map?.doubleClickZoom?.[method]?.();
+  map?.scrollWheelZoom?.[method]?.();
+  map?.boxZoom?.[method]?.();
+  map?.keyboard?.[method]?.();
+  map?.tap?.[method]?.();
+}
+
+function bindMonitoringMapMobileScrollGuard(map, mapEl, options = {}) {
+  if (!map || !mapEl) return;
+  const toggle = options.toggleId ? document.getElementById(options.toggleId) : null;
+  const hint = options.hintId ? document.getElementById(options.hintId) : null;
+  const hintText = hint?.querySelector('[data-map-touch-help]') || hint;
+  const guardEnabled = monitoringMapMobileScrollGuardEnabled();
+  mapEl.classList.toggle('is-mobile-scroll-guarded', guardEnabled);
+  if (!guardEnabled) {
+    mapEl.classList.add('is-map-interaction-enabled');
+    setLeafletMapInteraction(map, true);
+    if (hint) hint.hidden = true;
+    if (toggle) toggle.hidden = true;
+    return;
+  }
+
+  let interactive = false;
+  const sync = () => {
+    mapEl.classList.toggle('is-map-interaction-enabled', interactive);
+    setLeafletMapInteraction(map, interactive);
+    if (toggle) {
+      toggle.hidden = false;
+      toggle.setAttribute('aria-pressed', interactive ? 'true' : 'false');
+      toggle.setAttribute('aria-label', interactive ? 'Kunci interaksi peta' : 'Aktifkan interaksi peta');
+      toggle.setAttribute('title', interactive ? 'Kunci peta' : 'Aktifkan peta');
+      toggle.innerHTML = interactive
+        ? '<span aria-hidden="true">✋</span><span class="sr-only">Kunci peta</span>'
+        : '<span aria-hidden="true">⌖</span><span class="sr-only">Aktifkan peta</span>';
+    }
+    if (hint) {
+      hint.hidden = !interactive;
+      hintText?.replaceChildren(document.createTextNode('Peta aktif untuk geser dan zoom.'));
+    }
+  };
+  const lockMap = () => {
+    if (!interactive) return;
+    interactive = false;
+    sync();
+  };
+  toggle?.addEventListener('click', () => {
+    interactive = !interactive;
+    sync();
+  });
+  mapEl.addEventListener('mouseleave', lockMap);
+  document.addEventListener('click', (event) => {
+    if (!interactive) return;
+    const target = event.target;
+    if (!target?.closest) return;
+    if (target.closest('.monitoring-map-canvas-wrap')) return;
+    if (target.closest('.bottom-nav, .sidebar, .topbar, .menu-backdrop, [data-view], [data-open-nav-group]')) lockMap();
+  }, true);
+  window.addEventListener('pagehide', lockMap);
+  sync();
+}
+
 async function mountMonitoringCustomerMap(payload = {}) {
   const mapEl = document.getElementById('customerMapLeaflet');
   if (!mapEl) return;
@@ -15001,13 +15114,27 @@ async function mountMonitoringCustomerMap(payload = {}) {
   }
   if (!document.body.contains(mapEl)) return;
   mapEl.addEventListener('click', handleMonitoringCustomerMapEditClick);
+  const mobileLightweightMap = monitoringMapMobileScrollGuardEnabled();
+  const customerRenderer = mobileLightweightMap && window.L.canvas ? window.L.canvas({ padding: 0.35 }) : null;
   const map = window.L.map(mapEl, {
-    scrollWheelZoom: true
+    scrollWheelZoom: true,
+    preferCanvas: mobileLightweightMap,
+    zoomAnimation: !mobileLightweightMap,
+    fadeAnimation: !mobileLightweightMap,
+    markerZoomAnimation: !mobileLightweightMap,
+    tap: !mobileLightweightMap
   }).setView([-0.5022, 117.1537], 12);
   enableLeafletMapWheelZoom(map, mapEl);
   mapEl._monitoringCustomerMap = map;
+  bindMonitoringMapMobileScrollGuard(map, mapEl, {
+    toggleId: 'customerMapInteractionToggle',
+    hintId: 'customerMapTouchHint'
+  });
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
+    updateWhenIdle: mobileLightweightMap,
+    updateWhenZooming: !mobileLightweightMap,
+    keepBuffer: mobileLightweightMap ? 1 : 2,
     attribution: '&copy; OpenStreetMap'
   }).addTo(map);
   const bounds = [];
@@ -15017,15 +15144,23 @@ async function mountMonitoringCustomerMap(payload = {}) {
     bounds.push(coordinate);
     const nodeKind = ['noc', 'odc', 'odp'].includes(node.type) ? node.type : 'odp';
     window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon(nodeKind, node.tone || node.status || 'active')
+      icon: monitoringMapMarkerIcon(nodeKind, node.tone || node.status || 'active'),
+      zIndexOffset: monitoringMapMarkerZIndex(nodeKind)
     }).addTo(map).bindPopup(monitoringFiberPopup(node));
   });
   (payload.markers || []).forEach((row) => {
     const coordinate = monitoringCoordinate(row);
     if (!coordinate) return;
     bounds.push(coordinate);
+    if (mobileLightweightMap && window.L.circleMarker) {
+      window.L.circleMarker(coordinate, monitoringCustomerMapCircleStyle(row, customerRenderer))
+        .addTo(map)
+        .bindPopup(monitoringCustomerPopup(row));
+      return;
+    }
     window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon('customer', row.tone || row.accessState || row.status || 'active')
+      icon: monitoringMapMarkerIcon('customer', monitoringCustomerMapTone(row)),
+      zIndexOffset: monitoringMapMarkerZIndex('customer')
     }).addTo(map).bindPopup(monitoringCustomerPopup(row));
   });
   if (bounds.length) {
@@ -15280,7 +15415,6 @@ async function renderMonitoringCustomerMap(options = {}) {
               <p class="muted" id="customerMapGpsStatus">GPS perangkat akan diminta saat peta dibuka.</p>
             </div>
           </div>
-          <div class="monitoring-map-canvas" id="customerMapLeaflet"></div>
           <div class="monitoring-map-legend">
             <span><i class="legend-dot active"></i>Aktif</span>
             <span><i class="legend-dot isolated"></i>Isolir</span>
@@ -15288,6 +15422,14 @@ async function renderMonitoringCustomerMap(options = {}) {
             <span><i class="legend-chip noc">SITE</i>Site</span>
             <span><i class="legend-chip odc">ODC</i>ODC</span>
             <span><i class="legend-chip odp">ODP</i>ODP</span>
+          </div>
+          <div class="monitoring-map-canvas-wrap">
+            <div class="monitoring-map-canvas" id="customerMapLeaflet"></div>
+            <button class="monitoring-map-touch-toggle" id="customerMapInteractionToggle" type="button" aria-pressed="false" aria-label="Aktifkan interaksi peta" title="Aktifkan peta" hidden>
+              <span aria-hidden="true">⌖</span>
+              <span class="sr-only">Aktifkan peta</span>
+            </button>
+            <div class="monitoring-map-touch-toast" id="customerMapTouchHint" data-map-touch-help hidden>Peta aktif untuk geser dan zoom.</div>
           </div>
         </section>
 
@@ -15350,7 +15492,8 @@ async function mountMonitoringFiberMap(payload = {}) {
     if (!coordinate) return;
     bounds.push(coordinate);
     window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon('noc', noc.tone || noc.status || 'active')
+      icon: monitoringMapMarkerIcon('noc', noc.tone || noc.status || 'active'),
+      zIndexOffset: monitoringMapMarkerZIndex('noc')
     }).addTo(map).bindPopup(monitoringFiberPopup(noc));
   });
   (payload.centers || []).forEach((center) => {
@@ -15358,7 +15501,8 @@ async function mountMonitoringFiberMap(payload = {}) {
     if (!coordinate) return;
     bounds.push(coordinate);
     window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon('odc', center.tone || center.status || 'active')
+      icon: monitoringMapMarkerIcon('odc', center.tone || center.status || 'active'),
+      zIndexOffset: monitoringMapMarkerZIndex('odc')
     }).addTo(map).bindPopup(monitoringFiberPopup(center));
     if (primarySiteCoordinate) {
       window.L.polyline([primarySiteCoordinate, coordinate], {
@@ -15374,7 +15518,8 @@ async function mountMonitoringFiberMap(payload = {}) {
     if (!coordinate) return;
     bounds.push(coordinate);
     const marker = window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon('odp', point.tone || point.status || 'active')
+      icon: monitoringMapMarkerIcon('odp', point.tone || point.status || 'active'),
+      zIndexOffset: monitoringMapMarkerZIndex('odp')
     }).addTo(map).bindPopup(monitoringFiberPopup(point));
     const center = centerById.get(String(point.centerId || ''));
     const centerCoordinate = monitoringCoordinate(center || {});
@@ -15713,20 +15858,57 @@ async function renderMonitoringFiberNetwork(options = {}) {
           <div>
             <h3>Topologi ODP/ODC</h3>
             <p class="muted gps-status" id="fiberNetworkGpsStatus">GPS perangkat akan diminta dan peta difokuskan ke lokasi perangkat.</p>
+            <p class="muted">Double-click peta untuk tambah ODC atau ODP langsung di titik tersebut. Koordinat Site diatur di menu NAS Site.</p>
           </div>
         </div>
-        <div class="monitoring-map-canvas fiber-map-canvas" id="fiberNetworkLeaflet"></div>
         <div class="monitoring-map-legend">
-          <span><i class="legend-chip noc">SITE</i>Site/NAS</span>
+          <span><i class="legend-chip noc">SITE</i>Site acuan server</span>
           <span><i class="legend-chip odc">ODC</i>Optical distribution center</span>
           <span><i class="legend-chip odp">ODP</i>Optical distribution point</span>
           <span><i class="legend-dot active"></i>Aktif</span>
           <span><i class="legend-dot maintenance"></i>Maintenance</span>
           <span><i class="legend-dot inactive"></i>Nonaktif</span>
         </div>
+        <div class="monitoring-map-canvas fiber-map-canvas" id="fiberNetworkLeaflet"></div>
       </section>
 
       <div class="monitoring-fiber-grid">
+        <section class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3>Daftar Site</h3>
+              <p class="muted">${monitoringMapNumber((payload.nocs || []).length)} Site sesuai filter.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="mobile-card-table monitoring-fiber-table monitoring-fiber-noc-table">
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th>Area</th>
+                  <th>Koordinat</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(payload.nocs || []).length ? (payload.nocs || []).map((row) => `
+                  <tr>
+                    <td>
+                      <strong>${escapeHtml(row.code || '-')}</strong>
+                      <div class="muted">${escapeHtml(row.name || '-')}</div>
+                      ${row.isPrimary ? '<div><span class="badge active">Acuan Site</span></div>' : ''}
+                      ${row.note ? `<div class="muted">${escapeHtml(row.note)}</div>` : ''}
+                    </td>
+                    <td>${escapeHtml(row.area || '-')}</td>
+                    <td>${row.latitude && row.longitude ? `${escapeHtml(row.latitude)}, ${escapeHtml(row.longitude)}` : 'Koordinat belum ada'}</td>
+                    <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.statusLabel || '-')}</span></td>
+                  </tr>
+                `).join('') : '<tr><td colspan="4">Belum ada data Site. Tambahkan atau isi koordinat di menu NAS Site.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         <section class="panel">
           <div class="panel-head compact">
             <div>

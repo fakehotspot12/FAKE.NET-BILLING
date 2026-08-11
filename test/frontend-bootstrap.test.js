@@ -15,8 +15,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=ui-mobile-menu-toggle-20260811"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-mobile-menu-toggle-20260811"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=menu-map-fiber-icons-20260811-1540"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=menu-map-fiber-icons-20260811-1540"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);

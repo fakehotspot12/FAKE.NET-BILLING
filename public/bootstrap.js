@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'ui-mobile-menu-toggle-20260811';
+  const assetRevision = 'menu-map-fiber-icons-20260811-1540';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {
