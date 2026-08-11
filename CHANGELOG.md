@@ -2,24 +2,34 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
-## [4.1.9] - 2026-08-10
+## [4.2.0] - 2026-08-11
+
+### Changed
+
+- Sinkronisasi perubahan Cempaka dev ke FAKE.NET untuk halaman Member/Data Pelanggan dan Tagihan Pelanggan.
+- Tampilan Member memakai tab operasional untuk semua pelanggan, pelanggan baru, isolir, dan terminated dengan pagination masing-masing.
+- Tampilan Tagihan Pelanggan dan tabel besar lain mengikuti layout mobile card/table terbaru agar lebih rapi di layar kecil.
+- Baseline engine/performance canonical dipakai kembali untuk cache, pagination PostgreSQL, RADIUS, GenieACS, dan UI mobile.
 
 ### Fixed
 
-- Penanda Web Push pembayaran online disimpan permanen agar notifikasi Chrome tidak muncul ulang setelah restart atau update service.
+- Penanda Web Push pembayaran online tetap disimpan permanen agar notifikasi Chrome tidak muncul ulang setelah restart atau update service.
 
-## [4.1.8] - 2026-08-10
-
-### Changed
-
-- Label jabatan finance disederhanakan menjadi `Kepala Keuangan dan Aset`.
-
-## [4.1.7] - 2026-08-10
+## [4.1.9] - 2026-08-11
 
 ### Changed
 
-- Portal WifiKu memakai navigasi bawah seperti mobile billing dengan tab Beranda, Tagihan, Wifi, dan Akun.
-- Tab WifiKu kini hanya menampilkan konten sesuai menu aktif agar tampilan mobile lebih fokus.
+- Source LIVE dan DEV diselaraskan dengan baseline engine/performance LIVE dan peningkatan UI/operasional terbaik dari DEV.
+- UI mobile DEV untuk tabel besar dipertahankan: tabel penting tampil sebagai kartu mobile agar tidak perlu geser horizontal berlebihan.
+- Backend engine LIVE dipertahankan: storage schema v3, pagination PostgreSQL, diagnostics endpoint, cache pelanggan online, dan optimasi laporan.
+- RADIUS memakai deduplikasi NAS berbasis alias/address dan profile PPP menampilkan jumlah user aktif/suspend/terminate.
+- Dashboard NAS menampilkan counter RX/TX byte selain trafik upload/download.
+- Foto KTP tetap tersedia untuk OCR/arsip, namun tidak lagi menjadi syarat `Data Valid`.
+
+### Security
+
+- Role Viewer mengikuti kebijakan LIVE: dashboard-only.
+- Role Sekretaris dapat input/edit operasional RADIUS dan GenieACS tanpa akses admin/transaksi sensitif.
 
 ## [4.1.6] - 2026-08-09
 

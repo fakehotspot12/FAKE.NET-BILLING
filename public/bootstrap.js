@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'ui-v412-mobile-bottom-sheet-20260809';
+  const assetRevision = 'ui-mobile-menu-toggle-20260811';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {
@@ -17,7 +17,7 @@
     copyrightName: document.title || 'FAKE.NET',
     appVersion,
     releaseDate: '__FAKENET_RELEASE_DATE__',
-    loginVerificationEnabled: true
+    loginVerificationEnabled: false
   };
   let branding = { ...defaultBranding };
   let applicationLoading = false;

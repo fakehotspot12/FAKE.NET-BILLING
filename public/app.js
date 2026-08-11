@@ -43,6 +43,8 @@ const mobileMenuQuery = window.matchMedia('(max-width: 760px)');
 const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100];
+const MOBILE_FULL_MENU_GROUPS = new Set(['monitoring', 'settings-menu', 'admin']);
+const MOBILE_FULL_MENU_VIEWS = new Set(['monitoringSite', 'monitoringServices', 'genieAcs', 'networkAssets', 'billingSettings', 'radiusSettings', 'paymentGateway', 'waGateway', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity']);
 const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
 const APP_TIME_ZONE_LABELS = {
   'Asia/Jakarta': 'WIB',
@@ -74,38 +76,62 @@ const LOGIN_RETURN_VIEW_STORAGE_KEY = 'fakenetBillingReturnView';
 const THEME_STORAGE_KEY = 'fakenetBillingTheme';
 const MONITORING_BILLING_PERIOD_STORAGE_KEY = 'fakenetBillingMonitoringBillingPeriod';
 const DASHBOARD_PRIVACY_STORAGE_KEY = 'fakenetBillingDashboardPrivacyHidden';
+const LOG_DETECTION_STORAGE_KEY = 'fakenetBillingLogDetectionEvents';
+const LOG_DETECTION_MAX_ROWS = 200;
+const LOG_DETECTION_FAILURE_TERMS = [
+  'error',
+  'gagal',
+  'failed',
+  'failure',
+  'timeout',
+  'ditolak',
+  'denied',
+  'unauthorized',
+  'forbidden',
+  'network',
+  'koneksi',
+  'terputus',
+  'tidak bisa',
+  'invalid',
+  'exception',
+  'crash',
+  'unhandled'
+];
 let activeClientTimeZone = DEFAULT_APP_TIME_ZONE;
 
 const titles = {
   dashboard: 'Dashboard',
   radiusPppDhcp: 'PPPoE DHCP',
   radiusHotspot: 'Voucher Hotspot',
-  radiusSettings: 'Isolir Radius',
+  radiusSettings: 'Pengaturan Radius',
   genieAcs: 'GenieACS',
-  monitoringSite: 'Monitoring Site',
+  monitoringSite: 'Pemantauan NAS',
   monitoringMembers: 'Data Pelanggan',
+  monitoringNewCustomers: 'Pelanggan Baru',
+  monitoringIsolatedMembers: 'Pelanggan Isolir',
+  monitoringTerminatedMembers: 'Pelanggan Terminated',
   monitoringCustomers: 'Sesi Online',
   monitoringBilling: 'Tagihan Pelanggan',
-  monitoringServices: 'Layanan',
+  monitoringServices: 'Status Layanan',
   externalIncomes: 'Pemasukan',
   expenses: 'Pengeluaran',
   billingSettings: 'Pengaturan Billing',
-  reportsDaily: 'Tagihan Harian',
-  reportsMonthlyBilling: 'Tagihan Bulanan',
+  reportsDaily: 'Laporan Tagihan',
+  reportsMonthlyBilling: 'Laporan Tagihan',
   reportsStatistics: 'Statistik',
-  reportsVoucherDaily: 'Voucher Harian',
-  reportsVoucherMonthly: 'Voucher Bulanan',
+  reportsVoucherDaily: 'Laporan Voucher',
+  reportsVoucherMonthly: 'Laporan Voucher',
   reportsTransactions: 'Mutasi Bulanan',
   reportsFinanceRecap: 'Rekapitulasi',
   reportsInventoryStock: 'Stok Inventaris',
-  diagnostics: 'Deteksi Log',
+  logDetection: 'Deteksi Log',
   activity: 'Log Audit',
-  waGateway: 'Whatsapp Gateway',
+  waGateway: 'WhatsApp Gateway',
   paymentGateway: 'Payment Gateway',
   inventory: 'Inventaris',
-  networkAssets: 'Aset',
-  users: 'User',
-  settings: 'Pengaturan'
+  networkAssets: 'Aset Jaringan',
+  users: 'Pengguna dan Peran',
+  settings: 'Pengaturan Sistem'
 };
 
 const viewPermissions = {
@@ -121,7 +147,7 @@ const viewPermissions = {
   reportsTransactions: 'reports:daily:read',
   reportsFinanceRecap: 'reports:daily:read',
   reportsInventoryStock: 'inventory:read',
-  diagnostics: 'diagnostics:read',
+  logDetection: 'activity:read',
   activity: 'activity:read',
   waGateway: 'wa-gateway:manage',
   paymentGateway: 'payment-gateway:manage',
@@ -133,6 +159,9 @@ const viewPermissions = {
   genieAcs: 'genieacs:read',
   monitoringSite: 'monitoring:read',
   monitoringMembers: ['billing-monitor:read', 'members:read'],
+  monitoringNewCustomers: ['billing-monitor:read', 'members:read'],
+  monitoringIsolatedMembers: ['billing-monitor:read', 'members:read'],
+  monitoringTerminatedMembers: ['billing-monitor:read', 'members:read'],
   monitoringCustomers: 'monitoring:read',
   monitoringBilling: 'billing-monitor:read',
   monitoringServices: 'monitoring:read',
@@ -169,11 +198,7 @@ const state = {
   view: 'dashboard',
   period: todayInput().slice(0, 7),
   externalIncomePeriod: todayInput().slice(0, 7),
-  externalIncomePage: 1,
-  externalIncomeLimit: 10,
   expensePeriod: todayInput().slice(0, 7),
-  expensePage: 1,
-  expenseLimit: 10,
   receiptPrintMode: 'a4',
   invoiceStatus: 'all',
   customerStatus: 'all',
@@ -183,6 +208,7 @@ const state = {
   activityCategory: 'all',
   activityFrom: todayInput(),
   activityTo: todayInput(),
+  logDetectionRange: 'today',
   monitoringCustomerPage: 1,
   monitoringCustomerLimit: CUSTOMER_PAGE_SIZE,
   monitoringCustomerSite: 'all',
@@ -190,6 +216,7 @@ const state = {
   monitoringCustomersPayload: null,
   monitoringMemberPage: 1,
   monitoringMemberLimit: 10,
+  monitoringMemberTab: 'all',
   monitoringMemberStatus: 'all',
   monitoringMemberPaymentType: 'all',
   monitoringMemberBillingPeriod: 'all',
@@ -199,6 +226,17 @@ const state = {
   monitoringMemberFrom: '',
   monitoringMemberTo: '',
   monitoringMemberCreator: 'all',
+  monitoringNewCustomerPage: 1,
+  monitoringNewCustomerLimit: 10,
+  monitoringNewCustomerPeriod: todayInput().slice(0, 7),
+  monitoringNewCustomerStatus: 'all',
+  monitoringNewCustomerNas: 'all',
+  monitoringIsolatedMemberPage: 1,
+  monitoringIsolatedMemberLimit: 10,
+  monitoringIsolatedMemberNas: 'all',
+  monitoringTerminatedMemberPage: 1,
+  monitoringTerminatedMemberLimit: 10,
+  monitoringTerminatedMemberNas: 'all',
   monitoringServicesPage: 1,
   monitoringServicesLimit: CUSTOMER_PAGE_SIZE,
   monitoringServicesTab: 'tv',
@@ -1165,6 +1203,7 @@ function applyTheme(theme = preferredTheme()) {
   }
 }
 
+
 function toggleTheme() {
   const current = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
   const next = current === 'dark' ? 'light' : 'dark';
@@ -1362,12 +1401,32 @@ async function api(path, options = {}) {
       const error = new Error(payload.error || 'Sesi login habis');
       error.status = response.status;
       error.payload = payload;
+      error.logDetectionRecorded = true;
+      recordLogDetectionEvent({
+        source: 'api',
+        level: 'warning',
+        method: requestMethod,
+        endpoint: path,
+        status: response.status,
+        message: payload.error || 'Sesi login habis',
+        detail: 'Sesi login habis atau akses API ditolak'
+      });
       throw error;
     }
     if (!response.ok) {
       const error = new Error(payload.error || 'Request gagal');
       error.status = response.status;
       error.payload = payload;
+      error.logDetectionRecorded = true;
+      recordLogDetectionEvent({
+        source: 'api',
+        level: response.status >= 500 ? 'error' : 'warning',
+        method: requestMethod,
+        endpoint: path,
+        status: response.status,
+        message: payload.error || 'Request gagal',
+        detail: payload.message || payload.detail || ''
+      });
       throw error;
     }
     if (requestMethod === 'GET') {
@@ -1376,6 +1435,19 @@ async function api(path, options = {}) {
       clearSearchApiCache();
     }
     return payload;
+  } catch (error) {
+    if (!error?.logDetectionRecorded && error?.name !== 'AbortError') {
+      recordLogDetectionEvent({
+        source: 'api',
+        level: 'error',
+        method: requestMethod,
+        endpoint: path,
+        status: error?.status || '',
+        message: error?.message || 'Request gagal',
+        detail: error?.payload?.error || error?.payload?.message || ''
+      });
+    }
+    throw error;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
@@ -1699,7 +1771,7 @@ function ingestPaymentNotifications(notifications = {}) {
     if (!id || seen.has(id)) return;
     seen.add(id);
     changed = true;
-    if (webPushSubscriptionActive) return;
+    if (webPushSubscriptionActive || event.webPushAttemptedAt || event.webPushSentAt) return;
     const item = {
       id,
       type: 'payment',
@@ -1988,13 +2060,13 @@ function canView(view) {
     return ['dashboard', 'radiusHotspot', 'reportsVoucherDaily', 'reportsVoucherMonthly'].includes(view) && can(viewPermissions[view]);
   }
   if (role === 'collector') {
-    return ['dashboard', 'monitoringMembers', 'monitoringBilling', 'reportsDaily', 'reportsMonthlyBilling'].includes(view) && can(viewPermissions[view]);
+    return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringIsolatedMembers', 'monitoringTerminatedMembers', 'monitoringBilling', 'reportsDaily', 'reportsMonthlyBilling'].includes(view) && can(viewPermissions[view]);
   }
   return can(viewPermissions[view]);
 }
 
 function firstAvailableView() {
-  return ['dashboard', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'genieAcs', 'monitoringSite', 'monitoringMembers', 'monitoringCustomers', 'monitoringBilling', 'monitoringServices', 'externalIncomes', 'expenses', 'reportsDaily', 'reportsMonthlyBilling', 'reportsStatistics', 'reportsVoucherDaily', 'reportsVoucherMonthly', 'reportsTransactions', 'reportsFinanceRecap', 'reportsInventoryStock', 'diagnostics', 'activity', 'waGateway', 'paymentGateway', 'inventory', 'networkAssets', 'users', 'settings'].find(canView) || 'dashboard';
+  return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringBilling', 'billingSettings', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'monitoringCustomers', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'monitoringSite', 'monitoringServices', 'genieAcs', 'networkAssets', 'paymentGateway', 'waGateway', 'reportsStatistics', 'reportsDaily', 'reportsVoucherDaily', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity'].find(canView) || 'dashboard';
 }
 
 function normalizeView(view) {
@@ -2111,6 +2183,7 @@ function setMenuOpen(open) {
   document.body.classList.toggle('is-menu-open', nextOpen);
   if (!nextOpen) document.body.classList.remove('is-menu-full');
   updateMenuButton();
+  syncBottomNavigationState();
 }
 
 function toggleMenu() {
@@ -2124,6 +2197,39 @@ function toggleMenu() {
     setMenuOpen(false);
   }
   updateMenuButton();
+}
+
+function syncBottomNavigationState() {
+  const loggedIn = Boolean(state.auth);
+  const menuOpen = menuIsMobile() && document.body.classList.contains('is-menu-open');
+  const fullMenuOpen = menuOpen && document.body.classList.contains('is-menu-full');
+  document.querySelectorAll('.bottom-nav [data-view]').forEach((button) => {
+    const visible = loggedIn && canView(button.dataset.view);
+    button.hidden = !visible;
+    button.classList.remove('is-open');
+    button.classList.toggle('is-active', visible && !menuOpen && navButtonMatchesView(button, state.view));
+    button.setAttribute('aria-expanded', 'false');
+  });
+  document.querySelectorAll('[data-open-nav-group]').forEach((button) => {
+    const group = document.querySelector(`[data-nav-group="${button.dataset.openNavGroup}"]`);
+    const children = group ? [...group.querySelectorAll('[data-view]')] : [];
+    const visible = loggedIn && children.some((item) => canView(item.dataset.view));
+    const activeView = children.some((item) => canView(item.dataset.view) && navButtonMatchesView(item, state.view));
+    const openGroup = visible && menuOpen && !fullMenuOpen && group?.classList.contains('is-open');
+    button.hidden = !visible;
+    button.classList.toggle('is-open', openGroup);
+    button.classList.toggle('is-active', visible && (activeView || openGroup));
+    button.setAttribute('aria-expanded', openGroup ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-open-full-menu]').forEach((button) => {
+    const visible = loggedIn;
+    const activeView = MOBILE_FULL_MENU_VIEWS.has(state.view);
+    const openFullMenu = visible && fullMenuOpen;
+    button.hidden = !visible;
+    button.classList.toggle('is-open', openFullMenu);
+    button.classList.toggle('is-active', visible && (activeView || openFullMenu));
+    button.setAttribute('aria-expanded', openFullMenu ? 'true' : 'false');
+  });
 }
 
 function roleLabel(role) {
@@ -2270,11 +2376,11 @@ function configureShell() {
     button.hidden = !visible;
     button.classList.toggle('is-active', visible && active);
   });
-  const fullMenuViews = new Set(['monitoringSite', 'monitoringServices', 'genieAcs', 'networkAssets', 'billingSettings', 'radiusSettings', 'paymentGateway', 'waGateway', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'diagnostics', 'activity']);
-  document.querySelectorAll('[data-open-menu], [data-open-full-menu]').forEach((button) => {
+  document.querySelectorAll('[data-open-full-menu]').forEach((button) => {
     button.hidden = !loggedIn;
-    button.classList.toggle('is-active', loggedIn && fullMenuViews.has(state.view));
+    button.classList.toggle('is-active', loggedIn && MOBILE_FULL_MENU_VIEWS.has(state.view));
   });
+  syncBottomNavigationState();
   updateMenuButton();
 }
 
@@ -2305,6 +2411,13 @@ function setView(view, options = {}) {
     state.monitoringMemberFrom = '';
     state.monitoringMemberTo = '';
     state.monitoringMemberCreator = 'all';
+    state.monitoringNewCustomerPage = 1;
+    state.monitoringNewCustomerStatus = 'all';
+    state.monitoringNewCustomerNas = 'all';
+    state.monitoringIsolatedMemberPage = 1;
+    state.monitoringIsolatedMemberNas = 'all';
+    state.monitoringTerminatedMemberPage = 1;
+    state.monitoringTerminatedMemberNas = 'all';
     state.monitoringServicesPage = 1;
     state.monitoringServicesTab = 'tv';
     state.monitoringServicesSite = 'all';
@@ -2408,70 +2521,6 @@ function formData(form) {
   return data;
 }
 
-const MOBILE_CARD_TABLE_VIEWS = new Set([
-  'externalIncomes',
-  'expenses',
-  'reportsFinanceRecap',
-  'reportsMonthlyBilling',
-  'monitoringSite',
-  'genieAcs',
-  'networkAssets',
-  'waGateway',
-  'inventory',
-  'reportsInventoryStock',
-  'users',
-  'monitoringBilling',
-  'monitoringMembers',
-  'radiusPppDhcp',
-  'radiusHotspot',
-  'monitoringCustomers',
-  'reportsDaily',
-  'reportsTransactions',
-  'paymentGateway',
-  'reportsVoucherDaily',
-  'reportsVoucherMonthly'
-]);
-
-const MOBILE_TECHNICAL_COLUMNS = Object.freeze({
-  monitoringBilling: new Set(['nas', 'terakhir aktif', 'last active']),
-  radiusPppDhcp: new Set(['password', 'mac', 'mac address']),
-  radiusHotspot: new Set(['password', 'mac', 'mac address'])
-});
-
-function normalizedTableLabel(value = '') {
-  return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function decorateResponsiveTables(root = document, view = state.view) {
-  if (!MOBILE_CARD_TABLE_VIEWS.has(view)) return;
-  const technicalColumns = MOBILE_TECHNICAL_COLUMNS[view] || new Set();
-  root.querySelectorAll('.table-wrap table, .detail-table-wrap table').forEach((table) => {
-    if (table.closest('.receipt-preview, .daily-billing-receipt-stack, .hotspot-voucher-print-stack')) return;
-    const headers = [...table.querySelectorAll('thead th')].map((header) => normalizedTableLabel(header.textContent));
-    if (!headers.length) return;
-    table.classList.add('mobile-card-table');
-    table.closest('.table-wrap, .detail-table-wrap')?.classList.add('mobile-card-wrap');
-    table.querySelectorAll('tbody tr').forEach((row) => {
-      const cells = [...row.children].filter((cell) => cell.tagName === 'TD');
-      if (!cells.length || cells.some((cell) => Number(cell.colSpan || 1) > 1)) return;
-      let primaryAssigned = false;
-      cells.forEach((cell, index) => {
-        const label = headers[index] || '';
-        const labelKey = label.toLowerCase();
-        cell.dataset.label = label || (cell.querySelector('input[type="checkbox"]') ? 'Pilih' : 'Detail');
-        if (cell.querySelector('input[type="checkbox"]')) {
-          cell.dataset.mobileSelect = 'true';
-        }
-        if (!primaryAssigned && /^(nama|nama pelanggan|username|user|referensi|invoice|no invoice)$/i.test(label)) {
-          cell.dataset.mobilePrimary = 'true';
-          primaryAssigned = true;
-        }
-        cell.classList.toggle('mobile-technical-cell', technicalColumns.has(labelKey));
-      });
-    });
-  });
-}
-
 function enhanceTableTopScrollbars(root = document) {
   const scope = root || document;
   const wrappers = [...scope.querySelectorAll('.table-wrap, .detail-table-wrap')]
@@ -2487,14 +2536,12 @@ function enhanceTableTopScrollbars(root = document) {
       wrapper.parentNode?.insertBefore(topScroll, wrapper);
     }
     wrapper.classList.add('has-top-scrollbar');
-    const mobileCard = mobileMenuQuery.matches && wrapper.classList.contains('mobile-card-wrap');
-    topScroll.dataset.forMobileCard = mobileCard ? 'true' : 'false';
     const inner = topScroll.firstElementChild;
     const update = () => {
       if (!inner) return;
       const width = Math.max(wrapper.scrollWidth, wrapper.clientWidth);
       inner.style.width = `${width}px`;
-      topScroll.hidden = mobileCard || wrapper.scrollWidth <= wrapper.clientWidth + 2;
+      topScroll.hidden = wrapper.scrollWidth <= wrapper.clientWidth + 2;
       topScroll.scrollLeft = wrapper.scrollLeft;
     };
     if (topScroll.dataset.topScrollBound !== 'true') {
@@ -2529,7 +2576,6 @@ function enhanceTableTopScrollbars(root = document) {
 function scheduleTableTopScrollbars(root = document) {
   const scope = root || document;
   const run = () => {
-    decorateResponsiveTables(scope, state.view);
     enhanceTableTopScrollbars(scope);
     restoreSearchFocusIntent();
   };
@@ -3108,7 +3154,7 @@ function dashboardAuditPanel(activity = []) {
       <div class="dashboard-radbill-section-head">
         <div class="dashboard-radbill-title">
           <span class="dashboard-radbill-square tone-warning">!</span>
-          <h2>Audit Log</h2>
+          <h2>Log Audit</h2>
         </div>
         ${canView('activity') ? '<button class="ghost-button compact" type="button" data-dashboard-view="activity">Lihat Semua</button>' : `<span class="dashboard-radbill-muted">${displayNumber(rows.length)} entri</span>`}
       </div>
@@ -3189,6 +3235,31 @@ function rememberDashboardRouterNasHistory(payload = {}) {
   });
 }
 
+
+function routerCounterBytes(router = {}, fields = []) {
+  for (const field of fields) {
+    if (!Object.prototype.hasOwnProperty.call(router, field)) continue;
+    const value = Number(router[field] || 0);
+    if (Number.isFinite(value)) return Math.max(0, value);
+  }
+  return null;
+}
+
+function routerTotalBytes(routers = [], fields = []) {
+  let hasCounter = false;
+  const total = routers.reduce((sum, router) => {
+    const value = routerCounterBytes(router, fields);
+    if (value === null) return sum;
+    hasCounter = true;
+    return sum + value;
+  }, 0);
+  return hasCounter ? total : null;
+}
+
+function routerByteText(value) {
+  return value === null || value === undefined ? '-' : statisticsCompactBytes(value);
+}
+
 function dashboardRouterNasMarkup(payload = {}) {
   const routers = Array.isArray(payload.routers) ? payload.routers : [];
   const options = routers.map((router, index) => ({
@@ -3201,6 +3272,8 @@ function dashboardRouterNasMarkup(payload = {}) {
   const visibleRouters = routers.filter((router, index) => dashboardRouterKey(router, index) === dashboardRouterNasSelected);
   const totalUpload = visibleRouters.reduce((sum, router) => sum + Number(router.uploadBps || 0), 0);
   const totalDownload = visibleRouters.reduce((sum, router) => sum + Number(router.downloadBps || 0), 0);
+  const totalTxBytes = routerTotalBytes(visibleRouters, ['txBytes', 'outputOctets']);
+  const totalRxBytes = routerTotalBytes(visibleRouters, ['rxBytes', 'inputOctets']);
   const visibleUpCount = visibleRouters.filter((router) => router.status === 'up').length;
   const visibleDownCount = visibleRouters.length - visibleUpCount;
   const isChecking = visibleRouters.length > 0 && visibleRouters.every((router) => router.status === 'checking');
@@ -3240,6 +3313,16 @@ function dashboardRouterNasMarkup(payload = {}) {
               <b data-router-rate="download">${escapeHtml(mbpsText(totalDownload))}</b>
             </span>
           </div>
+          <div class="router-byte-legend" aria-label="Total byte interface NAS">
+            <span>
+              <small>TX Byte</small>
+              <b data-router-byte="tx">${escapeHtml(routerByteText(totalTxBytes))}</b>
+            </span>
+            <span>
+              <small>RX Byte</small>
+              <b data-router-byte="rx">${escapeHtml(routerByteText(totalRxBytes))}</b>
+            </span>
+          </div>
           <div class="router-mini-meta">
             <span data-router-field="type">${escapeHtml(primaryRouter.routerosType || 'RouterOS')}</span>
             <span data-router-field="version">${escapeHtml(primaryRouter.routerosVersion || '-')}</span>
@@ -3274,8 +3357,8 @@ function drawRouterSparkline(canvas, points = []) {
   if (!ctx) return;
   const rect = canvas.getBoundingClientRect();
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  const width = Math.max(260, Math.round(rect.width || canvas.clientWidth || 320));
-  const height = Math.max(64, Math.round(rect.height || canvas.clientHeight || 76));
+  const width = Math.max(280, Math.round(rect.width || canvas.clientWidth || 340));
+  const height = Math.max(mobileMenuQuery.matches ? 82 : 94, Math.round(rect.height || canvas.clientHeight || 96));
   const pixelWidth = Math.round(width * dpr);
   const pixelHeight = Math.round(height * dpr);
   if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
@@ -3284,86 +3367,140 @@ function drawRouterSparkline(canvas, points = []) {
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  const surface = themeColor('--surface', '#ffffff');
-  const surfaceSoft = themeColor('--surface-soft', '#edf4fb');
-  const line = themeColor('--line', '#c9d8e8');
-  const muted = themeColor('--muted', '#5c6f84');
-  const primary = themeColor('--primary', '#08204f');
-  const blue = themeColor('--blue', '#2b8bd9');
-  ctx.fillStyle = surface;
+
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  const chartSurface = themeColor('--surface', isDark ? '#111827' : '#ffffff');
+  const chartSoft = themeColor('--surface-soft', isDark ? '#1f2937' : '#f8fafc');
+  const chartLine = themeColor('--line', isDark ? 'rgba(148, 163, 184, 0.28)' : '#e2e8f0');
+  const chartMuted = themeColor('--muted', isDark ? '#cbd5e1' : '#64748b');
+  const chartTop = chartSurface;
+  const chartBottom = chartSoft;
+  const majorGrid = chartLine;
+  const minorGrid = isDark ? 'rgba(148, 163, 184, 0.18)' : 'rgba(203, 213, 225, 0.55)';
+  const axisText = chartMuted;
+  const frame = chartLine;
+  const uploadColor = '#dc2626';
+  const uploadFill = 'rgba(220, 38, 38, 0.18)';
+  const downloadColor = '#16a34a';
+  const downloadFill = 'rgba(22, 163, 74, 0.18)';
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, chartTop);
+  gradient.addColorStop(1, chartBottom);
+  ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, width, height);
+
   const chartPoints = points.length ? points : [{ upload: 0, download: 0 }];
   const max = routerTrafficChartMax(chartPoints);
-  const axisWidth = mobileMenuQuery.matches ? 44 : 50;
-  const rightPad = 7;
-  const topPad = 8;
-  const bottomPad = 8;
+  const axisWidth = mobileMenuQuery.matches ? 48 : 56;
+  const rightPad = 8;
+  const topPad = 10;
+  const bottomPad = mobileMenuQuery.matches ? 12 : 14;
   const plotLeft = axisWidth;
   const plotRight = width - rightPad;
   const plotWidth = Math.max(1, plotRight - plotLeft);
   const plotHeight = Math.max(1, height - topPad - bottomPad);
-  const axisValues = [max, max / 2, 0];
-  ctx.font = `${mobileMenuQuery.matches ? 9 : 10}px Inter, system-ui, sans-serif`;
+  const baseline = topPad + plotHeight;
+  const yForValue = (value = 0) => baseline - (Math.max(0, Number(value || 0)) / max) * plotHeight;
+  const xForIndex = (index = 0, list = chartPoints) => list.length <= 1
+    ? plotRight
+    : plotLeft + (index / (list.length - 1)) * plotWidth;
+
+  ctx.save();
+  ctx.strokeStyle = minorGrid;
+  ctx.lineWidth = 1;
+  const verticalLines = mobileMenuQuery.matches ? 4 : 6;
+  for (let index = 0; index <= verticalLines; index += 1) {
+    const x = plotLeft + (index / verticalLines) * plotWidth;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(x) + 0.5, topPad);
+    ctx.lineTo(Math.round(x) + 0.5, baseline);
+    ctx.stroke();
+  }
+  const horizontalLines = 4;
+  for (let index = 0; index <= horizontalLines; index += 1) {
+    const y = topPad + (index / horizontalLines) * plotHeight;
+    ctx.strokeStyle = index === horizontalLines ? frame : (index % 2 === 0 ? majorGrid : minorGrid);
+    ctx.beginPath();
+    ctx.moveTo(plotLeft, Math.round(y) + 0.5);
+    ctx.lineTo(plotRight, Math.round(y) + 0.5);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = frame;
+  ctx.strokeRect(Math.round(plotLeft) + 0.5, Math.round(topPad) + 0.5, Math.round(plotWidth), Math.round(plotHeight));
+  ctx.restore();
+
+  ctx.save();
+  ctx.font = (mobileMenuQuery.matches ? 9 : 10) + 'px Inter, system-ui, sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
-  axisValues.forEach((value, index) => {
-    const y = topPad + (index / 2) * plotHeight;
-    ctx.strokeStyle = index === 2 ? line : surfaceSoft;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(plotLeft, y);
-    ctx.lineTo(plotRight, y);
-    ctx.stroke();
-    ctx.fillStyle = muted;
-    ctx.fillText(mbpsAxisText(value), axisWidth - 6, y);
+  ctx.fillStyle = axisText;
+  [max, max * 0.75, max * 0.5, max * 0.25, 0].forEach((value, index) => {
+    const y = topPad + (index / 4) * plotHeight;
+    ctx.fillText(mbpsAxisText(value), axisWidth - 7, y);
   });
-  const area = ctx.createLinearGradient(0, topPad, 0, topPad + plotHeight);
-  area.addColorStop(0, 'rgba(43, 139, 217, 0.20)');
-  area.addColorStop(1, 'rgba(43, 139, 217, 0.02)');
-  ctx.fillStyle = area;
-  ctx.beginPath();
-  chartPoints.forEach((point, index, list) => {
-    const x = list.length <= 1 ? plotRight : plotLeft + (index / (list.length - 1)) * plotWidth;
-    const y = topPad + plotHeight - (Number(point.download || 0) / max) * plotHeight;
-    if (index === 0) ctx.moveTo(x, topPad + plotHeight);
-    ctx.lineTo(x, y);
-    if (index === list.length - 1) ctx.lineTo(x, topPad + plotHeight);
-  });
-  ctx.closePath();
-  ctx.fill();
-  const plot = (field, color) => {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = mobileMenuQuery.matches ? 1.7 : 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = chartMuted;
+  ctx.fillText('MikroTik Graphing style', plotLeft + 5, height - 4);
+  ctx.restore();
+
+  const drawArea = (field, color, fillColor) => {
+    ctx.save();
     ctx.beginPath();
     chartPoints.forEach((point, index, list) => {
-      const x = list.length <= 1 ? plotRight : plotLeft + (index / (list.length - 1)) * plotWidth;
-      const y = topPad + plotHeight - (Number(point[field] || 0) / max) * plotHeight;
+      const x = xForIndex(index, list);
+      const y = yForValue(point[field]);
+      if (index === 0) {
+        ctx.moveTo(x, baseline);
+        ctx.lineTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+      if (index === list.length - 1) {
+        ctx.lineTo(x, baseline);
+      }
+    });
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+
+    ctx.beginPath();
+    chartPoints.forEach((point, index, list) => {
+      const x = xForIndex(index, list);
+      const y = yForValue(point[field]);
       if (index === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = mobileMenuQuery.matches ? 1.6 : 1.9;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
     ctx.stroke();
+    ctx.restore();
   };
-  plot('download', blue);
-  plot('upload', primary);
+
+  drawArea('download', downloadColor, downloadFill);
+  drawArea('upload', uploadColor, uploadFill);
+
   const latest = chartPoints[chartPoints.length - 1] || {};
-  const drawDot = (field, color) => {
+  const drawLatest = (field, color) => {
     const value = Number(latest[field] || 0);
-    const x = chartPoints.length <= 1 ? plotRight : plotRight;
-    const y = topPad + plotHeight - (value / max) * plotHeight;
+    const x = plotRight;
+    const y = yForValue(value);
+    ctx.save();
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(x, y, mobileMenuQuery.matches ? 2.3 : 2.6, 0, Math.PI * 2);
+    ctx.arc(x, y, mobileMenuQuery.matches ? 2.4 : 2.8, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = surface;
-    ctx.lineWidth = 1.25;
+    ctx.strokeStyle = chartBg;
+    ctx.lineWidth = 1.35;
     ctx.stroke();
+    ctx.restore();
   };
-  drawDot('download', blue);
-  drawDot('upload', primary);
+  drawLatest('download', downloadColor);
+  drawLatest('upload', uploadColor);
 }
-
 function renderDashboardRouterNasCharts() {
   const canvas = document.getElementById('routerNasChart');
   if (!canvas || !dashboardRouterNasPayload) return;
@@ -3411,6 +3548,16 @@ function dashboardRouterNasLoadingMarkup() {
             <b>-</b>
           </span>
         </div>
+        <div class="router-byte-legend" aria-label="Total byte interface NAS">
+          <span>
+            <small>TX Byte</small>
+            <b>-</b>
+          </span>
+          <span>
+            <small>RX Byte</small>
+            <b>-</b>
+          </span>
+        </div>
       </article>
     </section>
   `;
@@ -3425,6 +3572,8 @@ function updateDashboardRouterNasDom(payload = {}) {
   const visibleRouters = routers.filter((router, index) => dashboardRouterKey(router, index) === dashboardRouterNasSelected);
   const totalUpload = visibleRouters.reduce((sum, router) => sum + Number(router.uploadBps || 0), 0);
   const totalDownload = visibleRouters.reduce((sum, router) => sum + Number(router.downloadBps || 0), 0);
+  const totalTxBytes = routerTotalBytes(visibleRouters, ['txBytes', 'outputOctets']);
+  const totalRxBytes = routerTotalBytes(visibleRouters, ['rxBytes', 'inputOctets']);
   const visibleUpCount = visibleRouters.filter((router) => router.status === 'up').length;
   const visibleDownCount = visibleRouters.length - visibleUpCount;
   const isChecking = visibleRouters.length > 0 && visibleRouters.every((router) => router.status === 'checking');
@@ -3448,6 +3597,8 @@ function updateDashboardRouterNasDom(payload = {}) {
   }
   setText('[data-router-rate="upload"]', mbpsText(totalUpload));
   setText('[data-router-rate="download"]', mbpsText(totalDownload));
+  setText('[data-router-byte="tx"]', routerByteText(totalTxBytes));
+  setText('[data-router-byte="rx"]', routerByteText(totalRxBytes));
   setText('[data-router-field="type"]', primaryRouter.routerosType || 'RouterOS');
   setText('[data-router-field="version"]', primaryRouter.routerosVersion || '-');
   setText('[data-router-field="interface"]', primaryRouter.selectedInterfaceName || primaryRouter.selectedInterface || 'Auto');
@@ -3772,7 +3923,6 @@ function pagerLimitValue(value, fallback = RADIUS_PAGE_SIZE) {
 
 function effectivePagerLimit(value, total = 0, fallback = RADIUS_PAGE_SIZE) {
   const selected = pagerLimitValue(value, fallback);
-  if (selected === 'all') return Math.max(1, Number(total || 0) || 1);
   return selected;
 }
 
@@ -4567,92 +4717,6 @@ async function renderDashboard(options = {}) {
   }
 }
 
-function diagnosticsStatusBadge(active, activeLabel = 'Aktif', inactiveLabel = 'Tidak aktif') {
-  return `<span class="badge ${active ? 'active' : 'inactive'}">${escapeHtml(active ? activeLabel : inactiveLabel)}</span>`;
-}
-
-function diagnosticsUptimeText(seconds = 0) {
-  const totalMinutes = Math.max(0, Math.floor(Number(seconds || 0) / 60));
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  return [days ? `${days} hari` : '', hours ? `${hours} jam` : '', `${minutes} menit`].filter(Boolean).join(' ');
-}
-
-async function renderDiagnostics(options = {}) {
-  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memeriksa sistem...</div>';
-  const payload = await api(`/api/system/diagnostics${options.refresh ? '?refresh=1' : ''}`);
-  const processInfo = payload.process || {};
-  const memory = processInfo.memory || {};
-  const database = payload.database || {};
-  const cache = payload.cache || {};
-  const redis = cache.redis || {};
-  const runtimeCache = cache.runtime || {};
-  const queue = payload.whatsappQueue || {};
-  const automation = payload.automation || {};
-  const queuedMessages = Number(queue.waiting || 0) + Number(queue.prioritized || 0) + Number(queue.delayed || 0);
-  const redisAvailable = redis.available === true || redis.connected === true || redis.ready === true || redis.status === 'ready';
-
-  app.innerHTML = `
-    <div class="stack diagnostics-page">
-      <div class="toolbar compact-toolbar diagnostics-toolbar">
-        <div>
-          <strong>Status komponen aplikasi</strong>
-          <span class="muted">Pemeriksaan ${escapeHtml(dateTimeText(payload.checkedAt || new Date().toISOString()))}</span>
-        </div>
-        <button class="ghost-button compact" id="refreshDiagnostics" type="button">Periksa Ulang</button>
-      </div>
-
-      <section class="metrics diagnostics-metrics">
-        ${metric('Aplikasi', 'Online', `Uptime ${diagnosticsUptimeText(processInfo.uptimeSeconds)}`, 'positive')}
-        ${metric('Database', database.available ? 'Terhubung' : 'Gangguan', `${String(database.mode || '-').toUpperCase()} · ${displayNumber(database.latencyMs || 0)} ms`, database.available ? 'positive' : 'negative')}
-        ${metric('Redis', redisAvailable ? 'Terhubung' : 'Tidak siap', String(cache.mode || '-').toUpperCase(), redisAvailable ? 'positive' : 'warning-card')}
-        ${metric('Antrean WA', displayNumber(queuedMessages), queue.available ? 'BullMQ aktif' : 'Worker tidak tersedia', queue.available ? 'positive' : 'warning-card')}
-      </section>
-
-      <section class="diagnostics-grid">
-        <article class="diagnostics-card">
-          <div class="section-head"><h2>Proses Aplikasi</h2>${diagnosticsStatusBadge(true, 'Berjalan')}</div>
-          <dl>
-            <div><dt>RSS</dt><dd>${escapeHtml(statisticsCompactBytes(memory.rss || 0))}</dd></div>
-            <div><dt>Heap terpakai</dt><dd>${escapeHtml(statisticsCompactBytes(memory.heapUsed || 0))}</dd></div>
-            <div><dt>Heap tersedia</dt><dd>${escapeHtml(statisticsCompactBytes(memory.heapTotal || 0))}</dd></div>
-            <div><dt>PID</dt><dd>${displayNumber(processInfo.pid || 0)}</dd></div>
-          </dl>
-        </article>
-        <article class="diagnostics-card">
-          <div class="section-head"><h2>Cache</h2>${diagnosticsStatusBadge(redisAvailable, 'Siap', 'Periksa Redis')}</div>
-          <dl>
-            <div><dt>Cache proses</dt><dd>${displayNumber(runtimeCache.entries || 0)} entri</dd></div>
-            <div><dt>Ukuran cache</dt><dd>${escapeHtml(statisticsCompactBytes(runtimeCache.bytes || 0))}</dd></div>
-            <div><dt>Batas entri</dt><dd>${displayNumber(runtimeCache.maxEntries || 0)}</dd></div>
-            <div><dt>Batas memori</dt><dd>${escapeHtml(statisticsCompactBytes(runtimeCache.maxBytes || 0))}</dd></div>
-          </dl>
-        </article>
-        <article class="diagnostics-card">
-          <div class="section-head"><h2>Antrean Whatsapp</h2>${diagnosticsStatusBadge(queue.available === true, 'Aktif', 'Tidak siap')}</div>
-          <dl>
-            <div><dt>Menunggu</dt><dd>${displayNumber(Number(queue.waiting || 0) + Number(queue.prioritized || 0))}</dd></div>
-            <div><dt>Terjadwal</dt><dd>${displayNumber(queue.delayed || 0)}</dd></div>
-            <div><dt>Diproses</dt><dd>${displayNumber(queue.active || 0)}</dd></div>
-            <div><dt>Gagal</dt><dd>${displayNumber(queue.failed || 0)}</dd></div>
-          </dl>
-        </article>
-        <article class="diagnostics-card">
-          <div class="section-head"><h2>Otomasi</h2>${diagnosticsStatusBadge(automation.billing?.active === true, 'Scheduler aktif', 'Scheduler mati')}</div>
-          <dl>
-            <div><dt>Invoice dan isolir</dt><dd>${diagnosticsStatusBadge(automation.billing?.active === true, automation.billing?.running ? 'Memproses' : 'Siap')}</dd></div>
-            <div><dt>Interval billing</dt><dd>${displayNumber(automation.billing?.intervalSeconds || 0)} detik</dd></div>
-            <div><dt>Sinkron payment</dt><dd>${diagnosticsStatusBadge(automation.paymentGateway?.active === true, automation.paymentGateway?.running ? 'Memproses' : 'Siap')}</dd></div>
-            <div><dt>Monitoring router</dt><dd>${diagnosticsStatusBadge(automation.routerMonitoring?.active === true, automation.routerMonitoring?.running ? 'Memproses' : 'Siap')}</dd></div>
-          </dl>
-        </article>
-      </section>
-    </div>
-  `;
-  document.getElementById('refreshDiagnostics')?.addEventListener('click', () => renderDiagnostics({ refresh: true }));
-}
-
 async function renderActivity(options = {}) {
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat log...</div>';
   state.activityCategory = normalizeActivityCategoryForRole(state.activityCategory);
@@ -4769,6 +4833,341 @@ async function renderActivity(options = {}) {
     state.activityPage = page;
   }, renderActivity, 10);
 }
+
+
+function logDetectionSafeText(value = '') {
+  if (typeof value === 'string') return value.trim();
+  if (value === null || value === undefined) return '';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value || '').trim();
+  }
+}
+
+function logDetectionSearchText(event = {}) {
+  return [
+    event.level,
+    event.category,
+    event.source,
+    event.method,
+    event.endpoint,
+    event.status,
+    event.message,
+    event.detail,
+    event.actor,
+    event.type
+  ].map((item) => logDetectionSafeText(item).toLowerCase()).join(' ');
+}
+
+function logDetectionCategory(event = {}) {
+  const status = Number(event.status || 0);
+  const text = logDetectionSearchText(event);
+  if (event.source === 'javascript' || /javascript|script|unhandled/.test(text)) return 'Frontend';
+  if ([401, 403, 419, 423].includes(status) || /unauthorized|forbidden|ditolak|akses ditolak|sesi login|permission/.test(text)) return 'Akses';
+  if (status === 408 || /timeout|network|failed to fetch|koneksi|terputus|abort/.test(text)) return 'Koneksi';
+  if (/whatsapp|waha|payment|tripay|xendit|radius|mikrotik|genieacs|genie/.test(text)) return 'Integrasi';
+  if (status >= 500 || /error|exception|gagal|failed|crash/.test(text)) return 'Server';
+  return 'Web';
+}
+
+function logDetectionLevel(event = {}) {
+  const status = Number(event.status || 0);
+  const category = event.category || logDetectionCategory(event);
+  if (event.source === 'javascript' || status >= 500 || category === 'Server') return 'error';
+  if (status >= 400 || ['Akses', 'Koneksi', 'Integrasi'].includes(category)) return 'warning';
+  return 'info';
+}
+
+function logDetectionShouldStore(event = {}) {
+  const status = Number(event.status || 0);
+  if (event.source === 'javascript' || status >= 400) return true;
+  const text = logDetectionSearchText(event);
+  return LOG_DETECTION_FAILURE_TERMS.some((term) => text.includes(term));
+}
+
+function logDetectionSignature(event = {}) {
+  return [
+    event.source || 'web',
+    event.method || '',
+    event.endpoint || '',
+    event.status || '',
+    event.message || ''
+  ].map((item) => logDetectionSafeText(item).slice(0, 180)).join('|');
+}
+
+function readLogDetectionEvents() {
+  try {
+    const raw = window.localStorage?.getItem(LOG_DETECTION_STORAGE_KEY) || '[]';
+    const rows = JSON.parse(raw);
+    return Array.isArray(rows)
+      ? rows.filter((row) => row && typeof row === 'object').slice(0, LOG_DETECTION_MAX_ROWS)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLogDetectionEvents(rows = []) {
+  try {
+    window.localStorage?.setItem(LOG_DETECTION_STORAGE_KEY, JSON.stringify(rows.slice(0, LOG_DETECTION_MAX_ROWS)));
+  } catch {
+    // Browser storage may be blocked; detection must never break billing flow.
+  }
+}
+
+function recordLogDetectionEvent(event = {}) {
+  try {
+    const at = new Date().toISOString();
+    const normalized = {
+      id: event.id || `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      at,
+      lastAt: at,
+      source: logDetectionSafeText(event.source || 'web').slice(0, 80) || 'web',
+      method: logDetectionSafeText(event.method || '').toUpperCase().slice(0, 12),
+      endpoint: logDetectionSafeText(event.endpoint || event.path || '').slice(0, 240),
+      status: event.status || '',
+      message: logDetectionSafeText(event.message || event.error || 'Kegagalan akses web').slice(0, 500),
+      detail: logDetectionSafeText(event.detail || '').slice(0, 500),
+      count: 1
+    };
+    normalized.category = logDetectionCategory(normalized);
+    normalized.level = event.level || logDetectionLevel(normalized);
+    if (!logDetectionShouldStore(normalized)) return;
+    normalized.signature = logDetectionSignature(normalized);
+    const rows = readLogDetectionEvents();
+    const latest = rows[0];
+    const latestDate = latest ? dateTimeValueDate(latest.lastAt || latest.at) : null;
+    if (latest?.signature === normalized.signature && latestDate && Date.now() - latestDate.getTime() < 60000) {
+      latest.lastAt = at;
+      latest.count = Number(latest.count || 1) + 1;
+      latest.level = normalized.level;
+      latest.category = normalized.category;
+      writeLogDetectionEvents(rows);
+      return;
+    }
+    rows.unshift(normalized);
+    writeLogDetectionEvents(rows);
+  } catch {
+    // Detection logging is diagnostic only and must never interrupt the app.
+  }
+}
+
+function logDetectionDateInput(value) {
+  const date = dateTimeValueDate(value);
+  if (!date) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: appTimeZone(),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function logDetectionInRange(event = {}, range = 'today') {
+  if (range === 'all') return true;
+  const dates = activityRangeDates(range);
+  const day = logDetectionDateInput(event.lastAt || event.at);
+  if (!day) return false;
+  return (!dates.from || day >= dates.from) && (!dates.to || day <= dates.to);
+}
+
+function logDetectionSuggestion(event = {}) {
+  const category = event.category || logDetectionCategory(event);
+  const status = Number(event.status || 0);
+  if (category === 'Akses') return 'Cek sesi login, role/permission user, dan endpoint yang ditolak.';
+  if (category === 'Koneksi') return 'Cek koneksi browser ke server, port service, proxy/domain, dan timeout endpoint.';
+  if (category === 'Integrasi') return 'Cek konfigurasi gateway/token/secret serta status layanan terkait.';
+  if (category === 'Frontend') return 'Cek console browser, cache asset, dan file JS/CSS yang baru di-deploy.';
+  if (status >= 500 || category === 'Server') return 'Cek log service Node untuk endpoint tersebut dan payload terakhir.';
+  return 'Cek menu/endpoint terkait berdasarkan pesan error yang muncul.';
+}
+
+function logDetectionLevelLabel(level = '') {
+  if (level === 'error') return 'Error';
+  if (level === 'warning') return 'Warning';
+  return 'Info';
+}
+
+function logDetectionLevelClass(level = '') {
+  if (level === 'error') return 'inactive';
+  if (level === 'warning') return 'pending';
+  return 'active';
+}
+
+function logDetectionFromActivity(item = {}) {
+  const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+  const event = {
+    id: `activity-${item.id || item.at || item.createdAt || Math.random().toString(36).slice(2, 8)}`,
+    at: item.at || item.createdAt || item.time || '',
+    lastAt: item.at || item.createdAt || item.time || '',
+    source: 'audit-log',
+    type: item.type || '',
+    method: metadata.method || metadata.httpMethod || '',
+    endpoint: metadata.endpoint || metadata.path || metadata.route || metadata.url || item.target || '',
+    status: metadata.status || metadata.statusCode || '',
+    message: item.message || activityLabel(item.type || '') || 'Log audit',
+    detail: metadata.error || metadata.reason || metadata.detail || '',
+    actor: activityActorText(item),
+    count: 1
+  };
+  event.category = logDetectionCategory(event);
+  event.level = logDetectionLevel(event);
+  return logDetectionShouldStore(event) ? event : null;
+}
+
+function logDetectionSummary(rows = []) {
+  return rows.reduce((acc, row) => {
+    acc.total += 1;
+    if (row.level === 'error') acc.error += 1;
+    else if (row.level === 'warning') acc.warning += 1;
+    else acc.info += 1;
+    const category = row.category || 'Web';
+    acc.categories[category] = (acc.categories[category] || 0) + 1;
+    return acc;
+  }, { total: 0, error: 0, warning: 0, info: 0, categories: {} });
+}
+
+async function renderLogDetection(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat Deteksi Log...</div>';
+  const range = state.logDetectionRange || 'today';
+  const rangeDates = activityRangeDates(range);
+  let activityRows = [];
+  let activityError = '';
+  try {
+    const payload = await api(`/api/activity?${queryString({
+      range,
+      category: 'all',
+      from: rangeDates.from,
+      to: rangeDates.to,
+      page: 1,
+      limit: 120
+    })}`);
+    activityRows = (payload.activity || []).map(logDetectionFromActivity).filter(Boolean);
+  } catch (error) {
+    activityError = error.message || 'Audit log tidak bisa dimuat';
+  }
+
+  const browserRows = readLogDetectionEvents().filter((row) => logDetectionInRange(row, range));
+  const allRows = [...browserRows, ...activityRows]
+    .sort((a, b) => {
+      const bDate = dateTimeValueDate(b.lastAt || b.at);
+      const aDate = dateTimeValueDate(a.lastAt || a.at);
+      return (bDate?.getTime() || 0) - (aDate?.getTime() || 0);
+    })
+    .slice(0, 160);
+  const search = String(state.search || '').trim().toLowerCase();
+  const rows = search ? allRows.filter((row) => logDetectionSearchText(row).includes(search)) : allRows;
+  const summary = logDetectionSummary(rows);
+  const categoryText = Object.entries(summary.categories)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([label, count]) => `${label}: ${displayNumber(count)}`)
+    .join(' · ') || '-';
+
+  app.innerHTML = `
+    <div class="stack">
+      <div class="toolbar">
+        <div class="filters">
+          <select class="control" id="logDetectionRange">
+            <option value="today" ${range === 'today' ? 'selected' : ''}>Hari Ini</option>
+            <option value="week" ${range === 'week' ? 'selected' : ''}>7 Hari</option>
+            <option value="month" ${range === 'month' ? 'selected' : ''}>Bulan Ini</option>
+            <option value="all" ${range === 'all' ? 'selected' : ''}>Semua Log</option>
+          </select>
+          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari endpoint, error, status" autocomplete="off">
+        </div>
+        <button class="ghost-button" id="refreshLogDetection" type="button">Refresh</button>
+      </div>
+
+      <section class="user-summary-grid">
+        <article class="user-summary-card is-filtered"><span>Total deteksi</span><strong>${displayNumber(summary.total)}</strong></article>
+        <article class="user-summary-card is-inactive"><span>Error</span><strong>${displayNumber(summary.error)}</strong></article>
+        <article class="user-summary-card"><span>Warning</span><strong>${displayNumber(summary.warning)}</strong></article>
+        <article class="user-summary-card is-active"><span>Kategori</span><strong>${escapeHtml(categoryText)}</strong></article>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>Error & kegagalan akses web</h2>
+            <p class="muted">Sumber: error API/JavaScript dari browser ini dan Log Audit server. Menu ini hanya membaca log, tidak mengubah transaksi/radius.</p>
+          </div>
+          <span>${displayNumber(rows.length)} baris</span>
+        </div>
+        ${activityError ? `<div class="notice warning">Log Audit server belum bisa dimuat: ${escapeHtml(activityError)}</div>` : ''}
+        <div class="table-wrap log-detection-table-wrap">
+          <table class="mobile-card-table log-detection-table">
+            <thead>
+              <tr>
+                <th>Waktu</th>
+                <th>Level</th>
+                <th>Kategori</th>
+                <th>Sumber</th>
+                <th>Endpoint</th>
+                <th>Pesan</th>
+                <th>Saran cek</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.length ? rows.map((row) => `
+                <tr>
+                  <td class="nowrap">${escapeHtml(dateTimeText(row.lastAt || row.at))}</td>
+                  <td><span class="badge ${logDetectionLevelClass(row.level)}">${escapeHtml(logDetectionLevelLabel(row.level))}</span>${Number(row.count || 1) > 1 ? `<div class="muted">x${displayNumber(row.count)}</div>` : ''}</td>
+                  <td>${escapeHtml(row.category || '-')}</td>
+                  <td>
+                    <strong>${escapeHtml(row.source || '-')}</strong>
+                    ${row.actor ? `<div class="muted">${escapeHtml(row.actor)}</div>` : ''}
+                  </td>
+                  <td>
+                    <strong>${escapeHtml([row.method, row.endpoint].filter(Boolean).join(' ') || '-')}</strong>
+                    ${row.status ? `<div class="muted">HTTP/status: ${escapeHtml(row.status)}</div>` : ''}
+                  </td>
+                  <td>
+                    <strong>${escapeHtml(row.message || '-')}</strong>
+                    ${row.detail ? `<div class="muted">${escapeHtml(row.detail)}</div>` : ''}
+                  </td>
+                  <td>${escapeHtml(logDetectionSuggestion(row))}</td>
+                </tr>
+              `).join('') : `<tr><td colspan="7">${empty('Belum ada error/kegagalan akses yang terdeteksi pada rentang ini.')}</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  `;
+
+  document.getElementById('logDetectionRange')?.addEventListener('change', (event) => {
+    state.logDetectionRange = event.target.value || 'today';
+    renderLogDetection();
+  });
+  document.getElementById('refreshLogDetection')?.addEventListener('click', () => renderLogDetection({ forceLoading: true }));
+  bindSearch((renderOptions = {}) => renderLogDetection(renderOptions));
+}
+
+window.addEventListener('error', (event) => {
+  recordLogDetectionEvent({
+    source: 'javascript',
+    level: 'error',
+    endpoint: event.filename || '',
+    message: event.message || 'JavaScript error',
+    detail: [event.lineno, event.colno].filter(Boolean).join(':')
+  });
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason || {};
+  recordLogDetectionEvent({
+    source: 'javascript',
+    level: 'error',
+    message: reason.message || String(reason || 'Unhandled promise rejection'),
+    detail: reason.stack || ''
+  });
+});
 
 function dailyReportSummary(report = {}, transactionCount = Number(report.transactionCount || 0)) {
   return `
@@ -4962,6 +5361,54 @@ function openDailyDiscountAuditModal(item = {}) {
   `, async () => {});
 }
 
+function reportCombinedTabsMarkup(kind, activeTab) {
+  const configs = {
+    billing: {
+      label: 'Laporan Tagihan',
+      tabs: [
+        { key: 'daily', label: 'Harian', view: 'reportsDaily' },
+        { key: 'monthly', label: 'Bulanan', view: 'reportsMonthlyBilling' }
+      ]
+    },
+    voucher: {
+      label: 'Laporan Voucher',
+      tabs: [
+        { key: 'daily', label: 'Harian', view: 'reportsVoucherDaily' },
+        { key: 'monthly', label: 'Bulanan', view: 'reportsVoucherMonthly' }
+      ]
+    }
+  };
+  const config = configs[kind];
+  if (!config) return '';
+  const tabs = config.tabs.filter((tab) => canView(tab.view));
+  if (!tabs.length) return '';
+  return `
+    <div class="report-combined-tabs">
+      <div>
+        <strong>${escapeHtml(config.label)}</strong>
+        <span>Gunakan tab untuk pindah tampilan harian dan bulanan.</span>
+      </div>
+      <div class="tab-switcher" role="tablist" aria-label="${escapeHtml(config.label)}">
+        ${tabs.map((tab) => `
+          <button class="tab-button ${tab.key === activeTab ? 'is-active' : ''}" type="button" data-report-combined-view="${escapeHtml(tab.view)}" role="tab" aria-selected="${tab.key === activeTab ? 'true' : 'false'}">${escapeHtml(tab.label)}</button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderReportCombinedTabs(kind, activeTab) {
+  const stack = app.querySelector('.stack');
+  if (!stack) return;
+  stack.insertAdjacentHTML('afterbegin', reportCombinedTabsMarkup(kind, activeTab));
+  stack.querySelectorAll('[data-report-combined-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const view = button.dataset.reportCombinedView;
+      if (view && view !== state.view) setView(view);
+    });
+  });
+}
+
 async function renderReportsDaily(options = {}) {
   app.innerHTML = '<div class="empty">Memuat tagihan harian...</div>';
   const collectorReport = state.auth?.role === 'collector';
@@ -5091,6 +5538,8 @@ async function renderReportsDaily(options = {}) {
       </section>
     </div>
   `;
+
+  renderReportCombinedTabs('billing', 'daily');
 
   const selectedDailyReceipts = () => [...app.querySelectorAll('[data-daily-receipt-select]:checked')]
     .map((checkbox) => filteredTransactions[Number(checkbox.dataset.dailyReceiptSelect || -1)])
@@ -5266,7 +5715,7 @@ function financeDailyRowsTable(rows = [], emptyText = 'Belum ada data harian.') 
   }, { incomeCash: 0, incomeTransfer: 0, incomeOnline: 0, expenseCash: 0, expenseTransfer: 0, incomeTotal: 0 });
   return `
     <div class="table-wrap">
-      <table class="finance-daily-table">
+      <table>
         <thead>
           <tr>
             <th>No</th>
@@ -5742,6 +6191,8 @@ async function renderReportsMonthlyBilling(options = {}) {
     </div>
   `;
 
+  renderReportCombinedTabs('billing', 'monthly');
+
   document.getElementById('monthlyBillingStatus')?.addEventListener('change', (event) => {
     state.reportMonthlyBillingStatus = event.target.value || 'all';
     state.reportMonthlyBillingPage = 1;
@@ -5774,11 +6225,28 @@ async function renderReportsMonthlyBilling(options = {}) {
   }, renderReportsMonthlyBilling, 10);
 }
 
+function uniqueSelectOptions(options = [], mode = 'value-label') {
+  const rows = [];
+  const seen = new Set();
+  for (const option of Array.isArray(options) ? options : []) {
+    const value = String(option?.value || '').trim();
+    const label = String(option?.label || value).trim();
+    if (!value && !label) continue;
+    const key = mode === 'label'
+      ? label.toLowerCase()
+      : `${value.toLowerCase()}|${label.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ ...option, value, label });
+  }
+  return rows;
+}
+
 function voucherReportOptionTags(options = [], selected = 'all', emptyLabel = 'Semua') {
   const safeSelected = selected || 'all';
   return [
     `<option value="all" ${safeSelected === 'all' ? 'selected' : ''}>${escapeHtml(emptyLabel)}</option>`,
-    ...options.map((option) => {
+    ...uniqueSelectOptions(options).map((option) => {
       const value = String(option.value || '').trim();
       const label = String(option.label || value).trim();
       return `<option value="${escapeHtml(value)}" ${String(safeSelected) === value ? 'selected' : ''}>${escapeHtml(label)}</option>`;
@@ -5888,7 +6356,7 @@ function bindVoucherReportFilters(renderFn, options = {}) {
 function voucherMonthlyRowsTable(rows = []) {
   return `
     <div class="table-wrap">
-      <table>
+      <table class="voucher-monthly-table">
         <thead>
           <tr>
             <th>Tanggal</th>
@@ -5969,7 +6437,7 @@ async function renderReportsVoucherDaily(options = {}) {
           <span>${displayNumber(pagination.total || orders.length)} voucher paid</span>
         </div>
         <div class="table-wrap">
-          <table>
+          <table class="voucher-daily-table ${scoped ? 'is-scoped' : 'has-reseller'}">
             <thead>
               <tr>
                 <th>Waktu Beli</th>
@@ -6030,6 +6498,8 @@ async function renderReportsVoucherDaily(options = {}) {
       </section>
     </div>
   `;
+
+  renderReportCombinedTabs('voucher', 'daily');
 
   document.getElementById('voucherDailyDate')?.addEventListener('change', (event) => {
     state.reportVoucherDailyDate = event.target.value || todayInput();
@@ -6098,6 +6568,7 @@ async function renderReportsVoucherMonthly(options = {}) {
       </section>
     </div>
   `;
+  renderReportCombinedTabs('voucher', 'monthly');
   bindVoucherReportFilters(renderReportsVoucherMonthly);
   scheduleVoucherDataRefresh(renderReportsVoucherMonthly);
 }
@@ -6779,8 +7250,8 @@ async function renderReportsFinanceRecap(options = {}) {
         </div>
         <div class="split-grid">
           <div class="finance-recap-table-host">
-            <div class="table-wrap">
-              <table>
+            <div class="table-wrap finance-recap-table-wrap">
+              <table class="mobile-card-table finance-recap-table">
                 <thead>
                   <tr>
                     <th>Pemasukan</th>
@@ -6793,8 +7264,8 @@ async function renderReportsFinanceRecap(options = {}) {
             </div>
           </div>
           <div class="finance-recap-table-host">
-            <div class="table-wrap">
-              <table>
+            <div class="table-wrap finance-recap-table-wrap">
+              <table class="mobile-card-table finance-recap-table">
                 <thead>
                   <tr>
                     <th>Pengeluaran</th>
@@ -7518,8 +7989,8 @@ async function renderReportsInventoryStock(options = {}) {
       </div>
 
       <section class="section">
-        <div class="table-wrap">
-          <table>
+        <div class="table-wrap inventory-stock-table-wrap">
+          <table class="mobile-card-table inventory-stock-table">
             <thead>
               <tr>
                 <th>Tanggal</th>
@@ -7582,14 +8053,9 @@ async function renderExpenses(options = {}) {
   state.expensePeriod = period;
   const params = queryString({
     period,
-    search: state.search,
-    page: state.expensePage,
-    limit: state.expenseLimit
+    search: state.search
   });
-  const payload = await api(`/api/expenses?${params}`);
-  const expenses = payload.expenses || [];
-  const pagination = payload.pagination || { page: 1, limit: state.expenseLimit, total: expenses.length, totalPages: 1 };
-  state.expensePage = Number(pagination.page || 1);
+  const { expenses } = await api(`/api/expenses?${params}`);
   const writeAllowed = can('expenses:write');
 
   app.innerHTML = `
@@ -7601,8 +8067,8 @@ async function renderExpenses(options = {}) {
         </div>
         ${writeAllowed ? '<button class="button" id="addExpense" type="button">Tambah Pengeluaran</button>' : ''}
       </div>
-      <div class="table-wrap">
-        <table>
+      <div class="table-wrap expense-table-wrap">
+        <table class="mobile-card-table expense-table">
           <thead>
             <tr>
               <th>Tanggal</th>
@@ -7644,14 +8110,12 @@ async function renderExpenses(options = {}) {
           </tbody>
         </table>
       </div>
-      ${radiusPaginationControls('expense', pagination, 'pengeluaran')}
     </div>
   `;
 
   document.getElementById('addExpense')?.addEventListener('click', () => openExpenseModal());
   bindPeriodFilter('expensePeriod', (nextPeriod) => {
     state.expensePeriod = normalizedPeriod(nextPeriod);
-    state.expensePage = 1;
     renderExpenses();
   });
   if (writeAllowed) {
@@ -7678,21 +8142,7 @@ async function renderExpenses(options = {}) {
       });
     });
   }
-  bindSearch((renderOptions = {}) => {
-    state.expensePage = 1;
-    return renderExpenses(renderOptions);
-  });
-  app.querySelectorAll('[data-expense-page]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.expensePage = Math.max(1, Number(button.dataset.expensePage || 1));
-      renderExpenses();
-    });
-  });
-  bindPagerLimit('expense', (limit) => {
-    state.expenseLimit = limit;
-  }, (page) => {
-    state.expensePage = page;
-  }, renderExpenses, 10);
+  bindSearch(renderExpenses);
 }
 
 function optionList(values, selected) {
@@ -8208,14 +8658,9 @@ async function renderExternalIncomes(options = {}) {
   state.externalIncomePeriod = period;
   const params = queryString({
     period,
-    search: state.search,
-    page: state.externalIncomePage,
-    limit: state.externalIncomeLimit
+    search: state.search
   });
-  const payload = await api(`/api/external-incomes?${params}`);
-  const externalIncomes = payload.externalIncomes || [];
-  const pagination = payload.pagination || { page: 1, limit: state.externalIncomeLimit, total: externalIncomes.length, totalPages: 1 };
-  state.externalIncomePage = Number(pagination.page || 1);
+  const { externalIncomes } = await api(`/api/external-incomes?${params}`);
   const writeAllowed = can('external-incomes:write');
   const rows = externalIncomes.length ? externalIncomes.map((income) => {
     const cancelled = incomeIsCancelled(income);
@@ -8252,8 +8697,8 @@ async function renderExternalIncomes(options = {}) {
         </div>
         ${writeAllowed ? '<button class="button" id="addExternalIncome" type="button">Tambah Pemasukan</button>' : ''}
       </div>
-      <div class="table-wrap">
-        <table>
+      <div class="table-wrap external-income-table-wrap">
+        <table class="mobile-card-table external-income-table">
           <thead>
             <tr>
               <th>Tanggal</th>
@@ -8272,14 +8717,12 @@ async function renderExternalIncomes(options = {}) {
           </tbody>
         </table>
       </div>
-      ${radiusPaginationControls('external-income', pagination, 'pemasukan')}
     </div>
   `;
 
   document.getElementById('addExternalIncome')?.addEventListener('click', () => openExternalIncomeModal());
   bindPeriodFilter('externalIncomePeriod', (nextPeriod) => {
     state.externalIncomePeriod = normalizedPeriod(nextPeriod);
-    state.externalIncomePage = 1;
     renderExternalIncomes();
   });
   app.querySelectorAll('[data-receipt-income]').forEach((button) => {
@@ -8314,21 +8757,7 @@ async function renderExternalIncomes(options = {}) {
       });
     });
   }
-  bindSearch((renderOptions = {}) => {
-    state.externalIncomePage = 1;
-    return renderExternalIncomes(renderOptions);
-  });
-  app.querySelectorAll('[data-external-income-page]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.externalIncomePage = Math.max(1, Number(button.dataset.externalIncomePage || 1));
-      renderExternalIncomes();
-    });
-  });
-  bindPagerLimit('external-income', (limit) => {
-    state.externalIncomeLimit = limit;
-  }, (page) => {
-    state.externalIncomePage = page;
-  }, renderExternalIncomes, 10);
+  bindSearch(renderExternalIncomes);
 }
 
 function externalIncomeFormBody(income = {}) {
@@ -8555,18 +8984,9 @@ const USER_POSITION_OPTIONS = Object.freeze({
   viewer: ['Staf']
 });
 
-const LEGACY_USER_POSITION_LABELS = Object.freeze({
-  'Kepala Subbagian Keuangan dan Aset': 'Kepala Keuangan dan Aset'
-});
-
-function normalizeUserPositionLabel(position = '') {
-  const value = String(position || '').trim();
-  return LEGACY_USER_POSITION_LABELS[value] || value;
-}
-
 function userPositionOptions(role = 'viewer', selected = '') {
   const options = [...(USER_POSITION_OPTIONS[role] || ['Staf'])];
-  const current = normalizeUserPositionLabel(selected);
+  const current = String(selected || '').trim();
   const effective = options.includes(current) ? current : options[0];
   return options.map((position) => `
     <option value="${escapeHtml(position)}" ${position === effective ? 'selected' : ''}>${escapeHtml(position)}</option>
@@ -8717,8 +9137,8 @@ async function renderInventory(options = {}) {
         ${writeAllowed ? '<button class="button" id="addInventory" type="button">Tambah Barang</button>' : ''}
       </div>
 
-      <div class="table-wrap">
-        <table>
+      <div class="table-wrap inventory-table-wrap">
+        <table class="mobile-card-table inventory-table">
           <thead>
             <tr>
               <th>Barang</th>
@@ -8941,8 +9361,8 @@ async function renderNetworkAssets(options = {}) {
         ${writeAllowed ? '<button class="button" id="addNetworkAsset" type="button">Tambah Aset</button>' : ''}
       </div>
 
-      <div class="table-wrap">
-        <table>
+      <div class="table-wrap network-asset-table-wrap">
+        <table class="mobile-card-table network-asset-table">
           <thead>
             <tr>
               <th>Aset</th>
@@ -9104,7 +9524,7 @@ function hotspotRadiusSummary(payload = {}) {
 function radiusOptionTags(options = [], selected = '', emptyLabel = 'Semua') {
   return [
     `<option value="" ${!selected ? 'selected' : ''}>${escapeHtml(emptyLabel)}</option>`,
-    ...options.map((option) => `
+    ...uniqueSelectOptions(options).map((option) => `
       <option value="${escapeHtml(option.value)}" ${String(option.value) === String(selected || '') ? 'selected' : ''}>${escapeHtml(option.label)}</option>
     `)
   ].join('');
@@ -9145,14 +9565,44 @@ function radiusProfileOptions(rows = []) {
 }
 
 function radiusNasOptions(rows = []) {
-  return rows
-    .filter((row) => row && (row.name || row.ipAddress))
-    .map((row) => ({
-      label: row.name || row.ipAddress,
-      value: row.name || row.ipAddress,
-      ip: row.ipAddress || row.name || '',
-      id: row.id || row.uuid || ''
-    }));
+  const byKey = new Map();
+  const optionScore = (option = {}) => {
+    let score = 0;
+    if (option.status !== 'disabled' && option.connected !== false) score += 100;
+    if (option.source === 'site') score += 20;
+    if (option.id) score += 1;
+    return score;
+  };
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || (!row.name && !row.ipAddress && !row.address)) continue;
+    const label = String(row.name || row.ipAddress || row.address || '').trim();
+    const ip = String(row.ipAddress || row.address || row.name || '').trim();
+    const id = String(row.id || row.uuid || '').trim();
+    const value = id || label || ip;
+    const key = String(ip || label || value).trim().toLowerCase().replace(/\/(?:32|128)$/, '');
+    if (!key) continue;
+    const option = {
+      label,
+      value,
+      ip,
+      id,
+      status: row.status || '',
+      connected: row.connected,
+      source: row.source || '',
+      aliases: Array.isArray(row.aliases) ? row.aliases : []
+    };
+    const current = byKey.get(key);
+    if (!current || optionScore(option) >= optionScore(current)) {
+      const aliases = [...new Set([...(current?.aliases || []), ...(option.aliases || []), current?.id, current?.value, current?.ip, option.id, option.value, option.ip]
+        .map((item) => String(item || '').trim())
+        .filter(Boolean))];
+      byKey.set(key, { ...option, aliases });
+    }
+  }
+  return [...byKey.values()].sort((left, right) => String(left.label).localeCompare(String(right.label), 'id', {
+    numeric: true,
+    sensitivity: 'base'
+  }));
 }
 
 async function loadRadiusNasOptions() {
@@ -9261,12 +9711,12 @@ function nasTargetChoiceMarkup(options = [], selected = []) {
       detail: 'Seluruh NAS yang tersedia',
       all: true
     },
-    ...options.map((item) => ({
+    ...uniqueSelectOptions(options.map((item) => ({
       value: String(item.id || item.value || item.ip || ''),
       label: item.label || item.name || item.ip || '-',
       detail: item.ip && item.ip !== item.label ? item.ip : '',
       all: false
-    })).filter((item) => item.value)
+    })).filter((item) => item.value), 'label')
   ];
   return `
     <div class="nas-target-picker" data-nas-target-picker>
@@ -10949,7 +11399,19 @@ function radiusSessionRows(rows = [], type = 'ppp', writeAllowed = false) {
 }
 
 function radiusProfileRows(rows = [], type = 'ppp', writeAllowed = false) {
-  return rows.map((row) => `
+  return rows.map((row) => {
+    const profileUserCount = Number(row.userCount || 0);
+    const activeCount = Number(row.activeUserCount || 0);
+    const suspendedCount = Number(row.suspendedUserCount || 0);
+    const terminatedCount = Number(row.terminatedUserCount || 0);
+    const inactiveCount = Math.max(0, profileUserCount - activeCount - suspendedCount - terminatedCount);
+    const statusParts = [
+      activeCount ? `Aktif ${displayNumber(activeCount)}` : '',
+      suspendedCount ? `Isolir ${displayNumber(suspendedCount)}` : '',
+      terminatedCount ? `Terminate ${displayNumber(terminatedCount)}` : '',
+      inactiveCount ? `Lainnya ${displayNumber(inactiveCount)}` : ''
+    ].filter(Boolean);
+    return `
     <tr>
       <td>
         <strong>${escapeHtml(row.name || '-')}</strong>
@@ -10957,6 +11419,12 @@ function radiusProfileRows(rows = [], type = 'ppp', writeAllowed = false) {
         ${type === 'hotspot' ? `<div class="muted">Validity ${escapeHtml(row.validity || '-')} · Quota ${escapeHtml(row.quota || '-')} · Shared ${escapeHtml(row.sharedUsers || 1)}</div>` : ''}
       </td>
       <td>${row.price ? rupiah(row.price) : '-'}</td>
+      ${type === 'ppp' ? `
+        <td>
+          <strong>${displayNumber(profileUserCount)} user</strong>
+          <div class="muted">${statusParts.length ? escapeHtml(statusParts.join(' · ')) : 'Belum dipakai'}</div>
+        </td>
+      ` : ''}
       <td>
         <span>${escapeHtml(row.rateLimit || '-')}</span>
         <div class="muted">${escapeHtml(row.rateLimitText || '')}</div>
@@ -10980,7 +11448,8 @@ function radiusProfileRows(rows = [], type = 'ppp', writeAllowed = false) {
         </td>
       ` : ''}
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function radiusTemplateRows(rows = [], writeAllowed = false) {
@@ -11000,7 +11469,7 @@ function radiusTemplateRows(rows = [], writeAllowed = false) {
         <td><span class="badge ${row.active === false ? 'inactive' : 'active'}">${row.active === false ? 'Nonaktif' : 'Aktif'}</span></td>
         ${writeAllowed ? `
           <td>
-            <div class="row-actions wa-template-actions">
+            <div class="row-actions">
               <button class="ghost-button compact" type="button" data-edit-radius-hotspot-template="${escapeHtml(row.id)}">Edit</button>
               ${row.builtin === true ? '' : `<button class="danger-button compact" type="button" data-delete-radius-hotspot-template="${escapeHtml(row.id)}" data-radius-template-name="${escapeHtml(row.name || '')}">Hapus</button>`}
               <button class="ghost-button compact" type="button" data-edit-radius-hotspot-template-html="${escapeHtml(row.id)}">Edit HTML</button>
@@ -11196,7 +11665,7 @@ function radiusTable(tab, rows = [], type = 'ppp', writeAllowed = false, startNo
   if (tab === 'sessions') {
     return `
       <div class="table-wrap">
-        <table>
+        <table class="radius-table radius-session-table radius-session-table-${type} ${writeAllowed ? 'has-row-actions' : ''}">
           <thead>
             <tr>
               <th>User</th>
@@ -11217,11 +11686,12 @@ function radiusTable(tab, rows = [], type = 'ppp', writeAllowed = false, startNo
   if (tab === 'profiles') {
     return `
       <div class="table-wrap">
-        <table>
+        <table class="radius-table radius-profile-table radius-profile-table-${type} ${writeAllowed ? 'has-row-actions' : ''}">
           <thead>
             <tr>
               <th>Profile</th>
               <th>Harga</th>
+              ${type === 'ppp' ? '<th>User PPP</th>' : ''}
               <th>Rate Limit</th>
               <th>Burst</th>
               <th>Min/Priority</th>
@@ -11229,7 +11699,7 @@ function radiusTable(tab, rows = [], type = 'ppp', writeAllowed = false, startNo
               ${writeAllowed ? '<th>Aksi</th>' : ''}
             </tr>
           </thead>
-          <tbody>${rows.length ? radiusProfileRows(rows, type, writeAllowed) : `<tr><td colspan="${writeAllowed ? 7 : 6}">Belum ada profile.</td></tr>`}</tbody>
+          <tbody>${rows.length ? radiusProfileRows(rows, type, writeAllowed) : `<tr><td colspan="${(writeAllowed ? 7 : 6) + (type === 'ppp' ? 1 : 0)}">Belum ada profile.</td></tr>`}</tbody>
         </table>
       </div>
     `;
@@ -11237,7 +11707,7 @@ function radiusTable(tab, rows = [], type = 'ppp', writeAllowed = false, startNo
   if (tab === 'templates') {
     return `
       <div class="table-wrap">
-        <table>
+        <table class="radius-table radius-template-table ${writeAllowed ? 'has-row-actions' : ''}">
           <thead>
             <tr>
               <th>Template</th>
@@ -11254,7 +11724,7 @@ function radiusTable(tab, rows = [], type = 'ppp', writeAllowed = false, startNo
   if (tab === 'nas') {
     return `
       <div class="table-wrap">
-        <table>
+        <table class="radius-table radius-nas-table">
           <thead>
             <tr>
               <th>NAS</th>
@@ -11276,7 +11746,7 @@ function radiusTable(tab, rows = [], type = 'ppp', writeAllowed = false, startNo
   const emptyColspan = (selectableUsers ? 9 : 8) + (writeAllowed ? 1 : 0);
   return `
     <div class="table-wrap">
-      <table class="radius-table radius-user-table ${writeAllowed ? 'has-row-actions' : ''}">
+      <table class="radius-table radius-user-table radius-user-table-${type} ${selectableUsers ? 'has-select' : 'no-select'} ${writeAllowed ? 'has-row-actions' : ''}">
         <thead>
           <tr>
             ${selectableUsers ? `<th class="select-cell"><input type="checkbox" id="${selectAllId}" aria-label="${selectAllLabel}"></th>` : ''}
@@ -11339,7 +11809,14 @@ function bindPhotoInputTriggers(root = document) {
 }
 
 function radiusNasIpForRow(row = {}, nasOptions = []) {
-  const match = nasOptions.find((option) => [option.label, option.value, option.ip].includes(row.nas || row.site));
+  const rowValues = [row.nas, row.site, row.nasId]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const match = nasOptions.find((option) => {
+    const optionValues = [option.label, option.value, option.ip, option.id, ...(Array.isArray(option.aliases) ? option.aliases : [])]
+      .map((value) => String(value || '').trim());
+    return rowValues.some((value) => optionValues.includes(value));
+  });
   return match ? match.ip : '';
 }
 
@@ -11455,7 +11932,7 @@ function radiusMemberFieldsMarkup(options = {}) {
       </div>
       <div class="field full notice ${bhpUsoEnabled ? 'info' : ''}">
         <strong>BHP USO</strong>
-        <span>${bhpUsoEnabled ? `Aktif ${bhpUsoRate}% dan otomatis ditambahkan ke total tagihan.` : 'Tidak aktif pada Billing Settings.'}</span>
+        <span>${bhpUsoEnabled ? `Aktif ${bhpUsoRate}% dan otomatis ditambahkan ke total tagihan.` : 'Tidak aktif pada Siklus Penagihan.'}</span>
       </div>
       <label class="field">
         <span>Status Invoice Awal</span>
@@ -13871,11 +14348,11 @@ function openRadiusIsolirGuideModal() {
 }
 
 async function renderRadiusSettings(options = {}) {
-  app.innerHTML = '<div class="empty">Memuat Isolir Radius...</div>';
+  app.innerHTML = '<div class="empty">Memuat Radius Settings...</div>';
   const payload = await api(`/api/radius/settings?${queryString({ page: 1, limit: 1, refresh: options.refresh ? '1' : '' })}`);
   const sync = payload.sync || {};
   const radius = payload.radius || {};
-  const writeSettings = can('radius:write') || can('settings:write');
+  const writeSettings = can('settings:write');
 
   app.innerHTML = `
     <div class="stack">
@@ -13885,8 +14362,8 @@ async function renderRadiusSettings(options = {}) {
         <section class="form-panel">
           <div class="section-head">
             <div>
-              <h3>Isolir Radius</h3>
-              <p>Override Radius saat user PPP-DHCP atau Hotspot diberi status isolir.</p>
+              <h3>Pengaturan Isolir Radius</h3>
+              <p>Override Radius saat user PPP-DHCP atau Hotspot diberi status isolir. Siklus tagihan tetap di menu Pengaturan Billing.</p>
             </div>
           </div>
           <form id="radiusSettingsForm" class="form-grid">
@@ -13912,15 +14389,24 @@ async function renderRadiusSettings(options = {}) {
             </label>
             <div class="modal-actions field full">
               <button class="ghost-button" id="openIsolirRouterGuide" type="button">Panduan Redirect Isolir</button>
+              <button class="ghost-button" id="refreshRadiusSettings" type="button">Refresh</button>
               <button class="button" type="submit">Simpan Radius</button>
             </div>
           </form>
         </section>
-      ` : ''}
+      ` : `
+        <section class="section">
+          <div>
+            <h3>Pengaturan Isolir Radius</h3>
+            <p class="muted">Role login tidak memiliki akses mengubah pengaturan isolir radius.</p>
+          </div>
+        </section>
+      `}
     </div>
   `;
 
   document.getElementById('openIsolirRouterGuide')?.addEventListener('click', () => openRadiusIsolirGuideModal());
+  document.getElementById('refreshRadiusSettings')?.addEventListener('click', () => renderRadiusSettings({ refresh: true }));
   document.getElementById('radiusSettingsForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -14025,8 +14511,8 @@ async function renderMonitoringSite(options = {}) {
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table>
+      <div class="table-wrap monitoring-site-table-wrap">
+        <table class="mobile-card-table monitoring-site-table">
           <thead>
             <tr>
               <th>Target</th>
@@ -15721,7 +16207,6 @@ async function renderGenieAcs(options = {}) {
 function scheduleMonitoringCustomerRefresh() {
   clearRealtimeTimers();
   if (state.view !== 'monitoringCustomers') return;
-  const refreshDelay = state.monitoringCustomersPayload?.refreshing === true ? 3000 : 20000;
   monitoringCustomersTimer = window.setTimeout(() => {
     if (state.view === 'monitoringCustomers') {
       if (['searchInput', 'customerSiteFilter'].includes(document.activeElement?.id)) {
@@ -15730,7 +16215,7 @@ function scheduleMonitoringCustomerRefresh() {
       }
       renderMonitoringCustomers({ silent: true });
     }
-  }, refreshDelay);
+  }, 20000);
 }
 
 function monitoringCustomerRows(sites = [], type = 'pppoe') {
@@ -15781,7 +16266,7 @@ function monitoringCustomerTable(users = [], type = 'pppoe', startNo = 1) {
   const pppoe = type === 'pppoe';
   return `
     <div class="table-wrap monitoring-customer-table-wrap">
-      <table class="monitoring-customer-table">
+      <table class="monitoring-customer-table monitoring-customer-table-${type}">
         <thead>
           <tr>
             <th class="monitoring-col-no">No</th>
@@ -15840,20 +16325,14 @@ function filteredMonitoringCustomers(rows = []) {
 
 async function renderMonitoringCustomers(options = {}) {
   clearRealtimeTimers();
-  if (shouldShowPageLoading(options)) {
+  const shouldFetch = options.refresh || (!options.liveSearch && options.silent) || !state.monitoringCustomersPayload;
+  if (shouldFetch && shouldShowPageLoading(options)) {
     app.innerHTML = '<div class="empty">Memuat pelanggan online...</div>';
   }
-  const customerType = state.monitoringCustomerType === 'hotspot' ? 'hotspot' : 'pppoe';
-  const customerLimit = pagerLimitValue(state.monitoringCustomerLimit || CUSTOMER_PAGE_SIZE, CUSTOMER_PAGE_SIZE);
-  const params = queryString({
-    page: state.monitoringCustomerPage,
-    limit: customerLimit,
-    type: customerType,
-    site: state.monitoringCustomerSite,
-    search: state.search,
-    refresh: options.refresh ? '1' : ''
-  });
-  const payload = await api(`/api/monitoring/customers?${params}`);
+  const endpoint = options.refresh ? '/api/monitoring/customers?refresh=1' : '/api/monitoring/customers';
+  const payload = shouldFetch
+    ? await api(endpoint)
+    : state.monitoringCustomersPayload;
   state.monitoringCustomersPayload = payload;
   const summary = payload.summary || {};
   const sites = Array.isArray(payload.sites) ? payload.sites : [];
@@ -15863,15 +16342,29 @@ async function renderMonitoringCustomers(options = {}) {
   if (state.monitoringCustomerSite !== selectedSite) {
     state.monitoringCustomerSite = selectedSite;
   }
+  const customerType = state.monitoringCustomerType === 'hotspot' ? 'hotspot' : 'pppoe';
   if (state.monitoringCustomerType !== customerType) {
     state.monitoringCustomerType = customerType;
   }
   const customerTypeLabel = customerType === 'hotspot' ? 'Hotspot' : 'PPPoE';
-  const pageUsers = Array.isArray(payload.rows) ? payload.rows : monitoringCustomerRows(sites, customerType);
-  const pagination = payload.pagination || { page: 1, limit: customerLimit, total: pageUsers.length, totalPages: 1, hasPrev: false, hasNext: false };
-  state.monitoringCustomerPage = Number(pagination.page || 1);
-  state.monitoringCustomerLimit = pagerLimitValue(pagination.limit || customerLimit, CUSTOMER_PAGE_SIZE);
-  const offset = (state.monitoringCustomerPage - 1) * Number(pagination.limit || CUSTOMER_PAGE_SIZE);
+  const allCustomerUsers = monitoringCustomerRows(sites, customerType);
+  const filteredCustomerUsers = filteredMonitoringCustomers(allCustomerUsers);
+  const total = filteredCustomerUsers.length;
+  const customerLimit = pagerLimitValue(state.monitoringCustomerLimit || CUSTOMER_PAGE_SIZE, CUSTOMER_PAGE_SIZE);
+  const effectiveLimit = effectivePagerLimit(customerLimit, total, CUSTOMER_PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / effectiveLimit));
+  const currentPage = Math.min(Math.max(1, Number(state.monitoringCustomerPage || 1)), totalPages);
+  state.monitoringCustomerPage = currentPage;
+  const offset = (currentPage - 1) * effectiveLimit;
+  const pageUsers = filteredCustomerUsers.slice(offset, offset + effectiveLimit);
+  const pagination = {
+    page: currentPage,
+    limit: customerLimit,
+    total,
+    totalPages,
+    hasPrev: currentPage > 1,
+    hasNext: currentPage < totalPages
+  };
 
   app.innerHTML = `
     <div class="stack">
@@ -17126,6 +17619,15 @@ function memberKtpPhotoUrl(member = {}, fallbackId = '') {
   return `/api/monitoring/member-ktp-photo?memberId=${encodeURIComponent(id)}${version ? `&v=${encodeURIComponent(version)}` : ''}`;
 }
 
+function memberHasKtpPhoto(member = {}) {
+  const photo = member.ktpPhoto || member.memberKtpPhoto || null;
+  return Boolean(
+    member.ktpPhotoUrl
+    || member.memberKtpPhotoUrl
+    || (photo && typeof photo === 'object' && (photo.hasPhoto || photo.id))
+  );
+}
+
 function memberDataValidationState(member = {}) {
   const serverChecks = member.dataValidation?.checks;
   if (serverChecks && typeof serverChecks === 'object') {
@@ -17137,7 +17639,10 @@ function memberDataValidationState(member = {}) {
       location: serverChecks.location === true,
       housePhoto: serverChecks.housePhoto === true
     };
-    return { valid: Object.values(checks).every(Boolean), checks };
+    const optionalChecks = {
+      ktpPhoto: serverChecks.ktpPhoto === true || memberHasKtpPhoto(member)
+    };
+    return { valid: Object.values(checks).every(Boolean), checks, optionalChecks };
   }
   const latitude = Number(member.latitude ?? member.memberLatitude ?? 0);
   const longitude = Number(member.longitude ?? member.memberLongitude ?? 0);
@@ -17156,7 +17661,10 @@ function memberDataValidationState(member = {}) {
       && longitude <= 180,
     housePhoto: Boolean(memberHousePhotoUrl(member))
   };
-  return { valid: Object.values(checks).every(Boolean), checks };
+  const optionalChecks = {
+    ktpPhoto: memberHasKtpPhoto(member)
+  };
+  return { valid: Object.values(checks).every(Boolean), checks, optionalChecks };
 }
 
 function memberDataValidationModalBody(member = {}) {
@@ -17168,6 +17676,9 @@ function memberDataValidationModalBody(member = {}) {
     ['address', 'Alamat'],
     ['location', 'Data Lokasi'],
     ['housePhoto', 'Foto Rumah']
+  ];
+  const optionalItems = [
+    ['ktpPhoto', 'Foto KTP', 'Opsional untuk OCR/arsip']
   ];
   return `
     <div class="member-validation-modal">
@@ -17188,6 +17699,16 @@ function memberDataValidationModalBody(member = {}) {
             <small>${validation.checks[key] ? 'Valid' : 'Belum terisi'}</small>
           </div>
         `).join('')}
+        ${optionalItems.map(([key, label, hint]) => {
+          const complete = validation.optionalChecks?.[key] === true;
+          return `
+            <div class="member-validation-item ${complete ? 'is-valid' : ''}">
+              <span class="member-validation-icon" aria-hidden="true"></span>
+              <strong>${escapeHtml(label)}</strong>
+              <small>${complete ? 'Tersimpan' : escapeHtml(hint)}</small>
+            </div>
+          `;
+        }).join('')}
       </div>
       <div class="modal-actions">
         <button class="ghost-button" data-close-modal type="button">Tutup</button>
@@ -17315,12 +17836,12 @@ function memberEditHeader(member = {}, detail = {}) {
   `;
 }
 
-function memberPaginationControls(pagination = {}) {
+function memberPaginationControls(pagination = {}, currentLimit = state.monitoringMemberLimit || 10) {
   const page = Number(pagination.page || 1);
   const totalPages = Number(pagination.totalPages || 1);
   const total = Number(pagination.total || 0);
-  const limitControl = pagerLimitControl('member', pagination.limit || state.monitoringMemberLimit || 10, 10);
-  if (total <= effectivePagerLimit(pagination.limit || state.monitoringMemberLimit || 10, total, 10)) {
+  const limitControl = pagerLimitControl('member', pagination.limit || currentLimit || 10, 10);
+  if (total <= effectivePagerLimit(pagination.limit || currentLimit || 10, total, 10)) {
     return `
       <div class="pager">
         <span class="pager-info">${total ? `Menampilkan ${total} member` : 'Belum ada member'}</span>
@@ -18233,6 +18754,12 @@ async function openMemberPaymentModal(member = {}) {
   billingPeriodSelect?.addEventListener('change', syncScheduleFields);
 }
 
+function monitoringMemberEffectivePeriodMode() {
+  const selected = String(state.monitoringMemberPeriod || 'all').trim().toLowerCase();
+  if (selected && selected !== 'all') return selected;
+  return state.monitoringMemberNewCustomer === 'new' ? 'month' : 'all';
+}
+
 async function printMonitoringMembersReport() {
   const printWindow = window.open('', '_blank');
   if (!printWindow) throw new Error('Popup print diblokir browser');
@@ -18243,7 +18770,7 @@ async function printMonitoringMembersReport() {
     billingPeriod: state.monitoringMemberBillingPeriod,
     newCustomer: state.monitoringMemberNewCustomer,
     nas: state.monitoringMemberNas,
-    periodMode: state.monitoringMemberPeriod,
+    periodMode: monitoringMemberEffectivePeriodMode(),
     from: state.monitoringMemberFrom,
     to: state.monitoringMemberTo,
     creator: state.monitoringMemberCreator,
@@ -18326,24 +18853,484 @@ async function printMonitoringMembersReport() {
   window.setTimeout(() => printWindow.print(), 300);
 }
 
-async function renderMonitoringMembers(options = {}) {
-  clearRealtimeTimers();
-  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat member...</div>';
-  const params = queryString({
-    status: state.monitoringMemberStatus,
-    paymentType: state.monitoringMemberPaymentType,
-    billingPeriod: state.monitoringMemberBillingPeriod,
-    newCustomer: state.monitoringMemberNewCustomer,
-    nas: state.monitoringMemberNas,
+function monitoringNewCustomerDateRange() {
+  const period = normalizedPeriod(state.monitoringNewCustomerPeriod || state.period || todayInput().slice(0, 7));
+  return {
+    period,
+    from: `${period}-01`,
+    to: monthEndInput(period)
+  };
+}
+
+const MONITORING_MEMBER_TABS = [
+  { value: 'all', label: 'Semua Pelanggan' },
+  { value: 'new', label: 'Pelanggan Baru' },
+  { value: 'isolated', label: 'Isolir' },
+  { value: 'terminated', label: 'Terminated' }
+];
+
+function normalizeMonitoringMemberTab(tab = state.monitoringMemberTab) {
+  const value = String(tab || 'all').trim().toLowerCase();
+  return MONITORING_MEMBER_TABS.some((item) => item.value === value) ? value : 'all';
+}
+
+function monitoringMemberTabStateKeys(tab = normalizeMonitoringMemberTab()) {
+  if (tab === 'new') {
+    return {
+      page: 'monitoringNewCustomerPage',
+      limit: 'monitoringNewCustomerLimit',
+      nas: 'monitoringNewCustomerNas'
+    };
+  }
+  if (tab === 'isolated') {
+    return {
+      page: 'monitoringIsolatedMemberPage',
+      limit: 'monitoringIsolatedMemberLimit',
+      nas: 'monitoringIsolatedMemberNas'
+    };
+  }
+  if (tab === 'terminated') {
+    return {
+      page: 'monitoringTerminatedMemberPage',
+      limit: 'monitoringTerminatedMemberLimit',
+      nas: 'monitoringTerminatedMemberNas'
+    };
+  }
+  return {
+    page: 'monitoringMemberPage',
+    limit: 'monitoringMemberLimit',
+    nas: 'monitoringMemberNas'
+  };
+}
+
+function monitoringMemberTabStatus(tab = normalizeMonitoringMemberTab()) {
+  if (tab === 'new') return 'all';
+  if (tab === 'isolated') return 'suspend';
+  if (tab === 'terminated') return 'terminate';
+  return state.monitoringMemberStatus || 'all';
+}
+
+function monitoringMemberTabsMarkup(activeTab = normalizeMonitoringMemberTab()) {
+  return `
+    <div class="tab-switcher member-tab-switcher" role="tablist" aria-label="Filter pelanggan">
+      ${MONITORING_MEMBER_TABS.map((tab) => `
+        <button class="tab-button ${activeTab === tab.value ? 'is-active' : ''}" type="button" data-monitoring-member-tab="${escapeHtml(tab.value)}" role="tab" aria-selected="${activeTab === tab.value ? 'true' : 'false'}">${escapeHtml(tab.label)}</button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function monitoringMemberTabMetricMarkup(tab = normalizeMonitoringMemberTab(), summary = {}, pagination = {}, range = null) {
+  if (tab === 'new') {
+    return `
+      <section class="metrics member-summary-metrics">
+        ${metric('Pelanggan Baru', displayNumber(pagination.total || 0), periodLabel(range?.period || state.monitoringNewCustomerPeriod))}
+        ${metric('Periode', `${escapeHtml(dateText(range?.from || ''))} - ${escapeHtml(dateText(range?.to || ''))}`, 'Tanggal aktif/registrasi')}
+      </section>
+    `;
+  }
+  if (tab === 'isolated' || tab === 'terminated') {
+    const label = tab === 'isolated' ? 'Pelanggan Isolir' : 'Pelanggan Terminated';
+    const statusValue = tab === 'isolated' ? 'suspend' : 'terminate';
+    return `
+      <section class="metrics member-summary-metrics">
+        ${metric(label, displayNumber(pagination.total || 0), 'Data sesuai status')}
+        ${metric('Status', escapeHtml(memberStatusLabel(statusValue)), 'Filter terkunci')}
+      </section>
+    `;
+  }
+  return `
+    <section class="metrics member-summary-metrics">
+      ${metric('Total', displayNumber(summary.total || 0), 'Semua member')}
+      ${metric('Prepaid Fixed', displayNumber(summary.prepaidFixed || 0), 'Prepaid fixed')}
+      ${metric('Prepaid Renewal', displayNumber(summary.prepaidRenewal || 0), 'Prepaid renewal')}
+      ${metric('Postpaid Fixed', displayNumber(summary.postpaidFixed || 0), 'Postpaid fixed')}
+      ${metric('Postpaid Cycle', displayNumber(summary.postpaidCycle || 0), 'Postpaid cycle')}
+    </section>
+  `;
+}
+
+function memberSegmentPaginationControls(kind, pagination = {}, currentLimit = 10, label = 'pelanggan') {
+  const page = Number(pagination.page || 1);
+  const totalPages = Number(pagination.totalPages || 1);
+  const total = Number(pagination.total || 0);
+  const limitControl = pagerLimitControl(kind, pagination.limit || currentLimit || 10, 10);
+  if (total <= effectivePagerLimit(pagination.limit || currentLimit || 10, total, 10)) {
+    return `
+      <div class="pager">
+        <span class="pager-info">${total ? `Menampilkan ${total} ${escapeHtml(label)}` : `Belum ada ${escapeHtml(label)}`}</span>
+        ${limitControl}
+      </div>
+    `;
+  }
+  return `
+    <div class="pager">
+      <button class="ghost-button compact" type="button" data-${kind}-page="${page - 1}" ${pagination.hasPrev ? '' : 'disabled'}>Sebelumnya</button>
+      <span class="pager-info">Halaman ${page} dari ${totalPages} - ${total} ${escapeHtml(label)}</span>
+      ${limitControl}
+      <button class="ghost-button compact" type="button" data-${kind}-page="${page + 1}" ${pagination.hasNext ? '' : 'disabled'}>Berikutnya</button>
+    </div>
+  `;
+}
+
+function monitoringMemberSegmentRows(members = [], pagination = {}) {
+  const currentPage = Number(pagination.page || 1);
+  const currentLimit = Number(pagination.limit || members.length || 10);
+  const startNo = Number.isFinite(currentLimit) ? ((currentPage - 1) * currentLimit) : 0;
+  return members.length ? members.map((member, index) => {
+    const titleText = memberTitle(member);
+    const internetText = member.internet || member.username || '-';
+    const contactText = member.whatsapp || member.phone || '-';
+    const priceText = member.price ? rupiah(member.price) : '-';
+    const dateTextValue = member.registeredDate || member.activeDate || member.createdAt || '';
+    return `
+      <tr>
+        <td class="nowrap">${displayNumber(startNo + index + 1)}</td>
+        <td>
+          <div class="cell-stack">
+            <strong class="cell-title" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}</strong>
+            <span class="cell-subline member-id-line" title="${escapeHtml(memberDisplayId(member))}"><b>${escapeHtml(memberDisplayId(member))}</b></span>
+            <span class="cell-subline" title="${escapeHtml(internetText)}">${escapeHtml(internetText)}</span>
+          </div>
+        </td>
+        <td>
+          <div class="cell-stack">
+            <strong class="cell-title">${escapeHtml(contactText)}</strong>
+            ${member.address ? `<span class="cell-subline clamp-2" title="${escapeHtml(member.address)}">${escapeHtml(member.address)}</span>` : '<span class="cell-subline">-</span>'}
+          </div>
+        </td>
+        <td>
+          <div class="cell-stack">
+            <strong class="cell-title">${escapeHtml(member.packageName || '-')}</strong>
+            <span class="cell-subline">${escapeHtml(priceText)}</span>
+          </div>
+        </td>
+        <td>${escapeHtml(member.nasName || member.nas || member.siteName || '-')}</td>
+        <td><span class="badge ${memberStatusBadge(member.status || member.serviceStatus)}">${escapeHtml(memberStatusLabel(member.status || member.serviceStatus))}</span></td>
+        <td class="nowrap">${escapeHtml(dateTextValue ? dateText(dateTextValue) : '-')}</td>
+      </tr>
+    `;
+  }).join('') : '<tr><td colspan="7">Tidak ada pelanggan sesuai filter.</td></tr>';
+}
+
+function monitoringMemberSegmentPrintRows(members = []) {
+  return members.length ? members.map((member, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${escapeHtml(dateText(member.registeredDate || member.activeDate || member.createdAt || '') || '-')}</td>
+      <td>${escapeHtml(member.fullName || member.customerName || '-')}</td>
+      <td>${escapeHtml(member.memberId || member.userId || member.accountId || '-')}</td>
+      <td>${escapeHtml(member.internet || member.username || '-')}</td>
+      <td>${escapeHtml(member.whatsapp || member.phone || '-')}</td>
+      <td>${escapeHtml(member.nasName || member.nas || member.siteName || '-')}</td>
+      <td>${escapeHtml(member.packageName || '-')}</td>
+      <td>${escapeHtml(memberStatusLabel(member.status || member.serviceStatus))}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="9">Tidak ada data.</td></tr>';
+}
+
+async function printMonitoringMemberSegmentReport(title, params) {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) throw new Error('Popup print diblokir browser');
+  printWindow.document.write('<!doctype html><title>Memuat laporan pelanggan</title><body>Memuat data...</body>');
+  const payload = await api(`/api/monitoring/members?${queryString({ ...params, page: 1, limit: 'all', sort: 'az' })}`);
+  const members = Array.isArray(payload.members) ? payload.members : [];
+  const branding = currentBranding();
+  printWindow.document.open();
+  printWindow.document.write(`
+    <!doctype html>
+    <html lang="id">
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(branding.businessName)} - ${escapeHtml(title)}</title>
+        <style>
+          @page { size: A4 landscape; margin: 12mm; }
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; color: #111827; margin: 0; }
+          .head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+          .head img { width: 44px; height: 44px; object-fit: contain; }
+          .head strong { display: block; font-size: 18px; }
+          .head span { color: #475569; font-size: 12px; }
+          h1 { margin: 0 0 10px; font-size: 16px; }
+          table { width: 100%; border-collapse: collapse; font-size: 10px; }
+          th, td { border: 1px solid #d1d5db; padding: 5px 6px; text-align: left; vertical-align: top; }
+          th { background: #0f4f82; color: #fff; white-space: nowrap; }
+          td { word-break: normal; overflow-wrap: anywhere; }
+        </style>
+      </head>
+      <body>
+        <div class="head">
+          <img src="${escapeHtml(branding.logoUrl)}" alt="">
+          <div>
+            <strong>${escapeHtml(branding.businessName)}</strong>
+            <span>${escapeHtml(branding.appSubtitle || '')}</span>
+          </div>
+        </div>
+        <h1>${escapeHtml(title)}</h1>
+        <table>
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Registrasi</th>
+              <th>Nama</th>
+              <th>Member ID</th>
+              <th>Username</th>
+              <th>Whatsapp</th>
+              <th>NAS</th>
+              <th>Paket</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>${monitoringMemberSegmentPrintRows(members)}</tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  window.setTimeout(() => printWindow.print(), 300);
+}
+
+async function renderMonitoringNewCustomers(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat pelanggan baru...</div>';
+  const range = monitoringNewCustomerDateRange();
+  state.monitoringNewCustomerPeriod = range.period;
+  const params = {
+    status: state.monitoringNewCustomerStatus,
+    paymentType: 'all',
+    billingPeriod: 'all',
+    newCustomer: 'new',
+    nas: state.monitoringNewCustomerNas,
+    periodMode: 'all',
+    from: range.from,
+    to: range.to,
+    creator: 'all',
+    search: state.search,
+    page: state.monitoringNewCustomerPage,
+    limit: state.monitoringNewCustomerLimit,
+    refresh: options.refresh ? 1 : 0
+  };
+  const payload = await api(`/api/monitoring/members?${queryString(params)}`);
+  const members = Array.isArray(payload.members) ? payload.members : [];
+  const nasOptions = Array.isArray(payload.nasOptions) ? payload.nasOptions : [];
+  const pagination = payload.pagination || { page: 1, limit: state.monitoringNewCustomerLimit, total: members.length, totalPages: 1 };
+  state.monitoringNewCustomerPage = Number(pagination.page || 1);
+  state.monitoringNewCustomerLimit = pagerLimitValue(pagination.limit || state.monitoringNewCustomerLimit || 10, 10);
+  const title = `Pelanggan Baru ${periodLabel(range.period)}`;
+
+  app.innerHTML = `
+    <div class="stack monitoring-members-view monitoring-member-segment-view">
+      <section class="metrics member-summary-metrics">
+        ${metric('Pelanggan Baru', displayNumber(pagination.total || 0), periodLabel(range.period))}
+        ${metric('Periode', `${escapeHtml(dateText(range.from))} - ${escapeHtml(dateText(range.to))}`, 'Tanggal aktif/registrasi')}
+        ${metric('Status', escapeHtml(memberStatusLabel(state.monitoringNewCustomerStatus)), 'Filter status')}
+      </section>
+
+      <div class="toolbar">
+        <div class="filters">
+          <input class="control month-picker-control" id="newCustomerPeriodFilter" type="month" value="${escapeHtml(range.period)}" aria-label="Filter periode pelanggan baru">
+          <select class="control" id="newCustomerStatusFilter" aria-label="Filter status pelanggan baru">
+            <option value="all" ${state.monitoringNewCustomerStatus === 'all' ? 'selected' : ''}>Semua status</option>
+            <option value="active" ${state.monitoringNewCustomerStatus === 'active' ? 'selected' : ''}>Aktif</option>
+            <option value="suspend" ${state.monitoringNewCustomerStatus === 'suspend' ? 'selected' : ''}>Isolir</option>
+          </select>
+          <select class="control" id="newCustomerNasFilter" aria-label="Filter NAS pelanggan baru">
+            ${voucherReportOptionTags(nasOptions, state.monitoringNewCustomerNas || 'all', 'Semua NAS')}
+          </select>
+          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, UID, PPPoE, WA" autocomplete="off">
+        </div>
+        <div class="row-actions">
+          <button class="ghost-button compact" id="exportNewCustomersXlsx" type="button">Export XLSX</button>
+          <button class="ghost-button compact" id="printNewCustomersPdf" type="button">Print PDF</button>
+          <button class="ghost-button compact" id="refreshNewCustomers" type="button">Refresh</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="billing-table member-mobile-table">
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Member</th>
+              <th>Contact</th>
+              <th>Paket</th>
+              <th>NAS</th>
+              <th>Status</th>
+              <th>Registrasi</th>
+            </tr>
+          </thead>
+          <tbody>${monitoringMemberSegmentRows(members, pagination)}</tbody>
+        </table>
+      </div>
+      ${memberSegmentPaginationControls('new-customer', pagination, state.monitoringNewCustomerLimit, 'pelanggan baru')}
+    </div>
+  `;
+
+  document.getElementById('newCustomerPeriodFilter')?.addEventListener('change', (event) => {
+    state.monitoringNewCustomerPeriod = normalizedPeriod(event.target.value || todayInput().slice(0, 7));
+    state.monitoringNewCustomerPage = 1;
+    renderMonitoringNewCustomers();
+  });
+  document.getElementById('newCustomerStatusFilter')?.addEventListener('change', (event) => {
+    state.monitoringNewCustomerStatus = event.target.value || 'all';
+    state.monitoringNewCustomerPage = 1;
+    renderMonitoringNewCustomers();
+  });
+  document.getElementById('newCustomerNasFilter')?.addEventListener('change', (event) => {
+    state.monitoringNewCustomerNas = event.target.value || 'all';
+    state.monitoringNewCustomerPage = 1;
+    renderMonitoringNewCustomers();
+  });
+  document.getElementById('refreshNewCustomers')?.addEventListener('click', () => renderMonitoringNewCustomers({ refresh: true }));
+  document.getElementById('exportNewCustomersXlsx')?.addEventListener('click', async () => {
+    const exportParams = { ...params, page: 1, limit: 'all', sort: 'az' };
+    await downloadFile(`/api/monitoring/members/export.xlsx?${queryString(exportParams)}`, `pelanggan-baru-${range.period}.xlsx`);
+  });
+  document.getElementById('printNewCustomersPdf')?.addEventListener('click', () => printMonitoringMemberSegmentReport(title, params).catch((error) => {
+    setToast(error.message || 'Print pelanggan baru gagal');
+  }));
+  bindSearch((renderOptions = {}) => {
+    state.monitoringNewCustomerPage = 1;
+    return renderMonitoringNewCustomers(renderOptions);
+  });
+  app.querySelectorAll('[data-new-customer-page]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.monitoringNewCustomerPage = Math.max(1, Number(button.dataset.newCustomerPage || 1));
+      renderMonitoringNewCustomers();
+    });
+  });
+  bindPagerLimit('new-customer', (limit) => {
+    state.monitoringNewCustomerLimit = limit;
+  }, (page) => {
+    state.monitoringNewCustomerPage = page;
+  }, renderMonitoringNewCustomers, 10);
+}
+
+async function renderMonitoringMemberStatusPage(config = {}, options = {}) {
+  const status = config.status || 'active';
+  const title = config.title || 'Pelanggan';
+  const kind = config.kind || 'member-status';
+  const stateKeys = config.stateKeys || {};
+  const pageKey = stateKeys.page || 'monitoringIsolatedMemberPage';
+  const limitKey = stateKeys.limit || 'monitoringIsolatedMemberLimit';
+  const nasKey = stateKeys.nas || 'monitoringIsolatedMemberNas';
+  if (shouldShowPageLoading(options)) app.innerHTML = `<div class="empty">Memuat ${escapeHtml(title.toLowerCase())}...</div>`;
+  const params = {
+    status,
+    paymentType: 'all',
+    billingPeriod: 'all',
+    newCustomer: 'all',
+    nas: state[nasKey],
     periodMode: 'all',
     from: '',
     to: '',
     creator: 'all',
     search: state.search,
-    page: state.monitoringMemberPage,
-    limit: state.monitoringMemberLimit,
+    page: state[pageKey],
+    limit: state[limitKey],
     refresh: options.refresh ? 1 : 0
+  };
+  const payload = await api(`/api/monitoring/members?${queryString(params)}`);
+  const members = Array.isArray(payload.members) ? payload.members : [];
+  const nasOptions = Array.isArray(payload.nasOptions) ? payload.nasOptions : [];
+  const pagination = payload.pagination || { page: 1, limit: state[limitKey], total: members.length, totalPages: 1 };
+  state[pageKey] = Number(pagination.page || 1);
+  state[limitKey] = pagerLimitValue(pagination.limit || state[limitKey] || 10, 10);
+
+  app.innerHTML = `
+    <div class="stack monitoring-members-view monitoring-member-segment-view">
+      <section class="metrics member-summary-metrics">
+        ${metric(title, displayNumber(pagination.total || 0), 'Data sesuai status')}
+        ${metric('Status', escapeHtml(memberStatusLabel(status)), 'Filter terkunci')}
+      </section>
+
+      <div class="toolbar">
+        <div class="filters">
+          <select class="control" id="${kind}NasFilter" aria-label="Filter NAS ${escapeHtml(title)}">
+            ${voucherReportOptionTags(nasOptions, state[nasKey] || 'all', 'Semua NAS')}
+          </select>
+          <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, UID, PPPoE, WA" autocomplete="off">
+        </div>
+        <div class="row-actions">
+          <button class="ghost-button compact" id="${kind}ExportXlsx" type="button">Export XLSX</button>
+          <button class="ghost-button compact" id="${kind}PrintPdf" type="button">Print PDF</button>
+          <button class="ghost-button compact" id="${kind}Refresh" type="button">Refresh</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="billing-table member-mobile-table">
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Member</th>
+              <th>Contact</th>
+              <th>Paket</th>
+              <th>NAS</th>
+              <th>Status</th>
+              <th>Registrasi</th>
+            </tr>
+          </thead>
+          <tbody>${monitoringMemberSegmentRows(members, pagination)}</tbody>
+        </table>
+      </div>
+      ${memberSegmentPaginationControls(kind, pagination, state[limitKey], title.toLowerCase())}
+    </div>
+  `;
+
+  document.getElementById(`${kind}NasFilter`)?.addEventListener('change', (event) => {
+    state[nasKey] = event.target.value || 'all';
+    state[pageKey] = 1;
+    renderMonitoringMemberStatusPage(config);
   });
+  document.getElementById(`${kind}Refresh`)?.addEventListener('click', () => renderMonitoringMemberStatusPage(config, { refresh: true }));
+  document.getElementById(`${kind}ExportXlsx`)?.addEventListener('click', async () => {
+    await downloadFile(`/api/monitoring/members/export.xlsx?${queryString({ ...params, page: 1, limit: 'all', sort: 'az' })}`, `${kind}-${todayInput()}.xlsx`);
+  });
+  document.getElementById(`${kind}PrintPdf`)?.addEventListener('click', () => printMonitoringMemberSegmentReport(title, params).catch((error) => {
+    setToast(error.message || `Print ${title.toLowerCase()} gagal`);
+  }));
+  bindSearch((renderOptions = {}) => {
+    state[pageKey] = 1;
+    return renderMonitoringMemberStatusPage(config, renderOptions);
+  });
+  app.querySelectorAll(`[data-${kind}-page]`).forEach((button) => {
+    button.addEventListener('click', () => {
+      state[pageKey] = Math.max(1, Number(button.dataset[`${kind.replace(/-([a-z])/g, (_, char) => char.toUpperCase())}Page`] || 1));
+      renderMonitoringMemberStatusPage(config);
+    });
+  });
+  bindPagerLimit(kind, (limit) => {
+    state[limitKey] = limit;
+  }, (page) => {
+    state[pageKey] = page;
+  }, () => renderMonitoringMemberStatusPage(config), 10);
+}
+
+async function renderMonitoringMembers(options = {}) {
+  clearRealtimeTimers();
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat member...</div>';
+  const activeMemberTab = normalizeMonitoringMemberTab();
+  state.monitoringMemberTab = activeMemberTab;
+  const tabStateKeys = monitoringMemberTabStateKeys(activeMemberTab);
+  const newCustomerRange = activeMemberTab === 'new' ? monitoringNewCustomerDateRange() : null;
+  if (newCustomerRange) state.monitoringNewCustomerPeriod = newCustomerRange.period;
+  const requestParams = {
+    status: monitoringMemberTabStatus(activeMemberTab),
+    paymentType: activeMemberTab === 'new' ? 'all' : state.monitoringMemberPaymentType,
+    billingPeriod: activeMemberTab === 'new' ? 'all' : state.monitoringMemberBillingPeriod,
+    newCustomer: activeMemberTab === 'new' ? 'new' : 'all',
+    nas: state[tabStateKeys.nas],
+    periodMode: activeMemberTab === 'new' ? 'all' : 'all',
+    from: newCustomerRange?.from || '',
+    to: newCustomerRange?.to || '',
+    creator: 'all',
+    search: state.search,
+    page: state[tabStateKeys.page],
+    limit: state[tabStateKeys.limit],
+    refresh: options.refresh ? 1 : 0
+  };
+  const params = queryString(requestParams);
   const payload = await api(`/api/monitoring/members?${params}`);
   const members = Array.isArray(payload.members) ? payload.members : [];
   const nasOptions = Array.isArray(payload.nasOptions) ? payload.nasOptions : [];
@@ -18355,8 +19342,8 @@ async function renderMonitoringMembers(options = {}) {
     postpaidFixed: 0,
     postpaidCycle: 0
   };
-  state.monitoringMemberPage = Number(pagination.page || 1);
-  state.monitoringMemberLimit = pagerLimitValue(pagination.limit || state.monitoringMemberLimit || 10, 10);
+  state[tabStateKeys.page] = Number(pagination.page || 1);
+  state[tabStateKeys.limit] = pagerLimitValue(pagination.limit || state[tabStateKeys.limit] || 10, 10);
   const contactEditable = canAny(['customers:manage', 'members:contact:write']);
   const paymentEditable = can('customers:manage');
   const rows = members.length ? members.map((member, index) => {
@@ -18409,11 +19396,7 @@ async function renderMonitoringMembers(options = {}) {
             </button>
           </div>
         </td>
-        <td class="member-date-cell">
-          ${dateLines.length
-            ? `<div class="cell-stack member-date-lines">${dateLines.map((line) => `<span>${escapeHtml(line)}</span>`).join('')}</div>`
-            : '<span class="muted">-</span>'}
-        </td>
+        <td>${dateLines.length ? dateLines.map((line) => `<div class="nowrap">${escapeHtml(line)}</div>`).join('') : '<span class="muted">-</span>'}</td>
         <td>
           <div class="row-actions compact-actions">
             <button class="ghost-button compact" type="button" data-member-contact="${index}" ${id ? '' : 'disabled'}>${contactEditable ? 'Edit Contact' : 'Contact'}</button>
@@ -18437,7 +19420,7 @@ async function renderMonitoringMembers(options = {}) {
   };
 
   app.innerHTML = `
-    <div class="stack">
+    <div class="stack monitoring-members-view">
       ${payload.ok ? '' : `
         <section class="notice error">
           <strong>Data member belum bisa dibaca</strong>
@@ -18445,43 +19428,39 @@ async function renderMonitoringMembers(options = {}) {
         </section>
       `}
 
-      <section class="metrics member-summary-metrics">
-        ${metric('Total', displayNumber(summary.total || 0), 'Semua member')}
-        ${metric('Prepaid Fixed', displayNumber(summary.prepaidFixed || 0), 'Prepaid fixed')}
-        ${metric('Prepaid Renewal', displayNumber(summary.prepaidRenewal || 0), 'Prepaid renewal')}
-        ${metric('Postpaid Fixed', displayNumber(summary.postpaidFixed || 0), 'Postpaid fixed')}
-        ${metric('Postpaid Cycle', displayNumber(summary.postpaidCycle || 0), 'Postpaid cycle')}
-      </section>
+      ${monitoringMemberTabsMarkup(activeMemberTab)}
+      ${monitoringMemberTabMetricMarkup(activeMemberTab, summary, pagination, newCustomerRange)}
 
       <div class="toolbar">
         <div class="filters">
-          <select class="control" id="memberStatusFilter" aria-label="Filter status member">
-            <option value="all" ${state.monitoringMemberStatus === 'all' ? 'selected' : ''}>Semua status</option>
-            <option value="active" ${state.monitoringMemberStatus === 'active' ? 'selected' : ''}>Aktif</option>
-            <option value="suspend" ${state.monitoringMemberStatus === 'suspend' ? 'selected' : ''}>Isolir</option>
-            <option value="terminate" ${state.monitoringMemberStatus === 'terminate' ? 'selected' : ''}>Terminated</option>
-          </select>
-          <select class="control" id="memberPaymentTypeFilter" aria-label="Filter tipe pembayaran">
-            <option value="all" ${state.monitoringMemberPaymentType === 'all' ? 'selected' : ''}>Semua tipe</option>
-            <option value="prepaid" ${state.monitoringMemberPaymentType === 'prepaid' ? 'selected' : ''}>Prepaid</option>
-            <option value="postpaid" ${state.monitoringMemberPaymentType === 'postpaid' ? 'selected' : ''}>Postpaid</option>
-          </select>
-          <select class="control" id="memberBillingPeriodFilter" aria-label="Filter periode billing">
-            ${state.monitoringMemberPaymentType === 'all'
-              ? [
-                ['all', 'Semua periode'],
-                ['fixed', 'Fixed Date'],
-                ['cycle', 'Billing Cycle'],
-                ['renewal', 'Renewal']
-              ].map(([value, label]) => `<option value="${value}" ${state.monitoringMemberBillingPeriod === value ? 'selected' : ''}>${label}</option>`).join('')
-              : billingPeriodOptionTags(state.monitoringMemberPaymentType, state.monitoringMemberBillingPeriod, true)}
-          </select>
-          <select class="control" id="memberNewCustomerFilter" aria-label="Filter pelanggan baru">
-            <option value="all" ${state.monitoringMemberNewCustomer === 'all' ? 'selected' : ''}>Semua pelanggan</option>
-            <option value="new" ${state.monitoringMemberNewCustomer === 'new' ? 'selected' : ''}>Pelanggan Baru</option>
-          </select>
+          ${activeMemberTab === 'new' ? `<input class="control month-picker-control" id="newCustomerPeriodFilter" type="month" value="${escapeHtml(newCustomerRange?.period || state.monitoringNewCustomerPeriod)}" aria-label="Filter periode pelanggan baru">` : ''}
+          ${activeMemberTab === 'all' ? `
+            <select class="control" id="memberStatusFilter" aria-label="Filter status member">
+              <option value="all" ${state.monitoringMemberStatus === 'all' ? 'selected' : ''}>Semua status</option>
+              <option value="active" ${state.monitoringMemberStatus === 'active' ? 'selected' : ''}>Aktif</option>
+              <option value="suspend" ${state.monitoringMemberStatus === 'suspend' ? 'selected' : ''}>Isolir</option>
+              <option value="terminate" ${state.monitoringMemberStatus === 'terminate' ? 'selected' : ''}>Terminated</option>
+            </select>
+          ` : ''}
+          ${activeMemberTab !== 'new' ? `
+            <select class="control" id="memberPaymentTypeFilter" aria-label="Filter tipe pembayaran">
+              <option value="all" ${state.monitoringMemberPaymentType === 'all' ? 'selected' : ''}>Semua tipe</option>
+              <option value="prepaid" ${state.monitoringMemberPaymentType === 'prepaid' ? 'selected' : ''}>Prepaid</option>
+              <option value="postpaid" ${state.monitoringMemberPaymentType === 'postpaid' ? 'selected' : ''}>Postpaid</option>
+            </select>
+            <select class="control" id="memberBillingPeriodFilter" aria-label="Filter periode billing">
+              ${state.monitoringMemberPaymentType === 'all'
+                ? [
+                  ['all', 'Semua periode'],
+                  ['fixed', 'Fixed Date'],
+                  ['cycle', 'Billing Cycle'],
+                  ['renewal', 'Renewal']
+                ].map(([value, label]) => `<option value="${value}" ${state.monitoringMemberBillingPeriod === value ? 'selected' : ''}>${label}</option>`).join('')
+                : billingPeriodOptionTags(state.monitoringMemberPaymentType, state.monitoringMemberBillingPeriod, true)}
+            </select>
+          ` : ''}
           <select class="control" id="memberNasFilter" aria-label="Filter NAS member">
-            ${voucherReportOptionTags(nasOptions, state.monitoringMemberNas || 'all', 'Semua NAS')}
+            ${voucherReportOptionTags(nasOptions, state[tabStateKeys.nas] || 'all', 'Semua NAS')}
           </select>
           <input class="control" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, UID, PPPoE, WA, validasi" autocomplete="off">
         </div>
@@ -18493,7 +19472,7 @@ async function renderMonitoringMembers(options = {}) {
       </div>
 
       <div class="table-wrap">
-        <table class="billing-table">
+        <table class="billing-table member-mobile-table">
           <thead>
             <tr>
               <th>Member</th>
@@ -18507,18 +19486,32 @@ async function renderMonitoringMembers(options = {}) {
           <tbody>${rows}</tbody>
         </table>
       </div>
-      ${memberPaginationControls(pagination)}
+      ${memberPaginationControls(pagination, state[tabStateKeys.limit])}
     </div>
   `;
 
-  document.getElementById('memberStatusFilter')?.addEventListener('change', (event) => {
-    state.monitoringMemberStatus = event.target.value || 'all';
-    state.monitoringMemberPage = 1;
+  app.querySelectorAll('[data-monitoring-member-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextTab = normalizeMonitoringMemberTab(button.dataset.monitoringMemberTab || 'all');
+      if (state.monitoringMemberTab === nextTab) return;
+      state.monitoringMemberTab = nextTab;
+      const nextKeys = monitoringMemberTabStateKeys(nextTab);
+      state[nextKeys.page] = 1;
+      renderMonitoringMembers();
+    });
+  });
+  document.getElementById('newCustomerPeriodFilter')?.addEventListener('change', (event) => {
+    state.monitoringNewCustomerPeriod = normalizedPeriod(event.target.value || todayInput().slice(0, 7));
+    state[tabStateKeys.page] = 1;
     renderMonitoringMembers();
   });
-  document.getElementById('memberNewCustomerFilter')?.addEventListener('change', (event) => {
-    state.monitoringMemberNewCustomer = event.target.value || 'all';
-    state.monitoringMemberPage = 1;
+  document.getElementById('memberStatusFilter')?.addEventListener('change', (event) => {
+    if (activeMemberTab === 'new') {
+      state.monitoringNewCustomerStatus = event.target.value || 'all';
+    } else {
+      state.monitoringMemberStatus = event.target.value || 'all';
+    }
+    state[tabStateKeys.page] = 1;
     renderMonitoringMembers();
   });
   document.getElementById('memberPaymentTypeFilter')?.addEventListener('change', (event) => {
@@ -18529,60 +19522,50 @@ async function renderMonitoringMembers(options = {}) {
         state.monitoringMemberPaymentType
       );
     }
-    state.monitoringMemberPage = 1;
+    state[tabStateKeys.page] = 1;
     renderMonitoringMembers();
   });
   document.getElementById('memberBillingPeriodFilter')?.addEventListener('change', (event) => {
     state.monitoringMemberBillingPeriod = event.target.value || 'all';
-    state.monitoringMemberPage = 1;
+    state[tabStateKeys.page] = 1;
     renderMonitoringMembers();
   });
   document.getElementById('memberNasFilter')?.addEventListener('change', (event) => {
-    state.monitoringMemberNas = event.target.value || 'all';
-    state.monitoringMemberPage = 1;
+    state[tabStateKeys.nas] = event.target.value || 'all';
+    state[tabStateKeys.page] = 1;
     renderMonitoringMembers();
   });
   document.getElementById('refreshMembers')?.addEventListener('click', () => renderMonitoringMembers({ refresh: true }));
   document.getElementById('exportMembersXlsx')?.addEventListener('click', async () => {
     try {
-      const exportParams = queryString({
-        status: state.monitoringMemberStatus,
-        paymentType: state.monitoringMemberPaymentType,
-        billingPeriod: state.monitoringMemberBillingPeriod,
-        newCustomer: state.monitoringMemberNewCustomer,
-        nas: state.monitoringMemberNas,
-        periodMode: 'all',
-        from: '',
-        to: '',
-        creator: 'all',
-        search: state.search
-      });
-      await downloadFile(`/api/monitoring/members/export.xlsx?${exportParams}`, `pelanggan-baru-${todayInput()}.xlsx`);
+      const exportParams = queryString({ ...requestParams, page: 1, limit: 'all', sort: 'az' });
+      await downloadFile(`/api/monitoring/members/export.xlsx?${exportParams}`, `pelanggan-${activeMemberTab}-${todayInput()}.xlsx`);
     } catch (error) {
       setToast(error.message || 'Export member gagal');
     }
   });
   document.getElementById('printMembersPdf')?.addEventListener('click', async () => {
     try {
-      await printMonitoringMembersReport();
+      const title = MONITORING_MEMBER_TABS.find((tab) => tab.value === activeMemberTab)?.label || 'Pelanggan';
+      await printMonitoringMemberSegmentReport(title, requestParams);
     } catch (error) {
       setToast(error.message || 'Pratinjau PDF member gagal dibuat');
     }
   });
   bindSearch((renderOptions = {}) => {
-    state.monitoringMemberPage = 1;
+    state[tabStateKeys.page] = 1;
     return renderMonitoringMembers(renderOptions);
   });
   app.querySelectorAll('[data-member-page]').forEach((button) => {
     button.addEventListener('click', () => {
-      state.monitoringMemberPage = Math.max(1, Number(button.dataset.memberPage || 1));
+      state[tabStateKeys.page] = Math.max(1, Number(button.dataset.memberPage || 1));
       renderMonitoringMembers();
     });
   });
   bindPagerLimit('member', (limit) => {
-    state.monitoringMemberLimit = limit;
+    state[tabStateKeys.limit] = limit;
   }, (page) => {
-    state.monitoringMemberPage = page;
+    state[tabStateKeys.page] = page;
   }, renderMonitoringMembers, 10);
   app.querySelectorAll('[data-member-location]').forEach((link) => {
     link.addEventListener('click', (event) => {
@@ -18716,6 +19699,8 @@ async function renderMonitoringBilling(options = {}) {
     const mapUrl = memberLocationUrl(invoice);
     const invoiceItem = invoice.item || invoice.subscribe || '';
     const invoiceLabel = billingInvoiceNo(invoice) || '-';
+    const dueDateLabel = dateText(invoice.dueDate || invoice.invoiceDate) || '-';
+    const mobileRowNumber = ((Number(pagination.page || 1) - 1) * Number(pagination.limit || state.monitoringBillingLimit || invoices.length || 0)) + index + 1;
     return `
       <tr class="billing-row">
         <td>
@@ -18723,7 +19708,7 @@ async function renderMonitoringBilling(options = {}) {
         </td>
         <td>
           <div class="cell-stack">
-            <strong class="cell-title" title="${escapeHtml(customerName)}">${escapeHtml(customerName)}</strong>
+            <strong class="cell-title" title="${escapeHtml(customerName)}"><span class="billing-mobile-row-number">${displayNumber(mobileRowNumber)}. </span>${escapeHtml(customerName)}</strong>
             <span class="cell-subline" title="${escapeHtml(customerMeta)}">${escapeHtml(customerMeta)}</span>
           </div>
         </td>
@@ -18738,6 +19723,7 @@ async function renderMonitoringBilling(options = {}) {
         <td>
           <div class="cell-stack">
             <strong class="cell-title" title="${escapeHtml(invoiceLabel)}">${escapeHtml(invoiceLabel)}</strong>
+            <span class="cell-subline billing-mobile-invoice-meta">${escapeHtml(invoiceLabel)} · Jatuh tempo ${escapeHtml(dueDateLabel)} · ${escapeHtml(displayedStatus)}</span>
             ${invoiceItem ? `<span class="cell-subline clamp-2" title="${escapeHtml(invoiceItem)}">${escapeHtml(invoiceItem)}</span>` : '<span class="cell-subline">-</span>'}
           </div>
         </td>
@@ -18753,7 +19739,7 @@ async function renderMonitoringBilling(options = {}) {
   }).join('') : '<tr><td colspan="10">Tidak ada tagihan sesuai filter.</td></tr>';
 
   app.innerHTML = `
-    <div class="stack">
+    <div class="stack monitoring-billing-view">
       ${payload.ok ? '' : `
         <section class="notice error">
           <strong>Data tagihan belum bisa dibaca</strong>
@@ -19540,7 +20526,7 @@ function filteredUserRows(users = []) {
         user.username,
         user.employeeId,
         user.nik,
-        normalizeUserPositionLabel(user.position),
+        user.position,
         user.unit,
         user.department,
         user.roleLabel,
@@ -19667,7 +20653,7 @@ async function renderUsers(options = {}) {
                 <td>
                   <div class="user-table-details">
                     <strong>${escapeHtml(user.employeeId || user.nik || '-')}</strong>
-                    <span>${escapeHtml(normalizeUserPositionLabel(user.position) || 'Jabatan belum diisi')}</span>
+                    <span>${escapeHtml(user.position || 'Jabatan belum diisi')}</span>
                   </div>
                 </td>
                 <td>
@@ -19987,7 +20973,7 @@ function bindUserRoleNasLock() {
       unitInput.value = roleLabel(selectedRole);
     }
     if (positionSelect) {
-      const current = normalizeUserPositionLabel(positionSelect.value);
+      const current = positionSelect.value;
       const allowed = USER_POSITION_OPTIONS[selectedRole] || ['Staf'];
       const next = allowed.includes(current) ? current : allowed[0];
       positionSelect.innerHTML = userPositionOptions(selectedRole, next);
@@ -20239,7 +21225,7 @@ async function renderBillingSettings() {
     <div class="stack">
       <section class="form-panel">
         <div class="section-head">
-          <h2>Billing Settings</h2>
+          <h2>Siklus Penagihan</h2>
         </div>
         <form id="billingSettingsForm" class="form-grid">
           <label class="field">
@@ -20396,8 +21382,8 @@ function waMessageRows(messages = [], startNo = 1) {
         <input type="checkbox" data-wa-message-select="${escapeHtml(message.id)}" aria-label="Pilih pesan ${displayNumber(startNo + index)}">
         <span>${displayNumber(startNo + index)}</span>
       </td>
-      <td class="nowrap wa-message-time-cell">${escapeHtml(dateTimeText(message.sentAt || message.updatedAt || message.createdAt || message.scheduledAt))}</td>
-      <td class="wa-message-phone-cell">
+      <td class="nowrap">${escapeHtml(dateTimeText(message.sentAt || message.updatedAt || message.createdAt || message.scheduledAt))}</td>
+      <td>
         <strong>${escapeHtml(message.phone || '-')}</strong>
       </td>
       <td>${escapeHtml(waMessageSubject(message))}</td>
@@ -20475,7 +21461,7 @@ const WA_INVOICE_VARIABLES = [
   ['[gateway_total]', 'Total Payment Gateway'],
   ['[period]', 'Invoice Period'],
   ['[due_date]', 'Due Date'],
-  ['[suspend_grace]', 'Batas isolir dari Billing Setting'],
+  ['[suspend_grace]', 'Batas isolir dari pengaturan penagihan'],
   ['[suspend_grace_days]', 'Jumlah hari grace isolir'],
   ['[payment_gateway]', 'Payment Gateway Link'],
   ['[invoice_link]', 'Link invoice/status pembayaran'],
@@ -21363,16 +22349,12 @@ function paymentGatewayPager(total = 0, limit = 10, page = 1) {
 
 async function renderPaymentGateway(options = {}) {
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat Payment Gateway...</div>';
-  const limit = pagerLimitValue(state.paymentGatewayLimit || 10, 10);
   const params = queryString({
     from: state.xenditFrom,
     to: state.xenditTo,
     method: state.xenditMethod,
     kind: state.paymentGatewayKind,
-    search: state.search,
-    tab: state.paymentGatewayTab,
-    page: state.paymentGatewayPage,
-    limit
+    search: state.search
   });
   const payload = await api(`/api/payment-gateway?${params}`);
   const settings = payload.settings || {};
@@ -21380,12 +22362,11 @@ async function renderPaymentGateway(options = {}) {
   const provider = settings.provider || 'tripay';
   const callbackExampleBase = String(settings.publicBaseUrl || '').trim().replace(/\/+$/, '') || 'https://billing.example.net';
   const callbackExample = `${callbackExampleBase}/payment-gateway/webhook`;
-  const tabTotals = payload.tabTotals || {};
   const pendingRows = payload.pending || [];
   const tabs = [
     { value: 'transactions', label: 'Transaksi' },
     { value: 'balance', label: 'Riwayat Saldo' },
-    { value: 'pending', label: `Tertunda (${displayNumber(tabTotals.pending || pendingRows.length)})` },
+    { value: 'pending', label: `Tertunda (${displayNumber(pendingRows.length)})` },
     { value: 'fees', label: 'Laporan Biaya' }
   ];
   const rowsByTab = {
@@ -21395,10 +22376,12 @@ async function renderPaymentGateway(options = {}) {
     fees: payload.reports || []
   };
   const tabRows = rowsByTab[state.paymentGatewayTab] || rowsByTab.transactions;
-  const pagination = payload.pagination || { page: 1, limit, total: tabRows.length, totalPages: 1 };
-  state.paymentGatewayPage = Number(pagination.page || 1);
-  state.paymentGatewayLimit = pagerLimitValue(pagination.limit || limit, 10);
-  const pageRows = tabRows;
+  const limit = pagerLimitValue(state.paymentGatewayLimit || 10, 10);
+  const effectiveLimit = effectivePagerLimit(limit, tabRows.length, 10);
+  const totalPages = Math.max(1, Math.ceil(tabRows.length / effectiveLimit));
+  state.paymentGatewayPage = Math.min(Math.max(1, Number(state.paymentGatewayPage || 1)), totalPages);
+  const offset = (state.paymentGatewayPage - 1) * effectiveLimit;
+  const pageRows = tabRows.slice(offset, offset + effectiveLimit);
   const summary = payload.summary || {};
   const historySync = payload.historySync || {};
   const historySyncText = historySync.syncedAt
@@ -21513,7 +22496,7 @@ async function renderPaymentGateway(options = {}) {
             <tbody>${pageRows.length ? paymentGatewayRows(pageRows) : '<tr class="payment-gateway-empty"><td colspan="8">Belum ada transaksi payment gateway.</td></tr>'}</tbody>
           </table>
         </div>
-        ${paymentGatewayPager(pagination.total || 0, state.paymentGatewayLimit, state.paymentGatewayPage)}
+        ${paymentGatewayPager(tabRows.length, limit, state.paymentGatewayPage)}
       </section>
     </div>
   `;
@@ -22320,6 +23303,21 @@ async function render(options = {}) {
     else if (state.view === 'genieAcs') await renderGenieAcs(renderOptions);
     else if (state.view === 'monitoringSite') await renderMonitoringSite();
     else if (state.view === 'monitoringMembers') await renderMonitoringMembers(renderOptions);
+    else if (state.view === 'monitoringNewCustomers') {
+      state.monitoringMemberTab = 'new';
+      state.view = 'monitoringMembers';
+      await renderMonitoringMembers(renderOptions);
+    }
+    else if (state.view === 'monitoringIsolatedMembers') {
+      state.monitoringMemberTab = 'isolated';
+      state.view = 'monitoringMembers';
+      await renderMonitoringMembers(renderOptions);
+    }
+    else if (state.view === 'monitoringTerminatedMembers') {
+      state.monitoringMemberTab = 'terminated';
+      state.view = 'monitoringMembers';
+      await renderMonitoringMembers(renderOptions);
+    }
     else if (state.view === 'monitoringCustomers') await renderMonitoringCustomers(renderOptions);
     else if (state.view === 'monitoringBilling') await renderMonitoringBilling();
     else if (state.view === 'monitoringServices') await renderMonitoringServices();
@@ -22334,7 +23332,7 @@ async function render(options = {}) {
     else if (state.view === 'reportsTransactions') await renderReportsTransactions(renderOptions);
     else if (state.view === 'reportsFinanceRecap') await renderReportsFinanceRecap();
     else if (state.view === 'reportsInventoryStock') await renderReportsInventoryStock();
-    else if (state.view === 'diagnostics') await renderDiagnostics(renderOptions);
+    else if (state.view === 'logDetection') await renderLogDetection(renderOptions);
     else if (state.view === 'activity') await renderActivity(renderOptions);
     else if (state.view === 'waGateway') await renderWaGateway();
     else if (state.view === 'paymentGateway') await renderPaymentGateway();
@@ -22476,6 +23474,7 @@ document.querySelectorAll('[data-nav-toggle]').forEach((button) => {
         group.scrollIntoView({ block: 'nearest' });
       });
     }
+    syncBottomNavigationState();
   });
 });
 
@@ -22483,6 +23482,14 @@ document.querySelectorAll('[data-open-nav-group]').forEach((button) => {
   button.addEventListener('click', () => {
     const group = document.querySelector(`[data-nav-group="${button.dataset.openNavGroup}"]`);
     if (!group) return;
+    const sameGroupOpen = menuIsMobile()
+      && document.body.classList.contains('is-menu-open')
+      && !document.body.classList.contains('is-menu-full')
+      && group.classList.contains('is-open');
+    if (sameGroupOpen) {
+      setMenuOpen(false);
+      return;
+    }
     document.body.classList.remove('is-menu-full');
     document.querySelectorAll('[data-nav-group]').forEach((item) => {
       const open = item === group;
@@ -22495,22 +23502,30 @@ document.querySelectorAll('[data-open-nav-group]').forEach((button) => {
     window.requestAnimationFrame(() => {
       group.scrollIntoView({ block: 'nearest' });
     });
+    syncBottomNavigationState();
   });
 });
 
-document.querySelectorAll('[data-open-menu], [data-open-full-menu]').forEach((button) => {
+document.querySelectorAll('[data-open-full-menu]').forEach((button) => {
   button.addEventListener('click', () => {
+    const sameFullMenuOpen = menuIsMobile()
+      && document.body.classList.contains('is-menu-open')
+      && document.body.classList.contains('is-menu-full');
+    if (sameFullMenuOpen) {
+      setMenuOpen(false);
+      return;
+    }
     document.body.classList.add('is-menu-full');
-    const fullGroups = new Set(['monitoring', 'settings-menu', 'admin', 'configuration', 'adminSystem']);
-    document.querySelectorAll('[data-nav-group]').forEach((group) => {
-      const open = fullGroups.has(group.dataset.navGroup || '');
-      group.classList.toggle('is-open', open);
-      group.querySelector('[data-nav-toggle]')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    document.querySelectorAll('[data-nav-group]').forEach((item) => {
+      const open = MOBILE_FULL_MENU_GROUPS.has(item.dataset.navGroup || '');
+      item.classList.toggle('is-open', open);
+      item.querySelector('[data-nav-toggle]')?.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
     if (menuIsMobile()) setMenuOpen(true);
     window.requestAnimationFrame(() => {
       document.querySelector('[data-nav-group="monitoring"]')?.scrollIntoView({ block: 'nearest' });
     });
+    syncBottomNavigationState();
   });
 });
 

@@ -263,15 +263,47 @@ function radiusNasEntries(data, options = {}) {
   ensureArrays(data);
   const includeUnconfigured = options.includeUnconfigured === true;
   const entries = [];
-  const seen = new Set();
+  const seen = new Map();
+
+  const normalizeAddressKey = (value = '') => text(value).toLowerCase().replace(/\/(?:32|128)$/, '');
+  const entryKey = (entry = {}) => normalizeAddressKey(entry.address)
+    || text(entry.name).toLowerCase()
+    || text(entry.id).toLowerCase();
+  const aliasList = (...items) => {
+    const aliases = [];
+    const used = new Set();
+    const add = (value = '') => {
+      const alias = text(value);
+      const key = alias.toLowerCase();
+      if (!alias || used.has(key)) return;
+      used.add(key);
+      aliases.push(alias);
+    };
+    for (const item of items) {
+      if (!item) continue;
+      add(item.id);
+      add(item.nasname);
+      add(item.name);
+      add(item.shortname);
+      add(item.address);
+      add(item.host);
+      if (Array.isArray(item.aliases)) item.aliases.forEach(add);
+    }
+    return aliases;
+  };
+  const scoreEntry = (entry = {}) => {
+    let score = 0;
+    if (entry.active !== false) score += 100;
+    if (entry.source === 'site') score += 20;
+    if (entry.secret) score += 10;
+    if (entry.id) score += 1;
+    return score;
+  };
   const pushEntry = (entry = {}) => {
     const id = text(entry.id || entry.nasname || entry.address || entry.name);
     const address = text(entry.address || entry.nasname || entry.host);
     if (!id || !address) return;
-    const key = `${id.toLowerCase()}|${address.toLowerCase()}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    entries.push({
+    const normalized = {
       id,
       name: text(entry.name || entry.shortname || address),
       address,
@@ -280,8 +312,34 @@ function radiusNasEntries(data, options = {}) {
       ports: Math.max(0, Math.trunc(numberValue(entry.ports || entry.port, 3799))),
       site: text(entry.site || entry.location || entry.server),
       active: entry.active !== false,
-      source: entry.source || 'radius'
-    });
+      source: entry.source || 'radius',
+      aliases: aliasList(entry, { id, name: entry.name || entry.shortname, address })
+    };
+    const key = entryKey(normalized);
+    if (!key) return;
+    const existingIndex = seen.get(key);
+    if (existingIndex === undefined) {
+      seen.set(key, entries.length);
+      entries.push(normalized);
+      return;
+    }
+    const current = entries[existingIndex];
+    const preferred = scoreEntry(normalized) >= scoreEntry(current) ? normalized : current;
+    const fallback = preferred === normalized ? current : normalized;
+    entries[existingIndex] = {
+      ...fallback,
+      ...preferred,
+      id: preferred.id || fallback.id,
+      name: preferred.name || fallback.name,
+      address: preferred.address || fallback.address,
+      secret: preferred.secret || fallback.secret,
+      type: preferred.type || fallback.type || 'mikrotik',
+      ports: preferred.ports || fallback.ports || 3799,
+      site: preferred.site || fallback.site || '',
+      active: preferred.active !== false,
+      source: preferred.source || fallback.source || 'radius',
+      aliases: aliasList(current, normalized)
+    };
   };
 
   for (const item of data.radiusNas) {
@@ -304,7 +362,8 @@ function radiusNasEntries(data, options = {}) {
       ports: Math.max(0, Math.trunc(numberValue(cfg.port || target.radiusPort, 3799))),
       site: text(target.location || target.name),
       active: target.status !== 'inactive' && (explicitEnabled ? enabled : Boolean(secret)),
-      source: 'site'
+      source: 'site',
+      aliases: aliasList(target, cfg)
     });
   }
 

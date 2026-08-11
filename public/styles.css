@@ -1786,47 +1786,6 @@ input[type="checkbox"] {
   display: grid;
 }
 
-.nav-section {
-  gap: 4px;
-}
-
-.nav-section-label {
-  display: grid;
-  grid-template-columns: minmax(12px, 1fr) auto minmax(12px, 1fr);
-  align-items: center;
-  gap: 8px;
-  margin: 9px 4px 4px;
-  color: rgba(201, 232, 255, 0.62);
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 0.16em;
-  line-height: 1;
-  text-transform: uppercase;
-  flex: 0 0 auto;
-}
-
-.nav-section-label::before,
-.nav-section-label::after {
-  content: "";
-  height: 1px;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    rgba(148, 163, 184, 0),
-    rgba(148, 163, 184, 0.38),
-    rgba(148, 163, 184, 0)
-  );
-}
-
-.nav-section .nav-submenu {
-  display: grid;
-  margin-top: 0;
-}
-
-.nav-section.is-open .nav-submenu {
-  display: grid;
-}
-
 .nav-subitem {
   position: relative;
   min-height: 30px;
@@ -1932,15 +1891,8 @@ input[type="checkbox"] {
   mask: var(--menu-icon) center / contain no-repeat;
 }
 
-[data-view="dashboard"],
-[data-nav-toggle="dashboardNav"],
-[data-nav-group="main"] {
+[data-view="dashboard"] {
   --menu-icon: var(--icon-dashboard);
-}
-
-[data-nav-toggle="customers"],
-[data-open-nav-group="customers"] {
-  --menu-icon: var(--icon-member);
 }
 
 [data-nav-toggle="radius"] {
@@ -1959,6 +1911,7 @@ input[type="checkbox"] {
   --menu-icon: var(--icon-settings);
 }
 
+[data-view="logDetection"],
 [data-view="activity"] {
   --menu-icon: var(--icon-activity);
 }
@@ -1967,14 +1920,9 @@ input[type="checkbox"] {
   --menu-icon: var(--icon-genieacs);
 }
 
-[data-nav-toggle="financeManagement"],
-[data-open-nav-group="finance"],
-[data-open-nav-group="financeManagement"] {
+[data-nav-toggle="financeReports"],
+[data-open-nav-group="financeReports"] {
   --menu-icon: var(--icon-finance);
-}
-
-[data-open-nav-group="radius"] {
-  --menu-icon: var(--icon-radius);
 }
 
 [data-view="externalIncomes"] {
@@ -2044,16 +1992,6 @@ input[type="checkbox"] {
 
 [data-nav-toggle="monitoring"] {
   --menu-icon: var(--icon-monitoring);
-}
-
-[data-nav-toggle="configuration"] {
-  --menu-icon: var(--icon-settings);
-}
-
-[data-nav-toggle="adminSystem"],
-[data-open-menu],
-[data-open-full-menu] {
-  --menu-icon: var(--icon-users);
 }
 
 [data-view="monitoringSite"] {
@@ -6178,64 +6116,6 @@ body.is-loading-auth .content::before {
 
 .member-summary-metrics {
   grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.billing-mobile-primary {
-  display: none;
-}
-
-.diagnostics-toolbar > div:first-child {
-  display: grid;
-  gap: 3px;
-}
-
-.diagnostics-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.diagnostics-card {
-  min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.diagnostics-card .section-head {
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.diagnostics-card .section-head h2 {
-  font-size: 15px;
-}
-
-.diagnostics-card dl {
-  display: grid;
-  gap: 0;
-  margin: 0;
-}
-
-.diagnostics-card dl > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 0;
-  border-top: 1px solid var(--line);
-}
-
-.diagnostics-card dt {
-  color: var(--muted);
-}
-
-.diagnostics-card dd {
-  min-width: 0;
-  margin: 0;
-  font-weight: 800;
-  text-align: right;
 }
 
 .member-contact-preview-grid {
@@ -11666,9 +11546,7 @@ dialog::backdrop {
   }
 
   .statistics-svg-wrap svg {
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
+    min-width: 520px;
   }
 
   .statistics-column-chart {
@@ -11691,23 +11569,15 @@ dialog::backdrop {
     width: var(--mobile-menu-width);
     height: 100dvh;
     padding: 14px 12px;
-    transform: translate3d(calc(-100% - 24px), 0, 0);
-    visibility: hidden;
-    pointer-events: none;
-    transition:
-      transform 180ms ease,
-      visibility 0s linear 180ms;
-    box-shadow: none;
+    transform: translateX(-104%);
+    transition: transform 180ms ease;
+    box-shadow: 18px 0 44px rgba(2, 10, 34, 0.32);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 
   .is-menu-open .sidebar {
-    transform: translate3d(0, 0, 0);
-    visibility: visible;
-    pointer-events: auto;
-    transition-delay: 0s;
-    box-shadow: 18px 0 44px rgba(2, 10, 34, 0.32);
+    transform: translateX(0);
   }
 
   .menu-backdrop {
@@ -11729,6 +11599,20 @@ dialog::backdrop {
 
   body.is-menu-open {
     overflow: hidden;
+  }
+
+  .topbar,
+  .content {
+    transition: transform 180ms ease;
+  }
+
+  .is-menu-open .topbar,
+  .is-menu-open .content {
+    transform: translateX(var(--mobile-menu-width));
+  }
+
+  .is-menu-open .topbar {
+    z-index: 31;
   }
 
   .topbar {
@@ -11874,7 +11758,7 @@ dialog::backdrop {
   }
 
   .content {
-    padding: 12px 12px calc(82px + env(safe-area-inset-bottom, 0px));
+    padding: 12px 12px 18px;
   }
 
   .metrics,
@@ -12332,26 +12216,12 @@ dialog::backdrop {
   }
 
   .bottom-nav {
-    position: fixed;
-    right: 8px;
-    bottom: max(8px, env(safe-area-inset-bottom, 0px));
-    left: 8px;
-    z-index: 55;
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 3px;
-    min-height: 58px;
-    padding: 5px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
-    box-shadow: 0 12px 34px rgba(8, 32, 79, 0.2);
-    backdrop-filter: blur(12px);
+    display: none;
   }
 
   .bottom-item {
-    min-width: 0;
-    min-height: 48px;
+    position: relative;
+    min-height: 46px;
     display: grid;
     place-items: center;
     align-content: center;
@@ -12360,7 +12230,7 @@ dialog::backdrop {
     border-radius: 8px;
     color: var(--muted);
     background: transparent;
-    font-size: 10.5px;
+    font-size: 10px;
     font-weight: 800;
     line-height: 1.1;
     white-space: nowrap;
@@ -12368,13 +12238,31 @@ dialog::backdrop {
   }
 
   .bottom-item::before {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
   }
 
   .bottom-item.is-active {
     color: var(--primary);
     background: linear-gradient(180deg, #dcefff, #edf7ff);
+  }
+
+  .bottom-item.is-open {
+    color: var(--primary);
+    background: linear-gradient(180deg, #dcefff, #edf7ff);
+    box-shadow: inset 0 0 0 1px rgba(43, 139, 217, 0.16);
+  }
+
+  .bottom-item.is-open::after {
+    content: "";
+    position: absolute;
+    right: 14px;
+    bottom: 4px;
+    left: 14px;
+    height: 3px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.9;
   }
 
   .table-wrap {
@@ -12637,234 +12525,8 @@ dialog::backdrop {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .diagnostics-grid {
-    grid-template-columns: 1fr;
-  }
-
   .transaction-note .receipt-lines {
     grid-template-columns: 1fr;
-  }
-
-  .table-wrap:has(.mobile-card-table) {
-    border: 0;
-    overflow: visible;
-    background: transparent;
-  }
-
-  .table-top-scroll[data-for-mobile-card="true"] {
-    display: none;
-  }
-
-  table.mobile-card-table {
-    display: block;
-    min-width: 0;
-    width: 100%;
-    border-collapse: separate;
-    background: transparent;
-  }
-
-  .mobile-card-table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .mobile-card-table tbody {
-    display: grid;
-    gap: 9px;
-    width: 100%;
-  }
-
-  .mobile-card-table tbody tr {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    gap: 6px 10px;
-    width: 100%;
-    padding: 11px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--surface);
-    box-shadow: 0 5px 16px rgba(8, 32, 79, 0.06);
-    position: relative;
-  }
-
-  .mobile-card-table tbody tr[hidden] {
-    display: none;
-  }
-
-  .mobile-card-table td {
-    display: grid;
-    grid-template-columns: minmax(82px, 38%) minmax(0, 1fr);
-    align-items: start;
-    gap: 8px;
-    min-width: 0;
-    max-width: none;
-    padding: 0;
-    border: 0;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  .mobile-card-table td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 10px;
-    font-weight: 800;
-    line-height: 1.35;
-    overflow-wrap: break-word;
-    text-transform: uppercase;
-    white-space: normal;
-  }
-
-  .mobile-card-table td[data-mobile-primary="true"],
-  .mobile-card-table td[data-label="Nama"],
-  .mobile-card-table td[data-label="Nama Pelanggan"],
-  .mobile-card-table td[data-label="Username"],
-  .mobile-card-table td[data-label="User"],
-  .mobile-card-table td[data-label="Referensi"] {
-    grid-column: 1 / -1;
-  }
-
-  .mobile-card-table td[data-mobile-primary="true"] {
-    padding-bottom: 7px;
-    padding-right: 34px;
-    border-bottom: 1px solid var(--line);
-    font-size: 14px;
-    font-weight: 750;
-  }
-
-  .mobile-card-table td[data-mobile-select="true"] {
-    grid-column: 1;
-    grid-row: 1;
-    display: flex;
-    justify-content: flex-end;
-    position: absolute;
-    right: 11px;
-    top: 11px;
-  }
-
-  .mobile-card-table td[data-mobile-select="true"]::before,
-  .mobile-card-table td[data-label="No"]::before,
-  .mobile-card-table td[data-label="Aksi"]::before,
-  .mobile-card-table td[data-label="Action"]::before {
-    display: none;
-  }
-
-  .mobile-card-table td[data-label="No"] {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-  }
-
-  .mobile-card-table td[data-label="Aksi"],
-  .mobile-card-table td[data-label="Action"] {
-    grid-column: 1 / -1;
-    display: flex;
-    justify-content: flex-end;
-    padding-top: 7px;
-    border-top: 1px solid var(--line);
-  }
-
-  .mobile-card-table td.mobile-technical-cell {
-    display: none;
-  }
-
-  .mobile-card-table .action-menu summary {
-    min-height: 34px;
-    height: 34px;
-  }
-
-  .mobile-card-table.finance-daily-table td {
-    grid-template-columns: minmax(116px, 46%) minmax(0, 1fr);
-  }
-
-  .mobile-card-table.finance-daily-table td.amount {
-    font-size: 12.5px;
-    overflow-wrap: normal;
-    white-space: nowrap;
-    word-break: normal;
-  }
-
-  .mobile-card-table.finance-daily-table td.amount > strong,
-  .mobile-card-table.finance-daily-table td.amount {
-    text-align: right;
-  }
-
-  .mobile-card-table .member-date-lines {
-    gap: 2px;
-    width: 100%;
-  }
-
-  .mobile-card-table td.member-date-cell {
-    grid-template-columns: minmax(82px, 32%) minmax(0, 1fr);
-  }
-
-  .mobile-card-table .member-date-lines span {
-    overflow-wrap: normal;
-    white-space: nowrap;
-    word-break: normal;
-  }
-
-  .mobile-card-table.wa-message-table td,
-  .mobile-card-table.wa-message-table td:nth-child(2),
-  .mobile-card-table.wa-message-table td:nth-child(3) {
-    width: 100%;
-  }
-
-  .mobile-card-table .wa-message-time-cell,
-  .mobile-card-table .wa-message-phone-cell strong {
-    overflow-wrap: normal;
-    white-space: nowrap;
-  }
-
-  .billing-mobile-primary {
-    display: grid;
-    gap: 7px;
-    order: -2;
-  }
-
-  .billing-mobile-primary .search-input-wrap,
-  .billing-mobile-primary .control {
-    width: 100%;
-  }
-
-  .billing-mobile-status-tabs {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 5px;
-    padding: 4px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--surface-soft);
-  }
-
-  .billing-mobile-status-tabs button {
-    min-width: 0;
-    min-height: 36px;
-    border: 0;
-    border-radius: 6px;
-    color: var(--muted);
-    background: transparent;
-    font: inherit;
-    font-size: 12px;
-    font-weight: 800;
-  }
-
-  .billing-mobile-status-tabs button.is-active {
-    color: #fff;
-    background: var(--primary);
-  }
-
-  .billing-desktop-search,
-  .filters .search-input-wrap:has(.billing-desktop-search) {
-    display: none;
   }
 }
 
@@ -13020,7 +12682,7 @@ dialog::backdrop {
   }
 
   .member-summary-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 
@@ -16451,140 +16113,8 @@ dialog::backdrop {
   }
 }
 
-/* Final mobile containment: late legacy table rules must not widen card views. */
-@media (max-width: 760px) {
-  .menu-toggle {
-    display: none;
-  }
-
-  #app,
-  #app > *,
-  .stack,
-  .section,
-  .toolbar,
-  .filters,
-  .metrics,
-  .form-panel,
-  .panel {
-    box-sizing: border-box;
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .table-wrap:has(table.mobile-card-table) {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    overflow: visible;
-  }
-
-  .table-wrap table.mobile-card-table,
-  .report-transactions-table-wrap table.report-transactions-table.mobile-card-table,
-  .table-wrap .billing-table.mobile-card-table,
-  .table-wrap .monitoring-customer-table.mobile-card-table,
-  .table-wrap .radius-user-table.mobile-card-table,
-  .table-wrap .daily-report-table.mobile-card-table {
-    display: block;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .mobile-card-table tbody,
-  .mobile-card-table tbody tr,
-  .mobile-card-table tbody td {
-    box-sizing: border-box;
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .table-wrap:not(.payment-gateway-table-wrap) .mobile-card-table tbody td {
-    justify-self: stretch;
-    max-width: none;
-    width: 100%;
-  }
-
-  .mobile-card-table tbody tr {
-    width: 100%;
-  }
-
-  .mobile-card-table tbody tr:has(> td[colspan]) {
-    display: block;
-  }
-
-  .mobile-card-table tbody tr > td[colspan] {
-    display: block;
-    width: 100%;
-    padding: 14px;
-    text-align: center;
-  }
-
-  .mobile-card-table tbody tr > td[colspan]::before {
-    display: none;
-  }
-
-  .mobile-card-table .user-table-details,
-  .mobile-card-table .user-table-contact,
-  .mobile-card-table .user-nas-target {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .mobile-card-table .user-table-details strong,
-  .mobile-card-table .user-table-details span,
-  .mobile-card-table .user-last-login,
-  .mobile-card-table .nas-badge {
-    max-width: 100%;
-    overflow-wrap: normal;
-    text-overflow: clip;
-    white-space: normal;
-    word-break: normal;
-  }
-
-  .mobile-card-table .user-table-details > strong {
-    font-size: 13px;
-  }
-
-  .mobile-card-table.user-management-table td {
-    grid-template-columns: minmax(78px, 32%) minmax(0, 1fr);
-  }
-
-  .mobile-card-table .user-table-name {
-    display: grid;
-    grid-template-columns: 30px minmax(0, 1fr);
-    width: 100%;
-  }
-
-  .mobile-card-table .user-table-name > div {
-    min-width: 0;
-  }
-
-  .mobile-card-table .user-table-name strong,
-  .mobile-card-table .user-table-name .muted {
-    overflow-wrap: anywhere;
-    white-space: normal;
-  }
-
-  .wa-template-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    width: 100%;
-  }
-
-  .wa-template-actions > button {
-    width: 100%;
-    min-width: 0;
-    white-space: normal;
-  }
-
-  .wa-template-actions > button:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-  }
-}
-
-/* Mobile bottom navigation drawer. Keep this late so it overrides legacy side-drawer rules. */
-@media (max-width: 760px) {
+/* DEV mobile bottom navigation override - start */
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
   body.is-authenticated .app-shell {
     padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   }
@@ -16594,19 +16124,20 @@ dialog::backdrop {
   }
 
   body.is-authenticated .menu-toggle {
-    display: none !important;
+    display: none;
   }
 
   body.is-authenticated .bottom-nav {
+    position: fixed;
     right: max(10px, env(safe-area-inset-right, 0px));
     bottom: max(10px, env(safe-area-inset-bottom, 0px));
     left: max(10px, env(safe-area-inset-left, 0px));
     z-index: 70;
-    grid-template-columns: repeat(5, minmax(50px, 1fr));
+    display: grid;
+    grid-template-columns: repeat(5, minmax(56px, 1fr));
     gap: 6px;
-    min-height: 64px;
     padding: 6px;
-    border-color: rgba(148, 163, 184, 0.34);
+    border: 1px solid rgba(148, 163, 184, 0.34);
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.96);
     box-shadow: 0 18px 42px rgba(15, 23, 42, 0.22);
@@ -16626,7 +16157,6 @@ dialog::backdrop {
     min-height: 48px;
     padding: 6px 4px;
     border-radius: 13px;
-    font-size: 10.5px;
   }
 
   body.is-authenticated .sidebar {
@@ -16637,63 +16167,33 @@ dialog::backdrop {
     left: max(10px, env(safe-area-inset-left, 0px));
     z-index: 68;
     width: auto;
-    max-width: none;
     max-height: min(64dvh, 520px);
     height: auto;
     padding: 10px;
     border: 1px solid rgba(148, 163, 184, 0.28);
     border-radius: 20px;
     box-shadow: 0 20px 54px rgba(15, 23, 42, 0.28);
-    opacity: 0;
-    pointer-events: none;
     transform: translateY(calc(100% + 110px));
-    visibility: hidden;
-    transition:
-      transform 180ms ease,
-      opacity 180ms ease,
-      visibility 0s linear 180ms;
-    overflow-x: hidden;
+    transition: transform 180ms ease;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 
   body.is-authenticated.is-menu-open .sidebar {
-    opacity: 1;
-    pointer-events: auto;
     transform: translateY(0);
-    visibility: visible;
-    transition-delay: 0s;
   }
 
   body.is-authenticated .sidebar .side-brand,
   body.is-authenticated .sidebar .app-footer,
-  body.is-authenticated .sidebar [data-nav-group="dashboardNav"],
-  body.is-authenticated .sidebar [data-nav-group="main"] {
-    display: none !important;
-  }
-
-  body.is-authenticated .sidebar .nav-group {
+  body.is-authenticated .sidebar > .nav-item[data-view="dashboard"] {
     display: none;
   }
 
-  body.is-authenticated .sidebar .nav-group.is-open {
-    display: grid;
-  }
-
-  body.is-authenticated.is-menu-full .sidebar .nav-group {
+  body.is-authenticated.is-menu-open .sidebar .nav-group:not(.is-open) {
     display: none;
-  }
-
-  body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="monitoring"],
-  body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="settings-menu"],
-  body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="admin"],
-  body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="configuration"],
-  body.is-authenticated.is-menu-full .sidebar .nav-group[data-nav-group="adminSystem"] {
-    display: grid;
   }
 
   body.is-authenticated .sidebar .nav-toggle {
-    margin-bottom: 8px;
     cursor: default;
     pointer-events: none;
   }
@@ -16732,3 +16232,1901 @@ dialog::backdrop {
     transform: none;
   }
 }
+/* DEV mobile bottom navigation override - end */
+
+/* DEV compact menu icon mapping - start */
+[data-open-nav-group="billing"] {
+  --menu-icon: var(--icon-member);
+}
+
+[data-open-nav-group="radius"] {
+  --menu-icon: var(--icon-radius);
+}
+
+[data-open-nav-group="finance"] {
+  --menu-icon: var(--icon-finance);
+}
+
+[data-open-full-menu] {
+  --menu-icon: var(--icon-settings);
+}
+
+[data-view="reportsDaily"],
+[data-view="reportsMonthlyBilling"],
+[data-view="reportsVoucherDaily"],
+[data-view="reportsVoucherMonthly"],
+[data-nav-group="reports"] .nav-section-label {
+  --menu-icon: var(--icon-report);
+}
+
+[data-view="billingSettings"] {
+  --menu-icon: var(--icon-calendar-month);
+}
+/* DEV compact menu icon mapping - end */
+
+
+/* DEV responsive filter layout cleanup - start */
+.toolbar {
+  row-gap: 10px;
+}
+
+.toolbar > .filters {
+  flex: 1 1 680px;
+  max-width: 100%;
+  row-gap: 8px;
+}
+
+.toolbar > .filters > .control,
+.toolbar > .filters > .date-picker-control,
+.toolbar > .filters > .filter-period-picker {
+  flex: 0 1 176px;
+  max-width: 230px;
+  min-width: min(176px, 100%);
+}
+
+.toolbar > .filters > select.control {
+  min-width: min(164px, 100%);
+}
+
+.toolbar > .filters > input[type="date"].control,
+.toolbar > .filters > .date-picker-control {
+  flex-basis: 152px;
+  max-width: 176px;
+}
+
+.toolbar > .filters > input[type="month"].control,
+.toolbar > .filters > .month-picker-control {
+  flex-basis: 154px;
+  max-width: 184px;
+}
+
+.toolbar > .filters > #searchInput,
+.toolbar > .filters > .search-input-wrap,
+.toolbar > .filters > .radius-search-input {
+  flex: 1 1 300px;
+  max-width: 480px;
+  min-width: min(280px, 100%);
+}
+
+.toolbar > .row-actions,
+.toolbar > .toolbar-actions {
+  flex: 0 0 auto;
+}
+
+.toolbar > .filters > [hidden] {
+  display: none !important;
+}
+
+@media (min-width: 761px) {
+  .toolbar > .button,
+  .toolbar > .ghost-button,
+  .toolbar > .danger-button {
+    flex: 0 0 auto;
+  }
+
+  .toolbar > .filters:only-child {
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  body.is-authenticated .content .toolbar {
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  body.is-authenticated .content .toolbar > .filters {
+    display: grid;
+    flex: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  body.is-authenticated .content .toolbar > .filters > .control,
+  body.is-authenticated .content .toolbar > .filters > .date-picker-control,
+  body.is-authenticated .content .toolbar > .filters > .filter-period-picker,
+  body.is-authenticated .content .toolbar > .filters > .search-input-wrap,
+  body.is-authenticated .content .toolbar > .filters > .radius-search-input {
+    flex: none;
+    max-width: none;
+    min-width: 0;
+    width: 100%;
+  }
+
+  body.is-authenticated .content .toolbar > .filters > #searchInput,
+  body.is-authenticated .content .toolbar > .filters > .search-input-wrap,
+  body.is-authenticated .content .toolbar > .filters > .radius-search-input,
+  body.is-authenticated .content .toolbar > .filters > .filter-period-picker {
+    grid-column: 1 / -1;
+  }
+
+  body.is-authenticated .content .toolbar > .filters > input[type="date"].control,
+  body.is-authenticated .content .toolbar > .filters > .date-picker-control {
+    grid-column: auto;
+  }
+
+  body.is-authenticated .content .toolbar > .button,
+  body.is-authenticated .content .toolbar > .ghost-button,
+  body.is-authenticated .content .toolbar > .danger-button {
+    justify-content: center;
+    width: 100%;
+  }
+
+  body.is-authenticated .content .toolbar > .row-actions,
+  body.is-authenticated .content .toolbar > .toolbar-actions,
+  body.is-authenticated .content .radius-toolbar-actions {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  body.is-authenticated .content .toolbar > .row-actions > *,
+  body.is-authenticated .content .toolbar > .toolbar-actions > *,
+  body.is-authenticated .content .radius-toolbar-actions > * {
+    justify-content: center;
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  body.is-authenticated .content .toolbar > .filters,
+  body.is-authenticated .content .toolbar > .row-actions,
+  body.is-authenticated .content .toolbar > .toolbar-actions,
+  body.is-authenticated .content .radius-toolbar-actions {
+    grid-template-columns: 1fr;
+  }
+}
+/* DEV responsive filter layout cleanup - end */
+
+
+
+
+/* DEV account avatar white background - start */
+.account-button .user-chip-avatar,
+.account-button .user-chip-avatar.is-default,
+.account-button .user-chip-avatar.has-photo {
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.86);
+}
+
+.account-button .user-chip-avatar.has-photo {
+  color: transparent;
+}
+
+.account-button .user-chip-avatar img {
+  background: #ffffff;
+}
+
+[data-theme="dark"] .account-button .user-chip-avatar,
+[data-theme="dark"] .account-button .user-chip-avatar.is-default,
+[data-theme="dark"] .account-button .user-chip-avatar.has-photo {
+  background: #ffffff;
+  border-color: rgba(226, 232, 240, 0.72);
+  color: var(--primary);
+}
+
+[data-theme="dark"] .account-button .user-chip-avatar.has-photo {
+  color: transparent;
+}
+/* DEV account avatar white background - end */
+
+
+/* DEV router NAS TX/RX bytes - start */
+.router-byte-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.router-byte-legend span {
+  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px;
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.router-byte-legend small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.router-byte-legend b {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.1;
+  text-align: right;
+  white-space: nowrap;
+}
+/* DEV router NAS TX/RX bytes - end */
+
+
+/* DEV router NAS MikroTik graph style - start */
+.router-nas-chart {
+  height: 96px;
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.router-chart-legend span:has([data-router-rate="upload"]) {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(254, 226, 226, 0.72);
+}
+
+.router-chart-legend span:has([data-router-rate="download"]) {
+  border-color: rgba(22, 163, 74, 0.26);
+  background: rgba(220, 252, 231, 0.68);
+}
+
+[data-router-rate="upload"] {
+  color: #dc2626;
+}
+
+[data-router-rate="download"] {
+  color: #16a34a;
+}
+
+[data-theme="dark"] .router-nas-chart {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+[data-theme="dark"] .router-chart-legend span:has([data-router-rate="upload"]) {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: rgba(127, 29, 29, 0.24);
+}
+
+[data-theme="dark"] .router-chart-legend span:has([data-router-rate="download"]) {
+  border-color: rgba(74, 222, 128, 0.34);
+  background: rgba(20, 83, 45, 0.22);
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  .router-nas-chart {
+    height: 84px;
+  }
+}
+/* DEV router NAS MikroTik graph style - end */
+
+/* DEV radbill section label menu - start */
+.nav-section {
+  gap: 4px;
+}
+
+.nav-section-label {
+  display: grid;
+  grid-template-columns: minmax(12px, 1fr) auto minmax(12px, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 9px 4px 4px;
+  color: rgba(201, 232, 255, 0.62);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
+
+.nav-section-label::before,
+.nav-section-label::after {
+  content: "";
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0),
+    rgba(148, 163, 184, 0.38),
+    rgba(148, 163, 184, 0)
+  );
+}
+
+.nav-section .nav-submenu {
+  display: grid;
+  margin-top: 0;
+}
+
+.nav-section.is-open .nav-submenu {
+  display: grid;
+}
+
+@media (max-width: 920px) {
+  body.is-authenticated .sidebar .nav-section:not(.is-open) {
+    display: none;
+  }
+
+  body.is-authenticated .sidebar .nav-section.is-open {
+    display: grid;
+  }
+
+  body.is-authenticated.is-menu-full .sidebar .nav-section {
+    display: none;
+  }
+
+  body.is-authenticated.is-menu-full .sidebar .nav-section[data-nav-group="network"],
+  body.is-authenticated.is-menu-full .sidebar .nav-section[data-nav-group="services"],
+  body.is-authenticated.is-menu-full .sidebar .nav-section[data-nav-group="reports"],
+  body.is-authenticated.is-menu-full .sidebar .nav-section[data-nav-group="admin"] {
+    display: grid;
+  }
+
+  body.is-authenticated .sidebar .nav-section-label {
+    margin: 2px 4px 8px;
+  }
+}
+/* DEV radbill section label menu - end */
+
+
+/* DEV report combined tabs - start */
+.report-combined-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.report-combined-tabs > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.report-combined-tabs > div:first-child span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .report-combined-tabs {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .report-combined-tabs .tab-switcher {
+    width: 100%;
+  }
+
+  .report-combined-tabs .tab-button {
+    flex: 1 1 0;
+  }
+}
+/* DEV report combined tabs - end */
+
+
+/* DEV mobile billing nota layout - start */
+.billing-mobile-row-number,
+.billing-mobile-invoice-meta,
+.billing-mobile-status-tabs,
+.billing-mobile-summary {
+  display: none;
+}
+
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .monitoring-billing-view {
+    gap: 12px;
+  }
+
+  .monitoring-billing-view > .metrics,
+  .monitoring-billing-view > .collector-billing-metrics {
+    display: none;
+  }
+
+  .monitoring-billing-view > .toolbar:not(.billing-batch-toolbar) {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    gap: 10px;
+    padding: 0;
+  }
+
+  .monitoring-billing-view > .toolbar:not(.billing-batch-toolbar) .filters {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .monitoring-billing-view #billingScopeFilter,
+  .monitoring-billing-view #billingPeriodFilter,
+  .monitoring-billing-view #billingSiteFilter,
+  .monitoring-billing-view #billingCustomerStatusFilter,
+  .monitoring-billing-view #billingStatusFilter,
+  .monitoring-billing-view > .toolbar:not(.billing-batch-toolbar) .row-actions {
+    display: none;
+  }
+
+  .monitoring-billing-view #searchInput {
+    min-height: 44px;
+    order: -1;
+    width: 100%;
+  }
+
+  .billing-mobile-status-tabs {
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    display: grid;
+    gap: 4px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 4px;
+  }
+
+  .billing-mobile-status-tabs button {
+    background: transparent;
+    border: 0;
+    border-radius: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 800;
+    min-height: 36px;
+    padding: 0 10px;
+  }
+
+  .billing-mobile-status-tabs button.active {
+    background: var(--primary);
+    box-shadow: 0 8px 18px rgba(43, 139, 217, .18);
+    color: #fff;
+  }
+
+  .billing-mobile-summary {
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    color: var(--text);
+    display: flex;
+    font-size: 13px;
+    font-weight: 900;
+    min-height: 44px;
+    padding: 0 12px;
+  }
+
+  .billing-mobile-select-all {
+    align-items: center;
+    display: inline-flex;
+    gap: 10px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .billing-mobile-select-all span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .monitoring-billing-view .billing-table-wrap {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .monitoring-billing-view .billing-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 0 !important;
+    table-layout: auto;
+    width: 100% !important;
+  }
+
+  .monitoring-billing-view .billing-table colgroup,
+  .monitoring-billing-view .billing-table thead {
+    display: none;
+  }
+
+  .monitoring-billing-view .billing-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr.billing-row {
+    align-items: start;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, .06);
+    display: grid;
+    gap: 2px 8px;
+    grid-template-areas:
+      "check customer amount"
+      "check invoice amount"
+      "check contact contact"
+      "action action action";
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    padding: 12px 10px;
+  }
+
+  [data-theme="dark"] .monitoring-billing-view .billing-table tbody tr.billing-row {
+    box-shadow: 0 14px 30px rgba(0, 0, 0, .22);
+  }
+
+  .monitoring-billing-view .billing-table tbody tr:not(.billing-row) {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    display: block;
+    padding: 14px;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr.billing-row td {
+    background: transparent !important;
+    border: 0;
+    display: block;
+    max-width: none;
+    min-width: 0;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr:not(.billing-row) td {
+    border: 0;
+    display: block;
+    padding: 0;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(1) {
+    align-self: start;
+    grid-area: check;
+    padding-top: 2px;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(2) {
+    grid-area: customer;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(4) {
+    grid-area: contact;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(5) {
+    grid-area: invoice;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(8) {
+    align-self: start;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 950;
+    grid-area: amount;
+    line-height: 1.15;
+    padding-top: 2px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(10) {
+    align-self: stretch;
+    grid-area: action;
+    justify-self: stretch;
+    padding-top: 8px;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(3),
+  .monitoring-billing-view .billing-row td:nth-child(6),
+  .monitoring-billing-view .billing-row td:nth-child(7),
+  .monitoring-billing-view .billing-row td:nth-child(9) {
+    display: none;
+  }
+
+  .billing-mobile-row-number {
+    color: var(--muted);
+    display: inline;
+    font-weight: 900;
+    margin-right: 2px;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(2) .cell-title {
+    color: var(--text);
+    display: block;
+    font-size: 14px;
+    font-weight: 950;
+    line-height: 1.22;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(2) .cell-subline {
+    display: none;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(5) .cell-title,
+  .monitoring-billing-view .billing-row td:nth-child(5) .cell-subline:not(.billing-mobile-invoice-meta) {
+    display: none;
+  }
+
+  .billing-mobile-invoice-meta {
+    color: var(--muted);
+    display: block;
+    font-size: 11.5px;
+    font-weight: 750;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(4) .cell-title,
+  .monitoring-billing-view .billing-row td:nth-child(4) .cell-map-link {
+    display: none;
+  }
+
+  .monitoring-billing-view .billing-row td:nth-child(4) .cell-subline {
+    color: var(--muted);
+    display: block;
+    font-size: 11.5px;
+    line-height: 1.25;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .monitoring-billing-view .billing-action-stack {
+    align-items: center;
+    border-top: 1px dashed var(--line);
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-start;
+    padding-top: 8px;
+  }
+
+  .monitoring-billing-view .billing-action-button {
+    border-radius: 10px;
+    gap: 4px;
+    min-height: 32px;
+    min-width: 0;
+    padding: 0 8px;
+    width: auto;
+  }
+
+  .monitoring-billing-view .billing-action-button > span:not(.billing-action-icon) {
+    display: inline;
+    font-size: 11px;
+    font-weight: 900;
+  }
+
+  .monitoring-billing-view .billing-action-button:not(:has(.billing-action-icon))::before {
+    content: "↻";
+    font-size: 16px;
+    font-weight: 950;
+    line-height: 1;
+  }
+
+  .monitoring-billing-view .billing-action-icon {
+    height: 20px;
+    width: 20px;
+  }
+
+  .monitoring-billing-view .pager,
+  .monitoring-billing-view .pagination,
+  .monitoring-billing-view .table-pagination {
+    border-radius: 16px;
+  }
+}
+/* DEV mobile billing nota layout - end */
+
+
+/* DEV mobile billing column visibility fix - start */
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(3),
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(6),
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(7),
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(9) {
+    display: none !important;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(2) .cell-subline,
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(4) .cell-title,
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(4) .cell-map-link,
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(5) .cell-title,
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(5) .cell-subline:not(.billing-mobile-invoice-meta) {
+    display: none !important;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(4) .cell-subline,
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(5) .billing-mobile-invoice-meta {
+    display: block !important;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(4) .cell-subline {
+    max-width: 100%;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(5) .billing-mobile-invoice-meta {
+    max-width: 100%;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr.billing-row {
+    grid-template-areas:
+      "check customer amount"
+      "check invoice amount"
+      "check contact contact"
+      "action action action" !important;
+    grid-template-columns: 28px minmax(0, 1fr) auto !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .monitoring-billing-view .billing-table tbody tr.billing-row {
+    grid-template-areas:
+      "check customer amount"
+      "check invoice amount"
+      "check contact contact"
+      "action action action" !important;
+    grid-template-columns: 28px minmax(0, 1fr) auto !important;
+  }
+
+  .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(8) {
+    justify-self: end;
+    padding-top: 4px;
+  }
+}
+/* DEV mobile billing column visibility fix - end */
+
+/* LIVE billing customer controls - keep button layout aligned with live */
+.billing-mobile-primary {
+  display: none;
+}
+
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .billing-mobile-primary {
+    display: grid;
+    gap: 7px;
+    order: -2;
+  }
+
+  .billing-mobile-primary .search-input-wrap,
+  .billing-mobile-primary .control {
+    width: 100%;
+  }
+
+  .billing-mobile-primary .billing-mobile-status-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface-soft);
+  }
+
+  .billing-mobile-primary .billing-mobile-status-tabs button {
+    min-width: 0;
+    min-height: 36px;
+    border: 0;
+    border-radius: 6px;
+    color: var(--muted);
+    background: transparent;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .billing-mobile-primary .billing-mobile-status-tabs button.is-active {
+    color: #fff;
+    background: var(--primary);
+  }
+
+  .billing-desktop-search,
+  .filters .search-input-wrap:has(.billing-desktop-search) {
+    display: none;
+  }
+}
+
+
+/* DEV mobile simple menu cards - start */
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .monitoring-members-view .table-wrap,
+  .monitoring-customer-table-wrap,
+  .daily-report-table-wrap,
+  .report-transactions-table-wrap,
+  .radius-section .table-wrap {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .member-mobile-table,
+  .monitoring-customer-table,
+  .radius-user-table,
+  .radius-session-table,
+  .radius-profile-table,
+  .radius-template-table,
+  .radius-nas-table,
+  .daily-report-table,
+  .report-transactions-table,
+  .voucher-daily-table,
+  .voucher-monthly-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 0 !important;
+    table-layout: auto;
+    width: 100% !important;
+  }
+
+  .member-mobile-table colgroup,
+  .member-mobile-table thead,
+  .monitoring-customer-table colgroup,
+  .monitoring-customer-table thead,
+  .radius-user-table colgroup,
+  .radius-user-table thead,
+  .radius-session-table colgroup,
+  .radius-session-table thead,
+  .radius-profile-table colgroup,
+  .radius-profile-table thead,
+  .radius-template-table colgroup,
+  .radius-template-table thead,
+  .radius-nas-table colgroup,
+  .radius-nas-table thead,
+  .daily-report-table colgroup,
+  .daily-report-table thead,
+  .report-transactions-table colgroup,
+  .report-transactions-table thead,
+  .voucher-daily-table colgroup,
+  .voucher-daily-table thead,
+  .voucher-monthly-table colgroup,
+  .voucher-monthly-table thead {
+    display: none !important;
+  }
+
+  .member-mobile-table tbody,
+  .monitoring-customer-table tbody,
+  .radius-user-table tbody,
+  .radius-session-table tbody,
+  .radius-profile-table tbody,
+  .radius-template-table tbody,
+  .radius-nas-table tbody,
+  .daily-report-table tbody,
+  .report-transactions-table tbody,
+  .voucher-daily-table tbody,
+  .voucher-monthly-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .member-mobile-table tbody tr,
+  .monitoring-customer-table tbody tr,
+  .radius-user-table tbody tr,
+  .radius-session-table tbody tr,
+  .radius-profile-table tbody tr,
+  .radius-template-table tbody tr,
+  .radius-nas-table tbody tr,
+  .daily-report-table tbody tr,
+  .report-transactions-table tbody tr,
+  .voucher-daily-table tbody tr,
+  .voucher-monthly-table tbody tr {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, .06);
+    display: grid;
+    gap: 5px 10px;
+    min-width: 0;
+    padding: 12px;
+  }
+
+  [data-theme="dark"] .member-mobile-table tbody tr,
+  [data-theme="dark"] .monitoring-customer-table tbody tr,
+  [data-theme="dark"] .radius-user-table tbody tr,
+  [data-theme="dark"] .radius-session-table tbody tr,
+  [data-theme="dark"] .radius-profile-table tbody tr,
+  [data-theme="dark"] .radius-template-table tbody tr,
+  [data-theme="dark"] .radius-nas-table tbody tr,
+  [data-theme="dark"] .daily-report-table tbody tr,
+  [data-theme="dark"] .report-transactions-table tbody tr,
+  [data-theme="dark"] .voucher-daily-table tbody tr,
+  [data-theme="dark"] .voucher-monthly-table tbody tr {
+    box-shadow: 0 14px 30px rgba(0, 0, 0, .22);
+  }
+
+  .member-mobile-table tbody td,
+  .monitoring-customer-table tbody td,
+  .radius-user-table tbody td,
+  .radius-session-table tbody td,
+  .radius-profile-table tbody td,
+  .radius-template-table tbody td,
+  .radius-nas-table tbody td,
+  .daily-report-table tbody td,
+  .report-transactions-table tbody td,
+  .voucher-daily-table tbody td,
+  .voucher-monthly-table tbody td {
+    background: transparent !important;
+    border: 0;
+    display: block;
+    max-width: none;
+    min-width: 0;
+    overflow: visible;
+    padding: 0;
+    white-space: normal;
+  }
+
+  .member-mobile-table .cell-title,
+  .monitoring-customer-table strong,
+  .radius-user-table strong,
+  .radius-session-table strong,
+  .radius-profile-table strong,
+  .daily-report-table strong,
+  .report-transactions-table strong,
+  .voucher-daily-table strong,
+  .voucher-monthly-table strong {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .member-mobile-table .cell-subline,
+  .radius-user-table .muted,
+  .radius-session-table .muted,
+  .radius-profile-table .muted,
+  .daily-report-table .muted,
+  .report-transactions-table .cell-subline,
+  .voucher-daily-table .muted,
+  .voucher-monthly-table .muted {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .monitoring-members-view .member-summary-metrics,
+  .monitoring-members-view > .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .member-mobile-table tbody tr {
+    grid-template-areas:
+      "member status"
+      "contact contact"
+      "payment payment"
+      "date action";
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .member-mobile-table tbody td:nth-child(1) { grid-area: member; }
+  .member-mobile-table tbody td:nth-child(2) { grid-area: contact; }
+  .member-mobile-table tbody td:nth-child(3) { grid-area: payment; }
+  .member-mobile-table tbody td:nth-child(4) { grid-area: status; justify-self: end; }
+  .member-mobile-table tbody td:nth-child(5) { grid-area: date; color: var(--muted); font-size: 11.5px; }
+  .member-mobile-table tbody td:nth-child(6) { grid-area: action; justify-self: end; }
+  .member-mobile-table .cell-map-link { display: none !important; }
+  .member-mobile-table .member-status-stack { align-items: flex-end; }
+  .member-mobile-table .compact-actions { justify-content: flex-end; }
+  .member-mobile-table .compact-actions .ghost-button { min-height: 30px; padding: 0 8px; }
+
+  .radius-user-table.has-select tbody tr {
+    grid-template-areas:
+      "check user action"
+      "check profile action"
+      "check status internet";
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .radius-user-table.has-select tbody td:nth-child(1) { grid-area: check; padding-top: 2px; }
+  .radius-user-table.has-select tbody td:nth-child(4) { grid-area: user; }
+  .radius-user-table.has-select tbody td:nth-child(6) { grid-area: profile; color: var(--muted); font-size: 12px; }
+  .radius-user-table.has-select tbody td:nth-child(8) { grid-area: status; }
+  .radius-user-table.has-select tbody td:nth-child(9) { grid-area: internet; justify-self: end; }
+  .radius-user-table.has-select.has-row-actions tbody td:nth-child(10) { grid-area: action; justify-self: end; }
+  .radius-user-table.has-select tbody td:nth-child(2),
+  .radius-user-table.has-select tbody td:nth-child(3),
+  .radius-user-table.has-select tbody td:nth-child(5),
+  .radius-user-table.has-select tbody td:nth-child(7) {
+    display: none !important;
+  }
+
+  .radius-user-table.no-select tbody tr {
+    grid-template-areas:
+      "user action"
+      "profile action"
+      "status internet";
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .radius-user-table.no-select tbody td:nth-child(3) { grid-area: user; }
+  .radius-user-table.no-select tbody td:nth-child(5) { grid-area: profile; color: var(--muted); font-size: 12px; }
+  .radius-user-table.no-select tbody td:nth-child(7) { grid-area: status; }
+  .radius-user-table.no-select tbody td:nth-child(8) { grid-area: internet; justify-self: end; }
+  .radius-user-table.no-select.has-row-actions tbody td:nth-child(9) { grid-area: action; justify-self: end; }
+  .radius-user-table.no-select tbody td:nth-child(1),
+  .radius-user-table.no-select tbody td:nth-child(2),
+  .radius-user-table.no-select tbody td:nth-child(4),
+  .radius-user-table.no-select tbody td:nth-child(6) {
+    display: none !important;
+  }
+
+  .radius-user-table .password-text {
+    display: none !important;
+  }
+
+  .radius-user-table .action-menu summary {
+    min-height: 32px;
+    min-width: 34px;
+  }
+
+  .radius-session-table tbody tr {
+    grid-template-areas:
+      "user status action"
+      "ip usage action"
+      "uptime usage action";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .radius-session-table tbody td:nth-child(1) { grid-area: user; }
+  .radius-session-table tbody td:nth-child(3) { grid-area: ip; color: var(--muted); font-size: 12px; }
+  .radius-session-table tbody td:nth-child(4) { grid-area: uptime; color: var(--muted); font-size: 12px; }
+  .radius-session-table tbody td:nth-child(5) { grid-area: usage; justify-self: end; text-align: right; }
+  .radius-session-table tbody td:nth-child(6) { grid-area: status; justify-self: end; }
+  .radius-session-table.has-row-actions tbody td:nth-child(8) { grid-area: action; justify-self: end; }
+  .radius-session-table tbody td:nth-child(2),
+  .radius-session-table tbody td:nth-child(7) {
+    display: none !important;
+  }
+
+  .radius-profile-table tbody tr {
+    grid-template-areas:
+      "profile price action"
+      "users status action"
+      "rate rate action";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .radius-profile-table tbody td:nth-child(1) { grid-area: profile; }
+  .radius-profile-table tbody td:nth-child(2) { grid-area: price; color: var(--text); font-weight: 900; justify-self: end; }
+  .radius-profile-table-ppp tbody td:nth-child(3) { grid-area: users; color: var(--muted); font-size: 12px; }
+  .radius-profile-table-ppp tbody td:nth-child(4) { grid-area: rate; color: var(--muted); font-size: 12px; }
+  .radius-profile-table-ppp tbody td:nth-child(7) { grid-area: status; justify-self: end; }
+  .radius-profile-table-ppp.has-row-actions tbody td:nth-child(8) { grid-area: action; justify-self: end; }
+  .radius-profile-table-ppp tbody td:nth-child(5),
+  .radius-profile-table-ppp tbody td:nth-child(6) {
+    display: none !important;
+  }
+
+  .radius-profile-table-hotspot tbody td:nth-child(3) { grid-area: rate; color: var(--muted); font-size: 12px; }
+  .radius-profile-table-hotspot tbody td:nth-child(6) { grid-area: status; justify-self: end; }
+  .radius-profile-table-hotspot.has-row-actions tbody td:nth-child(7) { grid-area: action; justify-self: end; }
+  .radius-profile-table-hotspot tbody td:nth-child(4),
+  .radius-profile-table-hotspot tbody td:nth-child(5) {
+    display: none !important;
+  }
+
+  .radius-template-table tbody tr,
+  .radius-nas-table tbody tr {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .radius-template-table.has-row-actions tbody td:last-child,
+  .radius-nas-table tbody td:nth-child(4) {
+    justify-self: end;
+  }
+
+  .monitoring-customer-table-pppoe tbody tr {
+    grid-template-areas:
+      "name uptime"
+      "address address";
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .monitoring-customer-table-pppoe tbody td:nth-child(2) { grid-area: name; }
+  .monitoring-customer-table-pppoe tbody td:nth-child(5) { grid-area: address; color: var(--muted); font-size: 12px; }
+  .monitoring-customer-table-pppoe tbody td:nth-child(6) { grid-area: uptime; justify-self: end; }
+  .monitoring-customer-table-pppoe tbody td:nth-child(1),
+  .monitoring-customer-table-pppoe tbody td:nth-child(3),
+  .monitoring-customer-table-pppoe tbody td:nth-child(4) {
+    display: none !important;
+  }
+
+  .monitoring-customer-table-hotspot tbody tr {
+    grid-template-areas:
+      "name uptime"
+      "address address";
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .monitoring-customer-table-hotspot tbody td:nth-child(2) { grid-area: name; }
+  .monitoring-customer-table-hotspot tbody td:nth-child(4) { grid-area: address; color: var(--muted); font-size: 12px; }
+  .monitoring-customer-table-hotspot tbody td:nth-child(5) { grid-area: uptime; justify-self: end; }
+  .monitoring-customer-table-hotspot tbody td:nth-child(1),
+  .monitoring-customer-table-hotspot tbody td:nth-child(3) {
+    display: none !important;
+  }
+
+  .daily-report-table tbody tr {
+    grid-template-areas:
+      "check info amount"
+      "check time action"
+      "check method status";
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .daily-report-table tbody td:nth-child(1) { grid-area: check; }
+  .daily-report-table tbody td:nth-child(2) { grid-area: info; font-weight: 800; }
+  .daily-report-table tbody td:nth-child(4) { grid-area: time; color: var(--muted); font-size: 12px; }
+  .daily-report-table tbody td:nth-child(5) { grid-area: method; color: var(--muted); font-size: 12px; }
+  .daily-report-table tbody td:nth-child(6) { grid-area: status; justify-self: end; }
+  .daily-report-table tbody td:nth-child(8) { grid-area: amount; font-weight: 950; justify-self: end; }
+  .daily-report-table tbody td:nth-child(9) { grid-area: action; justify-self: end; }
+  .daily-report-table tbody td:nth-child(3),
+  .daily-report-table tbody td:nth-child(7) {
+    display: none !important;
+  }
+
+  .report-transactions-table tbody tr {
+    grid-template-areas:
+      "ref amount action"
+      "time source action"
+      "desc method action";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .report-transactions-table tbody td:nth-child(1) { grid-area: ref; }
+  .report-transactions-table tbody td:nth-child(2) { grid-area: time; color: var(--muted); font-size: 12px; }
+  .report-transactions-table tbody td:nth-child(3) { grid-area: source; }
+  .report-transactions-table tbody td:nth-child(5) { grid-area: desc; color: var(--muted); font-size: 12px; }
+  .report-transactions-table tbody td:nth-child(6) { grid-area: method; justify-self: end; }
+  .report-transactions-table tbody td:nth-child(8) { grid-area: amount; font-weight: 950; justify-self: end; }
+  .report-transactions-table tbody td:nth-child(9) { grid-area: action; justify-self: end; }
+  .report-transactions-table tbody td:nth-child(4),
+  .report-transactions-table tbody td:nth-child(7) {
+    display: none !important;
+  }
+
+  .voucher-daily-table.has-reseller tbody tr {
+    grid-template-areas:
+      "voucher amount net"
+      "time package method"
+      "buyer buyer buyer";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .voucher-daily-table.has-reseller tbody td:nth-child(1) { grid-area: time; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(2) { grid-area: voucher; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(4) { grid-area: buyer; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(5) { grid-area: package; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(7) { grid-area: method; justify-self: end; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(9) { grid-area: amount; font-weight: 950; justify-self: end; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(11) { grid-area: net; justify-self: end; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(3),
+  .voucher-daily-table.has-reseller tbody td:nth-child(6),
+  .voucher-daily-table.has-reseller tbody td:nth-child(8),
+  .voucher-daily-table.has-reseller tbody td:nth-child(10) {
+    display: none !important;
+  }
+
+  .voucher-daily-table.is-scoped tbody tr {
+    grid-template-areas:
+      "voucher amount net"
+      "time package method"
+      "buyer buyer buyer";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .voucher-daily-table.is-scoped tbody td:nth-child(1) { grid-area: time; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(2) { grid-area: voucher; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(4) { grid-area: buyer; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(5) { grid-area: package; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(6) { grid-area: method; justify-self: end; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(8) { grid-area: amount; font-weight: 950; justify-self: end; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(10) { grid-area: net; justify-self: end; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(3),
+  .voucher-daily-table.is-scoped tbody td:nth-child(7),
+  .voucher-daily-table.is-scoped tbody td:nth-child(9) {
+    display: none !important;
+  }
+
+  .voucher-monthly-table tbody tr {
+    grid-template-areas:
+      "date omzet net"
+      "count voucher voucher";
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .voucher-monthly-table tbody td:nth-child(1) { grid-area: date; }
+  .voucher-monthly-table tbody td:nth-child(2) { grid-area: count; color: var(--muted); font-size: 12px; }
+  .voucher-monthly-table tbody td:nth-child(3) { grid-area: voucher; color: var(--muted); font-size: 12px; justify-self: end; }
+  .voucher-monthly-table tbody td:nth-child(7) { grid-area: omzet; font-weight: 950; justify-self: end; }
+  .voucher-monthly-table tbody td:nth-child(9) { grid-area: net; justify-self: end; }
+  .voucher-monthly-table tbody td:nth-child(4),
+  .voucher-monthly-table tbody td:nth-child(5),
+  .voucher-monthly-table tbody td:nth-child(6),
+  .voucher-monthly-table tbody td:nth-child(8) {
+    display: none !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .member-mobile-table tbody tr,
+  .radius-user-table.has-select tbody tr,
+  .radius-user-table.no-select tbody tr,
+  .radius-session-table tbody tr,
+  .radius-profile-table tbody tr,
+  .daily-report-table tbody tr,
+  .report-transactions-table tbody tr,
+  .voucher-daily-table tbody tr,
+  .voucher-monthly-table tbody tr {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .report-transactions-table tbody tr {
+    grid-template-areas:
+      "ref amount"
+      "time action"
+      "desc method";
+  }
+}
+/* DEV mobile simple menu cards - end */
+
+
+/* DEV mobile simple menu cards fix - start */
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .member-mobile-table tbody td[colspan],
+  .monitoring-customer-table tbody td[colspan],
+  .radius-user-table tbody td[colspan],
+  .radius-session-table tbody td[colspan],
+  .radius-profile-table tbody td[colspan],
+  .radius-template-table tbody td[colspan],
+  .radius-nas-table tbody td[colspan],
+  .daily-report-table tbody td[colspan],
+  .report-transactions-table tbody td[colspan],
+  .voucher-daily-table tbody td[colspan],
+  .voucher-monthly-table tbody td[colspan] {
+    color: var(--muted);
+    display: block !important;
+    grid-column: 1 / -1 !important;
+    min-height: 24px;
+    text-align: center;
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .radius-user-table.has-select tbody tr {
+    grid-template-columns: 28px minmax(0, 1fr) auto !important;
+  }
+
+  .radius-session-table tbody tr,
+  .radius-profile-table tbody tr,
+  .daily-report-table tbody tr,
+  .report-transactions-table tbody tr,
+  .voucher-daily-table tbody tr,
+  .voucher-monthly-table tbody tr {
+    grid-template-columns: minmax(0, 1fr) auto auto !important;
+  }
+
+  .radius-user-table.no-select tbody tr,
+  .member-mobile-table tbody tr,
+  .monitoring-customer-table tbody tr {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .report-transactions-table tbody tr {
+    grid-template-areas:
+      "ref amount action"
+      "time source action"
+      "desc method action" !important;
+  }
+}
+/* DEV mobile simple menu cards fix - end */
+
+
+/* DEV mobile icon density fix - start */
+[data-open-nav-group="customers"] {
+  --menu-icon: var(--icon-users);
+}
+
+[data-nav-group="customers"] [data-view="monitoringMembers"] {
+  --menu-icon: var(--icon-users);
+}
+
+@media (max-width: 920px) {
+  body.is-authenticated.is-menu-full .sidebar .nav-section[data-nav-group="monitoring"],
+  body.is-authenticated.is-menu-full .sidebar .nav-section[data-nav-group="settings-menu"],
+  body.is-authenticated.is-menu-full .sidebar .nav-section[data-nav-group="admin"] {
+    display: grid !important;
+  }
+
+  body.is-authenticated .bottom-item {
+    position: relative;
+    gap: 4px;
+    min-height: 54px;
+    padding: 5px 4px;
+    font-size: 10.5px;
+    letter-spacing: -0.01em;
+  }
+
+  body.is-authenticated .bottom-item::before {
+    width: 24px !important;
+    height: 24px !important;
+  }
+
+  body.is-authenticated .bottom-item.is-open {
+    color: var(--primary);
+    background: linear-gradient(180deg, #dcefff, #edf7ff);
+    box-shadow: inset 0 0 0 1px rgba(43, 139, 217, 0.16);
+  }
+
+  body.is-authenticated .bottom-item.is-open::after {
+    content: "";
+    position: absolute;
+    right: 14px;
+    bottom: 4px;
+    left: 14px;
+    height: 3px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.9;
+  }
+
+  body.is-authenticated .sidebar .nav-subitem {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 10px;
+    min-height: 48px;
+    padding: 6px 10px 6px 7px;
+    font-size: 12.5px;
+  }
+
+  body.is-authenticated .sidebar .nav-subitem::before {
+    width: 28px;
+    height: 28px;
+    border-radius: 11px;
+  }
+
+  body.is-authenticated .sidebar .nav-subitem::after {
+    left: 14px;
+    width: 15px;
+    height: 15px;
+  }
+
+  body.is-authenticated .sidebar .nav-section-label {
+    font-size: 10.5px;
+    margin: 3px 4px 9px;
+  }
+}
+
+@media (max-width: 380px) {
+  body.is-authenticated .bottom-item {
+    font-size: 9.8px;
+    min-width: 48px;
+  }
+
+  body.is-authenticated .bottom-item::before {
+    width: 22px !important;
+    height: 22px !important;
+  }
+}
+/* DEV mobile icon density fix - end */
+
+/* DEV mobile extended table cards - start */
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .genieacs-table-wrap,
+  .wa-message-table-wrap,
+  .user-table-wrap,
+  .detail-table-wrap,
+  .payment-gateway-table-wrap,
+  .log-detection-table-wrap,
+  .finance-recap-table-wrap,
+  .inventory-stock-table-wrap,
+  .expense-table-wrap,
+  .external-income-table-wrap,
+  .inventory-table-wrap,
+  .network-asset-table-wrap,
+  .monitoring-site-table-wrap {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .genieacs-table,
+  .wa-message-table,
+  .user-management-table,
+  .detail-table,
+  .payment-gateway-table,
+  .mobile-card-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    display: block;
+    min-width: 0 !important;
+    table-layout: auto;
+    width: 100% !important;
+  }
+
+  .genieacs-table colgroup,
+  .genieacs-table thead,
+  .wa-message-table thead,
+  .user-management-table thead,
+  .detail-table thead,
+  .payment-gateway-table colgroup,
+  .payment-gateway-table thead,
+  .mobile-card-table thead {
+    display: none !important;
+  }
+
+  .genieacs-table tbody,
+  .wa-message-table tbody,
+  .user-management-table tbody,
+  .detail-table tbody,
+  .payment-gateway-table tbody,
+  .mobile-card-table tbody {
+    display: grid;
+    gap: 10px;
+    padding: 0;
+  }
+
+  .genieacs-table tbody tr,
+  .wa-message-table tbody tr,
+  .user-management-table tbody tr,
+  .detail-table tbody tr,
+  .payment-gateway-table tbody tr,
+  .mobile-card-table tbody tr {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, .06);
+    display: grid;
+    gap: 7px 10px;
+    min-width: 0;
+    padding: 12px;
+  }
+
+  [data-theme="dark"] .genieacs-table tbody tr,
+  [data-theme="dark"] .wa-message-table tbody tr,
+  [data-theme="dark"] .user-management-table tbody tr,
+  [data-theme="dark"] .detail-table tbody tr,
+  [data-theme="dark"] .payment-gateway-table tbody tr,
+  [data-theme="dark"] .mobile-card-table tbody tr {
+    box-shadow: 0 14px 30px rgba(0, 0, 0, .22);
+  }
+
+  .genieacs-table tbody td,
+  .wa-message-table tbody td,
+  .user-management-table tbody td,
+  .detail-table tbody td,
+  .payment-gateway-table tbody td,
+  .mobile-card-table tbody td {
+    background: transparent !important;
+    border: 0;
+    display: block;
+    max-width: none;
+    min-width: 0;
+    overflow: visible;
+    padding: 0;
+    white-space: normal;
+  }
+
+  .genieacs-table tbody td::before,
+  .wa-message-table tbody td::before,
+  .user-management-table tbody td::before,
+  .detail-table tbody td::before,
+  .mobile-card-table tbody td::before {
+    color: var(--muted);
+    content: "";
+    display: block;
+    font-size: 9.5px;
+    font-weight: 900;
+    letter-spacing: .04em;
+    line-height: 1.15;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+  }
+
+  .payment-gateway-table tbody td::before {
+    color: var(--muted);
+    content: attr(data-label);
+    display: block;
+    font-size: 9.5px;
+    font-weight: 900;
+    letter-spacing: .04em;
+    line-height: 1.15;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+  }
+
+  .genieacs-table tbody td[colspan],
+  .wa-message-table tbody td[colspan],
+  .user-management-table tbody td[colspan],
+  .detail-table tbody td[colspan],
+  .payment-gateway-table tbody td[colspan],
+  .mobile-card-table tbody td[colspan] {
+    color: var(--muted);
+    grid-column: 1 / -1;
+    min-height: 24px;
+    text-align: center;
+  }
+
+  .genieacs-table tbody td[colspan]::before,
+  .wa-message-table tbody td[colspan]::before,
+  .user-management-table tbody td[colspan]::before,
+  .detail-table tbody td[colspan]::before,
+  .payment-gateway-table tbody td[colspan]::before,
+  .mobile-card-table tbody td[colspan]::before {
+    content: none;
+  }
+
+  .genieacs-table strong,
+  .genieacs-table code,
+  .genieacs-truncate,
+  .genieacs-sn-cell,
+  .genieacs-nowrap,
+  .wa-message-table strong,
+  .wa-message-text,
+  .user-management-table strong,
+  .user-management-table .muted,
+  .detail-table td,
+  .mobile-card-table strong,
+  .mobile-card-table .muted,
+  .payment-gateway-reference strong,
+  .payment-gateway-reference .muted {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-card-table td,
+  .mobile-card-table .muted,
+  .detail-table td,
+  .wa-message-text,
+  .wa-message-preview-button {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .mobile-card-table .row-actions,
+  .genieacs-table .row-actions,
+  .wa-message-table .wa-message-row-actions,
+  .user-management-table .user-row-actions,
+  .monitoring-site-table .row-actions,
+  .inventory-table .row-actions,
+  .network-asset-table .row-actions,
+  .external-income-table .row-actions,
+  .expense-table .row-actions {
+    align-items: stretch;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .mobile-card-table .row-actions > *,
+  .genieacs-table .row-actions > *,
+  .wa-message-table .wa-message-row-actions > *,
+  .user-management-table .user-row-actions > * {
+    min-height: 32px;
+    min-width: 0;
+  }
+
+  .genieacs-table tbody tr {
+    grid-template-areas:
+      "select status status"
+      "pppoe pppoe pppoe"
+      "ip nas active"
+      "type sn sn"
+      "redaman temp last"
+      "action action action";
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+  }
+
+  .genieacs-table tbody td:nth-child(1) { grid-area: select; padding-top: 2px; }
+  .genieacs-table tbody td:nth-child(2) { display: none !important; }
+  .genieacs-table tbody td:nth-child(3) { grid-area: status; justify-self: end; }
+  .genieacs-table tbody td:nth-child(4) { grid-area: pppoe; }
+  .genieacs-table tbody td:nth-child(5) { grid-area: ip; }
+  .genieacs-table tbody td:nth-child(6) { grid-area: nas; }
+  .genieacs-table tbody td:nth-child(7) { grid-area: type; }
+  .genieacs-table tbody td:nth-child(8) { grid-area: sn; }
+  .genieacs-table tbody td:nth-child(9) { grid-area: redaman; }
+  .genieacs-table tbody td:nth-child(10) { grid-area: temp; }
+  .genieacs-table tbody td:nth-child(11) { grid-area: active; justify-self: end; }
+  .genieacs-table tbody td:nth-child(12) { grid-area: last; justify-self: end; text-align: right; }
+  .genieacs-table tbody td:nth-child(13) {
+    border-top: 1px dashed var(--line);
+    grid-area: action;
+    padding-top: 8px;
+  }
+
+  .genieacs-table tbody td:nth-child(1)::before { content: "Pilih"; }
+  .genieacs-table tbody td:nth-child(3)::before { content: "Status"; text-align: right; }
+  .genieacs-table tbody td:nth-child(4)::before { content: "PPPoE"; }
+  .genieacs-table tbody td:nth-child(5)::before { content: "IP"; }
+  .genieacs-table tbody td:nth-child(6)::before { content: "NAS"; }
+  .genieacs-table tbody td:nth-child(7)::before { content: "Type"; }
+  .genieacs-table tbody td:nth-child(8)::before { content: "SN"; }
+  .genieacs-table tbody td:nth-child(9)::before { content: "Redaman"; }
+  .genieacs-table tbody td:nth-child(10)::before { content: "Suhu"; }
+  .genieacs-table tbody td:nth-child(11)::before { content: "Client"; text-align: right; }
+  .genieacs-table tbody td:nth-child(12)::before { content: "Aktif"; text-align: right; }
+  .genieacs-table tbody td:nth-child(13)::before { content: "Aksi"; }
+
+  .genieacs-table .genieacs-pppoe-cell {
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+  }
+
+  .genieacs-table .cell-icon-button {
+    flex: 0 0 34px;
+    height: 34px;
+    width: 34px;
+  }
+
+  .genieacs-table .genieacs-client-button {
+    min-width: 38px;
+  }
+
+  .wa-message-table tbody tr {
+    grid-template-areas:
+      "number status"
+      "phone phone"
+      "subject time"
+      "text text"
+      "action action";
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .wa-message-table tbody td:nth-child(1) { grid-area: number; }
+  .wa-message-table tbody td:nth-child(2) { grid-area: time; color: var(--muted); font-size: 11.5px; justify-self: end; text-align: right; }
+  .wa-message-table tbody td:nth-child(3) { grid-area: phone; }
+  .wa-message-table tbody td:nth-child(4) { grid-area: subject; }
+  .wa-message-table tbody td:nth-child(5) { grid-area: text; }
+  .wa-message-table tbody td:nth-child(6) { grid-area: status; justify-self: end; text-align: right; }
+  .wa-message-table tbody td:nth-child(7) {
+    border-top: 1px dashed var(--line);
+    grid-area: action;
+    padding-top: 8px;
+  }
+
+  .wa-message-table tbody td:nth-child(1)::before { content: "No"; }
+  .wa-message-table tbody td:nth-child(2)::before { content: "Waktu"; text-align: right; }
+  .wa-message-table tbody td:nth-child(3)::before { content: "Penerima"; }
+  .wa-message-table tbody td:nth-child(4)::before { content: "Subject"; }
+  .wa-message-table tbody td:nth-child(5)::before { content: "Pesan"; }
+  .wa-message-table tbody td:nth-child(6)::before { content: "Status"; text-align: right; }
+  .wa-message-table tbody td:nth-child(7)::before { content: "Aksi"; }
+
+  .wa-message-table .wa-message-no-cell,
+  .wa-message-table .wa-message-text {
+    min-width: 0;
+    width: auto;
+  }
+
+  .wa-message-preview-button {
+    max-width: 100%;
+    text-align: left;
+  }
+
+  .user-management-table tbody tr {
+    grid-template-areas:
+      "user status"
+      "role nas"
+      "identity identity"
+      "contact contact"
+      "last last"
+      "action action";
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .user-management-table tbody td:nth-child(1) { grid-area: user; }
+  .user-management-table tbody td:nth-child(2) { grid-area: identity; }
+  .user-management-table tbody td:nth-child(3) { grid-area: role; }
+  .user-management-table tbody td:nth-child(4) { grid-area: contact; }
+  .user-management-table tbody td:nth-child(5) { grid-area: nas; justify-self: end; text-align: right; }
+  .user-management-table tbody td:nth-child(6) { grid-area: status; justify-self: end; }
+  .user-management-table tbody td:nth-child(7) { grid-area: last; color: var(--muted); font-size: 11.5px; }
+  .user-management-table tbody td:nth-child(8) {
+    border-top: 1px dashed var(--line);
+    grid-area: action;
+    padding-top: 8px;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+
+  .user-management-table tbody td:nth-child(1)::before { content: "Pengguna"; }
+  .user-management-table tbody td:nth-child(2)::before { content: "Identitas"; }
+  .user-management-table tbody td:nth-child(3)::before { content: "Role"; }
+  .user-management-table tbody td:nth-child(4)::before { content: "Kontak"; }
+  .user-management-table tbody td:nth-child(5)::before { content: "NAS"; text-align: right; }
+  .user-management-table tbody td:nth-child(6)::before { content: "Status"; text-align: right; }
+  .user-management-table tbody td:nth-child(7)::before { content: "Login"; }
+  .user-management-table tbody td:nth-child(8)::before { content: "Aksi"; }
+
+  .user-management-table .user-table-name {
+    align-items: center;
+  }
+
+  .user-management-table .user-row-actions {
+    display: flex;
+  }
+
+  .detail-table tbody tr {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .detail-table tbody td:nth-child(1)::before { content: "No"; }
+  .detail-table tbody td:nth-child(2)::before { content: "Koneksi"; }
+  .detail-table tbody td:nth-child(3)::before { content: "Nama / Device"; }
+  .detail-table tbody td:nth-child(4)::before { content: "IP"; }
+  .detail-table tbody td:nth-child(5)::before { content: "MAC"; }
+
+  .mobile-card-table tbody tr {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .mobile-card-table tbody td.amount,
+  .mobile-card-table tbody td:has(.badge) {
+    justify-self: end;
+    text-align: right;
+  }
+
+  .mobile-card-table tbody td:last-child:has(.row-actions) {
+    border-top: 1px dashed var(--line);
+    grid-column: 1 / -1;
+    padding-top: 8px;
+  }
+
+  .mobile-card-table tbody td:nth-child(1) {
+    font-weight: 850;
+  }
+
+  .log-detection-table tbody tr {
+    grid-template-columns: minmax(0, .8fr) auto;
+  }
+  .log-detection-table tbody td:nth-child(1)::before { content: "Waktu"; }
+  .log-detection-table tbody td:nth-child(2)::before { content: "Level"; text-align: right; }
+  .log-detection-table tbody td:nth-child(3)::before { content: "Kategori"; }
+  .log-detection-table tbody td:nth-child(4)::before { content: "Sumber"; }
+  .log-detection-table tbody td:nth-child(5)::before { content: "Endpoint"; }
+  .log-detection-table tbody td:nth-child(6)::before { content: "Pesan"; }
+  .log-detection-table tbody td:nth-child(7)::before { content: "Saran"; }
+
+  .finance-recap-table tbody td:nth-child(1)::before { content: "Kategori"; }
+  .finance-recap-table tbody td:nth-child(2)::before { content: "Transaksi"; text-align: right; }
+  .finance-recap-table tbody td:nth-child(3)::before { content: "Nominal"; text-align: right; }
+
+  .inventory-stock-table tbody td:nth-child(1)::before { content: "Tanggal"; }
+  .inventory-stock-table tbody td:nth-child(2)::before { content: "Barang"; }
+  .inventory-stock-table tbody td:nth-child(3)::before { content: "Jenis"; }
+  .inventory-stock-table tbody td:nth-child(4)::before { content: "Jumlah"; text-align: right; }
+  .inventory-stock-table tbody td:nth-child(5)::before { content: "Stok"; text-align: right; }
+  .inventory-stock-table tbody td:nth-child(6)::before { content: "Update Oleh"; }
+
+  .expense-table tbody td:nth-child(1)::before { content: "Tanggal"; }
+  .expense-table tbody td:nth-child(2)::before { content: "Catatan"; }
+  .expense-table tbody td:nth-child(3)::before { content: "Penerima"; }
+  .expense-table tbody td:nth-child(4)::before { content: "Keperluan"; }
+  .expense-table tbody td:nth-child(5)::before { content: "Metode"; }
+  .expense-table tbody td:nth-child(6)::before { content: "Nominal"; text-align: right; }
+  .expense-table tbody td:nth-child(7)::before { content: "Aksi"; }
+
+  .external-income-table tbody td:nth-child(1)::before { content: "Tanggal"; }
+  .external-income-table tbody td:nth-child(2)::before { content: "Kuitansi"; }
+  .external-income-table tbody td:nth-child(3)::before { content: "Kategori"; }
+  .external-income-table tbody td:nth-child(4)::before { content: "Pembayar"; }
+  .external-income-table tbody td:nth-child(5)::before { content: "Barang/Jasa"; }
+  .external-income-table tbody td:nth-child(6)::before { content: "Metode"; }
+  .external-income-table tbody td:nth-child(7)::before { content: "Nominal"; text-align: right; }
+  .external-income-table tbody td:nth-child(8)::before { content: "Status"; text-align: right; }
+  .external-income-table tbody td:nth-child(9)::before { content: "Aksi"; }
+
+  .inventory-table tbody td:nth-child(1)::before { content: "Barang"; }
+  .inventory-table tbody td:nth-child(2)::before { content: "Kategori"; }
+  .inventory-table tbody td:nth-child(3)::before { content: "Stok"; text-align: right; }
+  .inventory-table tbody td:nth-child(4)::before { content: "Lokasi"; }
+  .inventory-table tbody td:nth-child(5)::before { content: "Vendor"; }
+  .inventory-table tbody td:nth-child(6)::before { content: "Status"; text-align: right; }
+  .inventory-table tbody td:nth-child(7)::before { content: "Aksi"; }
+
+  .network-asset-table tbody td:nth-child(1)::before { content: "Aset"; }
+  .network-asset-table tbody td:nth-child(2)::before { content: "Jenis"; }
+  .network-asset-table tbody td:nth-child(3)::before { content: "Lokasi"; }
+  .network-asset-table tbody td:nth-child(4)::before { content: "Brand/Model"; }
+  .network-asset-table tbody td:nth-child(5)::before { content: "Serial"; }
+  .network-asset-table tbody td:nth-child(6)::before { content: "PIC"; }
+  .network-asset-table tbody td:nth-child(7)::before { content: "Kondisi"; text-align: right; }
+  .network-asset-table tbody td:nth-child(8)::before { content: "Aksi"; }
+
+  .monitoring-site-table tbody td:nth-child(1)::before { content: "Target"; }
+  .monitoring-site-table tbody td:nth-child(2)::before { content: "Host"; }
+  .monitoring-site-table tbody td:nth-child(3)::before { content: "Metode"; }
+  .monitoring-site-table tbody td:nth-child(4)::before { content: "Lokasi"; }
+  .monitoring-site-table tbody td:nth-child(5)::before { content: "Status"; text-align: right; }
+  .monitoring-site-table tbody td:nth-child(6)::before { content: "Update"; }
+  .monitoring-site-table tbody td:nth-child(7)::before { content: "Aksi"; }
+}
+
+@media (max-width: 520px) {
+  .genieacs-table tbody tr {
+    grid-template-areas:
+      "select status"
+      "pppoe pppoe"
+      "ip nas"
+      "type sn"
+      "redaman temp"
+      "active last"
+      "action action";
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .mobile-card-table tbody tr,
+  .detail-table tbody tr {
+    grid-template-columns: 1fr;
+  }
+
+  .wa-message-table tbody tr,
+  .user-management-table tbody tr {
+    grid-template-columns: 1fr;
+  }
+
+  .wa-message-table tbody td:nth-child(2),
+  .wa-message-table tbody td:nth-child(6),
+  .user-management-table tbody td:nth-child(5),
+  .user-management-table tbody td:nth-child(6) {
+    justify-self: start;
+    text-align: left;
+  }
+
+  .wa-message-table tbody td:nth-child(2)::before,
+  .wa-message-table tbody td:nth-child(6)::before,
+  .user-management-table tbody td:nth-child(5)::before,
+  .user-management-table tbody td:nth-child(6)::before,
+  .genieacs-table tbody td:nth-child(3)::before,
+  .genieacs-table tbody td:nth-child(11)::before,
+  .genieacs-table tbody td:nth-child(12)::before {
+    text-align: left;
+  }
+}
+/* DEV mobile extended table cards - end */
