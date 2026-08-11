@@ -18805,3 +18805,719 @@ dialog::backdrop {
   }
 }
 /* Reeltech-style monitoring map pages - end */
+
+/* Report table polish - keep version unchanged */
+.daily-report-table,
+.monthly-billing-daily-table,
+.voucher-daily-table,
+.voucher-monthly-table {
+  table-layout: fixed;
+}
+
+.daily-report-table {
+  min-width: 1040px;
+}
+
+.daily-report-table th,
+.daily-report-table td,
+.monthly-billing-daily-table th,
+.monthly-billing-daily-table td,
+.voucher-daily-table th,
+.voucher-daily-table td,
+.voucher-monthly-table th,
+.voucher-monthly-table td {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.daily-report-table th:nth-child(1),
+.daily-report-table td:nth-child(1) { width: 46px; }
+.daily-report-table th:nth-child(2),
+.daily-report-table td:nth-child(2) { width: 270px; }
+.daily-report-table th:nth-child(3),
+.daily-report-table td:nth-child(3) { width: 145px; }
+.daily-report-table th:nth-child(4),
+.daily-report-table td:nth-child(4) { width: 112px; }
+.daily-report-table th:nth-child(5),
+.daily-report-table td:nth-child(5) { width: 155px; }
+.daily-report-table th:nth-child(6),
+.daily-report-table td:nth-child(6) { width: 105px; }
+.daily-report-table th:nth-child(7),
+.daily-report-table td:nth-child(7) { width: 150px; }
+.daily-report-table th:nth-child(8),
+.daily-report-table td:nth-child(8) { width: 135px; }
+.daily-report-table th:nth-child(9),
+.daily-report-table td:nth-child(9) { width: 92px; }
+
+.monthly-billing-daily-table {
+  min-width: 1040px;
+}
+
+.monthly-billing-daily-table th:nth-child(1),
+.monthly-billing-daily-table td:nth-child(1) { width: 56px; }
+.monthly-billing-daily-table th:nth-child(2),
+.monthly-billing-daily-table td:nth-child(2) { width: 150px; }
+.monthly-billing-daily-table th:nth-child(3),
+.monthly-billing-daily-table td:nth-child(3),
+.monthly-billing-daily-table th:nth-child(4),
+.monthly-billing-daily-table td:nth-child(4),
+.monthly-billing-daily-table th:nth-child(5),
+.monthly-billing-daily-table td:nth-child(5),
+.monthly-billing-daily-table th:nth-child(6),
+.monthly-billing-daily-table td:nth-child(6),
+.monthly-billing-daily-table th:nth-child(7),
+.monthly-billing-daily-table td:nth-child(7) { width: 135px; }
+.monthly-billing-daily-table th:nth-child(8),
+.monthly-billing-daily-table td:nth-child(8) { width: 160px; }
+
+.voucher-daily-table {
+  min-width: 1180px;
+}
+
+.voucher-daily-table th:nth-child(1),
+.voucher-daily-table td:nth-child(1) { width: 150px; }
+.voucher-daily-table th:nth-child(2),
+.voucher-daily-table td:nth-child(2) { width: 170px; }
+.voucher-daily-table th:nth-child(3),
+.voucher-daily-table td:nth-child(3) { width: 145px; }
+.voucher-daily-table th:nth-child(4),
+.voucher-daily-table td:nth-child(4) { width: 170px; }
+.voucher-daily-table th:nth-child(5),
+.voucher-daily-table td:nth-child(5) { width: 180px; }
+.voucher-daily-table th:nth-child(6),
+.voucher-daily-table td:nth-child(6) { width: 130px; }
+.voucher-daily-table th:nth-child(7),
+.voucher-daily-table td:nth-child(7) { width: 110px; }
+.voucher-daily-table th:nth-child(8),
+.voucher-daily-table td:nth-child(8) { width: 72px; }
+.voucher-daily-table th:nth-child(9),
+.voucher-daily-table td:nth-child(9),
+.voucher-daily-table th:nth-child(10),
+.voucher-daily-table td:nth-child(10),
+.voucher-daily-table th:nth-child(11),
+.voucher-daily-table td:nth-child(11) { width: 125px; }
+
+.voucher-monthly-table {
+  min-width: 1060px;
+}
+
+.voucher-monthly-table th:nth-child(1),
+.voucher-monthly-table td:nth-child(1) { width: 150px; }
+.voucher-monthly-table th:nth-child(2),
+.voucher-monthly-table td:nth-child(2),
+.voucher-monthly-table th:nth-child(3),
+.voucher-monthly-table td:nth-child(3) { width: 105px; }
+.voucher-monthly-table th:nth-child(4),
+.voucher-monthly-table td:nth-child(4),
+.voucher-monthly-table th:nth-child(5),
+.voucher-monthly-table td:nth-child(5),
+.voucher-monthly-table th:nth-child(6),
+.voucher-monthly-table td:nth-child(6),
+.voucher-monthly-table th:nth-child(7),
+.voucher-monthly-table td:nth-child(7),
+.voucher-monthly-table th:nth-child(8),
+.voucher-monthly-table td:nth-child(8),
+.voucher-monthly-table th:nth-child(9),
+.voucher-monthly-table td:nth-child(9) { width: 130px; }
+
+.daily-report-table .billing-action-stack {
+  justify-content: flex-end;
+}
+
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .daily-report-table-wrap,
+  .monthly-billing-daily-table-wrap,
+  .voucher-daily-table-wrap,
+  .voucher-monthly-table-wrap,
+  .report-transactions-table-wrap,
+  .finance-recap-table-wrap {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .daily-report-table,
+  .monthly-billing-daily-table,
+  .voucher-daily-table,
+  .voucher-monthly-table,
+  .report-transactions-table,
+  .finance-recap-table {
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+    display: block !important;
+    min-width: 0 !important;
+    table-layout: auto !important;
+    width: 100% !important;
+  }
+
+  .daily-report-table tbody,
+  .monthly-billing-daily-table tbody,
+  .voucher-daily-table tbody,
+  .voucher-monthly-table tbody,
+  .report-transactions-table tbody,
+  .finance-recap-table tbody {
+    display: grid !important;
+    gap: 10px !important;
+    padding: 0 !important;
+  }
+
+  .daily-report-table colgroup,
+  .daily-report-table thead,
+  .monthly-billing-daily-table thead,
+  .voucher-daily-table colgroup,
+  .voucher-daily-table thead,
+  .voucher-monthly-table colgroup,
+  .voucher-monthly-table thead,
+  .report-transactions-table colgroup,
+  .report-transactions-table thead,
+  .finance-recap-table thead {
+    display: none !important;
+  }
+
+  .daily-report-table tbody tr,
+  .monthly-billing-daily-table tbody tr,
+  .voucher-daily-table tbody tr,
+  .voucher-monthly-table tbody tr,
+  .report-transactions-table tbody tr,
+  .finance-recap-table tbody tr {
+    background: var(--surface) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 18px !important;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, .06) !important;
+    display: grid !important;
+    gap: 7px 10px !important;
+    min-width: 0 !important;
+    padding: 12px !important;
+  }
+
+  [data-theme="dark"] .daily-report-table tbody tr,
+  [data-theme="dark"] .monthly-billing-daily-table tbody tr,
+  [data-theme="dark"] .voucher-daily-table tbody tr,
+  [data-theme="dark"] .voucher-monthly-table tbody tr,
+  [data-theme="dark"] .report-transactions-table tbody tr,
+  [data-theme="dark"] .finance-recap-table tbody tr {
+    box-shadow: 0 14px 30px rgba(0, 0, 0, .22) !important;
+  }
+
+  .daily-report-table tbody td,
+  .monthly-billing-daily-table tbody td,
+  .voucher-daily-table tbody td,
+  .voucher-monthly-table tbody td,
+  .report-transactions-table tbody td,
+  .finance-recap-table tbody td {
+    background: transparent !important;
+    border: 0 !important;
+    display: block !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    white-space: normal !important;
+    width: auto !important;
+  }
+
+  .daily-report-table strong,
+  .daily-report-table .muted,
+  .daily-report-table .site-pill,
+  .monthly-billing-daily-table strong,
+  .voucher-daily-table strong,
+  .voucher-daily-table .muted,
+  .voucher-monthly-table strong,
+  .report-transactions-table strong,
+  .report-transactions-table .cell-title,
+  .report-transactions-table .cell-subline,
+  .finance-recap-table strong {
+    display: block;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    overflow-wrap: normal !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    word-break: normal !important;
+  }
+
+  .daily-report-table tbody tr {
+    grid-template-areas:
+      "check info amount"
+      "check time status"
+      "check method action" !important;
+    grid-template-columns: 28px minmax(0, 1fr) auto !important;
+  }
+
+  .daily-report-table tbody td:nth-child(1) { grid-area: check; padding-top: 2px !important; }
+  .daily-report-table tbody td:nth-child(2) { grid-area: info; font-weight: 850; }
+  .daily-report-table tbody td:nth-child(4) { grid-area: time; color: var(--muted); font-size: 12px; }
+  .daily-report-table tbody td:nth-child(5) { grid-area: method; color: var(--muted); font-size: 12px; }
+  .daily-report-table tbody td:nth-child(6) { grid-area: status; justify-self: end; }
+  .daily-report-table tbody td:nth-child(8) { grid-area: amount; font-weight: 950; justify-self: end; text-align: right; }
+  .daily-report-table tbody td:nth-child(9) { grid-area: action; justify-self: end; }
+  .daily-report-table tbody td:nth-child(3),
+  .daily-report-table tbody td:nth-child(7) {
+    display: none !important;
+  }
+
+  .daily-report-table .billing-action-stack {
+    align-items: center;
+    border-top: 0;
+    gap: 6px;
+    justify-content: flex-end;
+    padding-top: 0;
+  }
+
+  .daily-report-table .billing-action-button {
+    min-height: 32px;
+    min-width: 34px;
+    padding: 0 8px;
+  }
+
+  .monthly-billing-daily-table tbody tr {
+    grid-template-areas:
+      "date total"
+      "cash transfer"
+      "online expense" !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .monthly-billing-daily-table tbody td:nth-child(1) { display: none !important; }
+  .monthly-billing-daily-table tbody td:nth-child(2) { grid-area: date; font-weight: 850; }
+  .monthly-billing-daily-table tbody td:nth-child(3) { grid-area: cash; }
+  .monthly-billing-daily-table tbody td:nth-child(4) { grid-area: transfer; justify-self: end; text-align: right; }
+  .monthly-billing-daily-table tbody td:nth-child(5) { grid-area: online; }
+  .monthly-billing-daily-table tbody td:nth-child(6) { display: none !important; }
+  .monthly-billing-daily-table tbody td:nth-child(7) { grid-area: expense; justify-self: end; text-align: right; }
+  .monthly-billing-daily-table tbody td:nth-child(8) { grid-area: total; font-weight: 950; justify-self: end; text-align: right; }
+
+  .monthly-billing-daily-table tbody td:nth-child(2)::before { content: "Tanggal"; }
+  .monthly-billing-daily-table tbody td:nth-child(3)::before { content: "Tunai"; }
+  .monthly-billing-daily-table tbody td:nth-child(4)::before { content: "Transfer"; text-align: right; }
+  .monthly-billing-daily-table tbody td:nth-child(5)::before { content: "Online"; }
+  .monthly-billing-daily-table tbody td:nth-child(7)::before { content: "Pengeluaran"; text-align: right; }
+  .monthly-billing-daily-table tbody td:nth-child(8)::before { content: "Total"; text-align: right; }
+
+  .monthly-billing-daily-table tbody td[colspan]:only-child {
+    color: var(--muted);
+    display: block !important;
+    grid-column: 1 / -1 !important;
+    text-align: center;
+  }
+
+  .monthly-billing-daily-table tbody td[colspan]:only-child::before {
+    content: none !important;
+  }
+
+  .monthly-billing-daily-table tbody tr.table-total-row {
+    grid-template-areas:
+      "date total"
+      "cash transfer"
+      "online expense" !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(1) {
+    display: block !important;
+    grid-area: date;
+  }
+
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(2) { grid-area: cash; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(3) { grid-area: transfer; justify-self: end; text-align: right; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(4) { grid-area: online; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(5) { display: none !important; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(6) { grid-area: expense; justify-self: end; text-align: right; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(7) { grid-area: total; justify-self: end; text-align: right; }
+
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(1)::before { content: none; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(2)::before { content: "Tunai"; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(3)::before { content: "Transfer"; text-align: right; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(4)::before { content: "Online"; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(6)::before { content: "Pengeluaran"; text-align: right; }
+  .monthly-billing-daily-table tbody tr.table-total-row td:nth-child(7)::before { content: "Total"; text-align: right; }
+
+  .monthly-billing-daily-table tbody td::before,
+  .voucher-daily-table tbody td::before,
+  .voucher-monthly-table tbody td::before,
+  .finance-recap-table tbody td::before {
+    color: var(--muted);
+    display: block;
+    font-size: 9.5px;
+    font-weight: 900;
+    letter-spacing: .04em;
+    line-height: 1.15;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+  }
+
+  .voucher-daily-table.has-reseller tbody tr,
+  .voucher-daily-table.is-scoped tbody tr {
+    grid-template-areas:
+      "voucher amount"
+      "time method"
+      "package net"
+      "buyer buyer" !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .voucher-daily-table.has-reseller tbody td:nth-child(1),
+  .voucher-daily-table.is-scoped tbody td:nth-child(1) { grid-area: time; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(2),
+  .voucher-daily-table.is-scoped tbody td:nth-child(2) { grid-area: voucher; font-weight: 850; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(4),
+  .voucher-daily-table.is-scoped tbody td:nth-child(4) { grid-area: buyer; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(5),
+  .voucher-daily-table.is-scoped tbody td:nth-child(5) { grid-area: package; color: var(--muted); font-size: 12px; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(7) { grid-area: method; justify-self: end; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(6) { grid-area: method; justify-self: end; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(9) { grid-area: amount; font-weight: 950; justify-self: end; text-align: right; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(8) { grid-area: amount; font-weight: 950; justify-self: end; text-align: right; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(11) { grid-area: net; justify-self: end; text-align: right; }
+  .voucher-daily-table.is-scoped tbody td:nth-child(10) { grid-area: net; justify-self: end; text-align: right; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(3),
+  .voucher-daily-table.has-reseller tbody td:nth-child(6),
+  .voucher-daily-table.has-reseller tbody td:nth-child(8),
+  .voucher-daily-table.has-reseller tbody td:nth-child(10),
+  .voucher-daily-table.is-scoped tbody td:nth-child(3),
+  .voucher-daily-table.is-scoped tbody td:nth-child(7),
+  .voucher-daily-table.is-scoped tbody td:nth-child(9) {
+    display: none !important;
+  }
+
+  .voucher-daily-table tbody td:nth-child(1)::before { content: "Waktu"; }
+  .voucher-daily-table tbody td:nth-child(2)::before { content: "Voucher"; }
+  .voucher-daily-table tbody td:nth-child(4)::before { content: "Pembeli"; }
+  .voucher-daily-table tbody td:nth-child(5)::before { content: "Paket"; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(7)::before,
+  .voucher-daily-table.is-scoped tbody td:nth-child(6)::before { content: "Metode"; text-align: right; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(9)::before,
+  .voucher-daily-table.is-scoped tbody td:nth-child(8)::before { content: "Omzet"; text-align: right; }
+  .voucher-daily-table.has-reseller tbody td:nth-child(11)::before,
+  .voucher-daily-table.is-scoped tbody td:nth-child(10)::before { content: "Net"; text-align: right; }
+
+  .voucher-monthly-table tbody tr {
+    grid-template-areas:
+      "date omzet"
+      "count net"
+      "voucher voucher" !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .voucher-monthly-table tbody td:nth-child(1) { grid-area: date; font-weight: 850; }
+  .voucher-monthly-table tbody td:nth-child(2) { grid-area: count; color: var(--muted); font-size: 12px; }
+  .voucher-monthly-table tbody td:nth-child(3) { grid-area: voucher; color: var(--muted); font-size: 12px; }
+  .voucher-monthly-table tbody td:nth-child(7) { grid-area: omzet; font-weight: 950; justify-self: end; text-align: right; }
+  .voucher-monthly-table tbody td:nth-child(9) { grid-area: net; justify-self: end; text-align: right; }
+  .voucher-monthly-table tbody td:nth-child(4),
+  .voucher-monthly-table tbody td:nth-child(5),
+  .voucher-monthly-table tbody td:nth-child(6),
+  .voucher-monthly-table tbody td:nth-child(8) {
+    display: none !important;
+  }
+
+  .voucher-monthly-table tbody td:nth-child(1)::before { content: "Tanggal"; }
+  .voucher-monthly-table tbody td:nth-child(2)::before { content: "Transaksi"; }
+  .voucher-monthly-table tbody td:nth-child(3)::before { content: "Voucher"; }
+  .voucher-monthly-table tbody td:nth-child(7)::before { content: "Omzet"; text-align: right; }
+  .voucher-monthly-table tbody td:nth-child(9)::before { content: "Net"; text-align: right; }
+
+  .report-transactions-table tbody tr {
+    grid-template-areas:
+      "ref amount action"
+      "time method action"
+      "source desc desc" !important;
+    grid-template-columns: minmax(0, 1fr) auto auto !important;
+  }
+
+  .report-transactions-table tbody td:nth-child(1) { grid-area: ref; }
+  .report-transactions-table tbody td:nth-child(2) { grid-area: time; color: var(--muted); font-size: 12px; }
+  .report-transactions-table tbody td:nth-child(3) { grid-area: source; }
+  .report-transactions-table tbody td:nth-child(5) { grid-area: desc; color: var(--muted); font-size: 12px; }
+  .report-transactions-table tbody td:nth-child(6) { grid-area: method; justify-self: end; }
+  .report-transactions-table tbody td:nth-child(8) { grid-area: amount; font-weight: 950; justify-self: end; text-align: right; }
+  .report-transactions-table tbody td:nth-child(9) { grid-area: action; justify-self: end; }
+  .report-transactions-table tbody td:nth-child(4),
+  .report-transactions-table tbody td:nth-child(7) {
+    display: none !important;
+  }
+
+  .report-transactions-table .ghost-button {
+    min-height: 32px;
+    padding: 0 9px;
+  }
+}
+
+@media (max-width: 520px) {
+  .daily-report-table tbody tr {
+    grid-template-areas:
+      "check info"
+      "amount amount"
+      "time status"
+      "method action" !important;
+    grid-template-columns: 28px minmax(0, 1fr) !important;
+  }
+
+  .daily-report-table tbody td:nth-child(8) {
+    justify-self: stretch !important;
+    text-align: left;
+  }
+
+  .daily-report-table tbody td:nth-child(9) {
+    justify-self: end;
+  }
+
+  .monthly-billing-daily-table tbody tr,
+  .voucher-daily-table.has-reseller tbody tr,
+  .voucher-daily-table.is-scoped tbody tr,
+  .voucher-monthly-table tbody tr,
+  .finance-recap-table tbody tr {
+    grid-template-columns: 1fr !important;
+  }
+
+  .monthly-billing-daily-table tbody tr {
+    grid-template-areas:
+      "date"
+      "cash"
+      "transfer"
+      "online"
+      "expense"
+      "total" !important;
+  }
+
+  .monthly-billing-daily-table tbody tr.table-total-row {
+    grid-template-areas:
+      "date"
+      "cash"
+      "transfer"
+      "online"
+      "expense"
+      "total" !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .monthly-billing-daily-table tbody td:nth-child(4),
+  .monthly-billing-daily-table tbody td:nth-child(7),
+  .monthly-billing-daily-table tbody td:nth-child(8),
+  .voucher-daily-table.has-reseller tbody td:nth-child(7),
+  .voucher-daily-table.is-scoped tbody td:nth-child(6),
+  .voucher-daily-table.has-reseller tbody td:nth-child(9),
+  .voucher-daily-table.is-scoped tbody td:nth-child(8),
+  .voucher-daily-table.has-reseller tbody td:nth-child(11),
+  .voucher-daily-table.is-scoped tbody td:nth-child(10),
+  .voucher-monthly-table tbody td:nth-child(7),
+  .voucher-monthly-table tbody td:nth-child(9) {
+    justify-self: start !important;
+    text-align: left !important;
+  }
+
+  .monthly-billing-daily-table tbody td:nth-child(4)::before,
+  .monthly-billing-daily-table tbody td:nth-child(7)::before,
+  .monthly-billing-daily-table tbody td:nth-child(8)::before,
+  .voucher-daily-table.has-reseller tbody td:nth-child(7)::before,
+  .voucher-daily-table.is-scoped tbody td:nth-child(6)::before,
+  .voucher-daily-table.has-reseller tbody td:nth-child(9)::before,
+  .voucher-daily-table.is-scoped tbody td:nth-child(8)::before,
+  .voucher-daily-table.has-reseller tbody td:nth-child(11)::before,
+  .voucher-daily-table.is-scoped tbody td:nth-child(10)::before,
+  .voucher-monthly-table tbody td:nth-child(7)::before,
+  .voucher-monthly-table tbody td:nth-child(9)::before {
+    text-align: left !important;
+  }
+
+  .voucher-daily-table.has-reseller tbody tr,
+  .voucher-daily-table.is-scoped tbody tr {
+    grid-template-areas:
+      "voucher"
+      "amount"
+      "time"
+      "method"
+      "package"
+      "buyer"
+      "net" !important;
+  }
+
+  .voucher-monthly-table tbody tr {
+    grid-template-areas:
+      "date"
+      "count"
+      "voucher"
+      "omzet"
+      "net" !important;
+  }
+
+  .report-transactions-table tbody tr {
+    grid-template-areas:
+      "ref"
+      "amount"
+      "time"
+      "source"
+      "method"
+      "desc"
+      "action" !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .report-transactions-table tbody td:nth-child(6),
+  .report-transactions-table tbody td:nth-child(8),
+  .report-transactions-table tbody td:nth-child(9) {
+    justify-self: start !important;
+    text-align: left !important;
+  }
+
+  .report-transactions-table .ghost-button {
+    width: 100%;
+  }
+}
+
+/* Daily billing item precision - version unchanged */
+.daily-report-info-cell,
+.daily-report-amount-cell,
+.daily-report-method-cell,
+.daily-report-action-cell {
+  min-width: 0;
+}
+
+.daily-report-item-title,
+.daily-report-item-subline {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daily-report-item-title {
+  color: var(--text);
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.daily-report-item-subline {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-top: 3px;
+}
+
+.daily-report-amount-cell strong {
+  white-space: nowrap;
+}
+
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .daily-report-table tbody tr {
+    align-items: center;
+    grid-template-areas:
+      "info amount"
+      "time status"
+      "method action" !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    padding-left: 44px !important;
+    position: relative;
+  }
+
+  .daily-report-table tbody td.daily-report-check-cell {
+    grid-area: auto !important;
+    left: 12px;
+    padding: 0 !important;
+    position: absolute !important;
+    top: 14px;
+    width: 22px !important;
+  }
+
+  .daily-report-table tbody td.daily-report-info-cell {
+    align-self: start;
+    font-weight: 400 !important;
+    grid-area: info !important;
+  }
+
+  .daily-report-table tbody td.daily-report-time-cell {
+    color: var(--muted);
+    font-size: 12px;
+    grid-area: time !important;
+    line-height: 1.25;
+  }
+
+  .daily-report-table tbody td.daily-report-method-cell {
+    color: var(--muted);
+    font-size: 12px;
+    grid-area: method !important;
+    line-height: 1.25;
+  }
+
+  .daily-report-table tbody td.daily-report-status-cell {
+    grid-area: status !important;
+    justify-self: end !important;
+  }
+
+  .daily-report-table tbody td.daily-report-amount-cell {
+    align-self: start;
+    font-weight: 950;
+    grid-area: amount !important;
+    justify-self: end !important;
+    line-height: 1.25;
+    text-align: right !important;
+  }
+
+  .daily-report-table tbody td.daily-report-action-cell {
+    grid-area: action !important;
+    justify-self: end !important;
+  }
+
+  .daily-report-method-cell strong,
+  .daily-report-method-cell .daily-confirmed-by {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 520px) {
+  .daily-report-table tbody tr {
+    gap: 8px 10px !important;
+    grid-template-areas:
+      "info info"
+      "amount status"
+      "time method"
+      "action action" !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    padding: 12px 12px 12px 40px !important;
+  }
+
+  .daily-report-table tbody td.daily-report-amount-cell {
+    justify-self: start !important;
+    text-align: left !important;
+  }
+
+  .daily-report-table tbody td.daily-report-action-cell {
+    justify-self: stretch !important;
+  }
+
+  .daily-report-table .billing-action-stack {
+    justify-content: flex-end !important;
+  }
+}
+
+@media (max-width: 380px) {
+  .daily-report-table tbody tr {
+    grid-template-areas:
+      "info"
+      "amount"
+      "status"
+      "time"
+      "method"
+      "action" !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .daily-report-table tbody td.daily-report-status-cell,
+  .daily-report-table tbody td.daily-report-action-cell {
+    justify-self: start !important;
+  }
+}

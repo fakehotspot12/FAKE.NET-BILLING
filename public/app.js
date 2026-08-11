@@ -5634,26 +5634,41 @@ async function renderReportsDaily(options = {}) {
               </tr>
             </thead>
             <tbody>
-              ${filteredTransactions.length ? filteredTransactions.map((item, index) => `
+              ${filteredTransactions.length ? filteredTransactions.map((item, index) => {
+                const invoiceText = billingInvoiceNo(item) || item.id || '-';
+                const infoText = item.info || item.customerName || item.username || item.externalId || '-';
+                const siteText = dailySiteLabel(item, reportSites) || '-';
+                const adminText = dailyAdminLabel(item, report || {});
+                const methodText = item.method || '-';
+                const statusValue = item.status || (Number(item.income || 0) > 0 ? 'paid' : 'pending');
+                const detailText = [
+                  invoiceText && invoiceText !== '-' ? `Invoice ${invoiceText}` : '',
+                  siteText && siteText !== '-' ? siteText : '',
+                  adminText && adminText !== '-' ? `Oleh ${adminText}` : ''
+                ].filter(Boolean).join(' · ') || '-';
+                return `
                 <tr>
-                  <td>
+                  <td class="daily-report-check-cell">
                     <input type="checkbox" data-daily-receipt-select="${index}" ${dailyReceiptAllowed(item) ? '' : 'disabled'} aria-label="Pilih kuitansi ${escapeHtml(item.invoiceNo || item.externalId || item.info || index + 1)}">
                   </td>
-                  <td>${escapeHtml(item.info || item.externalId || '-')}</td>
-                  <td class="site-cell"><span class="site-pill" title="${escapeHtml(dailySiteLabel(item, reportSites) || '-')}">${escapeHtml(dailySiteLabel(item, reportSites) || '-')}</span></td>
-                  <td class="nowrap">${escapeHtml(dailyPaymentTime(item))}</td>
-                  <td>
-                    <strong>${escapeHtml(item.method || '-')}</strong>
-                    ${String(item.method || '').trim().toLowerCase() === 'tunai - loket'
-                      ? `<div class="muted daily-confirmed-by" title="${escapeHtml(dailyAdminLabel(item, report || {}))}">Oleh: <span>${escapeHtml(dailyAdminLabel(item, report || {}))}</span></div>`
+                  <td class="daily-report-info-cell" title="${escapeHtml([infoText, detailText].filter(Boolean).join(' - '))}">
+                    <strong class="daily-report-item-title">${escapeHtml(infoText)}</strong>
+                    <span class="daily-report-item-subline">${escapeHtml(detailText)}</span>
+                  </td>
+                  <td class="site-cell daily-report-site-cell"><span class="site-pill" title="${escapeHtml(siteText)}">${escapeHtml(siteText)}</span></td>
+                  <td class="nowrap daily-report-time-cell">${escapeHtml(dailyPaymentTime(item))}</td>
+                  <td class="daily-report-method-cell">
+                    <strong>${escapeHtml(methodText)}</strong>
+                    ${String(methodText).trim().toLowerCase() === 'tunai - loket'
+                      ? `<div class="muted daily-confirmed-by" title="${escapeHtml(adminText)}">Oleh: <span>${escapeHtml(adminText)}</span></div>`
                       : ''}
                   </td>
-                  <td><span class="badge ${billingStatusBadge(item.status)}">${escapeHtml(billingStatusLabel(item.status || (Number(item.income || 0) > 0 ? 'paid' : 'pending')))}</span></td>
-                  <td class="daily-admin-cell" title="${escapeHtml(dailyAdminLabel(item, report || {}))}">
-                    <span class="daily-admin-name">${escapeHtml(dailyAdminLabel(item, report || {}))}</span>
+                  <td class="daily-report-status-cell"><span class="badge ${billingStatusBadge(statusValue)}">${escapeHtml(billingStatusLabel(statusValue))}</span></td>
+                  <td class="daily-admin-cell daily-report-admin-cell" title="${escapeHtml(adminText)}">
+                    <span class="daily-admin-name">${escapeHtml(adminText)}</span>
                   </td>
-                  <td class="amount positive">${rupiah(item.amount || item.income || 0)}</td>
-                  <td class="billing-action-cell">
+                  <td class="amount positive daily-report-amount-cell"><strong>${rupiah(item.amount || item.income || 0)}</strong></td>
+                  <td class="billing-action-cell daily-report-action-cell">
                     ${(dailyReceiptAllowed(item) || dailyDiscountAuditAllowed(item)) ? `
                       <div class="billing-action-stack">
                         ${dailyReceiptAllowed(item) ? `
@@ -5670,7 +5685,8 @@ async function renderReportsDaily(options = {}) {
                     ` : '<span class="muted">-</span>'}
                   </td>
                 </tr>
-              `).join('') : '<tr><td colspan="9">Belum ada tagihan pada tanggal ini.</td></tr>'}
+              `;
+              }).join('') : '<tr><td colspan="9">Belum ada tagihan pada tanggal ini.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -5853,8 +5869,8 @@ function financeDailyRowsTable(rows = [], emptyText = 'Belum ada data harian.') 
     return acc;
   }, { incomeCash: 0, incomeTransfer: 0, incomeOnline: 0, expenseCash: 0, expenseTransfer: 0, incomeTotal: 0 });
   return `
-    <div class="table-wrap">
-      <table>
+    <div class="table-wrap monthly-billing-daily-table-wrap">
+      <table class="mobile-card-table monthly-billing-daily-table">
         <thead>
           <tr>
             <th>No</th>
@@ -6494,7 +6510,7 @@ function bindVoucherReportFilters(renderFn, options = {}) {
 
 function voucherMonthlyRowsTable(rows = []) {
   return `
-    <div class="table-wrap">
+    <div class="table-wrap voucher-monthly-table-wrap">
       <table class="voucher-monthly-table">
         <thead>
           <tr>
@@ -6575,7 +6591,7 @@ async function renderReportsVoucherDaily(options = {}) {
           <h2>Voucher Harian</h2>
           <span>${displayNumber(pagination.total || orders.length)} voucher paid</span>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap voucher-daily-table-wrap">
           <table class="voucher-daily-table ${scoped ? 'is-scoped' : 'has-reseller'}">
             <thead>
               <tr>
