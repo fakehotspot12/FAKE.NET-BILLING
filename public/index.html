@@ -78,7 +78,7 @@
         <div class="nav-group nav-section" data-nav-group="customers">
           <div class="nav-section-label"><span>Pelanggan</span></div>
           <div class="nav-submenu">
-            <button class="nav-subitem" type="button" data-view="monitoringMembers">Data Pelanggan</button>
+            <button class="nav-subitem" type="button" data-view="monitoringMembers">Pelanggan</button>
             <button class="nav-subitem" type="button" data-view="monitoringBilling">Tagihan Pelanggan</button>
           </div>
         </div>
@@ -93,10 +93,7 @@
         <div class="nav-group nav-section" data-nav-group="finance">
           <div class="nav-section-label"><span>Keuangan</span></div>
           <div class="nav-submenu">
-            <button class="nav-subitem" type="button" data-view="externalIncomes">Pemasukan</button>
-            <button class="nav-subitem" type="button" data-view="expenses">Pengeluaran</button>
-            <button class="nav-subitem" type="button" data-view="reportsTransactions">Mutasi Bulanan</button>
-            <button class="nav-subitem" type="button" data-view="reportsFinanceRecap">Rekapitulasi</button>
+            <button class="nav-subitem" type="button" data-view="financeCash" data-related-views="externalIncomes,expenses,reportsTransactions,reportsFinanceRecap">Kas & Rekap</button>
             <button class="nav-subitem" type="button" data-view="reportsDaily" data-related-views="reportsMonthlyBilling">Laporan Tagihan</button>
             <button class="nav-subitem" type="button" data-view="reportsVoucherDaily" data-related-views="reportsVoucherMonthly">Laporan Voucher</button>
             <button class="nav-subitem" type="button" data-view="reportsStatistics">Statistik</button>
@@ -110,14 +107,12 @@
             <button class="nav-subitem" type="button" data-view="monitoringFiberNetwork">ODP/ODC</button>
             <button class="nav-subitem" type="button" data-view="monitoringServices">Status Layanan</button>
             <button class="nav-subitem" type="button" data-view="genieAcs">GenieACS</button>
-            <button class="nav-subitem" type="button" data-view="networkAssets">Aset Jaringan</button>
           </div>
         </div>
         <div class="nav-group nav-section" data-nav-group="settings-menu">
           <div class="nav-section-label"><span>Pengaturan</span></div>
           <div class="nav-submenu">
             <button class="nav-subitem" type="button" data-view="billingSettings">Pengaturan Billing</button>
-            <button class="nav-subitem" type="button" data-view="radiusSettings">Isolir Radius</button>
             <button class="nav-subitem" type="button" data-view="paymentGateway">Payment Gateway</button>
             <button class="nav-subitem" type="button" data-view="waGateway">WhatsApp Gateway</button>
           </div>
@@ -125,8 +120,7 @@
         <div class="nav-group nav-section" data-nav-group="admin">
           <div class="nav-section-label"><span>Admin Sistem</span></div>
           <div class="nav-submenu">
-            <button class="nav-subitem" type="button" data-view="inventory">Inventaris</button>
-            <button class="nav-subitem" type="button" data-view="reportsInventoryStock">Stok Inventaris</button>
+            <button class="nav-subitem" type="button" data-view="inventory">Inventaris & Aset</button>
             <button class="nav-subitem" type="button" data-view="users">Pengguna dan Peran</button>
             <button class="nav-subitem" type="button" data-view="settings">Pengaturan Sistem</button>
             <button class="nav-subitem" type="button" data-view="logDetection">Deteksi Log</button>

@@ -176,6 +176,27 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
+function requestIsHttps(req = {}) {
+  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return forwardedProto === 'https' || req.socket?.encrypted === true;
+}
+
+function applySecurityHeaders(req = {}, res = {}) {
+  if (!res || typeof res.setHeader !== 'function') return;
+  const headers = {
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(self)'
+  };
+  if (requestIsHttps(req)) {
+    headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (!res.hasHeader?.(name)) res.setHeader(name, value);
+  }
+}
+
 function notFound(res) {
   sendJson(res, 404, { ok: false, error: 'Halaman subweb tidak tersedia' });
 }
@@ -395,7 +416,8 @@ async function serveStatic(req, res, pathname = '') {
         notFound(res);
         return;
       }
-      sendJson(res, 500, { ok: false, error: error.message || 'Subweb gagal membaca upload' });
+      console.error(`Subweb upload error: ${error.message || error}`);
+      sendJson(res, 500, { ok: false, error: 'Subweb gagal membaca upload' });
     }
     return;
   }
@@ -423,7 +445,8 @@ async function serveStatic(req, res, pathname = '') {
       notFound(res);
       return;
     }
-    sendJson(res, 500, { ok: false, error: error.message || 'Subweb gagal membaca file' });
+    console.error(`Subweb static error: ${error.message || error}`);
+    sendJson(res, 500, { ok: false, error: 'Subweb gagal membaca file' });
   }
 }
 
@@ -461,9 +484,10 @@ function proxyToBilling(req, res) {
     proxyRes.pipe(res);
   });
   proxyReq.on('error', (error) => {
+    console.error(`Subweb proxy error: ${error.message || error}`);
     sendJson(res, 502, {
       ok: false,
-      error: `Billing utama tidak bisa dihubungi: ${error.message || error}`
+      error: 'Billing utama tidak bisa dihubungi'
     });
   });
   req.pipe(proxyReq);
@@ -481,6 +505,7 @@ function shouldProxy(pathname = '') {
 
 const server = http.createServer(async (req, res) => {
   try {
+    applySecurityHeaders(req, res);
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     if (req.method === 'OPTIONS') {
       res.writeHead(204, { 'Cache-Control': 'no-store' });
@@ -509,7 +534,8 @@ const server = http.createServer(async (req, res) => {
     }
     await serveStatic(req, res, decodeURIComponent(url.pathname));
   } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message || 'Subweb error' });
+    console.error(`Subweb request error: ${error.message || error}`);
+    sendJson(res, 500, { ok: false, error: 'Subweb error' });
   }
 });
 

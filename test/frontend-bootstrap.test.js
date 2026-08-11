@@ -9,6 +9,10 @@ function publicSource(filename) {
   return fs.readFileSync(path.join(__dirname, '..', 'public', filename), 'utf8');
 }
 
+function sourceFile(...segments) {
+  return fs.readFileSync(path.join(__dirname, '..', ...segments), 'utf8');
+}
+
 test('loads the lightweight bootstrap before the full authenticated application', () => {
   const indexSource = publicSource('index.html');
   const bootstrapSource = publicSource('bootstrap.js');
@@ -59,11 +63,15 @@ test('uses the compact navigation and bounded paging contract', () => {
   }
   assert.match(html, /class="nav-group nav-section"/);
   assert.match(html, /data-open-full-menu/);
+  assert.match(html, /data-view="financeCash" data-related-views="externalIncomes,expenses,reportsTransactions,reportsFinanceRecap">Kas & Rekap/);
   assert.match(html, /data-related-views="reportsMonthlyBilling"/);
   assert.match(html, /data-view="billingSettings">Pengaturan Billing/);
-  assert.match(html, /data-view="radiusSettings">Isolir Radius/);
+  assert.doesNotMatch(html, /data-view="radiusSettings">Isolir Radius/);
+  assert.doesNotMatch(html, /data-view="reportsInventoryStock">Stok Inventaris/);
   assert.equal((html.match(/class="bottom-item/g) || []).length, 5);
   assert.match(appSource, /const PAGER_LIMIT_OPTIONS = \[10, 25, 50, 100\]/);
+  assert.match(appSource, /const MONITORING_MAP_CANVAS_THRESHOLD = 320/);
+  assert.match(appSource, /async function addLeafletRowsInChunks/);
   assert.doesNotMatch(appSource, /const PAGER_LIMIT_OPTIONS = \[[^\]]*['"]all['"]/);
   assert.match(appSource, /mobile-card-table/);
   assert.match(appSource, /if \(!view \|\| !Object\.prototype\.hasOwnProperty\.call\(viewPermissions, view\)\) return false/);
@@ -84,4 +92,33 @@ test('opens mobile navigation as a bottom sheet instead of a side drawer', () =>
   assert.match(styles, /body\.is-authenticated\.is-menu-full \.sidebar \.nav-section\[data-nav-group="admin"\]/);
   assert.match(styles, /\.bottom-item\.is-open::after/);
   assert.doesNotMatch(styles, /body\.is-authenticated \.sidebar[\s\S]*?translate3d\(calc\(-100%/);
+});
+
+test('keeps monitoring maps mobile-safe and lightweight for large datasets', () => {
+  const appSource = publicSource('app.js');
+  const styles = publicSource('styles.css');
+
+  assert.match(appSource, /monitoringMapUseLightweightMode/);
+  assert.match(appSource, /preferCanvas:\s*lightweightMap/);
+  assert.match(appSource, /addLeafletRowsInChunks\(customerMarkers/);
+  assert.match(appSource, /addLeafletRowsInChunks\(points/);
+  assert.match(appSource, /fiberNetworkInteractionToggle/);
+  assert.match(styles, /\.monitoring-map-toolbar \.filters[\s\S]*?display:\s*grid/);
+  assert.match(styles, /\.monitoring-fiber-grid[\s\S]*?grid-template-columns:\s*minmax\(220px,\s*0\.74fr\)/);
+  assert.match(styles, /\.monitoring-map-canvas[\s\S]*?height:\s*clamp\(420px,\s*58vh,\s*620px\)/);
+});
+
+test('keeps public security responses minimal and protected', () => {
+  const serverSource = sourceFile('src', 'server.js');
+  const subwebSource = sourceFile('src', 'subweb-server.js');
+
+  assert.match(serverSource, /pathname === '\/api\/health'[\s\S]*?sendJson\(res, 200, \{ ok: true \}\)/);
+  assert.doesNotMatch(serverSource, /endpoint:\s*'payment-gateway-webhook'/);
+  assert.doesNotMatch(serverSource, /callbackUrl:\s*data\.settings\?\.paymentGateway/);
+  for (const header of ['X-Frame-Options', 'X-Content-Type-Options', 'Referrer-Policy', 'Permissions-Policy']) {
+    assert.match(serverSource, new RegExp(header));
+    assert.match(subwebSource, new RegExp(header));
+  }
+  assert.match(serverSource, /sendJson\(res, 500, \{ error: 'Server error' \}\)/);
+  assert.match(subwebSource, /sendJson\(res, 500, \{ ok: false, error: 'Subweb error' \}\)/);
 });

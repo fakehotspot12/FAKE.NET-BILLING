@@ -2,6 +2,16 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.3] - 2026-08-11
+
+### Changed
+
+- Merapikan ringkasan menu menjadi Pelanggan, Keuangan Kas & Rekap, Status Layanan, GenieACS, ODP/ODC, dan Inventaris & Aset.
+- Mengoptimalkan Peta Pelanggan dan ODP/ODC agar marker besar dirender bertahap dan memakai canvas saat dataset besar.
+- Menyesuaikan layout peta, ODP/ODC, toolbar filter, dan panel samping agar lebih stabil di desktop serta mobile.
+- Membatasi perintah test ke folder `test/` agar artefak lokal di root repo tidak ikut dieksekusi.
+- Menguatkan response publik agar health check, webhook check, dan error subweb tidak membocorkan detail datastore/server.
+
 ## [4.2.2] - 2026-08-11
 
 ### Fixed

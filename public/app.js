@@ -44,7 +44,7 @@ const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100];
 const MOBILE_FULL_MENU_GROUPS = new Set(['monitoring', 'settings-menu', 'admin']);
-const MOBILE_FULL_MENU_VIEWS = new Set(['monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'networkAssets', 'billingSettings', 'radiusSettings', 'paymentGateway', 'waGateway', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity']);
+const MOBILE_FULL_MENU_VIEWS = new Set(['monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'billingSettings', 'paymentGateway', 'waGateway', 'inventory', 'users', 'settings', 'logDetection', 'activity']);
 const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
 const APP_TIME_ZONE_LABELS = {
   'Asia/Jakarta': 'WIB',
@@ -108,13 +108,14 @@ const titles = {
   monitoringSite: 'Pemantauan NAS',
   monitoringCustomerMap: 'Peta Pelanggan',
   monitoringFiberNetwork: 'ODP/ODC',
-  monitoringMembers: 'Data Pelanggan',
+  monitoringMembers: 'Member',
   monitoringNewCustomers: 'Pelanggan Baru',
   monitoringIsolatedMembers: 'Pelanggan Isolir',
   monitoringTerminatedMembers: 'Pelanggan Terminated',
   monitoringCustomers: 'Sesi Online',
   monitoringBilling: 'Tagihan Pelanggan',
   monitoringServices: 'Status Layanan',
+  financeCash: 'Kas & Rekap',
   externalIncomes: 'Pemasukan',
   expenses: 'Pengeluaran',
   billingSettings: 'Pengaturan Billing',
@@ -130,14 +131,15 @@ const titles = {
   activity: 'Log Audit',
   waGateway: 'WhatsApp Gateway',
   paymentGateway: 'Payment Gateway',
-  inventory: 'Inventaris',
-  networkAssets: 'Aset Jaringan',
+  inventory: 'Inventaris & Aset',
+  networkAssets: 'Inventaris & Aset',
   users: 'Pengguna dan Peran',
   settings: 'Pengaturan Sistem'
 };
 
 const viewPermissions = {
   dashboard: 'dashboard:read',
+  financeCash: ['external-incomes:read', 'expenses:read', 'reports:daily:read'],
   externalIncomes: 'external-incomes:read',
   expenses: 'expenses:read',
   billingSettings: 'billing-settings:manage',
@@ -204,6 +206,7 @@ const state = {
   externalIncomePeriod: todayInput().slice(0, 7),
   expensePeriod: todayInput().slice(0, 7),
   receiptPrintMode: 'a4',
+  financeCashTab: 'incomes',
   invoiceStatus: 'all',
   customerStatus: 'all',
   activityPage: 1,
@@ -409,6 +412,8 @@ const PAYMENT_NOTIFICATION_SEEN_LIMIT = 100;
 const SEARCH_API_CACHE_PREFIX = 'fakenetBillingSearchApiCache:';
 const SEARCH_API_CACHE_MAX_ENTRIES = 120;
 const SEARCH_FOCUS_INTENT_MS = 5000;
+const MONITORING_MAP_CANVAS_THRESHOLD = 320;
+const MONITORING_MAP_CHUNK_SIZE = 120;
 let activeSearchFocusIntent = null;
 
 const money = new Intl.NumberFormat('id-ID', {
@@ -2099,12 +2104,81 @@ function canView(view) {
 }
 
 function firstAvailableView() {
-  return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringBilling', 'billingSettings', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'monitoringCustomers', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'networkAssets', 'paymentGateway', 'waGateway', 'reportsStatistics', 'reportsDaily', 'reportsVoucherDaily', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity'].find(canView) || 'dashboard';
+  return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringBilling', 'billingSettings', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'monitoringCustomers', 'financeCash', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'networkAssets', 'paymentGateway', 'waGateway', 'reportsStatistics', 'reportsDaily', 'reportsVoucherDaily', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity'].find(canView) || 'dashboard';
 }
 
 function normalizeView(view) {
   if (view === 'monitoring') return 'monitoringSite';
   return view;
+}
+
+function financeCashViewFromAlias(view) {
+  if (view === 'externalIncomes') return 'incomes';
+  if (view === 'expenses') return 'expenses';
+  if (view === 'reportsTransactions') return 'transactions';
+  if (view === 'reportsFinanceRecap') return 'recap';
+  return '';
+}
+
+function normalizeFinanceCashView(view) {
+  const tab = financeCashViewFromAlias(view);
+  if (tab) {
+    state.financeCashTab = tab;
+    return 'financeCash';
+  }
+  if (view === 'financeCash' && !['incomes', 'expenses', 'transactions', 'recap'].includes(state.financeCashTab)) {
+    state.financeCashTab = 'incomes';
+  }
+  return view;
+}
+
+function financeCashAvailableTabs() {
+  return [
+    can('external-incomes:read') ? { key: 'incomes', label: 'Pemasukan' } : null,
+    can('expenses:read') ? { key: 'expenses', label: 'Pengeluaran' } : null,
+    can('reports:daily:read') ? { key: 'transactions', label: 'Mutasi Bulanan' } : null,
+    can('reports:daily:read') ? { key: 'recap', label: 'Rekapitulasi' } : null
+  ].filter(Boolean);
+}
+
+function financeCashActiveTab() {
+  const tabs = financeCashAvailableTabs();
+  const requested = ['expenses', 'transactions', 'recap'].includes(state.financeCashTab) ? state.financeCashTab : 'incomes';
+  return tabs.some((tab) => tab.key === requested) ? requested : (tabs[0]?.key || 'incomes');
+}
+
+function financeCashTabsMarkup() {
+  const active = financeCashActiveTab();
+  const tabs = financeCashAvailableTabs();
+  return `
+    <div class="tab-switcher finance-cash-tab-switcher" role="tablist" aria-label="Kas dan rekap keuangan">
+      ${tabs.map((tab) => `<button class="tab-button ${active === tab.key ? 'is-active' : ''}" type="button" data-finance-cash-tab="${escapeHtml(tab.key)}" role="tab" aria-selected="${active === tab.key ? 'true' : 'false'}">${escapeHtml(tab.label)}</button>`).join('')}
+    </div>
+  `;
+}
+
+function bindFinanceCashTabs() {
+  app.querySelectorAll('[data-finance-cash-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextTab = ['expenses', 'transactions', 'recap'].includes(button.dataset.financeCashTab)
+        ? button.dataset.financeCashTab
+        : 'incomes';
+      if (state.financeCashTab === nextTab && state.view === 'financeCash') return;
+      state.financeCashTab = nextTab;
+      state.view = 'financeCash';
+      state.search = '';
+      if (nextTab === 'transactions') state.reportTransactionsPage = 1;
+      render();
+    });
+  });
+}
+
+async function renderFinanceCash(options = {}) {
+  state.financeCashTab = financeCashActiveTab();
+  if (state.financeCashTab === 'expenses') return renderExpenses(options);
+  if (state.financeCashTab === 'transactions') return renderReportsTransactions(options);
+  if (state.financeCashTab === 'recap') return renderReportsFinanceRecap(options);
+  return renderExternalIncomes(options);
 }
 
 function storageValue(key) {
@@ -2424,10 +2498,12 @@ function setView(view, options = {}) {
     return;
   }
 
-  const requestedView = normalizeView(view);
+  const previousFinanceCashTab = state.financeCashTab;
+  const requestedView = normalizeFinanceCashView(normalizeView(view));
   const nextView = canView(requestedView) ? requestedView : firstAvailableView();
+  const financeCashTabChanged = nextView === 'financeCash' && previousFinanceCashTab !== state.financeCashTab;
   const enteringMonitoringBilling = nextView === 'monitoringBilling' && state.view !== 'monitoringBilling';
-  if (nextView !== state.view) {
+  if (nextView !== state.view || financeCashTabChanged) {
     abortPageRequests();
     state.search = '';
     state.activityPage = 1;
@@ -7086,6 +7162,7 @@ function openReportTransactionDetail(transaction = {}) {
 }
 
 async function renderReportsTransactions(options = {}) {
+  state.financeCashTab = 'transactions';
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat mutasi bulanan...</div>';
   const period = state.reportTransactionsPeriod || state.period || todayInput().slice(0, 7);
   const params = {
@@ -7113,6 +7190,7 @@ async function renderReportsTransactions(options = {}) {
 
   app.innerHTML = `
     <div class="stack">
+      ${financeCashTabsMarkup()}
       ${payload.ok ? '' : `
         <section class="notice error">
           <strong>Mutasi belum bisa dibaca</strong>
@@ -7204,6 +7282,7 @@ async function renderReportsTransactions(options = {}) {
     state.reportTransactionsPage = 1;
     renderReportsTransactions();
   };
+  bindFinanceCashTabs();
   document.getElementById('reportTransactionsPeriod')?.addEventListener('change', (event) => {
     state.reportTransactionsPeriod = event.target.value || todayInput().slice(0, 7);
     state.period = state.reportTransactionsPeriod;
@@ -7252,6 +7331,7 @@ function financeRecapRows(rows = [], tone = 'positive') {
 }
 
 async function renderReportsFinanceRecap(options = {}) {
+  state.financeCashTab = 'recap';
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat rekapitulasi...</div>';
   const payload = await api(`/api/reports/finance-recap?${queryString({ period: state.period })}`);
   const summary = payload.summary || {};
@@ -7261,6 +7341,7 @@ async function renderReportsFinanceRecap(options = {}) {
 
   app.innerHTML = `
     <div class="stack">
+      ${financeCashTabsMarkup()}
       <div class="toolbar">
         <div class="filters">
           ${periodFilterControls('financeRecapPeriod', state.period)}
@@ -7315,6 +7396,7 @@ async function renderReportsFinanceRecap(options = {}) {
     </div>
   `;
 
+  bindFinanceCashTabs();
   bindPeriodFilter('financeRecapPeriod', (nextPeriod) => {
     state.period = normalizedPeriod(nextPeriod);
     renderReportsFinanceRecap();
@@ -8081,6 +8163,7 @@ async function renderReportsInventoryStock(options = {}) {
 }
 
 async function renderExpenses(options = {}) {
+  state.financeCashTab = 'expenses';
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat pengeluaran...</div>';
   const period = normalizedPeriod(state.expensePeriod || state.period);
   state.expensePeriod = period;
@@ -8093,6 +8176,7 @@ async function renderExpenses(options = {}) {
 
   app.innerHTML = `
     <div class="stack">
+      ${financeCashTabsMarkup()}
       <div class="toolbar">
         <div class="filters">
           ${periodFilterControls('expensePeriod', period)}
@@ -8146,6 +8230,7 @@ async function renderExpenses(options = {}) {
     </div>
   `;
 
+  bindFinanceCashTabs();
   document.getElementById('addExpense')?.addEventListener('click', () => openExpenseModal());
   bindPeriodFilter('expensePeriod', (nextPeriod) => {
     state.expensePeriod = normalizedPeriod(nextPeriod);
@@ -8686,6 +8771,7 @@ function bindMemberAddonRows(form, addons = []) {
 }
 
 async function renderExternalIncomes(options = {}) {
+  state.financeCashTab = 'incomes';
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat pemasukan...</div>';
   const period = normalizedPeriod(state.externalIncomePeriod || state.period);
   state.externalIncomePeriod = period;
@@ -8723,6 +8809,7 @@ async function renderExternalIncomes(options = {}) {
 
   app.innerHTML = `
     <div class="stack">
+      ${financeCashTabsMarkup()}
       <div class="toolbar">
         <div class="filters">
           ${periodFilterControls('externalIncomePeriod', period)}
@@ -8753,6 +8840,7 @@ async function renderExternalIncomes(options = {}) {
     </div>
   `;
 
+  bindFinanceCashTabs();
   document.getElementById('addExternalIncome')?.addEventListener('click', () => openExternalIncomeModal());
   bindPeriodFilter('externalIncomePeriod', (nextPeriod) => {
     state.externalIncomePeriod = normalizedPeriod(nextPeriod);
@@ -14988,6 +15076,53 @@ function monitoringCustomerMapCircleStyle(row = {}, renderer = null) {
   };
 }
 
+function monitoringFiberMapCircleStyle(row = {}, kind = 'odp', renderer = null) {
+  const tone = String(row.tone || row.status || 'active').toLowerCase();
+  const palette = {
+    noc: '#0f766e',
+    odc: '#2563eb',
+    odp: '#7c3aed',
+    maintenance: '#f59e0b',
+    inactive: '#64748b'
+  };
+  const fillColor = tone === 'maintenance' || tone === 'inactive'
+    ? palette[tone]
+    : (palette[kind] || palette.odp);
+  return {
+    renderer: renderer || undefined,
+    radius: kind === 'odc' ? 7 : 5,
+    stroke: true,
+    color: '#ffffff',
+    weight: 1.4,
+    opacity: 0.9,
+    fill: true,
+    fillColor,
+    fillOpacity: 0.88
+  };
+}
+
+function monitoringMapUseLightweightMode(totalRows = 0) {
+  return monitoringMapMobileScrollGuardEnabled() || Number(totalRows || 0) >= MONITORING_MAP_CANVAS_THRESHOLD;
+}
+
+function monitoringMapYield() {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function addLeafletRowsInChunks(rows = [], addRow = () => {}, options = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const chunkSize = Math.max(30, Number(options.chunkSize || MONITORING_MAP_CHUNK_SIZE) || MONITORING_MAP_CHUNK_SIZE);
+  const isCancelled = typeof options.isCancelled === 'function' ? options.isCancelled : () => false;
+  for (let index = 0; index < list.length; index += 1) {
+    if (isCancelled()) return false;
+    addRow(list[index], index);
+    if ((index + 1) % chunkSize === 0 && index < list.length - 1) {
+      await monitoringMapYield();
+    }
+  }
+  return !isCancelled();
+}
+
 function monitoringCustomerPopupAccountText(row = {}) {
   const username = String(row.username || '').trim();
   if (username) return username;
@@ -15114,16 +15249,20 @@ async function mountMonitoringCustomerMap(payload = {}) {
   }
   if (!document.body.contains(mapEl)) return;
   mapEl.addEventListener('click', handleMonitoringCustomerMapEditClick);
+  const infrastructureNodes = Array.isArray(payload.infrastructureNodes) ? payload.infrastructureNodes : [];
+  const customerMarkers = Array.isArray(payload.markers) ? payload.markers : [];
   const mobileLightweightMap = monitoringMapMobileScrollGuardEnabled();
-  const customerRenderer = mobileLightweightMap && window.L.canvas ? window.L.canvas({ padding: 0.35 }) : null;
+  const lightweightMap = monitoringMapUseLightweightMode(infrastructureNodes.length + customerMarkers.length);
+  const customerRenderer = lightweightMap && window.L.canvas ? window.L.canvas({ padding: 0.35 }) : null;
   const map = window.L.map(mapEl, {
     scrollWheelZoom: true,
-    preferCanvas: mobileLightweightMap,
-    zoomAnimation: !mobileLightweightMap,
-    fadeAnimation: !mobileLightweightMap,
-    markerZoomAnimation: !mobileLightweightMap,
+    preferCanvas: lightweightMap,
+    zoomAnimation: !lightweightMap,
+    fadeAnimation: !lightweightMap,
+    markerZoomAnimation: !lightweightMap,
     tap: !mobileLightweightMap
   }).setView([-0.5022, 117.1537], 12);
+  mapEl.dataset.mapMode = lightweightMap ? 'compact' : 'detailed';
   enableLeafletMapWheelZoom(map, mapEl);
   mapEl._monitoringCustomerMap = map;
   bindMonitoringMapMobileScrollGuard(map, mapEl, {
@@ -15132,13 +15271,14 @@ async function mountMonitoringCustomerMap(payload = {}) {
   });
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
-    updateWhenIdle: mobileLightweightMap,
-    updateWhenZooming: !mobileLightweightMap,
-    keepBuffer: mobileLightweightMap ? 1 : 2,
+    updateWhenIdle: lightweightMap,
+    updateWhenZooming: !lightweightMap,
+    keepBuffer: lightweightMap ? 1 : 2,
     attribution: '&copy; OpenStreetMap'
   }).addTo(map);
   const bounds = [];
-  (payload.infrastructureNodes || []).forEach((node) => {
+  const isCancelled = () => state.view !== 'monitoringCustomerMap' || !document.body.contains(mapEl);
+  await addLeafletRowsInChunks(infrastructureNodes, (node) => {
     const coordinate = monitoringCoordinate(node);
     if (!coordinate) return;
     bounds.push(coordinate);
@@ -15147,12 +15287,13 @@ async function mountMonitoringCustomerMap(payload = {}) {
       icon: monitoringMapMarkerIcon(nodeKind, node.tone || node.status || 'active'),
       zIndexOffset: monitoringMapMarkerZIndex(nodeKind)
     }).addTo(map).bindPopup(monitoringFiberPopup(node));
-  });
-  (payload.markers || []).forEach((row) => {
+  }, { isCancelled, chunkSize: 80 });
+  if (isCancelled()) return;
+  await addLeafletRowsInChunks(customerMarkers, (row) => {
     const coordinate = monitoringCoordinate(row);
     if (!coordinate) return;
     bounds.push(coordinate);
-    if (mobileLightweightMap && window.L.circleMarker) {
+    if (lightweightMap && window.L.circleMarker) {
       window.L.circleMarker(coordinate, monitoringCustomerMapCircleStyle(row, customerRenderer))
         .addTo(map)
         .bindPopup(monitoringCustomerPopup(row));
@@ -15162,7 +15303,8 @@ async function mountMonitoringCustomerMap(payload = {}) {
       icon: monitoringMapMarkerIcon('customer', monitoringCustomerMapTone(row)),
       zIndexOffset: monitoringMapMarkerZIndex('customer')
     }).addTo(map).bindPopup(monitoringCustomerPopup(row));
-  });
+  }, { isCancelled });
+  if (isCancelled()) return;
   if (bounds.length) {
     map.fitBounds(window.L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
   }
@@ -15474,20 +15616,39 @@ async function mountMonitoringFiberMap(payload = {}) {
     return;
   }
   if (!document.body.contains(mapEl)) return;
+  const nocs = Array.isArray(payload.nocs) ? payload.nocs : [];
+  const centers = Array.isArray(payload.centers) ? payload.centers : [];
+  const points = Array.isArray(payload.points) ? payload.points : [];
+  const lightweightMap = monitoringMapUseLightweightMode(nocs.length + centers.length + points.length);
+  const fiberRenderer = lightweightMap && window.L.canvas ? window.L.canvas({ padding: 0.35 }) : null;
   const map = window.L.map(mapEl, {
-    scrollWheelZoom: true
+    scrollWheelZoom: true,
+    preferCanvas: lightweightMap,
+    zoomAnimation: !lightweightMap,
+    fadeAnimation: !lightweightMap,
+    markerZoomAnimation: !lightweightMap,
+    tap: !monitoringMapMobileScrollGuardEnabled()
   }).setView([-0.5022, 117.1537], 12);
+  mapEl.dataset.mapMode = lightweightMap ? 'compact' : 'detailed';
   enableLeafletMapWheelZoom(map, mapEl);
   mapEl._fiberNetworkMap = map;
+  bindMonitoringMapMobileScrollGuard(map, mapEl, {
+    toggleId: 'fiberNetworkInteractionToggle',
+    hintId: 'fiberNetworkTouchHint'
+  });
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
+    updateWhenIdle: lightweightMap,
+    updateWhenZooming: !lightweightMap,
+    keepBuffer: lightweightMap ? 1 : 2,
     attribution: '&copy; OpenStreetMap'
   }).addTo(map);
   const bounds = [];
-  const centerById = new Map((payload.centers || []).map((center) => [String(center.id || ''), center]));
-  const primarySite = payload.primarySite || (payload.nocs || []).find((noc) => noc.isPrimary) || null;
+  const isCancelled = () => state.view !== 'monitoringFiberNetwork' || !document.body.contains(mapEl);
+  const centerById = new Map(centers.map((center) => [String(center.id || ''), center]));
+  const primarySite = payload.primarySite || nocs.find((noc) => noc.isPrimary) || null;
   const primarySiteCoordinate = monitoringCoordinate(primarySite || {});
-  (payload.nocs || []).forEach((noc) => {
+  await addLeafletRowsInChunks(nocs, (noc) => {
     const coordinate = monitoringCoordinate(noc);
     if (!coordinate) return;
     bounds.push(coordinate);
@@ -15495,43 +15656,54 @@ async function mountMonitoringFiberMap(payload = {}) {
       icon: monitoringMapMarkerIcon('noc', noc.tone || noc.status || 'active'),
       zIndexOffset: monitoringMapMarkerZIndex('noc')
     }).addTo(map).bindPopup(monitoringFiberPopup(noc));
-  });
-  (payload.centers || []).forEach((center) => {
+  }, { isCancelled, chunkSize: 60 });
+  if (isCancelled()) return;
+  await addLeafletRowsInChunks(centers, (center) => {
     const coordinate = monitoringCoordinate(center);
     if (!coordinate) return;
     bounds.push(coordinate);
-    window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon('odc', center.tone || center.status || 'active'),
-      zIndexOffset: monitoringMapMarkerZIndex('odc')
-    }).addTo(map).bindPopup(monitoringFiberPopup(center));
+    const layer = lightweightMap && window.L.circleMarker
+      ? window.L.circleMarker(coordinate, monitoringFiberMapCircleStyle(center, 'odc', fiberRenderer))
+      : window.L.marker(coordinate, {
+        icon: monitoringMapMarkerIcon('odc', center.tone || center.status || 'active'),
+        zIndexOffset: monitoringMapMarkerZIndex('odc')
+      });
+    layer.addTo(map).bindPopup(monitoringFiberPopup(center));
     if (primarySiteCoordinate) {
       window.L.polyline([primarySiteCoordinate, coordinate], {
+        renderer: fiberRenderer || undefined,
         color: '#0f766e',
         weight: 2,
         opacity: 0.5,
         dashArray: '2,8'
       }).addTo(map);
     }
-  });
-  (payload.points || []).forEach((point) => {
+  }, { isCancelled });
+  if (isCancelled()) return;
+  await addLeafletRowsInChunks(points, (point) => {
     const coordinate = monitoringCoordinate(point);
     if (!coordinate) return;
     bounds.push(coordinate);
-    const marker = window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon('odp', point.tone || point.status || 'active'),
-      zIndexOffset: monitoringMapMarkerZIndex('odp')
-    }).addTo(map).bindPopup(monitoringFiberPopup(point));
+    const marker = lightweightMap && window.L.circleMarker
+      ? window.L.circleMarker(coordinate, monitoringFiberMapCircleStyle(point, 'odp', fiberRenderer))
+      : window.L.marker(coordinate, {
+        icon: monitoringMapMarkerIcon('odp', point.tone || point.status || 'active'),
+        zIndexOffset: monitoringMapMarkerZIndex('odp')
+      });
+    marker.addTo(map).bindPopup(monitoringFiberPopup(point));
     const center = centerById.get(String(point.centerId || ''));
     const centerCoordinate = monitoringCoordinate(center || {});
     if (centerCoordinate) {
       window.L.polyline([centerCoordinate, coordinate], {
+        renderer: fiberRenderer || undefined,
         color: '#64748b',
         weight: 2,
         opacity: 0.55,
         dashArray: '5,7'
       }).addTo(map);
     }
-  });
+  }, { isCancelled });
+  if (isCancelled()) return;
   if (bounds.length) {
     map.fitBounds(window.L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
   }
@@ -15869,7 +16041,14 @@ async function renderMonitoringFiberNetwork(options = {}) {
           <span><i class="legend-dot maintenance"></i>Maintenance</span>
           <span><i class="legend-dot inactive"></i>Nonaktif</span>
         </div>
-        <div class="monitoring-map-canvas fiber-map-canvas" id="fiberNetworkLeaflet"></div>
+        <div class="monitoring-map-canvas-wrap">
+          <div class="monitoring-map-canvas fiber-map-canvas" id="fiberNetworkLeaflet"></div>
+          <button class="monitoring-map-touch-toggle" id="fiberNetworkInteractionToggle" type="button" aria-pressed="false" aria-label="Aktifkan interaksi peta" title="Aktifkan peta" hidden>
+            <span aria-hidden="true">⌖</span>
+            <span class="sr-only">Aktifkan peta</span>
+          </button>
+          <div class="monitoring-map-touch-toast" id="fiberNetworkTouchHint" data-map-touch-help hidden>Peta aktif untuk geser dan zoom.</div>
+        </div>
       </section>
 
       <div class="monitoring-fiber-grid">
@@ -24572,7 +24751,13 @@ async function render(options = {}) {
     if (!['monitoringCustomers', 'monitoringServices'].includes(state.view)) {
       clearRealtimeTimers();
     }
+    const normalizedRenderView = normalizeFinanceCashView(normalizeView(state.view));
+    if (normalizedRenderView !== state.view) {
+      state.view = normalizedRenderView;
+      rememberView(state.view, { replace: true });
+    }
     state.search = state.view === 'dashboard' || state.view === 'users' || state.view === 'settings' ? '' : state.search;
+    viewTitle.textContent = titles[state.view] || 'Dashboard';
     updatePeriodPicker();
     if (state.view === 'dashboard') await renderDashboard(renderOptions);
     else if (state.view === 'radiusPppDhcp') await renderRadiusPppDhcp(renderOptions);
@@ -24601,16 +24786,33 @@ async function render(options = {}) {
     else if (state.view === 'monitoringCustomers') await renderMonitoringCustomers(renderOptions);
     else if (state.view === 'monitoringBilling') await renderMonitoringBilling();
     else if (state.view === 'monitoringServices') await renderMonitoringServices();
-    else if (state.view === 'externalIncomes') await renderExternalIncomes();
-    else if (state.view === 'expenses') await renderExpenses();
+    else if (state.view === 'financeCash') await renderFinanceCash(renderOptions);
+    else if (state.view === 'externalIncomes') {
+      state.financeCashTab = 'incomes';
+      state.view = 'financeCash';
+      await renderFinanceCash(renderOptions);
+    }
+    else if (state.view === 'expenses') {
+      state.financeCashTab = 'expenses';
+      state.view = 'financeCash';
+      await renderFinanceCash(renderOptions);
+    }
     else if (state.view === 'billingSettings') await renderBillingSettings();
     else if (state.view === 'reportsDaily') await renderReportsDaily(renderOptions);
     else if (state.view === 'reportsMonthlyBilling') await renderReportsMonthlyBilling();
     else if (state.view === 'reportsStatistics') await renderReportsStatistics();
     else if (state.view === 'reportsVoucherDaily') await renderReportsVoucherDaily();
     else if (state.view === 'reportsVoucherMonthly') await renderReportsVoucherMonthly();
-    else if (state.view === 'reportsTransactions') await renderReportsTransactions(renderOptions);
-    else if (state.view === 'reportsFinanceRecap') await renderReportsFinanceRecap();
+    else if (state.view === 'reportsTransactions') {
+      state.financeCashTab = 'transactions';
+      state.view = 'financeCash';
+      await renderFinanceCash(renderOptions);
+    }
+    else if (state.view === 'reportsFinanceRecap') {
+      state.financeCashTab = 'recap';
+      state.view = 'financeCash';
+      await renderFinanceCash(renderOptions);
+    }
     else if (state.view === 'reportsInventoryStock') await renderReportsInventoryStock();
     else if (state.view === 'logDetection') await renderLogDetection(renderOptions);
     else if (state.view === 'activity') await renderActivity(renderOptions);

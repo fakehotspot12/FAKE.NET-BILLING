@@ -17815,13 +17815,9 @@ async function handleWahaWebhook(req, res) {
 async function handlePaymentGatewayWebhook(req, res, url) {
   const method = req.method || 'GET';
   if (method === 'GET') {
-    const data = await loadStore();
     sendJson(res, 200, {
       ok: true,
       success: true,
-      endpoint: 'payment-gateway-webhook',
-      provider: data.settings?.paymentGateway?.provider || 'tripay',
-      callbackUrl: data.settings?.paymentGateway?.callbackUrl || '',
       method: 'POST'
     });
     return;
@@ -24023,8 +24019,12 @@ const server = http.createServer(async (req, res) => {
     }
     await serveStatic(req, res, url);
   } catch (error) {
-    const message = error instanceof SyntaxError ? 'Payload JSON tidak valid' : error.message;
-    sendJson(res, error instanceof SyntaxError ? 400 : 500, { error: message || 'Server error' });
+    if (error instanceof SyntaxError) {
+      sendJson(res, 400, { error: 'Payload JSON tidak valid' });
+      return;
+    }
+    console.error(`Unhandled request error: ${error.message || error}`);
+    sendJson(res, 500, { error: 'Server error' });
   }
 });
 
