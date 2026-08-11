@@ -6191,7 +6191,34 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
   return customer;
 }
 
-function deleteRadiusLinkedMember(data = {}, radiusUser = {}, actor = {}) {
+function radiusDeleteReasonPayload(payload = {}) {
+  const code = String(payload.reasonCode || payload.deleteReasonCode || payload.reason || '').trim().toLowerCase();
+  const note = String(payload.reasonNote || payload.deleteReasonNote || payload.note || '').trim();
+  const labels = {
+    cabut_permanen: 'Cabut permanen',
+    tidak_lanjut: 'Tidak lanjut berlangganan',
+    pindah_provider: 'Pindah provider',
+    pindah_alamat: 'Pindah alamat',
+    menunggak_lama: 'Menunggak lama',
+    pindah_nas: 'Pindah NAS',
+    duplikat: 'Duplikat data',
+    salah_input: 'Salah input / data test',
+    lainnya: 'Lainnya'
+  };
+  const nonCabutReasons = new Set(['pindah_nas', 'duplikat', 'salah_input']);
+  let countedAsCabut = payload.countedAsCabut !== undefined
+    ? payloadEnabled(payload.countedAsCabut)
+    : !nonCabutReasons.has(code);
+  if (!code) countedAsCabut = true;
+  return {
+    reasonCode: labels[code] ? code : '',
+    reasonLabel: labels[code] || '',
+    reasonNote: note,
+    countedAsCabut
+  };
+}
+
+function deleteRadiusLinkedMember(data = {}, radiusUser = {}, actor = {}, options = {}) {
   const customer = findCustomerForRadiusUser(data, radiusUser);
   if (!customer) return null;
   const customerKeysForDeletedUser = new Set(customerKeys(customer));
@@ -6221,7 +6248,7 @@ function deleteRadiusLinkedMember(data = {}, radiusUser = {}, actor = {}) {
   }
   const directLinkedMemberId = String(radiusUser.customerId || '').trim();
   if (directLinkedMemberId && directLinkedMemberId === String(removed.id || '').trim()) {
-    recordRadiusRemovedUser(data, radiusUser, removed, actor, { source: 'ppp-delete' });
+    recordRadiusRemovedUser(data, radiusUser, removed, actor, { source: 'ppp-delete', ...radiusDeleteReasonPayload(options) });
   }
   return removed;
 }
@@ -6284,6 +6311,10 @@ function recordRadiusRemovedUser(data = {}, radiusUser = {}, customer = {}, acto
     lastStatus: radiusUser.status || customer.status || '',
     removedAt: now,
     source,
+    reasonCode: String(options.reasonCode || '').trim(),
+    reasonLabel: String(options.reasonLabel || '').trim(),
+    reasonNote: String(options.reasonNote || '').trim(),
+    countedAsCabut: options.countedAsCabut !== false,
     linkedMember: Boolean(customer.id),
     removedByName: actor?.name || actor?.username || 'Sistem',
     removedByUsername: actor?.username || '',
@@ -7222,7 +7253,7 @@ function radiusRemovedRecordCount(data = {}, serviceType = 'pppoe', period = cur
     const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
     const removedPeriod = String(record.removedAt || record.createdAt || '').slice(0, 7);
     const hasLinkedMember = Boolean(String(record.customerId || record.memberCode || '').trim());
-    return hasLinkedMember && type === selectedType && removedPeriod === selectedPeriod;
+    return hasLinkedMember && type === selectedType && removedPeriod === selectedPeriod && radiusRemovedRecordCountsAsCabut(record);
   }).length;
 }
 
@@ -11552,6 +11583,135 @@ function statisticsRemovedRecurringAmount(data = {}, record = {}) {
   return statisticsCustomerRecurringAmount(data, record);
 }
 
+function radiusRemovedRecordCountsAsCabut(record = {}) {
+  return record.countedAsCabut !== false;
+}
+
+function removedCustomerReasonText(record = {}) {
+  const code = String(record.reasonCode || record.deleteReasonCode || record.removedReasonCode || record.reason || '').trim().toLowerCase();
+  const labels = {
+    cabut_permanen: 'Cabut permanen',
+    permanent: 'Cabut permanen',
+    not_continue: 'Tidak lanjut berlangganan',
+    tidak_lanjut: 'Tidak lanjut berlangganan',
+    berhenti: 'Tidak lanjut berlangganan',
+    pindah_provider: 'Pindah provider',
+    move_provider: 'Pindah provider',
+    pindah_alamat: 'Pindah alamat',
+    move_address: 'Pindah alamat',
+    menunggak_lama: 'Menunggak lama',
+    overdue: 'Menunggak lama',
+    salah_input: 'Salah input / data test',
+    data_test: 'Salah input / data test',
+    test: 'Salah input / data test',
+    pindah_nas: 'Pindah NAS',
+    move_nas: 'Pindah NAS',
+    duplikat: 'Duplikat data',
+    duplicate: 'Duplikat data',
+    lainnya: 'Lainnya',
+    other: 'Lainnya'
+  };
+  return labels[code]
+    || String(record.reasonLabel || record.deleteReason || record.removedReason || record.cabutReason || '').trim()
+    || (code ? code : '-');
+}
+
+function removedCustomerNoteText(record = {}) {
+  return String(
+    record.reasonNote
+    || record.deleteReasonNote
+    || record.removedReasonNote
+    || record.cabutNote
+    || record.note
+    || record.notes
+    || ''
+  ).trim();
+}
+
+function reportRemovedCustomerRows(data = {}, period = currentPeriod(), options = {}) {
+  const selectedPeriod = normalizePeriod(period);
+  const selectedNas = String(options.nas || options.site || 'all').trim() || 'all';
+  const rows = [];
+  for (const record of data.radiusRemovedRecords || []) {
+    const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
+    if (type !== 'pppoe') continue;
+    if (!String(record.customerId || record.memberCode || '').trim()) continue;
+    if (!radiusRemovedRecordCountsAsCabut(record)) continue;
+    const removedAt = String(record.removedAt || record.createdAt || '').trim();
+    if (timestampLocalDateKey(removedAt || '').slice(0, 7) !== selectedPeriod && removedAt.slice(0, 7) !== selectedPeriod) continue;
+    const nas = radiusFindNas(data, record.nasId || record.nasName || record.nas || record.siteName || record.site || '') || {};
+    const nasName = nas.name
+      || record.nasName
+      || record.nas
+      || record.siteName
+      || record.site
+      || usernameDomainNasLabel(record.username)
+      || '';
+    const nasId = nas.id || record.nasId || record.siteId || '';
+    const row = {
+      id: record.id || record.key || record.radiusUserId || record.customerId || record.username || '',
+      removedAt,
+      removedDate: timestampLocalDateKey(removedAt) || removedAt.slice(0, 10),
+      installedAt: pppInstallDateForRemovedRecord(record),
+      customerName: record.customerName || record.fullName || record.name || record.username || '-',
+      username: record.username || '',
+      memberCode: record.memberCode || record.accountId || '',
+      customerId: record.customerId || '',
+      nasId,
+      nasName,
+      siteId: nasId,
+      siteName: nasName,
+      profileName: record.packageName || record.profileName || record.profile || '',
+      packageName: record.packageName || record.profileName || record.profile || '',
+      monthlyAmount: statisticsRemovedRecurringAmount(data, record),
+      price: Math.max(0, Math.round(toNumber(record.price || record.amount || 0))),
+      reason: removedCustomerReasonText(record),
+      reasonNote: removedCustomerNoteText(record),
+      removedByName: record.removedByName || record.deletedByName || record.actorName || '',
+      removedByUsername: record.removedByUsername || record.deletedByUsername || record.actorUsername || '',
+      removedByRole: record.removedByRole || record.deletedByRole || '',
+      lastStatus: record.lastStatus || record.statusBefore || '',
+      linkedMember: record.linkedMember !== false,
+      searchText: [
+        record.customerName,
+        record.fullName,
+        record.name,
+        record.username,
+        record.memberCode,
+        record.accountId,
+        nasName,
+        record.packageName,
+        record.profileName,
+        removedCustomerReasonText(record),
+        removedCustomerNoteText(record),
+        record.removedByName,
+        record.removedByUsername
+      ].join(' ').toLowerCase()
+    };
+    if (!reportMatchesNas(row, selectedNas)) continue;
+    rows.push(row);
+  }
+  rows.sort((a, b) => String(b.removedAt || '').localeCompare(String(a.removedAt || ''))
+    || String(a.customerName || '').localeCompare(String(b.customerName || ''), 'id', { numeric: true, sensitivity: 'base' }));
+  const search = String(options.search || '').trim();
+  const searchedRows = filterPreparedSearch(rows, search);
+  const totalAmount = searchedRows.reduce((sum, row) => sum + Number(row.monthlyAmount || 0), 0);
+  const pagination = paginationPayload(options.page || 1, options.limit || Math.max(1, searchedRows.length || 1), searchedRows.length);
+  const allRows = Number(options.limit || 0) === Number.MAX_SAFE_INTEGER;
+  const offset = allRows ? 0 : (pagination.page - 1) * pagination.limit;
+  return {
+    rows: allRows ? searchedRows.map(stripSearchText) : searchedRows.slice(offset, offset + pagination.limit).map(stripSearchText),
+    pagination: {
+      ...pagination,
+      totalAmount
+    },
+    summary: {
+      count: searchedRows.length,
+      amount: totalAmount
+    }
+  };
+}
+
 function pppInstallDateForUser(data = {}, user = {}) {
   const customer = statisticsLinkedPppCustomer(data, user);
   if (!customer) return '';
@@ -11800,6 +11960,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
     const type = String(record.serviceType || 'pppoe').trim().toLowerCase();
     if (type !== 'pppoe') continue;
     if (!String(record.customerId || record.memberCode || '').trim()) continue;
+    if (!radiusRemovedRecordCountsAsCabut(record)) continue;
     if (scopedNas && !reportMatchesNas(record, selectedNas)) continue;
     const removedDate = String(record.removedAt || '').slice(0, 10);
     if (monthPeriodSet.has(removedDate.slice(0, 7))) {
@@ -19230,6 +19391,70 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/reports/statistics/removed-customers.xlsx') {
+    const authContext = await requirePermission(req, res, 'reports:daily:read');
+    if (!authContext) return;
+    if (userIsCollector(authContext.user)) {
+      forbidden(res);
+      return;
+    }
+    const { page, limit } = paginationParams(url, 10, 5000, { allowAll: true });
+    const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
+    const result = reportRemovedCustomerRows(authContext.data, period, {
+      nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all',
+      search: url.searchParams.get('search') || '',
+      page,
+      limit
+    });
+    const rows = result.rows.map((row, index) => ({
+      no: index + 1,
+      tanggal_cabut: dateDisplayText(row.removedDate || row.removedAt || ''),
+      tanggal_pasang: dateDisplayText(row.installedAt || ''),
+      nama_pelanggan: row.customerName || '',
+      member_id: row.memberCode || '',
+      username_ppp: row.username || '',
+      nas: row.nasName || '',
+      paket_terakhir: row.packageName || row.profileName || '',
+      nominal_bulanan: Number(row.monthlyAmount || 0),
+      alasan_berhenti: row.reason || '',
+      catatan: row.reasonNote || '',
+      dihapus_oleh: row.removedByName || row.removedByUsername || ''
+    }));
+    const buffer = await workbookBuffer({ cabut: rows });
+    sendBinary(
+      res,
+      200,
+      buffer,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      `pelanggan-cabut-${period}.xlsx`
+    );
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/reports/statistics/removed-customers') {
+    const authContext = await requirePermission(req, res, 'reports:daily:read');
+    if (!authContext) return;
+    if (userIsCollector(authContext.user)) {
+      forbidden(res);
+      return;
+    }
+    const { page, limit } = paginationParams(url, 10, 500, { allowAll: true });
+    const period = normalizePeriod(url.searchParams.get('period') || currentPeriod());
+    const result = reportRemovedCustomerRows(authContext.data, period, {
+      nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all',
+      search: url.searchParams.get('search') || '',
+      page,
+      limit
+    });
+    sendJson(res, 200, {
+      ok: true,
+      period,
+      nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all',
+      ...result
+    });
+    return;
+  }
+
   if (method === 'GET' && pathname === '/api/reports/statistics') {
     const authContext = await requirePermission(req, res, 'reports:daily:read');
     if (!authContext) return;
@@ -20650,7 +20875,7 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'monitoring:write');
     if (!authContext) return;
     const centerId = fiberCenterMatch[1] ? decodeURIComponent(fiberCenterMatch[1]) : '';
-    const payload = method === 'DELETE' ? {} : await readBody(req);
+    const payload = await readBody(req);
     try {
       const { data, result } = await mutate((store) => {
         store.fiberCenters = Array.isArray(store.fiberCenters) ? store.fiberCenters : [];
@@ -21094,6 +21319,7 @@ async function handleApi(req, res, url) {
         let orphanMembers = [];
         let memberProfileSync = null;
         let coa = null;
+        const deleteReason = method === 'DELETE' ? radiusDeleteReasonPayload(payload) : {};
         if (method === 'POST' && payloadEnabled(payload.addToMember)) {
           if (!canCreateRadiusLinkedMember(authContext.user)) {
             throw new Error('Role user tidak memiliki akses membuat member');
@@ -21112,7 +21338,7 @@ async function handleApi(req, res, url) {
           }
         }
         if (method === 'DELETE') {
-          removedMember = deleteRadiusLinkedMember(store, next, authContext.user);
+          removedMember = deleteRadiusLinkedMember(store, next, authContext.user, deleteReason);
           orphanMembers = deleteOrphanRadiusMembers(store, authContext.user);
         } else {
           if (method === 'PUT') {
@@ -21131,7 +21357,10 @@ async function handleApi(req, res, url) {
             action: 'radius-member-delete',
             radiusUserId: next.id || id || '',
             customerId: removedMember.id || '',
-            radiusUsername: targetUsername || ''
+            radiusUsername: targetUsername || '',
+            reasonCode: deleteReason.reasonCode,
+            reasonNote: deleteReason.reasonNote,
+            countedAsCabut: deleteReason.countedAsCabut
           });
         }
         await syncFreeradiusIfNeeded(store, authContext.user, `radius-ppp-user-${method.toLowerCase()}`);
@@ -21375,6 +21604,7 @@ async function handleApi(req, res, url) {
     if (!authContext || !radiusSectionAllowedForUser(authContext.user, section)) return;
     const payload = await readBody(req);
     const requested = Array.isArray(payload.users) ? payload.users : [];
+    const deleteReason = radiusDeleteReasonPayload(payload);
     if (!requested.length) {
       badRequest(res, 'User yang dipilih tidak tersedia');
       return;
@@ -21397,7 +21627,7 @@ async function handleApi(req, res, url) {
           }
           try {
             const next = freeradius.deleteRadiusUser(store, id);
-            deleteRadiusLinkedMember(store, next, authContext.user);
+            deleteRadiusLinkedMember(store, next, authContext.user, deleteReason);
             deleted.push({ id, username: next.username || item.username || id, user: next });
           } catch (error) {
             failed.push({ id, error: error.message || 'Gagal menghapus user' });
@@ -21407,7 +21637,10 @@ async function handleApi(req, res, url) {
         addActivity(store, 'monitoring', `Bulk delete ${section} ${deleted.length} user oleh ${authContext.user.name || authContext.user.username}`, {
           action: `radius-${section}-bulk-delete`,
           deleted: deleted.length,
-          failed: failed.length
+          failed: failed.length,
+          reasonCode: deleteReason.reasonCode,
+          reasonNote: deleteReason.reasonNote,
+          countedAsCabut: deleteReason.countedAsCabut
         });
         await syncFreeradiusIfNeeded(store, authContext.user, `radius-${section}-bulk-delete`);
         return { deleted, failed };

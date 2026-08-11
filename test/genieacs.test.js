@@ -627,7 +627,7 @@ test('defaults WAN editing to an existing connection and keeps the earliest brid
   assert.equal(genieAcsWan.defaultWanTarget(bridgeOnly, 'pppoe'), null);
 });
 
-test('detects newly registered ONT from registration and WAN readiness', () => {
+test('detects newly registered ONT only when WAN PPP is missing', () => {
   const noWanDevice = huaweiMultiWanDevice();
   noWanDevice._registered = '2026-08-02T15:39:39.287Z';
   delete noWanDevice.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[2];
@@ -653,9 +653,8 @@ test('detects newly registered ONT from registration and WAN readiness', () => {
 
   assert.equal(noWan.registered, noWanDevice._registered);
   assert.equal(noWan.wanPending.code, 'no_wan_ppp');
-  assert.equal(waiting.wanPending.code, 'wan_ppp_not_ready');
-  assert.equal(waiting.wanSummary.pppoe.username, 'member@test.net');
-  assert.equal(disconnected.wanPending.code, 'wan_ppp_not_ready');
+  assert.equal(waiting, null);
+  assert.equal(disconnected, null);
   assert.equal(ready, null);
 });
 

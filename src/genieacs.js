@@ -1180,16 +1180,6 @@ function recentPendingCandidate(device = {}, cfg = normalizeSettings({})) {
       label: 'WAN PPP belum ada',
       pppoe: null
     };
-  } else if (
-    !validIpv4(pppoe.ip)
-    || pppoe.ip === '0.0.0.0'
-    || /disconnect|down|disabled|unconfigured/i.test(pppoe.status)
-  ) {
-    wanPending = {
-      code: 'wan_ppp_not_ready',
-      label: 'WAN PPP belum online',
-      pppoe
-    };
   }
   if (!wanPending) return null;
   return {

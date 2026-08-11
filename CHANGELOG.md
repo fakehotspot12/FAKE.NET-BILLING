@@ -2,6 +2,19 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.5] - 2026-08-11
+
+### Added
+
+- Menambahkan laporan detail pelanggan cabut di `Laporan > Statistik` lengkap dengan modal daftar, print PDF, dan export Excel.
+- Menambahkan alasan hapus user PPP-DHCP agar data cabut bisa dipisahkan dari salah input, duplikat, atau pindah NAS.
+
+### Fixed
+
+- Mengembalikan badge NAS laporan tagihan harian agar hanya tampil di mobile dan tidak dobel dengan kolom NAS desktop.
+- Memperbaiki deteksi antrian aktivasi GenieACS agar modem yang sudah memiliki WAN PPP tidak tetap muncul sebagai ONT perlu internet.
+- Memastikan penghapusan PPP-DHCP menyimpan riwayat cabut tanpa menghapus transaksi dan invoice historis.
+
 ## [4.2.4] - 2026-08-11
 
 ### Changed

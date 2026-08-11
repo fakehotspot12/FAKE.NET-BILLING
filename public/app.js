@@ -6224,6 +6224,213 @@ function statisticsAnnualSummaryMarkup(rows = []) {
   `;
 }
 
+function statisticsRemovedMetric(summary = {}) {
+  const countText = displayNumber(summary.removedCount || 0);
+  const amountText = `Senilai ${rupiah(summary.removedAmount || 0)}`;
+  return `
+    <button class="metric-card negative metric-card-button" type="button" data-statistics-cabut-detail aria-label="Lihat daftar pelanggan cabut">
+      <div class="label">Cabut</div>
+      <strong>${escapeHtml(countText)}</strong>
+      <div class="sub">${escapeHtml(amountText)}</div>
+    </button>
+  `;
+}
+
+function statisticsRemovedCustomerRowsMarkup(rows = []) {
+  if (!rows.length) {
+    return '<div class="empty mini-empty">Tidak ada pelanggan cabut pada periode ini.</div>';
+  }
+  return `
+    <div class="statistics-removed-list">
+      ${rows.map((row, index) => {
+        const name = row.customerName || row.username || '-';
+        const identity = [
+          row.username || '',
+          row.memberCode ? `ID ${row.memberCode}` : ''
+        ].filter(Boolean).join(' · ') || '-';
+        const stoppedBy = row.removedByName || row.removedByUsername || '-';
+        const note = row.reasonNote || '-';
+        return `
+          <article class="statistics-removed-row">
+            <div class="statistics-removed-no">${displayNumber(index + 1)}</div>
+            <div class="statistics-removed-main">
+              <strong title="${escapeHtml(name)}">${escapeHtml(name)}</strong>
+              <span title="${escapeHtml(identity)}">${escapeHtml(identity)}</span>
+              ${row.nasName ? `<span class="member-nas-tag">${escapeHtml(row.nasName)}</span>` : ''}
+            </div>
+            <div>
+              <span>Tanggal Cabut</span>
+              <strong>${escapeHtml(dateText(row.removedDate || row.removedAt || ''))}</strong>
+            </div>
+            <div>
+              <span>Paket</span>
+              <strong title="${escapeHtml(row.packageName || row.profileName || '-')}">${escapeHtml(row.packageName || row.profileName || '-')}</strong>
+            </div>
+            <div>
+              <span>Nominal</span>
+              <strong>${escapeHtml(rupiah(row.monthlyAmount || 0))}</strong>
+            </div>
+            <div>
+              <span>Alasan</span>
+              <strong title="${escapeHtml(row.reason || '-')}">${escapeHtml(row.reason || '-')}</strong>
+            </div>
+            <div>
+              <span>Oleh</span>
+              <strong title="${escapeHtml(stoppedBy)}">${escapeHtml(stoppedBy)}</strong>
+            </div>
+            <div class="statistics-removed-note">
+              <span>Catatan</span>
+              <strong title="${escapeHtml(note)}">${escapeHtml(note)}</strong>
+            </div>
+          </article>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+async function printStatisticsRemovedCustomersPdf(params = {}) {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) throw new Error('Popup print diblokir browser');
+  printWindow.document.write('<!doctype html><title>Memuat laporan cabut</title><body>Memuat data...</body>');
+  const payload = await api(`/api/reports/statistics/removed-customers?${queryString({ ...params, limit: 'all' })}`);
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  const branding = currentBranding();
+  const title = `Pelanggan Cabut ${periodLabel(payload.period || params.period || state.reportStatisticsPeriod)}`;
+  const totalAmount = rows.reduce((sum, row) => sum + Number(row.monthlyAmount || 0), 0);
+  const rowMarkup = rows.length ? rows.map((row, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${escapeHtml(dateText(row.removedDate || row.removedAt || ''))}</td>
+      <td>${escapeHtml(row.customerName || '-')}</td>
+      <td>${escapeHtml(row.memberCode || '-')}</td>
+      <td>${escapeHtml(row.username || '-')}</td>
+      <td>${escapeHtml(row.nasName || '-')}</td>
+      <td>${escapeHtml(row.packageName || row.profileName || '-')}</td>
+      <td>${escapeHtml(rupiah(row.monthlyAmount || 0))}</td>
+      <td>${escapeHtml(row.reason || '-')}</td>
+      <td>${escapeHtml(row.removedByName || row.removedByUsername || '-')}</td>
+      <td>${escapeHtml(row.reasonNote || '-')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="11">Tidak ada data.</td></tr>';
+  printWindow.document.open();
+  printWindow.document.write(`
+    <!doctype html>
+    <html lang="id">
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(branding.businessName)} - ${escapeHtml(title)}</title>
+        <style>
+          @page { size: A4 landscape; margin: 12mm; }
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; color: #111827; margin: 0; }
+          .head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+          .head img { width: 42px; height: 42px; object-fit: contain; }
+          .head strong { display: block; font-size: 17px; }
+          .head span { color: #475569; font-size: 12px; }
+          .summary { display: flex; justify-content: space-between; gap: 12px; margin: 0 0 10px; font-size: 12px; }
+          h1 { margin: 0 0 4px; font-size: 16px; }
+          table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
+          th, td { border: 1px solid #d1d5db; padding: 5px 6px; text-align: left; vertical-align: top; }
+          th { background: #0f4f82; color: #fff; white-space: nowrap; }
+          td { overflow-wrap: anywhere; }
+        </style>
+      </head>
+      <body>
+        <div class="head">
+          <img src="${escapeHtml(branding.logoUrl)}" alt="">
+          <div>
+            <strong>${escapeHtml(branding.businessName)}</strong>
+            <span>${escapeHtml(branding.appSubtitle || '')}</span>
+          </div>
+        </div>
+        <h1>${escapeHtml(title)}</h1>
+        <div class="summary">
+          <span>Total pelanggan cabut: <strong>${displayNumber(rows.length)}</strong></span>
+          <span>Senilai: <strong>${escapeHtml(rupiah(totalAmount))}</strong></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Tanggal Cabut</th>
+              <th>Nama</th>
+              <th>Member ID</th>
+              <th>Username</th>
+              <th>NAS</th>
+              <th>Paket</th>
+              <th>Nominal</th>
+              <th>Alasan</th>
+              <th>Dihapus Oleh</th>
+              <th>Catatan</th>
+            </tr>
+          </thead>
+          <tbody>${rowMarkup}</tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  window.setTimeout(() => printWindow.print(), 300);
+}
+
+async function openStatisticsRemovedCustomersModal() {
+  const period = state.reportStatisticsPeriod || state.period || todayInput().slice(0, 7);
+  const nas = state.reportNas || 'all';
+  const params = { period, nas, limit: 'all' };
+  openModal('Pelanggan Cabut', '<div class="empty">Memuat pelanggan cabut...</div>', async () => false);
+  try {
+    const payload = await api(`/api/reports/statistics/removed-customers?${queryString(params)}`);
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const summary = payload.summary || {};
+    modalBody.innerHTML = `
+      <div class="statistics-removed-modal">
+        <div class="statistics-removed-summary">
+          <div>
+            <span>Periode</span>
+            <strong>${escapeHtml(periodLabel(payload.period || period))}</strong>
+          </div>
+          <div>
+            <span>Pelanggan Cabut</span>
+            <strong>${escapeHtml(displayNumber(summary.count || rows.length))}</strong>
+          </div>
+          <div>
+            <span>Senilai</span>
+            <strong>${escapeHtml(rupiah(summary.amount || 0))}</strong>
+          </div>
+        </div>
+        <div class="toolbar statistics-removed-toolbar">
+          <div class="filters">
+            <span class="muted">${escapeHtml(nas && nas !== 'all' ? 'Filter NAS aktif' : 'Semua NAS')}</span>
+          </div>
+          <div class="row-actions">
+            <button class="ghost-button compact" id="statisticsRemovedExcel" type="button">Download Excel</button>
+            <button class="ghost-button compact" id="statisticsRemovedPdf" type="button">Download PDF</button>
+          </div>
+        </div>
+        ${statisticsRemovedCustomerRowsMarkup(rows)}
+        <div class="modal-actions">
+          <button class="ghost-button" type="button" data-close-statistics-removed>Tutup</button>
+        </div>
+      </div>
+    `;
+    document.getElementById('statisticsRemovedExcel')?.addEventListener('click', async () => {
+      try {
+        await downloadFile(`/api/reports/statistics/removed-customers.xlsx?${queryString(params)}`, `pelanggan-cabut-${period}.xlsx`);
+      } catch (error) {
+        setToast(error.message || 'Download Excel cabut gagal');
+      }
+    });
+    document.getElementById('statisticsRemovedPdf')?.addEventListener('click', () => {
+      printStatisticsRemovedCustomersPdf(params).catch((error) => setToast(error.message || 'Print PDF cabut gagal'));
+    });
+    modalBody.querySelector('[data-close-statistics-removed]')?.addEventListener('click', () => modal.close());
+  } catch (error) {
+    modalBody.innerHTML = `<div class="notice error">${escapeHtml(error.message || 'Data pelanggan cabut gagal dimuat')}</div>`;
+  }
+}
+
 async function renderReportsStatistics() {
   app.innerHTML = '<div class="empty">Memuat statistik...</div>';
   const period = state.reportStatisticsPeriod || state.period || todayInput().slice(0, 7);
@@ -6256,7 +6463,7 @@ async function renderReportsStatistics() {
         </div>
         <div class="statistics-card-grid">
           ${metric('Pasang Baru', displayNumber(summary.newInstallCount || 0), `Senilai ${rupiah(summary.newInstallAmount || 0)}`, 'positive')}
-          ${metric('Cabut', displayNumber(summary.removedCount || 0), `Senilai ${rupiah(summary.removedAmount || 0)}`, Number(summary.removedCount || 0) ? 'negative' : '')}
+          ${statisticsRemovedMetric(summary)}
           ${metric('Voucher Terjual', displayNumber(summary.voucherCount || 0), `${displayNumber(summary.voucherBuyerCount || 0)} transaksi`, 'positive')}
           ${metric('Pendapatan', statisticsCompactRupiah(summary.revenueAmount || 0), `${displayNumber(summary.revenueCount || 0)} transaksi`, 'positive')}
         </div>
@@ -6293,6 +6500,7 @@ async function renderReportsStatistics() {
     state.reportNas = event.target.value || 'all';
     renderReportsStatistics();
   });
+  app.querySelector('[data-statistics-cabut-detail]')?.addEventListener('click', openStatisticsRemovedCustomersModal);
 }
 
 async function renderReportsMonthlyBilling(options = {}) {
@@ -13603,6 +13811,103 @@ function selectedRadiusPppUsers(rows = []) {
     .filter(Boolean);
 }
 
+const RADIUS_PPP_DELETE_REASONS = [
+  { value: 'cabut_permanen', label: 'Cabut permanen', countedAsCabut: true },
+  { value: 'tidak_lanjut', label: 'Tidak lanjut berlangganan', countedAsCabut: true },
+  { value: 'pindah_provider', label: 'Pindah provider', countedAsCabut: true },
+  { value: 'pindah_alamat', label: 'Pindah alamat', countedAsCabut: true },
+  { value: 'menunggak_lama', label: 'Menunggak lama', countedAsCabut: true },
+  { value: 'pindah_nas', label: 'Pindah NAS', countedAsCabut: false },
+  { value: 'duplikat', label: 'Duplikat data', countedAsCabut: false },
+  { value: 'salah_input', label: 'Salah input / data test', countedAsCabut: false },
+  { value: 'lainnya', label: 'Lainnya', countedAsCabut: true }
+];
+
+function radiusPppDeleteReasonConfig(code = '') {
+  return RADIUS_PPP_DELETE_REASONS.find((item) => item.value === code) || RADIUS_PPP_DELETE_REASONS[0];
+}
+
+function radiusPppDeletePayload(values = {}) {
+  const reason = radiusPppDeleteReasonConfig(values.reasonCode || 'cabut_permanen');
+  const reasonNote = String(values.reasonNote || '').trim();
+  if (reason.value === 'lainnya' && !reasonNote) {
+    throw new Error('Catatan alasan wajib diisi untuk pilihan lainnya');
+  }
+  return {
+    reasonCode: reason.value,
+    reasonNote,
+    countedAsCabut: reason.countedAsCabut !== false
+  };
+}
+
+function bindRadiusPppDeleteModalFields() {
+  const form = modal.querySelector('.modal-frame');
+  const reasonSelect = form?.querySelector('[name="reasonCode"]');
+  const noteWrap = form?.querySelector('[data-radius-delete-note-wrap]');
+  const noteInput = form?.querySelector('[name="reasonNote"]');
+  if (!reasonSelect) return;
+  const sync = () => {
+    const config = radiusPppDeleteReasonConfig(reasonSelect.value || '');
+    if (noteWrap) noteWrap.hidden = config.value !== 'lainnya';
+    if (noteInput) noteInput.required = config.value === 'lainnya';
+  };
+  reasonSelect.addEventListener('change', sync);
+  sync();
+}
+
+function openRadiusPppDeleteModal(users = [], onConfirm) {
+  const selected = users.filter(Boolean);
+  if (!selected.length || typeof onConfirm !== 'function') return;
+  const title = selected.length > 1
+    ? `Hapus ${displayNumber(selected.length)} User PPP-DHCP`
+    : `Hapus User PPP-DHCP`;
+  const rows = selected.slice(0, 8).map((user) => `
+    <li>
+      <strong>${escapeHtml(user.username || user.name || user.id || '-')}</strong>
+      <span>${escapeHtml([user.name || user.customerName || '', user.profileName || user.profile || '', user.nasName || user.nas || ''].filter(Boolean).join(' - ') || 'Detail user tidak lengkap')}</span>
+    </li>
+  `).join('');
+  const more = selected.length > 8 ? `<div class="muted">+${displayNumber(selected.length - 8)} user lainnya</div>` : '';
+  openModal(title, `
+    <div class="radius-delete-modal">
+      <p class="muted">Member terkait ikut dihapus dari daftar aktif. Riwayat invoice dan transaksi tetap disimpan.</p>
+      <ul class="radius-delete-user-list">${rows}</ul>
+      ${more}
+      <div class="form-grid">
+        <label class="field full">
+          <span>Alasan hapus</span>
+          <select name="reasonCode">
+            ${RADIUS_PPP_DELETE_REASONS.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field full" data-radius-delete-note-wrap hidden>
+          <span>Catatan alasan</span>
+          <textarea name="reasonNote" rows="3" placeholder="Tulis alasan singkat"></textarea>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" type="button" data-close-modal>Batal</button>
+        <button class="danger-button" type="submit">Hapus User</button>
+      </div>
+    </div>
+  `, async (values, form) => {
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit) {
+      submit.disabled = true;
+      submit.textContent = 'Menghapus...';
+    }
+    try {
+      return await onConfirm(radiusPppDeletePayload(values));
+    } finally {
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Hapus User';
+      }
+    }
+  });
+  bindRadiusPppDeleteModalFields();
+}
+
 function radiusUserStatusPayload(user = {}, nextStatus = 'active', type = 'ppp') {
   const currentStatus = String(user.rawStatus || user.status || '').toLowerCase();
   const temporaryActivation = type === 'ppp' && nextStatus === 'active'
@@ -13756,20 +14061,28 @@ function bindRadiusPppBatchActions(rows = [], writeAllowed = false) {
   document.getElementById('radiusPppBatchDelete')?.addEventListener('click', async () => {
     const selected = selectedRadiusPppUsers(rows);
     if (!selected.length) return;
-    if (!window.confirm(`Hapus ${displayNumber(selected.length)} user PPP-DHCP terpilih? Member terkait ikut dihapus, transaksi tetap disimpan.`)) return;
-    setToast(`Menghapus ${displayNumber(selected.length)} user PPP-DHCP...`);
-    let deleted = 0;
-    let failed = 0;
-    try {
-      const result = await api('/api/radius/ppp-dhcp/users/bulk-delete', { method: 'POST', body: JSON.stringify({ users: selected.map((user) => ({ id: user.id, username: user.username || '' })) }) });
-      deleted = Number(result.deleted || 0);
-      failed = Number(result.failed || 0);
-    } catch (error) {
-      failed = selected.length;
-      setToast(error.message || 'Bulk delete PPP-DHCP gagal');
-    }
-    setToast(failed ? `${displayNumber(deleted)} user PPP-DHCP dihapus, ${displayNumber(failed)} gagal` : `${displayNumber(deleted)} user PPP-DHCP berhasil dihapus`);
-    await renderRadiusPppDhcp({ refresh: true });
+    openRadiusPppDeleteModal(selected, async (deletePayload) => {
+      setToast(`Menghapus ${displayNumber(selected.length)} user PPP-DHCP...`);
+      let deleted = 0;
+      let failed = 0;
+      try {
+        const result = await api('/api/radius/ppp-dhcp/users/bulk-delete', {
+          method: 'POST',
+          body: JSON.stringify({
+            users: selected.map((user) => ({ id: user.id, username: user.username || '' })),
+            ...deletePayload
+          })
+        });
+        deleted = Number(result.deleted || 0);
+        failed = Number(result.failed || 0);
+      } catch (error) {
+        failed = selected.length;
+        setToast(error.message || 'Bulk delete PPP-DHCP gagal');
+        return false;
+      }
+      setToast(failed ? `${displayNumber(deleted)} user PPP-DHCP dihapus, ${displayNumber(failed)} gagal` : `${displayNumber(deleted)} user PPP-DHCP berhasil dihapus`);
+      await renderRadiusPppDhcp({ refresh: true });
+    });
   });
   document.getElementById('radiusPppBatchIsolate')?.addEventListener('click', async () => {
     const selected = selectedRadiusPppUsers(rows);
@@ -14034,10 +14347,18 @@ async function renderRadiusPppDhcp(options = {}) {
     app.querySelectorAll('[data-delete-radius-ppp]').forEach((button) => {
       button.addEventListener('click', async () => {
         const username = button.dataset.radiusUsername || '';
-        if (!window.confirm(`Hapus user PPP-DHCP ${username || button.dataset.deleteRadiusPpp}?`)) return;
-        await api(`/api/radius/ppp-dhcp/users/${encodeURIComponent(button.dataset.deleteRadiusPpp)}?username=${encodeURIComponent(username)}`, { method: 'DELETE' });
-        setToast('User PPP-DHCP dihapus');
-        renderRadiusPppDhcp({ refresh: true });
+        const user = rows.find((entry) => String(entry.id) === String(button.dataset.deleteRadiusPpp)) || {
+          id: button.dataset.deleteRadiusPpp,
+          username
+        };
+        openRadiusPppDeleteModal([user], async (deletePayload) => {
+          await api(`/api/radius/ppp-dhcp/users/${encodeURIComponent(button.dataset.deleteRadiusPpp)}?username=${encodeURIComponent(username)}`, {
+            method: 'DELETE',
+            body: JSON.stringify(deletePayload)
+          });
+          setToast('User PPP-DHCP dihapus');
+          renderRadiusPppDhcp({ refresh: true });
+        });
       });
     });
     app.querySelectorAll('[data-status-radius-ppp]').forEach((button) => {
