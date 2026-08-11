@@ -8015,6 +8015,69 @@ function fiberNodeTone(status = 'active') {
   return fiberStatus(status) === 'active' ? 'active' : fiberStatus(status) === 'maintenance' ? 'maintenance' : 'inactive';
 }
 
+function monitoringFiberNodeLabelServer(row = {}) {
+  return [row.code, row.name].filter(Boolean).join(' - ') || '-';
+}
+
+function fiberPrimarySiteId(data = {}) {
+  const rows = Array.isArray(data.monitoringTargets) ? data.monitoringTargets : [];
+  if (!rows.length) return '';
+  const explicit = rows.find((target) => target && target.isPrimarySite === true);
+  if (explicit?.id) return explicit.id;
+  const activeWithCoordinate = rows.find((target) => (
+    String(target.status || '').toLowerCase() !== 'inactive'
+    && fiberCoordinate(target.latitude ?? target.siteLatitude) !== null
+    && fiberCoordinate(target.longitude ?? target.siteLongitude) !== null
+  ));
+  if (activeWithCoordinate?.id) return activeWithCoordinate.id;
+  const withCoordinate = rows.find((target) => (
+    fiberCoordinate(target.latitude ?? target.siteLatitude) !== null
+    && fiberCoordinate(target.longitude ?? target.siteLongitude) !== null
+  ));
+  return withCoordinate?.id || rows[0]?.id || '';
+}
+
+function normalizeMonitoringPrimarySite(store = {}, preferredId = '') {
+  store.monitoringTargets = Array.isArray(store.monitoringTargets) ? store.monitoringTargets : [];
+  if (!store.monitoringTargets.length) return;
+  const preferred = String(preferredId || '').trim();
+  const fallback = fiberPrimarySiteId(store);
+  const targetId = preferred && store.monitoringTargets.some((target) => String(target.id || '') === preferred)
+    ? preferred
+    : fallback;
+  if (!targetId) return;
+  store.monitoringTargets.forEach((target) => {
+    target.isPrimarySite = String(target.id || '') === String(targetId);
+  });
+}
+
+function fiberNocRows(data = {}) {
+  const primarySiteId = fiberPrimarySiteId(data);
+  return (data.monitoringTargets || []).map((target) => {
+    const rawStatus = String(target.status || '').toLowerCase();
+    const status = ['down', 'error'].includes(rawStatus)
+      ? 'maintenance'
+      : (rawStatus === 'inactive' ? 'inactive' : 'active');
+    return {
+      id: target.id || '',
+      source: 'monitoringTarget',
+      type: 'noc',
+      code: target.name || target.host || '',
+      name: target.location || target.host || '',
+      area: target.location || '',
+      latitude: fiberCoordinate(target.latitude ?? target.siteLatitude),
+      longitude: fiberCoordinate(target.longitude ?? target.siteLongitude),
+      status,
+      statusLabel: status === 'maintenance'
+        ? (rawStatus === 'down' ? 'Down' : 'Perlu cek')
+        : fiberStatusLabel(status),
+      tone: fiberNodeTone(status),
+      isPrimary: String(target.id || '') === String(primarySiteId || ''),
+      note: target.notes || target.host || ''
+    };
+  });
+}
+
 function customerFiberPointId(customer = {}) {
   return String(
     customer.fiberPointId
@@ -8234,6 +8297,7 @@ function fiberPointRows(data = {}) {
 
 function fiberAreaOptions(data = {}) {
   return [...new Set([
+    ...fiberNocRows(data).map((row) => row.area),
     ...(data.fiberCenters || []).map((row) => row.area),
     ...(data.fiberPoints || []).map((row) => row.area)
   ].map((value) => String(value || '').trim()).filter(Boolean))]
@@ -8243,9 +8307,12 @@ function fiberAreaOptions(data = {}) {
 function fiberNetworkPayload(data = {}, query = {}) {
   const area = String(query.area || '').trim().toLowerCase();
   const search = String(query.search || '').trim().toLowerCase();
+  const allNocs = fiberNocRows(data);
+  let nocs = allNocs;
   let centers = fiberCenterRows(data);
   let points = fiberPointRows(data);
   if (area && area !== 'all') {
+    nocs = nocs.filter((row) => String(row.area || '').trim().toLowerCase() === area);
     centers = centers.filter((row) => String(row.area || '').trim().toLowerCase() === area);
     points = points.filter((row) => String(row.area || '').trim().toLowerCase() === area);
   }
@@ -8258,17 +8325,23 @@ function fiberNetworkPayload(data = {}, query = {}) {
       row.statusLabel,
       row.note
     ].some((value) => String(value || '').toLowerCase().includes(search));
+    nocs = nocs.filter(matches);
     centers = centers.filter(matches);
     points = points.filter(matches);
   }
   const availablePorts = points.reduce((sum, point) => sum + Math.max(0, Number(point.availablePorts || 0)), 0);
+  const primarySite = allNocs.find((noc) => noc.isPrimary) || null;
   return {
     summary: {
+      noc: nocs.length,
       odc: centers.length,
       odp: points.length,
       odpActive: points.filter((point) => point.status === 'active').length,
-      availablePorts
+      availablePorts,
+      primarySite: primarySite ? monitoringFiberNodeLabelServer(primarySite) : ''
     },
+    primarySite,
+    nocs,
     centers,
     points,
     areaOptions: fiberAreaOptions(data),
@@ -8285,6 +8358,30 @@ function fiberNetworkPayload(data = {}, query = {}) {
 
 function customerMapPayload(data = {}, query = {}) {
   const customerRows = customerMapRows(data, query);
+  const publicRows = customerRows.rows.map((row) => ({
+    id: row.id,
+    customerNumber: row.customerNumber,
+    name: row.name,
+    phone: row.phone,
+    status: row.status,
+    statusLabel: row.statusLabel,
+    accessState: row.accessState,
+    currentPlan: row.currentPlan,
+    username: row.username,
+    connectionType: row.connectionType,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    accuracy: row.accuracy,
+    source: row.source,
+    note: row.note,
+    geotaggedAt: row.geotaggedAt,
+    address: row.address,
+    fiberPointId: row.fiberPointId,
+    odpPort: row.odpPort,
+    hasLocation: row.hasLocation,
+    tone: customerMapTone(row),
+    url: row.url
+  }));
   return {
     filters: {
       search: query.search || '',
@@ -8294,34 +8391,14 @@ function customerMapPayload(data = {}, query = {}) {
       location: query.location || ''
     },
     summary: customerRows.summary,
-    markers: customerRows.markers.map((row) => ({
-      id: row.id,
-      customerNumber: row.customerNumber,
-      name: row.name,
-      phone: row.phone,
-      status: row.status,
-      statusLabel: row.statusLabel,
-      accessState: row.accessState,
-      currentPlan: row.currentPlan,
-      username: row.username,
-      connectionType: row.connectionType,
-      latitude: row.latitude,
-      longitude: row.longitude,
-      accuracy: row.accuracy,
-      source: row.source,
-      note: row.note,
-      geotaggedAt: row.geotaggedAt,
-      address: row.address,
-      fiberPointId: row.fiberPointId,
-      odpPort: row.odpPort,
-      tone: customerMapTone(row),
-      url: row.url
-    })),
+    customers: publicRows,
+    markers: publicRows.filter((row) => row.hasLocation),
     infrastructureNodes: [
+      ...fiberNocRows(data).filter(fiberHasCoordinate),
       ...fiberCenterRows(data).filter(fiberHasCoordinate),
       ...fiberPointRows(data).filter(fiberHasCoordinate)
     ],
-    missingCustomers: customerRows.missingCustomers,
+    missingCustomers: publicRows.filter((row) => !row.hasLocation).slice(0, 40),
     servicePlanOptions: customerRows.servicePlanOptions,
     checkedAt: new Date().toISOString()
   };
@@ -20447,6 +20524,7 @@ async function handleApi(req, res, url) {
     try {
       const { result } = await mutate(async (data) => {
         const target = operations.addMonitoringTarget(data, payload);
+        normalizeMonitoringPrimarySite(data, target?.isPrimarySite ? target.id : '');
         await syncFreeradiusIfNeeded(data, authContext.user, 'monitoring-site-create');
         return target;
       });
@@ -20482,6 +20560,7 @@ async function handleApi(req, res, url) {
       const { result } = await mutate(async (data) => {
         const target = operations.updateMonitoringTarget(data, targetId, payload);
         if (target) {
+          normalizeMonitoringPrimarySite(data, target.isPrimarySite ? target.id : '');
           await syncFreeradiusIfNeeded(data, authContext.user, 'monitoring-site-update');
         }
         return target;
@@ -20504,6 +20583,7 @@ async function handleApi(req, res, url) {
     const { result } = await mutate(async (data) => {
       const target = operations.deleteMonitoringTarget(data, targetId);
       if (target) {
+        normalizeMonitoringPrimarySite(data);
         await syncFreeradiusIfNeeded(data, authContext.user, 'monitoring-site-delete');
       }
       return target;

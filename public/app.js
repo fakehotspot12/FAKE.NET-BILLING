@@ -854,6 +854,28 @@ function ensureLeafletLoaded() {
   return leafletLoadPromise;
 }
 
+function enableLeafletMapWheelZoom(map, mapEl) {
+  if (!map || !mapEl || !window.L) return map;
+  try {
+    map.scrollWheelZoom?.enable?.();
+  } catch {
+    // Ignore Leaflet handler state errors.
+  }
+  if (mapEl._leafletWheelZoomGuardBound) return map;
+  mapEl._leafletWheelZoomGuardBound = true;
+  mapEl.addEventListener('wheel', (event) => {
+    if (!mapEl.contains(event.target)) return;
+    try {
+      if (!map.scrollWheelZoom?.enabled?.()) map.scrollWheelZoom?.enable?.();
+    } catch {
+      // Ignore Leaflet handler state errors.
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }, { passive: false });
+  return map;
+}
+
 function dateTimeValueDate(value) {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
@@ -12695,6 +12717,88 @@ function currentBrowserPosition() {
   });
 }
 
+function browserPositionPoint(position = {}) {
+  const coords = position.coords || {};
+  const latitude = Number(coords.latitude);
+  const longitude = Number(coords.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return [latitude, longitude];
+}
+
+function browserPositionAccuracyText(position = {}) {
+  const accuracy = Number(position.coords?.accuracy || 0);
+  return accuracy ? `akurasi ${Math.round(accuracy)}m` : 'akurasi tidak tersedia';
+}
+
+function setGpsStatus(element, message = '', tone = '') {
+  if (!element) return;
+  element.textContent = message;
+  element.classList.toggle('is-error', tone === 'error');
+  element.classList.toggle('is-ok', tone === 'ok');
+}
+
+function browserGpsIcon() {
+  if (!window.L) return undefined;
+  return window.L.divIcon({
+    className: 'browser-gps-div-icon',
+    html: '<span class="browser-gps-pin"><span></span></span>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -12]
+  });
+}
+
+function showBrowserPositionOnMap(map, position = {}, options = {}) {
+  if (!map || !window.L) return null;
+  const point = browserPositionPoint(position);
+  if (!point) return null;
+  if (map._browserGpsLayer) {
+    try {
+      map.removeLayer(map._browserGpsLayer);
+    } catch {
+      // Ignore stale Leaflet layer.
+    }
+  }
+  const group = window.L.layerGroup().addTo(map);
+  const accuracy = Number(position.coords?.accuracy || 0);
+  if (accuracy > 0) {
+    window.L.circle(point, {
+      radius: accuracy,
+      color: '#2563eb',
+      fillColor: '#3b82f6',
+      fillOpacity: 0.08,
+      weight: 1
+    }).addTo(group);
+  }
+  window.L.marker(point, {
+    icon: browserGpsIcon()
+  }).addTo(group).bindPopup(`Lokasi perangkat<br>${escapeHtml(browserPositionAccuracyText(position))}`);
+  map._browserGpsLayer = group;
+  if (options.center !== false) {
+    const zoom = Math.max(Number(map.getZoom?.() || 0), Number(options.zoom || 16));
+    map.setView(point, zoom);
+  }
+  return point;
+}
+
+async function requestGpsForLeafletMap(map, options = {}) {
+  const statusEl = options.statusEl || null;
+  setGpsStatus(statusEl, 'Meminta izin GPS perangkat...', '');
+  try {
+    const position = await currentBrowserPosition();
+    const point = showBrowserPositionOnMap(map, position, options);
+    if (!point) throw new Error('Koordinat GPS perangkat tidak valid.');
+    setGpsStatus(statusEl, `GPS aktif: ${point[0].toFixed(7)}, ${point[1].toFixed(7)} (${browserPositionAccuracyText(position)}).`, 'ok');
+    if (typeof options.onPosition === 'function') {
+      await options.onPosition(position, point);
+    }
+    return { position, point };
+  } catch (error) {
+    setGpsStatus(statusEl, error.message || 'GPS perangkat tidak bisa diambil.', 'error');
+    throw error;
+  }
+}
+
 function bindRadiusMemberFields(options = {}) {
   const checkbox = modalBody.querySelector('#radiusAddToMember');
   const fieldsWrap = modalBody.querySelector('#radiusMemberFields');
@@ -14550,7 +14654,11 @@ async function renderMonitoringSite(options = {}) {
                 </td>
                 <td>${escapeHtml(target.host || '-')}<div class="muted">UDP ${escapeHtml(target.port || 161)}</div></td>
                 <td>SNMP ${escapeHtml(target.snmpVersion || '2c')}<div class="muted">OID ${escapeHtml(target.oid || '1.3.6.1.2.1.1.3.0')}</div></td>
-                <td>${escapeHtml(target.location || '-')}</td>
+                <td>
+                  ${escapeHtml(target.location || '-')}
+                  ${target.isPrimarySite ? '<div><span class="badge active">Acuan Site</span></div>' : ''}
+                  <div class="muted">${escapeHtml(monitoringCoordinateText(target))}</div>
+                </td>
                 <td>
                   <span class="badge ${badgeClass(target.status)}">${operationalStatusLabel(target.status)}</span>
                   <div class="muted">${target.lastLatencyMs === null || target.lastLatencyMs === undefined ? '-' : `${escapeHtml(target.lastLatencyMs)} ms`}</div>
@@ -14672,6 +14780,27 @@ function monitoringFormBody(target = {}) {
         <span>Lokasi</span>
         <input name="location" value="${escapeHtml(target.location || '')}">
       </label>
+      <label class="field">
+        <span>Latitude Site</span>
+        <input name="latitude" value="${escapeHtml(target.latitude ?? '')}" inputmode="decimal" placeholder="-0.5022">
+      </label>
+      <label class="field">
+        <span>Longitude Site</span>
+        <input name="longitude" value="${escapeHtml(target.longitude ?? '')}" inputmode="decimal" placeholder="117.1537">
+      </label>
+      <label class="field full checkbox-field">
+        <input name="isPrimarySite" type="checkbox" value="true" ${target.isPrimarySite ? 'checked' : ''}>
+        <span>Jadikan titik acuan Site/server utama</span>
+      </label>
+      <label class="field full">
+        <span>Picker koordinat Site</span>
+        <div class="fiber-modal-map" id="fiberNodeCoordinateMap"></div>
+        <div class="location-picker-actions">
+          <button class="ghost-button compact" id="fiberUseGpsLocation" type="button">Gunakan GPS perangkat</button>
+          <span class="muted gps-status" id="fiberGpsStatus">GPS akan diminta saat peta dibuka.</span>
+        </div>
+        <span class="muted">Klik peta untuk mengisi latitude/longitude Site, atau gunakan GPS perangkat saat berada di lokasi Site.</span>
+      </label>
       <div class="field full form-subhead">
         <strong>NAS Radius</strong>
         <span class="muted">Diisi di Site agar PPP-DHCP dan Hotspot bisa tersinkron ke FreeRADIUS.</span>
@@ -14749,6 +14878,7 @@ function openMonitoringModal(target = null) {
     setToast(target ? 'Target diperbarui' : 'Target ditambahkan');
     renderMonitoringSite();
   });
+  mountFiberNodeCoordinatePicker(target || {}).catch(() => {});
 }
 
 function monitoringMapNumber(value) {
@@ -14761,6 +14891,19 @@ function monitoringCoordinate(row = {}) {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
   if (latitude === 0 && longitude === 0) return null;
   return [latitude, longitude];
+}
+
+function monitoringCoordinateOutsideEastKalimantan(row = {}) {
+  const coordinate = monitoringCoordinate(row);
+  if (!coordinate) return false;
+  const [latitude, longitude] = coordinate;
+  return latitude < -2.9 || latitude > 2.8 || longitude < 113.4 || longitude > 119.6;
+}
+
+function monitoringCoordinateText(row = {}) {
+  const coordinate = monitoringCoordinate(row);
+  if (!coordinate) return 'Koordinat belum ada';
+  return `${coordinate[0].toFixed(6)}, ${coordinate[1].toFixed(6)}${monitoringCoordinateOutsideEastKalimantan(row) ? ' · di luar Kaltim' : ''}`;
 }
 
 function monitoringMapGoogleMapsUrl(latitude, longitude) {
@@ -14794,16 +14937,17 @@ function monitoringFiberNodeLabel(row = {}) {
 
 function monitoringMapMarkerIcon(kind = 'customer', tone = 'active') {
   if (!window.L) return undefined;
-  const safeKind = ['customer', 'odc', 'odp'].includes(kind) ? kind : 'customer';
+  const safeKind = ['customer', 'noc', 'odc', 'odp'].includes(kind) ? kind : 'customer';
   const safeTone = ['active', 'isolated', 'inactive', 'maintenance'].includes(tone) ? tone : 'active';
+  const infraLabel = safeKind === 'noc' ? 'SITE' : safeKind.toUpperCase();
   const html = safeKind === 'customer'
-    ? `<span class="customer-map-pin customer-map-pin-${safeTone}"><span></span></span>`
-    : `<span class="fiber-map-pin fiber-map-pin-${safeKind} fiber-map-pin-${safeTone}">${safeKind.toUpperCase()}</span>`;
+    ? `<span class="customer-map-pin-wrap customer-map-pin-wrap-${safeTone}">${safeTone === 'active' ? '<span class="customer-map-signal" aria-hidden="true"></span>' : ''}<span class="customer-map-pin customer-map-pin-${safeTone}"><span></span></span></span>`
+    : `<span class="fiber-map-pin fiber-map-pin-${safeKind} fiber-map-pin-${safeTone}">${infraLabel}</span>`;
   return window.L.divIcon({
     className: 'monitoring-map-div-icon',
     html,
-    iconSize: safeKind === 'customer' ? [24, 30] : [42, 30],
-    iconAnchor: safeKind === 'customer' ? [12, 28] : [21, 15],
+    iconSize: safeKind === 'customer' ? [34, 36] : [46, 30],
+    iconAnchor: safeKind === 'customer' ? [17, 32] : [23, 15],
     popupAnchor: [0, -14]
   });
 }
@@ -14811,15 +14955,20 @@ function monitoringMapMarkerIcon(kind = 'customer', tone = 'active') {
 function monitoringCustomerPopup(row = {}) {
   const coordinate = monitoringCoordinate(row);
   const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Buka Google Maps</a>` : '';
+  const canEditCoordinate = row.id && canAny(['customers:manage', 'members:contact:write']);
+  const canEditWifi = row.id && row.username && can('genieacs:write');
   return `
     <div class="monitoring-map-popup">
       <strong>${escapeHtml(row.name || '-')}</strong>
       <span>${escapeHtml(row.customerNumber || row.username || '-')}</span>
       <span>${escapeHtml(row.currentPlan || '-')}</span>
       <span>${monitoringCustomerStatusBadge(row.status)}</span>
+      <span class="${monitoringCoordinateOutsideEastKalimantan(row) ? 'warning-text' : ''}">${escapeHtml(monitoringCoordinateText(row))}</span>
       ${row.phone ? `<span>WA: ${escapeHtml(row.phone)}</span>` : ''}
       ${row.address ? `<span>${escapeHtml(row.address)}</span>` : ''}
       ${coordinateLink}
+      ${canEditCoordinate ? `<button class="ghost-button compact monitoring-map-popup-action" type="button" data-customer-map-row-id="${escapeHtml(row.id)}">Edit koordinat</button>` : ''}
+      ${canEditWifi ? `<button class="button compact monitoring-map-popup-action" type="button" data-customer-map-wifi-id="${escapeHtml(row.id)}">Edit WiFi</button>` : ''}
     </div>
   `;
 }
@@ -14827,13 +14976,14 @@ function monitoringCustomerPopup(row = {}) {
 function monitoringFiberPopup(row = {}) {
   const coordinate = monitoringCoordinate(row);
   const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Buka Google Maps</a>` : '';
-  const typeLabel = row.type === 'odc' ? 'ODC' : 'ODP';
+  const typeLabel = row.type === 'noc' ? 'Site' : row.type === 'odc' ? 'ODC' : 'ODP';
   return `
     <div class="monitoring-map-popup">
       <strong>${escapeHtml(typeLabel)} ${escapeHtml(monitoringFiberNodeLabel(row))}</strong>
+      ${row.type === 'noc' && row.isPrimary ? '<span><strong>Acuan server/site utama</strong></span>' : ''}
       <span>Area: ${escapeHtml(row.area || '-')}</span>
       <span>Status: ${escapeHtml(row.statusLabel || '-')}</span>
-      <span>Port: ${monitoringFiberPortText(row.usedPorts)} dipakai / ${monitoringFiberPortText(row.capacityPorts)} kapasitas</span>
+      ${row.type === 'noc' ? '' : `<span>Port: ${monitoringFiberPortText(row.usedPorts)} dipakai / ${monitoringFiberPortText(row.capacityPorts)} kapasitas</span>`}
       ${row.availablePorts !== null && row.availablePorts !== undefined ? `<span>Sisa port: ${monitoringFiberPortText(row.availablePorts)}</span>` : ''}
       ${row.centerName ? `<span>ODC: ${escapeHtml(row.centerName)}</span>` : ''}
       ${coordinateLink}
@@ -14850,9 +15000,12 @@ async function mountMonitoringCustomerMap(payload = {}) {
     return;
   }
   if (!document.body.contains(mapEl)) return;
+  mapEl.addEventListener('click', handleMonitoringCustomerMapEditClick);
   const map = window.L.map(mapEl, {
-    scrollWheelZoom: false
+    scrollWheelZoom: true
   }).setView([-0.5022, 117.1537], 12);
+  enableLeafletMapWheelZoom(map, mapEl);
+  mapEl._monitoringCustomerMap = map;
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
     attribution: '&copy; OpenStreetMap'
@@ -14862,8 +15015,9 @@ async function mountMonitoringCustomerMap(payload = {}) {
     const coordinate = monitoringCoordinate(node);
     if (!coordinate) return;
     bounds.push(coordinate);
+    const nodeKind = ['noc', 'odc', 'odp'].includes(node.type) ? node.type : 'odp';
     window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon(node.type === 'odc' ? 'odc' : 'odp', node.tone || node.status || 'active')
+      icon: monitoringMapMarkerIcon(nodeKind, node.tone || node.status || 'active')
     }).addTo(map).bindPopup(monitoringFiberPopup(node));
   });
   (payload.markers || []).forEach((row) => {
@@ -14877,7 +15031,135 @@ async function mountMonitoringCustomerMap(payload = {}) {
   if (bounds.length) {
     map.fitBounds(window.L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
   }
+  requestGpsForLeafletMap(map, {
+    statusEl: document.getElementById('customerMapGpsStatus'),
+    center: !bounds.length,
+    zoom: 16
+  }).catch(() => {});
   window.setTimeout(() => map.invalidateSize(), 150);
+}
+
+function monitoringCustomerMapRows(payload = window.__lastCustomerMapPayload || {}) {
+  const rows = [
+    ...(payload.customers || []),
+    ...(payload.markers || []),
+    ...(payload.missingCustomers || [])
+  ];
+  const byId = new Map();
+  rows.forEach((row) => {
+    const id = String(row?.id || '').trim();
+    if (!id || byId.has(id)) return;
+    byId.set(id, row);
+  });
+  return [...byId.values()];
+}
+
+function monitoringCustomerMapMemberPayload(row = {}) {
+  return {
+    id: row.id,
+    accountId: row.customerNumber,
+    userId: row.username || row.customerNumber,
+    internet: row.username,
+    username: row.username,
+    fullName: row.name,
+    customerName: row.name,
+    whatsapp: row.phone,
+    phone: row.phone,
+    address: row.address,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    locationAccuracy: row.accuracy
+  };
+}
+
+async function openMonitoringCustomerMapContact(row = {}) {
+  if (!row?.id) {
+    setToast('ID pelanggan tidak tersedia');
+    return;
+  }
+  await openMemberContactModal(monitoringCustomerMapMemberPayload(row), {
+    onSaved: async () => {
+      await renderMonitoringCustomerMap({ silent: true });
+    }
+  });
+}
+
+async function openMonitoringCustomerMapWifi(row = {}) {
+  const username = String(row.username || '').trim();
+  if (!username) {
+    setToast('Username PPPoE pelanggan belum tersedia');
+    return;
+  }
+  if (!can('genieacs:write')) {
+    setToast('Akses edit WiFi GenieACS tidak tersedia');
+    return;
+  }
+  const payload = await api(`/api/genieacs/devices?${queryString({
+    search: username,
+    page: 1,
+    limit: 5,
+    refresh: '1'
+  })}`);
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  const normalizedUsername = username.toLowerCase();
+  const usernamePrefix = normalizedUsername.split('@')[0] || normalizedUsername;
+  const matched = rows.find((device) => String(device.username || '').trim().toLowerCase() === normalizedUsername)
+    || rows.find((device) => String(device.username || '').trim().toLowerCase().split('@')[0] === usernamePrefix)
+    || (rows.length === 1 ? rows[0] : null);
+  if (!matched?.id) {
+    throw new Error(rows.length > 1
+      ? 'Ditemukan lebih dari 1 perangkat GenieACS. Cocokkan username PPPoE pelanggan dulu.'
+      : 'Perangkat GenieACS pelanggan belum ditemukan');
+  }
+  await openGenieWifiModal({
+    ...matched,
+    username: matched.username || username
+  }, {
+    onSubmitted: async () => {
+      if (state.view === 'monitoringCustomerMap') {
+        await renderMonitoringCustomerMap({ silent: true });
+      }
+    }
+  });
+}
+
+function handleMonitoringCustomerMapEditClick(event) {
+  const wifiButton = event.target?.closest?.('[data-customer-map-wifi-id]');
+  if (wifiButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = String(wifiButton.dataset.customerMapWifiId || '').trim();
+    const row = monitoringCustomerMapRows().find((item) => String(item.id || '') === id);
+    if (!row) {
+      setToast('Data pelanggan tidak ditemukan di peta');
+      return;
+    }
+    wifiButton.disabled = true;
+    wifiButton.setAttribute('aria-busy', 'true');
+    setToast('Mencari perangkat GenieACS pelanggan...');
+    openMonitoringCustomerMapWifi(row).catch((error) => {
+      setToast(error.message || 'WiFi pelanggan tidak bisa dibuka');
+    }).finally(() => {
+      if (wifiButton.isConnected) {
+        wifiButton.disabled = false;
+        wifiButton.removeAttribute('aria-busy');
+      }
+    });
+    return;
+  }
+  const button = event.target?.closest?.('[data-customer-map-row-id]');
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const id = String(button.dataset.customerMapRowId || '').trim();
+  const row = monitoringCustomerMapRows().find((item) => String(item.id || '') === id);
+  if (!row) {
+    setToast('Data pelanggan tidak ditemukan di peta');
+    return;
+  }
+  openMonitoringCustomerMapContact(row).catch((error) => {
+    setToast(error.message || 'Contact member tidak bisa dibuka');
+  });
 }
 
 function monitoringCustomerMapFilterOptions(payload = {}) {
@@ -14920,27 +15202,17 @@ function bindMonitoringCustomerMapFilters() {
     });
   });
   document.getElementById('refreshCustomerMap')?.addEventListener('click', () => renderMonitoringCustomerMap({ refresh: true }));
-  app.querySelectorAll('[data-customer-map-contact]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const row = (window.__lastCustomerMapPayload?.missingCustomers || [])[Number(button.dataset.customerMapContact || -1)];
-      if (!row) return;
-      try {
-        await openMemberContactModal({
-          id: row.id,
-          accountId: row.customerNumber,
-          userId: row.username,
-          internet: row.username,
-          fullName: row.name,
-          customerName: row.name,
-          whatsapp: row.phone,
-          phone: row.phone,
-          address: row.address
-        });
-        await renderMonitoringCustomerMap({ silent: true });
-      } catch (error) {
-        setToast(error.message || 'Contact member tidak bisa dibuka');
-      }
-    });
+  document.getElementById('customerMapUseGps')?.addEventListener('click', () => {
+    const map = document.getElementById('customerMapLeaflet')?._monitoringCustomerMap;
+    if (!map) return;
+    requestGpsForLeafletMap(map, {
+      statusEl: document.getElementById('customerMapGpsStatus'),
+      center: true,
+      zoom: 17
+    }).catch(() => {});
+  });
+  app.querySelectorAll('[data-customer-map-row-id]').forEach((button) => {
+    button.addEventListener('click', handleMonitoringCustomerMapEditClick);
   });
 }
 
@@ -14957,7 +15229,8 @@ async function renderMonitoringCustomerMap(options = {}) {
   if (renderIsStale(options.renderToken)) return;
   window.__lastCustomerMapPayload = payload;
   const summary = payload.summary || {};
-  const missingRows = payload.missingCustomers || [];
+  const customerRows = monitoringCustomerMapRows(payload);
+  const listedCustomerRows = customerRows.slice(0, 80);
   app.innerHTML = `
     <div class="stack monitoring-map-page">
       <section class="metrics">
@@ -14994,6 +15267,7 @@ async function renderMonitoringCustomerMap(options = {}) {
           </select>
         </div>
         <div class="row-actions">
+          <button class="ghost-button" id="customerMapUseGps" type="button">GPS Perangkat</button>
           <button class="ghost-button" id="refreshCustomerMap" type="button">Refresh</button>
         </div>
       </div>
@@ -15003,7 +15277,7 @@ async function renderMonitoringCustomerMap(options = {}) {
           <div class="panel-head compact">
             <div>
               <h3>Peta Pelanggan</h3>
-              <p class="muted">Marker pelanggan digabung dengan ODC/ODP yang memiliki koordinat.</p>
+              <p class="muted" id="customerMapGpsStatus">GPS perangkat akan diminta saat peta dibuka.</p>
             </div>
           </div>
           <div class="monitoring-map-canvas" id="customerMapLeaflet"></div>
@@ -15011,6 +15285,7 @@ async function renderMonitoringCustomerMap(options = {}) {
             <span><i class="legend-dot active"></i>Aktif</span>
             <span><i class="legend-dot isolated"></i>Isolir</span>
             <span><i class="legend-dot inactive"></i>Nonaktif</span>
+            <span><i class="legend-chip noc">SITE</i>Site</span>
             <span><i class="legend-chip odc">ODC</i>ODC</span>
             <span><i class="legend-chip odp">ODP</i>ODP</span>
           </div>
@@ -15019,21 +15294,26 @@ async function renderMonitoringCustomerMap(options = {}) {
         <aside class="panel monitoring-map-side">
           <div class="panel-head compact">
             <div>
-              <h3>Belum Ada Koordinat</h3>
-              <p class="muted">Ditampilkan maksimal 40 pelanggan sesuai filter.</p>
+              <h3>Daftar Pelanggan</h3>
+              <p class="muted">Ditampilkan maksimal 80 pelanggan sesuai filter. Klik edit untuk koreksi titik.</p>
             </div>
           </div>
           <div class="monitoring-map-missing-list">
-            ${missingRows.length ? missingRows.map((row, index) => `
+            ${listedCustomerRows.length ? listedCustomerRows.map((row) => {
+              const coordinate = monitoringCoordinate(row);
+              const outside = monitoringCoordinateOutsideEastKalimantan(row);
+              return `
               <article class="monitoring-map-missing-card">
                 <div>
                   <strong>${escapeHtml(row.name || '-')}</strong>
                   <span>${escapeHtml(row.username || row.customerNumber || '-')}</span>
                   <small>${escapeHtml(row.currentPlan || '-')}</small>
+                  <small class="monitoring-map-coordinate ${coordinate ? (outside ? 'is-warning' : 'is-ok') : 'is-missing'}">${escapeHtml(monitoringCoordinateText(row))}</small>
                 </div>
-                <button class="ghost-button compact" type="button" data-customer-map-contact="${index}" ${row.id ? '' : 'disabled'}>Edit koordinat</button>
+                <button class="ghost-button compact" type="button" data-customer-map-row-id="${escapeHtml(row.id || '')}" ${row.id ? '' : 'disabled'}>Edit koordinat</button>
               </article>
-            `).join('') : '<div class="empty compact">Semua pelanggan pada filter ini sudah memiliki koordinat.</div>'}
+            `;
+            }).join('') : '<div class="empty compact">Tidak ada pelanggan pada filter ini.</div>'}
           </div>
         </aside>
       </div>
@@ -15053,14 +15333,26 @@ async function mountMonitoringFiberMap(payload = {}) {
   }
   if (!document.body.contains(mapEl)) return;
   const map = window.L.map(mapEl, {
-    scrollWheelZoom: false
+    scrollWheelZoom: true
   }).setView([-0.5022, 117.1537], 12);
+  enableLeafletMapWheelZoom(map, mapEl);
+  mapEl._fiberNetworkMap = map;
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
     attribution: '&copy; OpenStreetMap'
   }).addTo(map);
   const bounds = [];
   const centerById = new Map((payload.centers || []).map((center) => [String(center.id || ''), center]));
+  const primarySite = payload.primarySite || (payload.nocs || []).find((noc) => noc.isPrimary) || null;
+  const primarySiteCoordinate = monitoringCoordinate(primarySite || {});
+  (payload.nocs || []).forEach((noc) => {
+    const coordinate = monitoringCoordinate(noc);
+    if (!coordinate) return;
+    bounds.push(coordinate);
+    window.L.marker(coordinate, {
+      icon: monitoringMapMarkerIcon('noc', noc.tone || noc.status || 'active')
+    }).addTo(map).bindPopup(monitoringFiberPopup(noc));
+  });
   (payload.centers || []).forEach((center) => {
     const coordinate = monitoringCoordinate(center);
     if (!coordinate) return;
@@ -15068,6 +15360,14 @@ async function mountMonitoringFiberMap(payload = {}) {
     window.L.marker(coordinate, {
       icon: monitoringMapMarkerIcon('odc', center.tone || center.status || 'active')
     }).addTo(map).bindPopup(monitoringFiberPopup(center));
+    if (primarySiteCoordinate) {
+      window.L.polyline([primarySiteCoordinate, coordinate], {
+        color: '#0f766e',
+        weight: 2,
+        opacity: 0.5,
+        dashArray: '2,8'
+      }).addTo(map);
+    }
   });
   (payload.points || []).forEach((point) => {
     const coordinate = monitoringCoordinate(point);
@@ -15089,6 +15389,44 @@ async function mountMonitoringFiberMap(payload = {}) {
   });
   if (bounds.length) {
     map.fitBounds(window.L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
+  }
+  requestGpsForLeafletMap(map, {
+    statusEl: document.getElementById('fiberNetworkGpsStatus'),
+    center: true,
+    zoom: 18
+  }).catch(() => {});
+  if (can('monitoring:write')) {
+    map.doubleClickZoom.disable();
+    map.on('dblclick', (event) => {
+      const lat = Number(event.latlng?.lat || 0).toFixed(7);
+      const lng = Number(event.latlng?.lng || 0).toFixed(7);
+      window.L.popup()
+        .setLatLng(event.latlng)
+        .setContent(`
+          <div class="monitoring-map-popup fiber-map-add-popup">
+            <strong>Tambah node di titik ini</strong>
+            <span>${escapeHtml(lat)}, ${escapeHtml(lng)}</span>
+            <button class="ghost-button compact" type="button" data-fiber-map-add="odc" data-lat="${escapeHtml(lat)}" data-lng="${escapeHtml(lng)}">Tambah ODC</button>
+            <button class="button compact" type="button" data-fiber-map-add="odp" data-lat="${escapeHtml(lat)}" data-lng="${escapeHtml(lng)}">Tambah ODP</button>
+          </div>
+        `)
+        .openOn(map);
+    });
+    mapEl.addEventListener('click', (event) => {
+      const button = event.target?.closest?.('[data-fiber-map-add]');
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const kind = button.dataset.fiberMapAdd || '';
+      const draft = {
+        latitude: button.dataset.lat || '',
+        longitude: button.dataset.lng || '',
+        area: state.monitoringFiberArea !== 'all' ? state.monitoringFiberArea : ''
+      };
+      map.closePopup();
+      if (kind === 'odc') openFiberOdcModal(draft, payload);
+      else if (kind === 'odp') openFiberOdpModal(draft, payload);
+    });
   }
   window.setTimeout(() => map.invalidateSize(), 150);
 }
@@ -15161,7 +15499,11 @@ function monitoringFiberFormBody(type = 'odc', row = {}, payload = {}) {
       <label class="field full">
         <span>Picker koordinat</span>
         <div class="fiber-modal-map" id="fiberNodeCoordinateMap"></div>
-        <span class="muted">Klik peta untuk mengisi latitude/longitude.</span>
+        <div class="location-picker-actions">
+          <button class="ghost-button compact" id="fiberUseGpsLocation" type="button">Gunakan GPS perangkat</button>
+          <span class="muted gps-status" id="fiberGpsStatus">GPS akan diminta saat peta dibuka.</span>
+        </div>
+        <span class="muted">Klik peta untuk mengisi latitude/longitude, atau gunakan GPS perangkat jika sedang berada di titik lokasi.</span>
       </label>
       <label class="field full">
         <span>Catatan</span>
@@ -15187,7 +15529,9 @@ async function mountFiberNodeCoordinatePicker(row = {}) {
   }
   if (!document.body.contains(mapEl)) return;
   const existing = monitoringCoordinate(row) || [-0.5022, 117.1537];
-  const map = window.L.map(mapEl, { scrollWheelZoom: false }).setView(existing, monitoringCoordinate(row) ? 16 : 12);
+  const map = window.L.map(mapEl, { scrollWheelZoom: true }).setView(existing, monitoringCoordinate(row) ? 16 : 12);
+  enableLeafletMapWheelZoom(map, mapEl);
+  mapEl._fiberNodeMap = map;
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
     attribution: '&copy; OpenStreetMap'
@@ -15210,6 +15554,27 @@ async function mountFiberNodeCoordinatePicker(row = {}) {
   };
   if (marker) marker.on('dragend', () => setCoordinate(marker.getLatLng()));
   map.on('click', (event) => setCoordinate(event.latlng));
+  const gpsStatus = modalBody.querySelector('#fiberGpsStatus');
+  const useGps = async (fillCoordinate = false) => {
+    await requestGpsForLeafletMap(map, {
+      statusEl: gpsStatus,
+      center: !monitoringCoordinate(row),
+      zoom: 17,
+      onPosition: async (position, point) => {
+        const currentCoordinate = monitoringCoordinate({ latitude: latInput.value, longitude: lngInput.value });
+        if (fillCoordinate || !currentCoordinate) {
+          setCoordinate({ lat: point[0], lng: point[1] });
+          setGpsStatus(gpsStatus, `GPS dipakai sebagai titik koordinat (${browserPositionAccuracyText(position)}).`, 'ok');
+        }
+      }
+    });
+  };
+  modalBody.querySelector('#fiberUseGpsLocation')?.addEventListener('click', () => {
+    useGps(true).catch(() => {});
+  });
+  window.setTimeout(() => {
+    useGps(false).catch(() => {});
+  }, 250);
   window.setTimeout(() => map.invalidateSize(), 180);
 }
 
@@ -15256,6 +15621,15 @@ function bindMonitoringFiberNetwork(payload = {}) {
     renderMonitoringFiberNetwork({ silent: true });
   });
   document.getElementById('refreshFiberNetwork')?.addEventListener('click', () => renderMonitoringFiberNetwork({ refresh: true }));
+  document.getElementById('fiberNetworkUseGps')?.addEventListener('click', () => {
+    const map = document.getElementById('fiberNetworkLeaflet')?._fiberNetworkMap;
+    if (!map) return;
+    requestGpsForLeafletMap(map, {
+      statusEl: document.getElementById('fiberNetworkGpsStatus'),
+      center: true,
+      zoom: 18
+    }).catch(() => {});
+  });
   document.getElementById('addFiberOdc')?.addEventListener('click', () => openFiberOdcModal(null, payload));
   document.getElementById('addFiberOdp')?.addEventListener('click', () => openFiberOdpModal(null, payload));
   app.querySelectorAll('[data-edit-odc]').forEach((button) => {
@@ -15311,6 +15685,7 @@ async function renderMonitoringFiberNetwork(options = {}) {
   app.innerHTML = `
     <div class="stack monitoring-map-page">
       <section class="metrics">
+        ${metric('Site', monitoringMapNumber(summary.noc), summary.primarySite ? `Acuan ${summary.primarySite}` : 'Titik server/site')}
         ${metric('ODC', monitoringMapNumber(summary.odc), 'Fiber distribution center')}
         ${metric('ODP', monitoringMapNumber(summary.odp), 'Distribution point')}
         ${metric('ODP Aktif', monitoringMapNumber(summary.odpActive), 'Siap dipakai', 'positive')}
@@ -15326,6 +15701,7 @@ async function renderMonitoringFiberNetwork(options = {}) {
           </select>
         </div>
         <div class="row-actions">
+          <button class="ghost-button" id="fiberNetworkUseGps" type="button">Fokus GPS</button>
           <button class="ghost-button" id="refreshFiberNetwork" type="button">Refresh</button>
           ${writeAllowed ? '<button class="ghost-button" id="addFiberOdc" type="button">Tambah ODC</button>' : ''}
           ${writeAllowed ? '<button class="button" id="addFiberOdp" type="button">Tambah ODP</button>' : ''}
@@ -15336,11 +15712,12 @@ async function renderMonitoringFiberNetwork(options = {}) {
         <div class="panel-head compact">
           <div>
             <h3>Topologi ODP/ODC</h3>
-            <p class="muted">Garis putus-putus menghubungkan ODC ke ODP jika keduanya memiliki koordinat.</p>
+            <p class="muted gps-status" id="fiberNetworkGpsStatus">GPS perangkat akan diminta dan peta difokuskan ke lokasi perangkat.</p>
           </div>
         </div>
         <div class="monitoring-map-canvas fiber-map-canvas" id="fiberNetworkLeaflet"></div>
         <div class="monitoring-map-legend">
+          <span><i class="legend-chip noc">SITE</i>Site/NAS</span>
           <span><i class="legend-chip odc">ODC</i>Optical distribution center</span>
           <span><i class="legend-chip odp">ODP</i>Optical distribution point</span>
           <span><i class="legend-dot active"></i>Aktif</span>
@@ -15800,7 +16177,7 @@ function setGenieModalStatus(element, state = 'loading', title = '', detail = ''
   });
 }
 
-async function openGenieWifiModal(row = {}) {
+async function openGenieWifiModal(row = {}, options = {}) {
   const wifiPayload = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wifi-options?${queryString({
     username: row.username || '',
     refresh: '1'
@@ -15962,6 +16339,9 @@ async function openGenieWifiModal(row = {}) {
         }
       }
       renderGenieAcs({ refresh: true });
+      if (typeof options.onSubmitted === 'function') {
+        await options.onSubmitted(response);
+      }
     } catch (error) {
       setGenieModalStatus(statusElement, 'error', 'Konfigurasi WiFi gagal', error.message || 'Task GenieACS tidak dapat dikirim.');
     } finally {
@@ -16122,6 +16502,9 @@ async function openGenieWifiModal(row = {}) {
       if (addName) addName.value = '';
       if (addPassword) addPassword.value = '';
       renderGenieAcs({ refresh: true });
+      if (typeof options.onSubmitted === 'function') {
+        await options.onSubmitted(result);
+      }
     } catch (error) {
       setGenieModalStatus(statusElement, 'error', 'Tambah SSID gagal', error.message || 'Task GenieACS tidak dapat dikirim.');
     } finally {

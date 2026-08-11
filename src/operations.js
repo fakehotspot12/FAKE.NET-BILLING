@@ -49,6 +49,29 @@ function cleanText(value) {
   return String(value || '').trim();
 }
 
+function truthyInput(value) {
+  return value === true || ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
+}
+
+function cleanCoordinate(value, type = 'latitude') {
+  const raw = cleanText(value).replace(',', '.');
+  if (!raw) return '';
+  const number = Number(raw);
+  if (!Number.isFinite(number)) {
+    throw new Error(`${type === 'longitude' ? 'Longitude' : 'Latitude'} tidak valid`);
+  }
+  const min = type === 'longitude' ? -180 : -90;
+  const max = type === 'longitude' ? 180 : 90;
+  if (number < min || number > max) {
+    throw new Error(`${type === 'longitude' ? 'Longitude' : 'Latitude'} di luar batas`);
+  }
+  return String(Math.round(number * 10000000) / 10000000);
+}
+
+function payloadHas(source = {}, key = '') {
+  return Object.prototype.hasOwnProperty.call(source, key);
+}
+
 function cleanHttpUrl(value = '') {
   const raw = cleanText(value);
   if (!raw) return '';
@@ -897,6 +920,9 @@ function addMonitoringTarget(data, payload = {}) {
     dashboardInterface: cleanText(payload.dashboardInterface || payload.trafficInterface),
     assetId: cleanText(payload.assetId),
     location: cleanText(payload.location),
+    latitude: cleanCoordinate(payload.latitude ?? payload.siteLatitude ?? '', 'latitude'),
+    longitude: cleanCoordinate(payload.longitude ?? payload.siteLongitude ?? '', 'longitude'),
+    isPrimarySite: truthyInput(payload.isPrimarySite || payload.primarySite),
     timeoutMs: Math.max(1000, Math.min(15000, Number(payload.timeoutMs) || 3000)),
     status: 'unknown',
     lastCheckedAt: '',
@@ -933,6 +959,11 @@ function updateMonitoringTarget(data, targetId, payload = {}) {
     dashboardInterface: cleanText(payload.dashboardInterface || payload.trafficInterface || target.dashboardInterface),
     assetId: cleanText(payload.assetId),
     location: cleanText(payload.location),
+    latitude: cleanCoordinate(payloadHas(payload, 'latitude') ? payload.latitude : target.latitude, 'latitude'),
+    longitude: cleanCoordinate(payloadHas(payload, 'longitude') ? payload.longitude : target.longitude, 'longitude'),
+    isPrimarySite: (payloadHas(payload, 'isPrimarySite') || payloadHas(payload, 'primarySite'))
+      ? truthyInput(payload.isPrimarySite || payload.primarySite)
+      : target.isPrimarySite === true,
     timeoutMs: Math.max(1000, Math.min(15000, Number(payload.timeoutMs) || target.timeoutMs || 3000)),
     notes: cleanText(payload.notes),
     mediaServices: sanitizeSiteMediaServices(payload, monitoringTargetMediaServices(data, target)),
