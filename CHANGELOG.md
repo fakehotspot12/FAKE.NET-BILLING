@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.2] - 2026-08-11
+
+### Fixed
+
+- Memperbaiki route `Peta Pelanggan` dan `ODP/ODC` yang memanggil helper payload belum terdefinisi setelah sinkron Cempaka dev.
+
 ## [4.2.1] - 2026-08-11
 
 ### Added

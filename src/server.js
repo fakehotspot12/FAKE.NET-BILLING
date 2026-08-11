@@ -7973,6 +7973,398 @@ function localMonitoringMemberRows(data = {}, query = {}) {
   return { members, creators, nasOptions, summary: monitoringMemberSummaryFromRows(members) };
 }
 
+function fiberNumber(value, fallback = 0) {
+  const number = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function fiberCoordinate(value) {
+  const number = fiberNumber(value, NaN);
+  return Number.isFinite(number) ? number : null;
+}
+
+function fiberHasCoordinate(row = {}) {
+  const latitude = fiberCoordinate(row.latitude);
+  const longitude = fiberCoordinate(row.longitude);
+  return latitude !== null
+    && longitude !== null
+    && latitude >= -90
+    && latitude <= 90
+    && longitude >= -180
+    && longitude <= 180
+    && latitude !== 0
+    && longitude !== 0;
+}
+
+function fiberStatus(value = 'active') {
+  const status = String(value || '').trim().toLowerCase();
+  if (['inactive', 'disabled', 'off', 'nonaktif'].includes(status)) return 'inactive';
+  if (['maintenance', 'maintain', 'repair', 'gangguan'].includes(status)) return 'maintenance';
+  return 'active';
+}
+
+function fiberStatusLabel(status = 'active') {
+  return {
+    active: 'Aktif',
+    inactive: 'Nonaktif',
+    maintenance: 'Maintenance'
+  }[fiberStatus(status)] || 'Aktif';
+}
+
+function fiberNodeTone(status = 'active') {
+  return fiberStatus(status) === 'active' ? 'active' : fiberStatus(status) === 'maintenance' ? 'maintenance' : 'inactive';
+}
+
+function customerFiberPointId(customer = {}) {
+  return String(
+    customer.fiberPointId
+    || customer.odpId
+    || customer.distributionPointId
+    || customer.distribution_point_id
+    || customer.odp
+    || ''
+  ).trim();
+}
+
+function customerOdpPort(customer = {}) {
+  return String(customer.odpPort || customer.fiberPort || customer.distributionPort || customer.port || '').trim();
+}
+
+function customerMapStatus(customer = {}) {
+  const normalized = normalizeCustomerStatusLocal(customer.status || customer.accessState || '');
+  if (['isolated', 'suspend'].includes(normalized)) return 'isolated';
+  if (['terminated', 'removed', 'inactive', 'disabled'].includes(normalized)) return 'inactive';
+  return 'active';
+}
+
+function customerMapTone(customer = {}) {
+  const status = customerMapStatus(customer);
+  return status === 'isolated' ? 'isolated' : status === 'inactive' ? 'inactive' : 'active';
+}
+
+function customerPlanName(data = {}, customer = {}, radiusUser = {}) {
+  const profile = radiusFindProfile(data, radiusUser.profileId || customer.packageName || customer.profile || '', 'pppoe') || {};
+  return profile.name || customer.packageName || customer.profile || radiusUser.profile || radiusUser.profileName || '';
+}
+
+function customerMapRows(data = {}, query = {}) {
+  const search = String(query.search || '').trim().toLowerCase();
+  const statusFilter = String(query.status || 'all').trim().toLowerCase();
+  const accessFilter = String(query.accessState || query.access_state || 'all').trim().toLowerCase();
+  const planFilter = String(query.plan || query.servicePlan || query.service_plan_id || 'all').trim().toLowerCase();
+  const locationFilter = String(query.location || 'all').trim().toLowerCase();
+  const radiusUsers = data.radiusUsers || [];
+  let rows = (data.customers || []).map((customer) => {
+    const radiusUser = radiusUsers.find((user) => {
+      return user.customerId === customer.id
+        || user.id === customer.radiusUserId
+        || String(user.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase();
+    }) || {};
+    const latitude = fiberCoordinate(customer.latitude ?? customer.memberLatitude);
+    const longitude = fiberCoordinate(customer.longitude ?? customer.memberLongitude);
+    const status = customerMapStatus(customer);
+    const plan = customerPlanName(data, customer, radiusUser);
+    const hasLocation = fiberHasCoordinate({ latitude, longitude });
+    const fiberPointId = customerFiberPointId(customer);
+    return {
+      id: customer.id || '',
+      customerNumber: customer.code || customer.accountId || customer.memberCode || customer.id || '',
+      name: customer.name || customer.customerName || customer.username || '',
+      phone: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
+      status,
+      statusLabel: status === 'isolated' ? 'Isolir' : status === 'inactive' ? 'Nonaktif' : 'Aktif',
+      accessState: status === 'isolated' ? 'isolated' : status === 'inactive' ? 'inactive' : 'normal',
+      currentPlan: plan,
+      username: radiusUser.username || customer.username || '',
+      connectionType: radiusUser.serviceType || customer.serviceType || 'pppoe',
+      latitude,
+      longitude,
+      accuracy: fiberNumber(customer.locationAccuracy, null),
+      source: customer.locationSource || customer.memberLocationSource || (hasLocation ? 'manual' : ''),
+      note: customer.locationNote || customer.note || '',
+      geotaggedAt: customer.locationUpdatedAt || customer.updatedAt || customer.createdAt || '',
+      address: customer.address || '',
+      fiberPointId,
+      odpPort: customerOdpPort(customer),
+      hasLocation,
+      url: customer.id ? `#monitoringMembers?member=${encodeURIComponent(customer.id)}` : ''
+    };
+  });
+
+  if (statusFilter && statusFilter !== 'all') {
+    rows = rows.filter((row) => row.status === statusFilter || row.accessState === statusFilter);
+  }
+  if (accessFilter && accessFilter !== 'all') {
+    rows = rows.filter((row) => row.accessState === accessFilter || row.status === accessFilter);
+  }
+  if (planFilter && planFilter !== 'all') {
+    rows = rows.filter((row) => String(row.currentPlan || '').trim().toLowerCase() === planFilter);
+  }
+  if (locationFilter === 'tagged') rows = rows.filter((row) => row.hasLocation);
+  if (locationFilter === 'missing') rows = rows.filter((row) => !row.hasLocation);
+  if (search) {
+    rows = rows.filter((row) => [
+      row.customerNumber,
+      row.name,
+      row.phone,
+      row.username,
+      row.currentPlan,
+      row.address,
+      row.fiberPointId,
+      row.odpPort
+    ].some((value) => String(value || '').toLowerCase().includes(search)));
+  }
+
+  const servicePlanOptions = [...new Set(rows.map((row) => row.currentPlan).filter(Boolean))]
+    .sort((a, b) => String(a).localeCompare(String(b), 'id', { numeric: true, sensitivity: 'base' }))
+    .map((name) => ({ id: name, name }));
+
+  return {
+    rows,
+    markers: rows.filter((row) => row.hasLocation),
+    missingCustomers: rows.filter((row) => !row.hasLocation).slice(0, 40),
+    summary: {
+      total: rows.length,
+      tagged: rows.filter((row) => row.hasLocation).length,
+      missing: rows.filter((row) => !row.hasLocation).length,
+      isolated: rows.filter((row) => row.status === 'isolated').length,
+      inactive: rows.filter((row) => row.status === 'inactive').length
+    },
+    servicePlanOptions
+  };
+}
+
+function fiberTaggedCustomerMap(data = {}) {
+  const map = new Map();
+  for (const row of customerMapRows(data, {}).rows) {
+    const pointId = String(row.fiberPointId || '').trim();
+    if (!pointId) continue;
+    if (!map.has(pointId)) map.set(pointId, []);
+    map.get(pointId).push({
+      id: row.id,
+      customerNumber: row.customerNumber,
+      name: row.name,
+      username: row.username,
+      phone: row.phone,
+      odpPort: row.odpPort,
+      status: row.status
+    });
+  }
+  return map;
+}
+
+function fiberCenterRows(data = {}) {
+  const pointsByCenter = new Map();
+  for (const point of data.fiberPoints || []) {
+    const centerId = String(point.centerId || '').trim();
+    if (!centerId) continue;
+    if (!pointsByCenter.has(centerId)) pointsByCenter.set(centerId, []);
+    pointsByCenter.get(centerId).push(point);
+  }
+  return (data.fiberCenters || []).map((center) => {
+    const childPoints = (pointsByCenter.get(String(center.id || '')) || []).map((point) => fiberPointPublicRow(data, point, { includeTaggedCustomers: false }));
+    const capacityPorts = Math.max(0, Math.round(fiberNumber(center.capacityPorts ?? center.capacity ?? center.ports, 0)));
+    const usedPorts = childPoints.length;
+    return {
+      id: center.id || '',
+      type: 'odc',
+      code: center.code || '',
+      name: center.name || '',
+      area: center.area || '',
+      latitude: fiberCoordinate(center.latitude),
+      longitude: fiberCoordinate(center.longitude),
+      capacityPorts,
+      usedPorts,
+      availablePorts: capacityPorts ? Math.max(0, capacityPorts - usedPorts) : null,
+      status: fiberStatus(center.status),
+      statusLabel: fiberStatusLabel(center.status),
+      tone: fiberNodeTone(center.status),
+      note: center.note || '',
+      distributionPointsCount: childPoints.length,
+      childPoints: childPoints.map((point) => ({
+        id: point.id,
+        code: point.code,
+        name: point.name,
+        status: point.status,
+        capacityPorts: point.capacityPorts,
+        usedPorts: point.usedPorts,
+        availablePorts: point.availablePorts
+      }))
+    };
+  });
+}
+
+function fiberPointPublicRow(data = {}, point = {}, options = {}) {
+  const center = (data.fiberCenters || []).find((item) => String(item.id || '') === String(point.centerId || '')) || {};
+  const taggedCustomers = (options.taggedMap || fiberTaggedCustomerMap(data)).get(String(point.id || '')) || [];
+  const capacityPorts = Math.max(0, Math.round(fiberNumber(point.capacityPorts ?? point.capacity ?? point.ports, 0)));
+  const damagedPorts = Math.max(0, Math.round(fiberNumber(point.damagedPorts, 0)));
+  const manualUsedPorts = Math.max(0, Math.round(fiberNumber(point.usedPorts, 0)));
+  const taggedUsedPorts = taggedCustomers.length;
+  const usedPorts = Math.max(manualUsedPorts, taggedUsedPorts);
+  const reservedPorts = Math.max(usedPorts, Math.round(fiberNumber(point.reservedPorts, 0)));
+  const availablePorts = capacityPorts ? Math.max(0, capacityPorts - reservedPorts - damagedPorts) : null;
+  return {
+    id: point.id || '',
+    type: 'odp',
+    centerId: point.centerId || '',
+    centerName: center.id ? `${center.code || '-'} - ${center.name || '-'}` : '',
+    code: point.code || '',
+    name: point.name || '',
+    area: point.area || center.area || '',
+    latitude: fiberCoordinate(point.latitude),
+    longitude: fiberCoordinate(point.longitude),
+    capacityPorts,
+    reservedPorts,
+    damagedPorts,
+    usedPorts,
+    availablePorts,
+    status: fiberStatus(point.status),
+    statusLabel: fiberStatusLabel(point.status),
+    tone: fiberNodeTone(point.status),
+    note: point.note || '',
+    taggedCustomers: options.includeTaggedCustomers === false ? undefined : taggedCustomers
+  };
+}
+
+function fiberPointRows(data = {}) {
+  const taggedMap = fiberTaggedCustomerMap(data);
+  return (data.fiberPoints || []).map((point) => fiberPointPublicRow(data, point, { taggedMap }));
+}
+
+function fiberAreaOptions(data = {}) {
+  return [...new Set([
+    ...(data.fiberCenters || []).map((row) => row.area),
+    ...(data.fiberPoints || []).map((row) => row.area)
+  ].map((value) => String(value || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'id', { numeric: true, sensitivity: 'base' }));
+}
+
+function fiberNetworkPayload(data = {}, query = {}) {
+  const area = String(query.area || '').trim().toLowerCase();
+  const search = String(query.search || '').trim().toLowerCase();
+  let centers = fiberCenterRows(data);
+  let points = fiberPointRows(data);
+  if (area && area !== 'all') {
+    centers = centers.filter((row) => String(row.area || '').trim().toLowerCase() === area);
+    points = points.filter((row) => String(row.area || '').trim().toLowerCase() === area);
+  }
+  if (search) {
+    const matches = (row = {}) => [
+      row.code,
+      row.name,
+      row.area,
+      row.centerName,
+      row.statusLabel,
+      row.note
+    ].some((value) => String(value || '').toLowerCase().includes(search));
+    centers = centers.filter(matches);
+    points = points.filter(matches);
+  }
+  const availablePorts = points.reduce((sum, point) => sum + Math.max(0, Number(point.availablePorts || 0)), 0);
+  return {
+    summary: {
+      odc: centers.length,
+      odp: points.length,
+      odpActive: points.filter((point) => point.status === 'active').length,
+      availablePorts
+    },
+    centers,
+    points,
+    areaOptions: fiberAreaOptions(data),
+    centerOptions: fiberCenterRows(data).map((center) => ({
+      id: center.id,
+      label: `${center.code || '-'} - ${center.name || '-'}`
+    })),
+    filters: {
+      area: query.area || '',
+      search: query.search || ''
+    }
+  };
+}
+
+function customerMapPayload(data = {}, query = {}) {
+  const customerRows = customerMapRows(data, query);
+  return {
+    filters: {
+      search: query.search || '',
+      status: query.status || '',
+      accessState: query.accessState || '',
+      servicePlan: query.plan || '',
+      location: query.location || ''
+    },
+    summary: customerRows.summary,
+    markers: customerRows.markers.map((row) => ({
+      id: row.id,
+      customerNumber: row.customerNumber,
+      name: row.name,
+      phone: row.phone,
+      status: row.status,
+      statusLabel: row.statusLabel,
+      accessState: row.accessState,
+      currentPlan: row.currentPlan,
+      username: row.username,
+      connectionType: row.connectionType,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      accuracy: row.accuracy,
+      source: row.source,
+      note: row.note,
+      geotaggedAt: row.geotaggedAt,
+      address: row.address,
+      fiberPointId: row.fiberPointId,
+      odpPort: row.odpPort,
+      tone: customerMapTone(row),
+      url: row.url
+    })),
+    infrastructureNodes: [
+      ...fiberCenterRows(data).filter(fiberHasCoordinate),
+      ...fiberPointRows(data).filter(fiberHasCoordinate)
+    ],
+    missingCustomers: customerRows.missingCustomers,
+    servicePlanOptions: customerRows.servicePlanOptions,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+function sanitizeFiberNodePayload(data = {}, type = 'odc', payload = {}, existing = {}) {
+  const now = new Date().toISOString();
+  const code = String(payload.code || existing.code || '').trim().toUpperCase();
+  const name = String(payload.name || existing.name || '').trim();
+  if (!code) throw new Error(type === 'odc' ? 'Kode ODC wajib diisi' : 'Kode ODP wajib diisi');
+  if (!name) throw new Error(type === 'odc' ? 'Nama ODC wajib diisi' : 'Nama ODP wajib diisi');
+  const latitude = String(payload.latitude ?? existing.latitude ?? '').trim();
+  const longitude = String(payload.longitude ?? existing.longitude ?? '').trim();
+  if (latitude && fiberCoordinate(latitude) === null) throw new Error('Latitude tidak valid');
+  if (longitude && fiberCoordinate(longitude) === null) throw new Error('Longitude tidak valid');
+  if (type === 'odp') {
+    const centerId = String(payload.centerId || existing.centerId || '').trim();
+    if (centerId && !(data.fiberCenters || []).some((center) => center.id === centerId)) {
+      throw new Error('ODC tidak ditemukan');
+    }
+  }
+  return {
+    ...existing,
+    id: existing.id || createId(type),
+    code,
+    name,
+    area: String(payload.area ?? existing.area ?? '').trim().toUpperCase(),
+    latitude,
+    longitude,
+    capacityPorts: Math.max(0, Math.round(fiberNumber(payload.capacityPorts ?? existing.capacityPorts, type === 'odc' ? 8 : 8))),
+    status: fiberStatus(payload.status ?? existing.status ?? 'active'),
+    note: String(payload.note ?? existing.note ?? '').trim(),
+    ...(type === 'odp' ? {
+      centerId: String(payload.centerId || existing.centerId || '').trim(),
+      reservedPorts: Math.max(0, Math.round(fiberNumber(payload.reservedPorts ?? existing.reservedPorts, 0))),
+      damagedPorts: Math.max(0, Math.round(fiberNumber(payload.damagedPorts ?? existing.damagedPorts, 0))),
+      usedPorts: Math.max(0, Math.round(fiberNumber(payload.usedPorts ?? existing.usedPorts, 0)))
+    } : {}),
+    createdAt: existing.createdAt || now,
+    updatedAt: now
+  };
+}
+
 function monitoringMemberSearchText(member = {}) {
   return preparedSearchText([
     member.fullName,
