@@ -388,6 +388,8 @@ let dashboardRouterNasPayload = null;
 let dashboardRouterNasHistory = {};
 let dashboardRouterNasSelected = '';
 let dashboardRouterNasCharts = {};
+let dashboardExtraPanelsIdleHandle = null;
+let dashboardExtraPanelsIdleKind = '';
 let notificationsTimer = null;
 let notificationsLoading = false;
 let lastNotificationsFetchAt = 0;
@@ -1261,6 +1263,17 @@ function nextRenderGeneration() {
 
 function renderIsStale(token) {
   return !state.auth || (token !== undefined && token !== renderGeneration);
+}
+
+function cancelDashboardExtraPanelsWork() {
+  if (!dashboardExtraPanelsIdleHandle) return;
+  if (dashboardExtraPanelsIdleKind === 'idle' && typeof window.cancelIdleCallback === 'function') {
+    window.cancelIdleCallback(dashboardExtraPanelsIdleHandle);
+  } else {
+    window.clearTimeout(dashboardExtraPanelsIdleHandle);
+  }
+  dashboardExtraPanelsIdleHandle = null;
+  dashboardExtraPanelsIdleKind = '';
 }
 
 function abortPageRequests() {
@@ -3315,6 +3328,23 @@ async function renderDashboardExtraPanels(renderToken, canViewFinance = false, c
   bindDashboardViewLinks();
 }
 
+function scheduleDashboardExtraPanels(renderToken, canViewFinance = false, canViewActivity = false) {
+  cancelDashboardExtraPanelsWork();
+  const run = () => {
+    dashboardExtraPanelsIdleHandle = null;
+    dashboardExtraPanelsIdleKind = '';
+    if (renderIsStale(renderToken) || state.view !== 'dashboard') return;
+    renderDashboardExtraPanels(renderToken, canViewFinance, canViewActivity);
+  };
+  if (typeof window.requestIdleCallback === 'function') {
+    dashboardExtraPanelsIdleKind = 'idle';
+    dashboardExtraPanelsIdleHandle = window.requestIdleCallback(run, { timeout: 700 });
+    return;
+  }
+  dashboardExtraPanelsIdleKind = 'timer';
+  dashboardExtraPanelsIdleHandle = window.setTimeout(run, 120);
+}
+
 function dashboardRouterKey(router = {}, index = 0) {
   return String(router.id || router.name || router.identity || router.host || `router-${index}`).trim() || `router-${index}`;
 }
@@ -4822,7 +4852,7 @@ async function renderDashboard(options = {}) {
     bindDashboardViewLinks();
     mountDashboardRouterNasShell();
     loadDashboardRouterNas({ silent: Boolean(dashboardRouterNasPayload) });
-    renderDashboardExtraPanels(renderToken, canViewFinance, canViewActivity);
+    scheduleDashboardExtraPanels(renderToken, canViewFinance, canViewActivity);
   }
 }
 
@@ -24746,6 +24776,7 @@ async function render(options = {}) {
   }
 
   const renderToken = nextRenderGeneration();
+  cancelDashboardExtraPanelsWork();
   const renderOptions = { ...options, renderToken };
   try {
     if (!['monitoringCustomers', 'monitoringServices'].includes(state.view)) {

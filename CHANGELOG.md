@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.4] - 2026-08-11
+
+### Changed
+
+- Menunda render panel bawah dashboard sampai browser idle agar ringkasan utama lebih cepat tampil.
+- Menaikkan cache runtime signature-based untuk dashboard, laporan, dan pencarian tanpa mengubah hasil perhitungan.
+- Menambahkan index PostgreSQL untuk field panas pelanggan, invoice, payment, pesan WA, aktivitas, pemasukan, dan pengeluaran.
+
 ## [4.2.3] - 2026-08-11
 
 ### Changed

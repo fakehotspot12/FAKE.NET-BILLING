@@ -122,3 +122,26 @@ test('keeps public security responses minimal and protected', () => {
   assert.match(serverSource, /sendJson\(res, 500, \{ error: 'Server error' \}\)/);
   assert.match(subwebSource, /sendJson\(res, 500, \{ ok: false, error: 'Subweb error' \}\)/);
 });
+
+test('keeps safe performance contracts for dashboard and hot queries', () => {
+  const appSource = publicSource('app.js');
+  const serverSource = sourceFile('src', 'server.js');
+  const storeSource = sourceFile('src', 'store.js');
+
+  assert.match(appSource, /function scheduleDashboardExtraPanels/);
+  assert.match(appSource, /requestIdleCallback\(run, \{ timeout: 700 \}\)/);
+  assert.match(appSource, /cancelDashboardExtraPanelsWork\(\)/);
+  assert.match(appSource, /scheduleDashboardExtraPanels\(renderToken, canViewFinance, canViewActivity\)/);
+  assert.match(serverSource, /DASHBOARD_RUNTIME_CACHE_TTL_SECONDS[\s\S]*?\|\| 30/);
+  assert.match(serverSource, /REPORT_RUNTIME_CACHE_TTL_SECONDS[\s\S]*?\|\| 90/);
+  assert.match(serverSource, /SEARCH_RUNTIME_CACHE_TTL_SECONDS[\s\S]*?\|\| 35/);
+  for (const indexName of [
+    'app_customers_status_created_json_idx',
+    'app_invoices_period_status_json_idx',
+    'app_payments_status_paid_at_json_idx',
+    'app_wa_messages_status_created_json_idx',
+    'app_activity_type_at_json_idx'
+  ]) {
+    assert.match(storeSource, new RegExp(indexName));
+  }
+});
