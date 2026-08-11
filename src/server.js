@@ -20124,6 +20124,149 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/monitoring/customer-map') {
+    const authContext = await requireAnyPermission(req, res, ['monitoring:read', 'billing-monitor:read', 'members:read']);
+    if (!authContext) return;
+    sendJson(res, 200, customerMapPayload(authContext.data, {
+      search: url.searchParams.get('search') || '',
+      status: url.searchParams.get('status') || 'all',
+      accessState: url.searchParams.get('accessState') || url.searchParams.get('access_state') || 'all',
+      plan: url.searchParams.get('plan') || url.searchParams.get('servicePlan') || 'all',
+      location: url.searchParams.get('location') || 'all'
+    }));
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/monitoring/fiber-network') {
+    const authContext = await requirePermission(req, res, 'monitoring:read');
+    if (!authContext) return;
+    sendJson(res, 200, fiberNetworkPayload(authContext.data, {
+      area: url.searchParams.get('area') || 'all',
+      search: url.searchParams.get('search') || ''
+    }));
+    return;
+  }
+
+  const fiberCenterMatch = pathname.match(/^\/api\/monitoring\/fiber-network\/odc(?:\/([^/]+))?$/);
+  if (fiberCenterMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
+    const authContext = await requirePermission(req, res, 'monitoring:write');
+    if (!authContext) return;
+    const centerId = fiberCenterMatch[1] ? decodeURIComponent(fiberCenterMatch[1]) : '';
+    const payload = method === 'DELETE' ? {} : await readBody(req);
+    try {
+      const { data, result } = await mutate((store) => {
+        store.fiberCenters = Array.isArray(store.fiberCenters) ? store.fiberCenters : [];
+        store.fiberPoints = Array.isArray(store.fiberPoints) ? store.fiberPoints : [];
+        if (method === 'POST') {
+          const node = sanitizeFiberNodePayload(store, 'odc', payload);
+          if (store.fiberCenters.some((item) => String(item.code || '').toLowerCase() === node.code.toLowerCase())) {
+            throw new Error('Kode ODC sudah dipakai');
+          }
+          store.fiberCenters.push(node);
+          addActivity(store, 'monitoring', `ODC ${node.code} ditambahkan oleh ${authContext.user.name || authContext.user.username}`, {
+            action: 'fiber-odc-create',
+            nodeId: node.id
+          });
+          return fiberCenterRows(store).find((item) => item.id === node.id);
+        }
+        const index = store.fiberCenters.findIndex((item) => item.id === centerId);
+        if (index === -1) return null;
+        if (method === 'DELETE') {
+          const childCount = store.fiberPoints.filter((point) => point.centerId === centerId).length;
+          if (childCount) throw new Error('ODC masih memiliki ODP. Pindahkan atau hapus ODP lebih dulu.');
+          const [removed] = store.fiberCenters.splice(index, 1);
+          addActivity(store, 'monitoring', `ODC ${removed.code || centerId} dihapus oleh ${authContext.user.name || authContext.user.username}`, {
+            action: 'fiber-odc-delete',
+            nodeId: centerId
+          });
+          return removed;
+        }
+        const node = sanitizeFiberNodePayload(store, 'odc', payload, store.fiberCenters[index]);
+        if (store.fiberCenters.some((item) => item.id !== centerId && String(item.code || '').toLowerCase() === node.code.toLowerCase())) {
+          throw new Error('Kode ODC sudah dipakai');
+        }
+        store.fiberCenters[index] = node;
+        addActivity(store, 'monitoring', `ODC ${node.code} diperbarui oleh ${authContext.user.name || authContext.user.username}`, {
+          action: 'fiber-odc-update',
+          nodeId: node.id
+        });
+        return fiberCenterRows(store).find((item) => item.id === node.id);
+      });
+      if (!result) {
+        notFound(res);
+        return;
+      }
+      sendJson(res, method === 'POST' ? 201 : 200, {
+        ok: true,
+        center: result,
+        payload: fiberNetworkPayload(data, {})
+      });
+    } catch (error) {
+      badRequest(res, error.message || 'Data ODC tidak bisa diproses');
+    }
+    return;
+  }
+
+  const fiberPointMatch = pathname.match(/^\/api\/monitoring\/fiber-network\/odp(?:\/([^/]+))?$/);
+  if (fiberPointMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
+    const authContext = await requirePermission(req, res, 'monitoring:write');
+    if (!authContext) return;
+    const pointId = fiberPointMatch[1] ? decodeURIComponent(fiberPointMatch[1]) : '';
+    const payload = method === 'DELETE' ? {} : await readBody(req);
+    try {
+      const { data, result } = await mutate((store) => {
+        store.fiberCenters = Array.isArray(store.fiberCenters) ? store.fiberCenters : [];
+        store.fiberPoints = Array.isArray(store.fiberPoints) ? store.fiberPoints : [];
+        if (method === 'POST') {
+          const node = sanitizeFiberNodePayload(store, 'odp', payload);
+          if (store.fiberPoints.some((item) => String(item.code || '').toLowerCase() === node.code.toLowerCase())) {
+            throw new Error('Kode ODP sudah dipakai');
+          }
+          store.fiberPoints.push(node);
+          addActivity(store, 'monitoring', `ODP ${node.code} ditambahkan oleh ${authContext.user.name || authContext.user.username}`, {
+            action: 'fiber-odp-create',
+            nodeId: node.id
+          });
+          return fiberPointRows(store).find((item) => item.id === node.id);
+        }
+        const index = store.fiberPoints.findIndex((item) => item.id === pointId);
+        if (index === -1) return null;
+        if (method === 'DELETE') {
+          const tagged = fiberTaggedCustomerMap(store).get(pointId) || [];
+          if (tagged.length) throw new Error('ODP masih dipakai pelanggan. Lepas pelanggan dari ODP ini lebih dulu.');
+          const [removed] = store.fiberPoints.splice(index, 1);
+          addActivity(store, 'monitoring', `ODP ${removed.code || pointId} dihapus oleh ${authContext.user.name || authContext.user.username}`, {
+            action: 'fiber-odp-delete',
+            nodeId: pointId
+          });
+          return removed;
+        }
+        const node = sanitizeFiberNodePayload(store, 'odp', payload, store.fiberPoints[index]);
+        if (store.fiberPoints.some((item) => item.id !== pointId && String(item.code || '').toLowerCase() === node.code.toLowerCase())) {
+          throw new Error('Kode ODP sudah dipakai');
+        }
+        store.fiberPoints[index] = node;
+        addActivity(store, 'monitoring', `ODP ${node.code} diperbarui oleh ${authContext.user.name || authContext.user.username}`, {
+          action: 'fiber-odp-update',
+          nodeId: node.id
+        });
+        return fiberPointRows(store).find((item) => item.id === node.id);
+      });
+      if (!result) {
+        notFound(res);
+        return;
+      }
+      sendJson(res, method === 'POST' ? 201 : 200, {
+        ok: true,
+        point: result,
+        payload: fiberNetworkPayload(data, {})
+      });
+    } catch (error) {
+      badRequest(res, error.message || 'Data ODP tidak bisa diproses');
+    }
+    return;
+  }
+
   if (method === 'GET' && pathname === '/api/monitoring/customers') {
     const authContext = await requirePermission(req, res, 'monitoring:read');
     if (!authContext) return;

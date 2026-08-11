@@ -2,6 +2,17 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.1] - 2026-08-11
+
+### Added
+
+- Menambahkan menu Monitoring > Peta Pelanggan dari Cempaka dev untuk melihat titik pelanggan, status layanan, paket, alamat, dan pelanggan yang belum punya koordinat.
+- Menambahkan menu Monitoring > ODP/ODC untuk pencatatan ODC, ODP, kapasitas port, port rusak/reserved, peta titik fiber, dan pelanggan yang tertaut ke ODP.
+
+### Changed
+
+- Storage aplikasi kini menyiapkan koleksi `fiberCenters` dan `fiberPoints` agar data ODP/ODC permanen dan aman saat update.
+
 ## [4.2.0] - 2026-08-11
 
 ### Changed

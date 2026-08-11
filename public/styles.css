@@ -18130,3 +18130,298 @@ dialog::backdrop {
   }
 }
 /* DEV mobile extended table cards - end */
+
+/* Reeltech-style monitoring map pages - start */
+.monitoring-map-page {
+  gap: 16px;
+}
+
+.monitoring-map-toolbar .filters {
+  grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(140px, 0.8fr));
+}
+
+.monitoring-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.monitoring-map-panel {
+  overflow: hidden;
+}
+
+.monitoring-map-canvas {
+  min-height: 520px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(43, 139, 217, 0.08), rgba(15, 23, 42, 0.03)),
+    var(--surface);
+}
+
+.fiber-map-canvas {
+  min-height: 460px;
+}
+
+.monitoring-map-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.monitoring-map-missing-list {
+  display: grid;
+  gap: 10px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.monitoring-map-missing-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.monitoring-map-missing-card strong,
+.monitoring-map-missing-card span,
+.monitoring-map-missing-card small {
+  display: block;
+}
+
+.monitoring-map-missing-card span,
+.monitoring-map-missing-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.monitoring-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.monitoring-map-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+  background: #22c55e;
+}
+
+.legend-dot.isolated,
+.legend-dot.maintenance {
+  background: #f59e0b;
+}
+
+.legend-dot.inactive {
+  background: #ef4444;
+}
+
+.legend-chip {
+  min-width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.legend-chip.odc,
+.fiber-map-pin-odc {
+  color: #fff;
+  background: #2563eb;
+}
+
+.legend-chip.odp,
+.fiber-map-pin-odp {
+  color: #fff;
+  background: #7c3aed;
+}
+
+.monitoring-map-div-icon {
+  background: transparent;
+  border: 0;
+}
+
+.customer-map-pin {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #fff;
+  border-radius: 999px 999px 999px 0;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.28);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(-45deg);
+  background: #22c55e;
+}
+
+.customer-map-pin span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #fff;
+  display: block;
+}
+
+.customer-map-pin-isolated {
+  background: #f59e0b;
+}
+
+.customer-map-pin-inactive {
+  background: #ef4444;
+}
+
+.fiber-map-pin {
+  min-width: 40px;
+  height: 26px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.24);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.fiber-map-pin-maintenance {
+  background: #f59e0b;
+}
+
+.fiber-map-pin-inactive {
+  background: #64748b;
+}
+
+.monitoring-map-popup {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+  font-size: 12px;
+}
+
+.monitoring-map-popup strong {
+  font-size: 13px;
+}
+
+.monitoring-map-popup span {
+  display: block;
+}
+
+.monitoring-fiber-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.monitoring-fiber-table td .row-actions {
+  flex-wrap: nowrap;
+}
+
+.fiber-modal-map {
+  min-height: 240px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+@media (max-width: 1024px) {
+  .monitoring-map-toolbar .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monitoring-map-layout,
+  .monitoring-fiber-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monitoring-map-side,
+  .monitoring-map-missing-list {
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .monitoring-map-toolbar .filters {
+    grid-template-columns: 1fr;
+  }
+
+  .monitoring-map-canvas,
+  .fiber-map-canvas {
+    min-height: 360px;
+    border-radius: 14px;
+  }
+
+  .monitoring-map-missing-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .monitoring-map-missing-card .ghost-button {
+    width: 100%;
+  }
+
+  .monitoring-fiber-table tbody tr {
+    gap: 8px;
+  }
+
+  .monitoring-fiber-table tbody td .row-actions {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .monitoring-fiber-table tbody td .row-actions > button {
+    flex: 1 1 120px;
+  }
+
+  .monitoring-fiber-odc-table tbody td:nth-child(1)::before { content: "ODC"; }
+  .monitoring-fiber-odc-table tbody td:nth-child(2)::before { content: "Area"; }
+  .monitoring-fiber-odc-table tbody td:nth-child(3)::before { content: "Port"; }
+  .monitoring-fiber-odc-table tbody td:nth-child(4)::before { content: "Status"; text-align: right; }
+  .monitoring-fiber-odc-table tbody td:nth-child(5)::before { content: "Aksi"; }
+
+  .monitoring-fiber-odp-table tbody td:nth-child(1)::before { content: "ODP"; }
+  .monitoring-fiber-odp-table tbody td:nth-child(2)::before { content: "ODC"; }
+  .monitoring-fiber-odp-table tbody td:nth-child(3)::before { content: "Area"; }
+  .monitoring-fiber-odp-table tbody td:nth-child(4)::before { content: "Port"; }
+  .monitoring-fiber-odp-table tbody td:nth-child(5)::before { content: "Status"; text-align: right; }
+  .monitoring-fiber-odp-table tbody td:nth-child(6)::before { content: "Aksi"; }
+}
+
+@media (max-width: 520px) {
+  .monitoring-map-canvas,
+  .fiber-map-canvas {
+    min-height: 320px;
+  }
+
+  .fiber-modal-map {
+    min-height: 210px;
+  }
+}
+/* Reeltech-style monitoring map pages - end */

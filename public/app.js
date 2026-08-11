@@ -44,7 +44,7 @@ const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100];
 const MOBILE_FULL_MENU_GROUPS = new Set(['monitoring', 'settings-menu', 'admin']);
-const MOBILE_FULL_MENU_VIEWS = new Set(['monitoringSite', 'monitoringServices', 'genieAcs', 'networkAssets', 'billingSettings', 'radiusSettings', 'paymentGateway', 'waGateway', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity']);
+const MOBILE_FULL_MENU_VIEWS = new Set(['monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'networkAssets', 'billingSettings', 'radiusSettings', 'paymentGateway', 'waGateway', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity']);
 const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
 const APP_TIME_ZONE_LABELS = {
   'Asia/Jakarta': 'WIB',
@@ -106,6 +106,8 @@ const titles = {
   radiusSettings: 'Pengaturan Radius',
   genieAcs: 'GenieACS',
   monitoringSite: 'Pemantauan NAS',
+  monitoringCustomerMap: 'Peta Pelanggan',
+  monitoringFiberNetwork: 'ODP/ODC',
   monitoringMembers: 'Data Pelanggan',
   monitoringNewCustomers: 'Pelanggan Baru',
   monitoringIsolatedMembers: 'Pelanggan Isolir',
@@ -158,6 +160,8 @@ const viewPermissions = {
   radiusSettings: 'radius:read',
   genieAcs: 'genieacs:read',
   monitoringSite: 'monitoring:read',
+  monitoringCustomerMap: ['monitoring:read', 'billing-monitor:read', 'members:read'],
+  monitoringFiberNetwork: 'monitoring:read',
   monitoringMembers: ['billing-monitor:read', 'members:read'],
   monitoringNewCustomers: ['billing-monitor:read', 'members:read'],
   monitoringIsolatedMembers: ['billing-monitor:read', 'members:read'],
@@ -249,6 +253,13 @@ const state = {
   monitoringBillingPeriod: todayInput().slice(0, 7),
   monitoringBillingScope: 'collectible',
   monitoringBillingKeepPreset: false,
+  monitoringCustomerMapSearch: '',
+  monitoringCustomerMapStatus: 'all',
+  monitoringCustomerMapAccess: 'all',
+  monitoringCustomerMapPlan: 'all',
+  monitoringCustomerMapLocation: 'all',
+  monitoringFiberSearch: '',
+  monitoringFiberArea: 'all',
   dashboardValuesHidden: storedDashboardPrivacyHidden(),
   radiusPppTab: 'users',
   radiusPppPage: 1,
@@ -2066,7 +2077,7 @@ function canView(view) {
 }
 
 function firstAvailableView() {
-  return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringBilling', 'billingSettings', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'monitoringCustomers', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'monitoringSite', 'monitoringServices', 'genieAcs', 'networkAssets', 'paymentGateway', 'waGateway', 'reportsStatistics', 'reportsDaily', 'reportsVoucherDaily', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity'].find(canView) || 'dashboard';
+  return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringBilling', 'billingSettings', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'monitoringCustomers', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'networkAssets', 'paymentGateway', 'waGateway', 'reportsStatistics', 'reportsDaily', 'reportsVoucherDaily', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity'].find(canView) || 'dashboard';
 }
 
 function normalizeView(view) {
@@ -14740,6 +14751,708 @@ function openMonitoringModal(target = null) {
   });
 }
 
+function monitoringMapNumber(value) {
+  return Number(value || 0).toLocaleString('id-ID');
+}
+
+function monitoringCoordinate(row = {}) {
+  const latitude = Number(row.latitude);
+  const longitude = Number(row.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude === 0 && longitude === 0) return null;
+  return [latitude, longitude];
+}
+
+function monitoringMapGoogleMapsUrl(latitude, longitude) {
+  return `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}`;
+}
+
+function monitoringCustomerStatusBadge(status = '') {
+  const normalized = String(status || 'active').toLowerCase();
+  const label = normalized === 'isolated' ? 'Isolir' : normalized === 'inactive' ? 'Nonaktif' : 'Aktif';
+  const css = normalized === 'isolated' ? 'pending' : normalized === 'inactive' ? 'inactive' : 'active';
+  return `<span class="badge ${css}">${label}</span>`;
+}
+
+function monitoringFiberStatusOptions(selected = 'active') {
+  const value = String(selected || 'active').toLowerCase();
+  return [
+    ['active', 'Aktif'],
+    ['maintenance', 'Maintenance'],
+    ['inactive', 'Nonaktif']
+  ].map(([optionValue, label]) => `<option value="${optionValue}" ${value === optionValue ? 'selected' : ''}>${label}</option>`).join('');
+}
+
+function monitoringFiberPortText(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  return monitoringMapNumber(value);
+}
+
+function monitoringFiberNodeLabel(row = {}) {
+  return [row.code, row.name].filter(Boolean).join(' - ') || '-';
+}
+
+function monitoringMapMarkerIcon(kind = 'customer', tone = 'active') {
+  if (!window.L) return undefined;
+  const safeKind = ['customer', 'odc', 'odp'].includes(kind) ? kind : 'customer';
+  const safeTone = ['active', 'isolated', 'inactive', 'maintenance'].includes(tone) ? tone : 'active';
+  const html = safeKind === 'customer'
+    ? `<span class="customer-map-pin customer-map-pin-${safeTone}"><span></span></span>`
+    : `<span class="fiber-map-pin fiber-map-pin-${safeKind} fiber-map-pin-${safeTone}">${safeKind.toUpperCase()}</span>`;
+  return window.L.divIcon({
+    className: 'monitoring-map-div-icon',
+    html,
+    iconSize: safeKind === 'customer' ? [24, 30] : [42, 30],
+    iconAnchor: safeKind === 'customer' ? [12, 28] : [21, 15],
+    popupAnchor: [0, -14]
+  });
+}
+
+function monitoringCustomerPopup(row = {}) {
+  const coordinate = monitoringCoordinate(row);
+  const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Buka Google Maps</a>` : '';
+  return `
+    <div class="monitoring-map-popup">
+      <strong>${escapeHtml(row.name || '-')}</strong>
+      <span>${escapeHtml(row.customerNumber || row.username || '-')}</span>
+      <span>${escapeHtml(row.currentPlan || '-')}</span>
+      <span>${monitoringCustomerStatusBadge(row.status)}</span>
+      ${row.phone ? `<span>WA: ${escapeHtml(row.phone)}</span>` : ''}
+      ${row.address ? `<span>${escapeHtml(row.address)}</span>` : ''}
+      ${coordinateLink}
+    </div>
+  `;
+}
+
+function monitoringFiberPopup(row = {}) {
+  const coordinate = monitoringCoordinate(row);
+  const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Buka Google Maps</a>` : '';
+  const typeLabel = row.type === 'odc' ? 'ODC' : 'ODP';
+  return `
+    <div class="monitoring-map-popup">
+      <strong>${escapeHtml(typeLabel)} ${escapeHtml(monitoringFiberNodeLabel(row))}</strong>
+      <span>Area: ${escapeHtml(row.area || '-')}</span>
+      <span>Status: ${escapeHtml(row.statusLabel || '-')}</span>
+      <span>Port: ${monitoringFiberPortText(row.usedPorts)} dipakai / ${monitoringFiberPortText(row.capacityPorts)} kapasitas</span>
+      ${row.availablePorts !== null && row.availablePorts !== undefined ? `<span>Sisa port: ${monitoringFiberPortText(row.availablePorts)}</span>` : ''}
+      ${row.centerName ? `<span>ODC: ${escapeHtml(row.centerName)}</span>` : ''}
+      ${coordinateLink}
+    </div>
+  `;
+}
+
+async function mountMonitoringCustomerMap(payload = {}) {
+  const mapEl = document.getElementById('customerMapLeaflet');
+  if (!mapEl) return;
+  const loaded = await ensureLeafletLoaded();
+  if (!loaded || !window.L) {
+    mapEl.innerHTML = '<div class="empty compact">Library peta belum bisa dimuat. Cek akses CDN Leaflet dari browser.</div>';
+    return;
+  }
+  if (!document.body.contains(mapEl)) return;
+  const map = window.L.map(mapEl, {
+    scrollWheelZoom: false
+  }).setView([-0.5022, 117.1537], 12);
+  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  const bounds = [];
+  (payload.infrastructureNodes || []).forEach((node) => {
+    const coordinate = monitoringCoordinate(node);
+    if (!coordinate) return;
+    bounds.push(coordinate);
+    window.L.marker(coordinate, {
+      icon: monitoringMapMarkerIcon(node.type === 'odc' ? 'odc' : 'odp', node.tone || node.status || 'active')
+    }).addTo(map).bindPopup(monitoringFiberPopup(node));
+  });
+  (payload.markers || []).forEach((row) => {
+    const coordinate = monitoringCoordinate(row);
+    if (!coordinate) return;
+    bounds.push(coordinate);
+    window.L.marker(coordinate, {
+      icon: monitoringMapMarkerIcon('customer', row.tone || row.accessState || row.status || 'active')
+    }).addTo(map).bindPopup(monitoringCustomerPopup(row));
+  });
+  if (bounds.length) {
+    map.fitBounds(window.L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
+  }
+  window.setTimeout(() => map.invalidateSize(), 150);
+}
+
+function monitoringCustomerMapFilterOptions(payload = {}) {
+  const selectedPlan = String(state.monitoringCustomerMapPlan || 'all');
+  const options = Array.isArray(payload.servicePlanOptions) ? [...payload.servicePlanOptions] : [];
+  if (selectedPlan !== 'all' && !options.some((item) => String(item.id || item.name || '') === selectedPlan)) {
+    options.push({ id: selectedPlan, name: selectedPlan });
+  }
+  return options
+    .sort((a, b) => String(a.name || a.id || '').localeCompare(String(b.name || b.id || ''), 'id', { numeric: true, sensitivity: 'base' }))
+    .map((item) => {
+      const value = String(item.id || item.name || '');
+      return `<option value="${escapeHtml(value)}" ${selectedPlan === value ? 'selected' : ''}>${escapeHtml(item.name || value)}</option>`;
+    }).join('');
+}
+
+function bindMonitoringCustomerMapFilters() {
+  const searchInput = document.getElementById('customerMapSearch');
+  if (searchInput) {
+    bindLiveTextSearch(searchInput, {
+      getValue: () => state.monitoringCustomerMapSearch,
+      setValue: (value) => { state.monitoringCustomerMapSearch = value; },
+      handler: renderMonitoringCustomerMap,
+      refocusSelector: '#customerMapSearch'
+    });
+    bindSearchClearButton(searchInput, () => {
+      state.monitoringCustomerMapSearch = '';
+      renderMonitoringCustomerMap({ silent: true, liveSearch: true });
+    });
+  }
+  [
+    ['customerMapStatus', 'monitoringCustomerMapStatus'],
+    ['customerMapAccess', 'monitoringCustomerMapAccess'],
+    ['customerMapPlan', 'monitoringCustomerMapPlan'],
+    ['customerMapLocation', 'monitoringCustomerMapLocation']
+  ].forEach(([id, stateKey]) => {
+    document.getElementById(id)?.addEventListener('change', (event) => {
+      state[stateKey] = event.target.value || 'all';
+      renderMonitoringCustomerMap({ silent: true });
+    });
+  });
+  document.getElementById('refreshCustomerMap')?.addEventListener('click', () => renderMonitoringCustomerMap({ refresh: true }));
+  app.querySelectorAll('[data-customer-map-contact]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const row = (window.__lastCustomerMapPayload?.missingCustomers || [])[Number(button.dataset.customerMapContact || -1)];
+      if (!row) return;
+      try {
+        await openMemberContactModal({
+          id: row.id,
+          accountId: row.customerNumber,
+          userId: row.username,
+          internet: row.username,
+          fullName: row.name,
+          customerName: row.name,
+          whatsapp: row.phone,
+          phone: row.phone,
+          address: row.address
+        });
+        await renderMonitoringCustomerMap({ silent: true });
+      } catch (error) {
+        setToast(error.message || 'Contact member tidak bisa dibuka');
+      }
+    });
+  });
+}
+
+async function renderMonitoringCustomerMap(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat peta pelanggan...</div>';
+  const params = queryString({
+    search: state.monitoringCustomerMapSearch,
+    status: state.monitoringCustomerMapStatus,
+    accessState: state.monitoringCustomerMapAccess,
+    plan: state.monitoringCustomerMapPlan,
+    location: state.monitoringCustomerMapLocation
+  });
+  const payload = await api(`/api/monitoring/customer-map?${params}`);
+  if (renderIsStale(options.renderToken)) return;
+  window.__lastCustomerMapPayload = payload;
+  const summary = payload.summary || {};
+  const missingRows = payload.missingCustomers || [];
+  app.innerHTML = `
+    <div class="stack monitoring-map-page">
+      <section class="metrics">
+        ${metric('Total Pelanggan', monitoringMapNumber(summary.total), 'Sesuai filter')}
+        ${metric('Sudah Bertitik', monitoringMapNumber(summary.tagged), 'Ada koordinat', 'positive')}
+        ${metric('Belum Koordinat', monitoringMapNumber(summary.missing), 'Perlu dilengkapi', summary.missing ? 'warning-card' : 'positive')}
+        ${metric('Isolir', monitoringMapNumber(summary.isolated), 'Status akses', summary.isolated ? 'warning-card' : '')}
+        ${metric('Nonaktif', monitoringMapNumber(summary.inactive), 'Terminated/nonaktif', summary.inactive ? 'negative' : '')}
+      </section>
+
+      <div class="toolbar monitoring-map-toolbar">
+        <div class="filters">
+          <input class="control" id="customerMapSearch" value="${escapeHtml(state.monitoringCustomerMapSearch)}" placeholder="Cari nama, username, WA, paket, alamat" autocomplete="off">
+          <select class="control" id="customerMapStatus">
+            <option value="all" ${state.monitoringCustomerMapStatus === 'all' ? 'selected' : ''}>Semua status</option>
+            <option value="active" ${state.monitoringCustomerMapStatus === 'active' ? 'selected' : ''}>Aktif</option>
+            <option value="isolated" ${state.monitoringCustomerMapStatus === 'isolated' ? 'selected' : ''}>Isolir</option>
+            <option value="inactive" ${state.monitoringCustomerMapStatus === 'inactive' ? 'selected' : ''}>Nonaktif</option>
+          </select>
+          <select class="control" id="customerMapAccess">
+            <option value="all" ${state.monitoringCustomerMapAccess === 'all' ? 'selected' : ''}>Semua akses</option>
+            <option value="normal" ${state.monitoringCustomerMapAccess === 'normal' ? 'selected' : ''}>Normal</option>
+            <option value="isolated" ${state.monitoringCustomerMapAccess === 'isolated' ? 'selected' : ''}>Isolir</option>
+            <option value="inactive" ${state.monitoringCustomerMapAccess === 'inactive' ? 'selected' : ''}>Nonaktif</option>
+          </select>
+          <select class="control" id="customerMapPlan">
+            <option value="all" ${state.monitoringCustomerMapPlan === 'all' ? 'selected' : ''}>Semua paket</option>
+            ${monitoringCustomerMapFilterOptions(payload)}
+          </select>
+          <select class="control" id="customerMapLocation">
+            <option value="all" ${state.monitoringCustomerMapLocation === 'all' ? 'selected' : ''}>Semua lokasi</option>
+            <option value="tagged" ${state.monitoringCustomerMapLocation === 'tagged' ? 'selected' : ''}>Ada koordinat</option>
+            <option value="missing" ${state.monitoringCustomerMapLocation === 'missing' ? 'selected' : ''}>Belum koordinat</option>
+          </select>
+        </div>
+        <div class="row-actions">
+          <button class="ghost-button" id="refreshCustomerMap" type="button">Refresh</button>
+        </div>
+      </div>
+
+      <div class="monitoring-map-layout">
+        <section class="panel monitoring-map-panel">
+          <div class="panel-head compact">
+            <div>
+              <h3>Peta Pelanggan</h3>
+              <p class="muted">Marker pelanggan digabung dengan ODC/ODP yang memiliki koordinat.</p>
+            </div>
+          </div>
+          <div class="monitoring-map-canvas" id="customerMapLeaflet"></div>
+          <div class="monitoring-map-legend">
+            <span><i class="legend-dot active"></i>Aktif</span>
+            <span><i class="legend-dot isolated"></i>Isolir</span>
+            <span><i class="legend-dot inactive"></i>Nonaktif</span>
+            <span><i class="legend-chip odc">ODC</i>ODC</span>
+            <span><i class="legend-chip odp">ODP</i>ODP</span>
+          </div>
+        </section>
+
+        <aside class="panel monitoring-map-side">
+          <div class="panel-head compact">
+            <div>
+              <h3>Belum Ada Koordinat</h3>
+              <p class="muted">Ditampilkan maksimal 40 pelanggan sesuai filter.</p>
+            </div>
+          </div>
+          <div class="monitoring-map-missing-list">
+            ${missingRows.length ? missingRows.map((row, index) => `
+              <article class="monitoring-map-missing-card">
+                <div>
+                  <strong>${escapeHtml(row.name || '-')}</strong>
+                  <span>${escapeHtml(row.username || row.customerNumber || '-')}</span>
+                  <small>${escapeHtml(row.currentPlan || '-')}</small>
+                </div>
+                <button class="ghost-button compact" type="button" data-customer-map-contact="${index}" ${row.id ? '' : 'disabled'}>Edit koordinat</button>
+              </article>
+            `).join('') : '<div class="empty compact">Semua pelanggan pada filter ini sudah memiliki koordinat.</div>'}
+          </div>
+        </aside>
+      </div>
+    </div>
+  `;
+  bindMonitoringCustomerMapFilters();
+  mountMonitoringCustomerMap(payload).catch((error) => setToast(error.message || 'Peta pelanggan gagal dimuat'));
+}
+
+async function mountMonitoringFiberMap(payload = {}) {
+  const mapEl = document.getElementById('fiberNetworkLeaflet');
+  if (!mapEl) return;
+  const loaded = await ensureLeafletLoaded();
+  if (!loaded || !window.L) {
+    mapEl.innerHTML = '<div class="empty compact">Library peta belum bisa dimuat. Cek akses CDN Leaflet dari browser.</div>';
+    return;
+  }
+  if (!document.body.contains(mapEl)) return;
+  const map = window.L.map(mapEl, {
+    scrollWheelZoom: false
+  }).setView([-0.5022, 117.1537], 12);
+  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  const bounds = [];
+  const centerById = new Map((payload.centers || []).map((center) => [String(center.id || ''), center]));
+  (payload.centers || []).forEach((center) => {
+    const coordinate = monitoringCoordinate(center);
+    if (!coordinate) return;
+    bounds.push(coordinate);
+    window.L.marker(coordinate, {
+      icon: monitoringMapMarkerIcon('odc', center.tone || center.status || 'active')
+    }).addTo(map).bindPopup(monitoringFiberPopup(center));
+  });
+  (payload.points || []).forEach((point) => {
+    const coordinate = monitoringCoordinate(point);
+    if (!coordinate) return;
+    bounds.push(coordinate);
+    const marker = window.L.marker(coordinate, {
+      icon: monitoringMapMarkerIcon('odp', point.tone || point.status || 'active')
+    }).addTo(map).bindPopup(monitoringFiberPopup(point));
+    const center = centerById.get(String(point.centerId || ''));
+    const centerCoordinate = monitoringCoordinate(center || {});
+    if (centerCoordinate) {
+      window.L.polyline([centerCoordinate, coordinate], {
+        color: '#64748b',
+        weight: 2,
+        opacity: 0.55,
+        dashArray: '5,7'
+      }).addTo(map);
+    }
+  });
+  if (bounds.length) {
+    map.fitBounds(window.L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
+  }
+  window.setTimeout(() => map.invalidateSize(), 150);
+}
+
+function monitoringFiberAreaOptions(payload = {}) {
+  const selected = String(state.monitoringFiberArea || 'all');
+  return (payload.areaOptions || []).map((area) => `<option value="${escapeHtml(area)}" ${selected === area ? 'selected' : ''}>${escapeHtml(area)}</option>`).join('');
+}
+
+function monitoringFiberCenterSelectOptions(payload = {}, selected = '') {
+  const centers = payload.centerOptions || [];
+  return centers.map((center) => `<option value="${escapeHtml(center.id || '')}" ${String(selected || '') === String(center.id || '') ? 'selected' : ''}>${escapeHtml(center.label || '-')}</option>`).join('');
+}
+
+function monitoringFiberFormBody(type = 'odc', row = {}, payload = {}) {
+  const isOdp = type === 'odp';
+  return `
+    <div class="form-grid">
+      ${isOdp ? `
+        <label class="field full">
+          <span>ODC induk</span>
+          <select name="centerId">
+            <option value="">Tanpa ODC</option>
+            ${monitoringFiberCenterSelectOptions(payload, row.centerId)}
+          </select>
+        </label>
+      ` : ''}
+      <label class="field">
+        <span>Kode ${isOdp ? 'ODP' : 'ODC'}</span>
+        <input name="code" value="${escapeHtml(row.code || '')}" required>
+      </label>
+      <label class="field">
+        <span>Nama</span>
+        <input name="name" value="${escapeHtml(row.name || '')}" required>
+      </label>
+      <label class="field">
+        <span>Area</span>
+        <input name="area" value="${escapeHtml(row.area || '')}" placeholder="Contoh: CEMPAKA">
+      </label>
+      <label class="field">
+        <span>Status</span>
+        <select name="status">${monitoringFiberStatusOptions(row.status)}</select>
+      </label>
+      <label class="field">
+        <span>Kapasitas port</span>
+        <input name="capacityPorts" type="number" min="0" step="1" value="${escapeHtml(row.capacityPorts ?? 8)}">
+      </label>
+      ${isOdp ? `
+        <label class="field">
+          <span>Port reserved</span>
+          <input name="reservedPorts" type="number" min="0" step="1" value="${escapeHtml(row.reservedPorts ?? row.usedPorts ?? 0)}">
+        </label>
+        <label class="field">
+          <span>Port rusak</span>
+          <input name="damagedPorts" type="number" min="0" step="1" value="${escapeHtml(row.damagedPorts ?? 0)}">
+        </label>
+        <label class="field">
+          <span>Port terpakai manual</span>
+          <input name="usedPorts" type="number" min="0" step="1" value="${escapeHtml(row.usedPorts ?? 0)}">
+        </label>
+      ` : ''}
+      <label class="field">
+        <span>Latitude</span>
+        <input name="latitude" value="${escapeHtml(row.latitude ?? '')}" inputmode="decimal" placeholder="-0.5022">
+      </label>
+      <label class="field">
+        <span>Longitude</span>
+        <input name="longitude" value="${escapeHtml(row.longitude ?? '')}" inputmode="decimal" placeholder="117.1537">
+      </label>
+      <label class="field full">
+        <span>Picker koordinat</span>
+        <div class="fiber-modal-map" id="fiberNodeCoordinateMap"></div>
+        <span class="muted">Klik peta untuk mengisi latitude/longitude.</span>
+      </label>
+      <label class="field full">
+        <span>Catatan</span>
+        <textarea name="note">${escapeHtml(row.note || '')}</textarea>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost-button" value="cancel" type="submit">Batal</button>
+      <button class="button" type="submit">Simpan</button>
+    </div>
+  `;
+}
+
+async function mountFiberNodeCoordinatePicker(row = {}) {
+  const mapEl = modalBody.querySelector('#fiberNodeCoordinateMap');
+  const latInput = modalBody.querySelector('input[name="latitude"]');
+  const lngInput = modalBody.querySelector('input[name="longitude"]');
+  if (!mapEl || !latInput || !lngInput) return;
+  const loaded = await ensureLeafletLoaded();
+  if (!loaded || !window.L) {
+    mapEl.innerHTML = '<div class="empty compact">Peta picker gagal dimuat. Isi koordinat manual.</div>';
+    return;
+  }
+  if (!document.body.contains(mapEl)) return;
+  const existing = monitoringCoordinate(row) || [-0.5022, 117.1537];
+  const map = window.L.map(mapEl, { scrollWheelZoom: false }).setView(existing, monitoringCoordinate(row) ? 16 : 12);
+  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  let marker = monitoringCoordinate(row)
+    ? window.L.marker(existing, { draggable: true }).addTo(map)
+    : null;
+  const setCoordinate = (latlng) => {
+    const lat = Number(latlng.lat);
+    const lng = Number(latlng.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    latInput.value = lat.toFixed(7);
+    lngInput.value = lng.toFixed(7);
+    if (!marker) {
+      marker = window.L.marker([lat, lng], { draggable: true }).addTo(map);
+      marker.on('dragend', () => setCoordinate(marker.getLatLng()));
+    } else {
+      marker.setLatLng([lat, lng]);
+    }
+  };
+  if (marker) marker.on('dragend', () => setCoordinate(marker.getLatLng()));
+  map.on('click', (event) => setCoordinate(event.latlng));
+  window.setTimeout(() => map.invalidateSize(), 180);
+}
+
+function openFiberOdcModal(row = null, payload = {}) {
+  openModal(row ? 'Edit ODC' : 'Tambah ODC', monitoringFiberFormBody('odc', row || {}, payload), async (formPayload) => {
+    await api(row ? `/api/monitoring/fiber-network/odc/${encodeURIComponent(row.id)}` : '/api/monitoring/fiber-network/odc', {
+      method: row ? 'PUT' : 'POST',
+      body: JSON.stringify(formPayload)
+    });
+    setToast(row ? 'ODC diperbarui' : 'ODC ditambahkan');
+    await renderMonitoringFiberNetwork({ silent: true });
+  });
+  mountFiberNodeCoordinatePicker(row || {}).catch(() => {});
+}
+
+function openFiberOdpModal(row = null, payload = {}) {
+  openModal(row ? 'Edit ODP' : 'Tambah ODP', monitoringFiberFormBody('odp', row || {}, payload), async (formPayload) => {
+    await api(row ? `/api/monitoring/fiber-network/odp/${encodeURIComponent(row.id)}` : '/api/monitoring/fiber-network/odp', {
+      method: row ? 'PUT' : 'POST',
+      body: JSON.stringify(formPayload)
+    });
+    setToast(row ? 'ODP diperbarui' : 'ODP ditambahkan');
+    await renderMonitoringFiberNetwork({ silent: true });
+  });
+  mountFiberNodeCoordinatePicker(row || {}).catch(() => {});
+}
+
+function bindMonitoringFiberNetwork(payload = {}) {
+  const searchInput = document.getElementById('fiberNetworkSearch');
+  if (searchInput) {
+    bindLiveTextSearch(searchInput, {
+      getValue: () => state.monitoringFiberSearch,
+      setValue: (value) => { state.monitoringFiberSearch = value; },
+      handler: renderMonitoringFiberNetwork,
+      refocusSelector: '#fiberNetworkSearch'
+    });
+    bindSearchClearButton(searchInput, () => {
+      state.monitoringFiberSearch = '';
+      renderMonitoringFiberNetwork({ silent: true, liveSearch: true });
+    });
+  }
+  document.getElementById('fiberNetworkArea')?.addEventListener('change', (event) => {
+    state.monitoringFiberArea = event.target.value || 'all';
+    renderMonitoringFiberNetwork({ silent: true });
+  });
+  document.getElementById('refreshFiberNetwork')?.addEventListener('click', () => renderMonitoringFiberNetwork({ refresh: true }));
+  document.getElementById('addFiberOdc')?.addEventListener('click', () => openFiberOdcModal(null, payload));
+  document.getElementById('addFiberOdp')?.addEventListener('click', () => openFiberOdpModal(null, payload));
+  app.querySelectorAll('[data-edit-odc]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const row = (payload.centers || [])[Number(button.dataset.editOdc || -1)];
+      if (row) openFiberOdcModal(row, payload);
+    });
+  });
+  app.querySelectorAll('[data-delete-odc]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const row = (payload.centers || [])[Number(button.dataset.deleteOdc || -1)];
+      if (!row || !window.confirm(`Hapus ODC ${monitoringFiberNodeLabel(row)}?`)) return;
+      try {
+        await api(`/api/monitoring/fiber-network/odc/${encodeURIComponent(row.id)}`, { method: 'DELETE' });
+        setToast('ODC dihapus');
+        renderMonitoringFiberNetwork({ silent: true });
+      } catch (error) {
+        setToast(error.message || 'ODC tidak bisa dihapus');
+      }
+    });
+  });
+  app.querySelectorAll('[data-edit-odp]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const row = (payload.points || [])[Number(button.dataset.editOdp || -1)];
+      if (row) openFiberOdpModal(row, payload);
+    });
+  });
+  app.querySelectorAll('[data-delete-odp]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const row = (payload.points || [])[Number(button.dataset.deleteOdp || -1)];
+      if (!row || !window.confirm(`Hapus ODP ${monitoringFiberNodeLabel(row)}?`)) return;
+      try {
+        await api(`/api/monitoring/fiber-network/odp/${encodeURIComponent(row.id)}`, { method: 'DELETE' });
+        setToast('ODP dihapus');
+        renderMonitoringFiberNetwork({ silent: true });
+      } catch (error) {
+        setToast(error.message || 'ODP tidak bisa dihapus');
+      }
+    });
+  });
+}
+
+async function renderMonitoringFiberNetwork(options = {}) {
+  if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat data ODP/ODC...</div>';
+  const params = queryString({
+    search: state.monitoringFiberSearch,
+    area: state.monitoringFiberArea
+  });
+  const payload = await api(`/api/monitoring/fiber-network?${params}`);
+  if (renderIsStale(options.renderToken)) return;
+  const writeAllowed = can('monitoring:write');
+  const summary = payload.summary || {};
+  app.innerHTML = `
+    <div class="stack monitoring-map-page">
+      <section class="metrics">
+        ${metric('ODC', monitoringMapNumber(summary.odc), 'Fiber distribution center')}
+        ${metric('ODP', monitoringMapNumber(summary.odp), 'Distribution point')}
+        ${metric('ODP Aktif', monitoringMapNumber(summary.odpActive), 'Siap dipakai', 'positive')}
+        ${metric('Sisa Port', monitoringMapNumber(summary.availablePorts), 'Berdasarkan kapasitas ODP')}
+      </section>
+
+      <div class="toolbar monitoring-map-toolbar">
+        <div class="filters">
+          <input class="control" id="fiberNetworkSearch" value="${escapeHtml(state.monitoringFiberSearch)}" placeholder="Cari kode, nama, area, status" autocomplete="off">
+          <select class="control" id="fiberNetworkArea">
+            <option value="all" ${state.monitoringFiberArea === 'all' ? 'selected' : ''}>Semua area</option>
+            ${monitoringFiberAreaOptions(payload)}
+          </select>
+        </div>
+        <div class="row-actions">
+          <button class="ghost-button" id="refreshFiberNetwork" type="button">Refresh</button>
+          ${writeAllowed ? '<button class="ghost-button" id="addFiberOdc" type="button">Tambah ODC</button>' : ''}
+          ${writeAllowed ? '<button class="button" id="addFiberOdp" type="button">Tambah ODP</button>' : ''}
+        </div>
+      </div>
+
+      <section class="panel monitoring-map-panel">
+        <div class="panel-head compact">
+          <div>
+            <h3>Topologi ODP/ODC</h3>
+            <p class="muted">Garis putus-putus menghubungkan ODC ke ODP jika keduanya memiliki koordinat.</p>
+          </div>
+        </div>
+        <div class="monitoring-map-canvas fiber-map-canvas" id="fiberNetworkLeaflet"></div>
+        <div class="monitoring-map-legend">
+          <span><i class="legend-chip odc">ODC</i>Optical distribution center</span>
+          <span><i class="legend-chip odp">ODP</i>Optical distribution point</span>
+          <span><i class="legend-dot active"></i>Aktif</span>
+          <span><i class="legend-dot maintenance"></i>Maintenance</span>
+          <span><i class="legend-dot inactive"></i>Nonaktif</span>
+        </div>
+      </section>
+
+      <div class="monitoring-fiber-grid">
+        <section class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3>Daftar ODC</h3>
+              <p class="muted">${monitoringMapNumber((payload.centers || []).length)} ODC sesuai filter.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="mobile-card-table monitoring-fiber-table monitoring-fiber-odc-table">
+              <thead>
+                <tr>
+                  <th>ODC</th>
+                  <th>Area</th>
+                  <th>Port</th>
+                  <th>Status</th>
+                  ${writeAllowed ? '<th>Aksi</th>' : ''}
+                </tr>
+              </thead>
+              <tbody>
+                ${(payload.centers || []).length ? (payload.centers || []).map((row, index) => `
+                  <tr>
+                    <td>
+                      <strong>${escapeHtml(row.code || '-')}</strong>
+                      <div class="muted">${escapeHtml(row.name || '-')}</div>
+                      <div class="muted">${row.latitude && row.longitude ? `${escapeHtml(row.latitude)}, ${escapeHtml(row.longitude)}` : 'Koordinat belum ada'}</div>
+                    </td>
+                    <td>${escapeHtml(row.area || '-')}</td>
+                    <td>
+                      ${monitoringFiberPortText(row.usedPorts)} / ${monitoringFiberPortText(row.capacityPorts)}
+                      <div class="muted">${monitoringFiberPortText(row.availablePorts)} sisa, ${monitoringFiberPortText(row.distributionPointsCount)} ODP</div>
+                    </td>
+                    <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.statusLabel || '-')}</span></td>
+                    ${writeAllowed ? `
+                      <td>
+                        <div class="row-actions">
+                          <button class="ghost-button compact" type="button" data-edit-odc="${index}">Edit</button>
+                          <button class="danger-button compact" type="button" data-delete-odc="${index}">Hapus</button>
+                        </div>
+                      </td>
+                    ` : ''}
+                  </tr>
+                `).join('') : `<tr><td colspan="${writeAllowed ? 5 : 4}">Belum ada data ODC.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h3>Daftar ODP</h3>
+              <p class="muted">${monitoringMapNumber((payload.points || []).length)} ODP sesuai filter.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="mobile-card-table monitoring-fiber-table monitoring-fiber-odp-table">
+              <thead>
+                <tr>
+                  <th>ODP</th>
+                  <th>ODC</th>
+                  <th>Area</th>
+                  <th>Port</th>
+                  <th>Status</th>
+                  ${writeAllowed ? '<th>Aksi</th>' : ''}
+                </tr>
+              </thead>
+              <tbody>
+                ${(payload.points || []).length ? (payload.points || []).map((row, index) => `
+                  <tr>
+                    <td>
+                      <strong>${escapeHtml(row.code || '-')}</strong>
+                      <div class="muted">${escapeHtml(row.name || '-')}</div>
+                      <div class="muted">${row.latitude && row.longitude ? `${escapeHtml(row.latitude)}, ${escapeHtml(row.longitude)}` : 'Koordinat belum ada'}</div>
+                    </td>
+                    <td>${escapeHtml(row.centerName || '-')}</td>
+                    <td>${escapeHtml(row.area || '-')}</td>
+                    <td>
+                      ${monitoringFiberPortText(row.usedPorts)} / ${monitoringFiberPortText(row.capacityPorts)}
+                      <div class="muted">Reserved ${monitoringFiberPortText(row.reservedPorts)}, rusak ${monitoringFiberPortText(row.damagedPorts)}, sisa ${monitoringFiberPortText(row.availablePorts)}</div>
+                      ${Array.isArray(row.taggedCustomers) && row.taggedCustomers.length ? `<div class="muted">${monitoringMapNumber(row.taggedCustomers.length)} pelanggan tertagging</div>` : ''}
+                    </td>
+                    <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.statusLabel || '-')}</span></td>
+                    ${writeAllowed ? `
+                      <td>
+                        <div class="row-actions">
+                          <button class="ghost-button compact" type="button" data-edit-odp="${index}">Edit</button>
+                          <button class="danger-button compact" type="button" data-delete-odp="${index}">Hapus</button>
+                        </div>
+                      </td>
+                    ` : ''}
+                  </tr>
+                `).join('') : `<tr><td colspan="${writeAllowed ? 6 : 5}">Belum ada data ODP.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+  bindMonitoringFiberNetwork(payload);
+  mountMonitoringFiberMap(payload).catch((error) => setToast(error.message || 'Peta ODP/ODC gagal dimuat'));
+}
+
 function buildRadiusRouterOsScript(options = {}) {
   const radiusServer = String(options.radiusServer || 'ISI_IP_SERVER_BILLING').trim();
   const nasAddress = String(options.nasAddress || 'ISI_IP_NAS').trim();
@@ -23302,6 +24015,8 @@ async function render(options = {}) {
     else if (state.view === 'radiusSettings') await renderRadiusSettings(renderOptions);
     else if (state.view === 'genieAcs') await renderGenieAcs(renderOptions);
     else if (state.view === 'monitoringSite') await renderMonitoringSite();
+    else if (state.view === 'monitoringCustomerMap') await renderMonitoringCustomerMap(renderOptions);
+    else if (state.view === 'monitoringFiberNetwork') await renderMonitoringFiberNetwork(renderOptions);
     else if (state.view === 'monitoringMembers') await renderMonitoringMembers(renderOptions);
     else if (state.view === 'monitoringNewCustomers') {
       state.monitoringMemberTab = 'new';
