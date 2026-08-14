@@ -25,14 +25,22 @@ function readFirstIp(rows) {
   return "";
 }
 
+function readFirstText(rows) {
+  for (const row of rows) {
+    const value = row.value && row.value[0];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return String(value).trim();
+  }
+  return "";
+}
+
 let result = currentValue();
 if (!result || result === "0.0.0.0") {
   for (const path of paths) {
     if (path.includes("ExternalIPAddress")) {
-      const connectionType = declare(path.replace("ExternalIPAddress", "ConnectionType"), { value: Date.now() });
-      if (connectionType.size && String(connectionType.value[0] || "").toLowerCase() === "bridge") continue;
+      const connectionType = declare(path.replace("ExternalIPAddress", "ConnectionType"), {});
+      if (readFirstText(connectionType).toLowerCase() === "bridge") continue;
     }
-    result = readFirstIp(declare(path, { path: Date.now() - 120000, value: Date.now() }));
+    result = readFirstIp(declare(path, {}));
     if (result) break;
   }
 }

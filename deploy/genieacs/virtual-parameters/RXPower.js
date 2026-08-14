@@ -1,5 +1,12 @@
 const paths = [
+  "InternetGatewayDevice.DeviceInfo.XponInterface.RXPower",
+  "InternetGatewayDevice.DeviceInfo.XponInterface.RxPower",
+  "InternetGatewayDevice.DeviceInfo.XponInterface.OpticalTransceiver.RXPower",
+  "InternetGatewayDevice.DeviceInfo.XponInterface.OpticalTransceiver.RxPower",
   "InternetGatewayDevice.WANDevice.*.X_GponInterafceConfig.RXPower",
+  "InternetGatewayDevice.WANDevice.*.X_GC_GponInterfaceConfig.RXPower",
+  "InternetGatewayDevice.WANDevice.*.X_GC_EponInterfaceConfig.RXPower",
+  "InternetGatewayDevice.WANDevice.*.X_GC_WANPONInterfaceConfig.RXPower",
   "InternetGatewayDevice.WANDevice.*.X_FH_GponInterfaceConfig.RXPower",
   "InternetGatewayDevice.WANDevice.*.X_ZTE-COM_WANPONInterfaceConfig.RXPower",
   "InternetGatewayDevice.WANDevice.*.X_CT-COM_EponInterfaceConfig.RXPower",
@@ -26,7 +33,7 @@ function normalize(value, path) {
 
 let result = null;
 for (const path of paths) {
-  const values = declare(path, { value: Date.now() });
+  const values = declare(path, {});
   for (const item of values) {
     const normalized = normalize(item.value && item.value[0], item.path || path);
     if (normalized !== null) {

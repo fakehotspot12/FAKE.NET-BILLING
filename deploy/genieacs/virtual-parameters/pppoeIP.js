@@ -27,7 +27,7 @@ function readFirstIp(rows) {
 let result = currentValue();
 if (!result || result === "0.0.0.0") {
   for (const path of paths) {
-    result = readFirstIp(declare(path, { path: Date.now() - 120000, value: Date.now() }));
+    result = readFirstIp(declare(path, {}));
     if (result) break;
   }
 }

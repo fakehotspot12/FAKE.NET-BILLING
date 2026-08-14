@@ -13,11 +13,15 @@ if (args[1] && args[1].value) {
   for (const path of paths) declare(path, null, { value: result });
 } else {
   for (const path of paths) {
-    const rows = declare(path, { value: Date.now() });
-    if (rows.size && rows.value[0]) {
-      result = rows.value[0];
-      break;
+    const rows = declare(path, {});
+    for (const row of rows) {
+      const value = row.value && row.value[0];
+      if (value) {
+        result = value;
+        break;
+      }
     }
+    if (result) break;
   }
 }
 

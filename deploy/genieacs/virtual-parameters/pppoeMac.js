@@ -8,7 +8,7 @@ const paths = [
 
 let result = "";
 for (const path of paths) {
-  const rows = declare(path, { value: Date.now() });
+  const rows = declare(path, {});
   for (const row of rows) {
     const value = row.value && row.value[0];
     if (value) {

@@ -16,9 +16,18 @@ if (args[1] && args[1].value) {
   declare("InternetGatewayDevice.DeviceInfo.UpTime", null, { value: totalSecs });
   declare("Device.DeviceInfo.UpTime", null, { value: totalSecs });
 } else {
-  const igd = declare("InternetGatewayDevice.DeviceInfo.UpTime", { value: Date.now() });
-  const device = declare("Device.DeviceInfo.UpTime", { value: Date.now() });
-  totalSecs = igd.size ? igd.value[0] : (device.size ? device.value[0] : "");
+  const igd = declare("InternetGatewayDevice.DeviceInfo.UpTime", {});
+  const device = declare("Device.DeviceInfo.UpTime", {});
+  for (const rows of [igd, device]) {
+    for (const row of rows) {
+      const value = row.value && row.value[0];
+      if (value !== undefined && value !== null && value !== "") {
+        totalSecs = value;
+        break;
+      }
+    }
+    if (totalSecs !== "") break;
+  }
 }
 
 return { writable: false, value: [uptimeText(totalSecs), "xsd:string"] };

@@ -38,7 +38,14 @@ const DEFAULT_PPP_PASSWORD_PARAMETERS = DEFAULT_USERNAME_PARAMETERS
 
 const DEFAULT_RX_POWER_PARAMETERS = [
   'VirtualParameters.RXPower',
+  'InternetGatewayDevice.DeviceInfo.XponInterface.RXPower',
+  'InternetGatewayDevice.DeviceInfo.XponInterface.RxPower',
+  'InternetGatewayDevice.DeviceInfo.XponInterface.OpticalTransceiver.RXPower',
+  'InternetGatewayDevice.DeviceInfo.XponInterface.OpticalTransceiver.RxPower',
   'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.1.X_GC_GponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.1.X_GC_EponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.1.X_GC_WANPONInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.2.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
@@ -52,10 +59,16 @@ const DEFAULT_RX_POWER_PARAMETERS = [
 
 const DEFAULT_TEMPERATURE_PARAMETERS = [
   'VirtualParameters.gettemp',
+  'InternetGatewayDevice.DeviceInfo.XponInterface.Temperature',
+  'InternetGatewayDevice.DeviceInfo.XponInterface.TransceiverTemperature',
+  'InternetGatewayDevice.DeviceInfo.XponInterface.OpticalTransceiver.Temperature',
   'InternetGatewayDevice.WANDevice.1.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Temperature',
   'InternetGatewayDevice.WANDevice.1.X_CU_WANGPONInterfaceConfig.OpticalTransceiver.Temperature',
   'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature',
   'InternetGatewayDevice.WANDevice.2.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_GC_GponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_GC_EponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.1.X_GC_WANPONInterfaceConfig.TransceiverTemperature',
   'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.TransceiverTemperature',
   'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.TransceiverTemperature',
   'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.TransceiverTemperature',

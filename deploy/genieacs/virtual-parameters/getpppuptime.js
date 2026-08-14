@@ -15,8 +15,14 @@ if (args[1] && args[1].value) {
   totalSecs = args[1].value[0] || "";
   declare("InternetGatewayDevice.WANDevice.1.WANConnectionDevice.*.WANPPPConnection.*.Uptime", null, { value: totalSecs });
 } else {
-  const rows = declare("InternetGatewayDevice.WANDevice.1.WANConnectionDevice.*.WANPPPConnection.*.Uptime", { value: Date.now() });
-  if (rows.size) totalSecs = rows.value[0] || "";
+  const rows = declare("InternetGatewayDevice.WANDevice.1.WANConnectionDevice.*.WANPPPConnection.*.Uptime", {});
+  for (const row of rows) {
+    const value = row.value && row.value[0];
+    if (value) {
+      totalSecs = value;
+      break;
+    }
+  }
 }
 
 return { writable: false, value: [uptimeText(totalSecs), "xsd:string"] };

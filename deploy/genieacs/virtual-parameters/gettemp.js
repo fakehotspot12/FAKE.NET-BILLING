@@ -1,7 +1,13 @@
 const paths = [
+  "InternetGatewayDevice.DeviceInfo.XponInterface.Temperature",
+  "InternetGatewayDevice.DeviceInfo.XponInterface.TransceiverTemperature",
+  "InternetGatewayDevice.DeviceInfo.XponInterface.OpticalTransceiver.Temperature",
   "InternetGatewayDevice.WANDevice.*.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Temperature",
   "InternetGatewayDevice.WANDevice.*.X_CU_WANGPONInterfaceConfig.OpticalTransceiver.Temperature",
   "InternetGatewayDevice.WANDevice.*.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature",
+  "InternetGatewayDevice.WANDevice.*.X_GC_GponInterfaceConfig.TransceiverTemperature",
+  "InternetGatewayDevice.WANDevice.*.X_GC_EponInterfaceConfig.TransceiverTemperature",
+  "InternetGatewayDevice.WANDevice.*.X_GC_WANPONInterfaceConfig.TransceiverTemperature",
   "InternetGatewayDevice.WANDevice.*.X_CMCC_EponInterfaceConfig.TransceiverTemperature",
   "InternetGatewayDevice.WANDevice.*.X_CMCC_GponInterfaceConfig.TransceiverTemperature",
   "InternetGatewayDevice.WANDevice.*.X_CT-COM_EponInterfaceConfig.TransceiverTemperature",
@@ -46,7 +52,7 @@ function normalize(value) {
 
 let result = null;
 for (const path of paths) {
-  const values = declare(path, { value: Date.now() });
+  const values = declare(path, {});
   for (const item of values) {
     const normalized = normalize(item.value && item.value[0]);
     if (normalized !== null) {

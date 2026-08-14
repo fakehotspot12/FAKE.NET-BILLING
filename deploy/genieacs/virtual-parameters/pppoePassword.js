@@ -9,7 +9,7 @@ if (args[1] && args[1].value) {
   for (const path of paths) declare(path, null, { value: result });
 } else {
   for (const path of paths) {
-    const rows = declare(path, { value: Date.now() });
+    const rows = declare(path, {});
     for (const row of rows) {
       const value = row.value && row.value[0];
       if (value) {

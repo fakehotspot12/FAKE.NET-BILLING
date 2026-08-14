@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.7] - 2026-08-14
+
+### Fixed
+
+- Memperbaiki paket Virtual Parameters GenieACS untuk modem FD511GD/CDTC dan beberapa modem XPON agar redaman, suhu, mode PON, uptime, serial, total active device, PPPoE username, dan IP PPPoE dapat dibaca dari path vendor yang sesuai.
+- Mengubah bootstrap GenieACS agar tidak lagi menjalankan auto-provision Virtual Parameters secara agresif yang dapat memicu `too_many_commits` pada beberapa ONT.
+- Menambahkan backfill Virtual Parameters dari data mentah Mongo GenieACS saat install/update, sehingga nilai umum langsung tersedia tanpa harus menambah parameter manual.
+- Menonaktifkan preset legacy GenieACS `default` yang terdeteksi berat dan membersihkan deklarasi VirtualParameters lama agar tidak mengganggu provision billing.
+
 ## [4.2.6] - 2026-08-14
 
 ### Added

@@ -12,6 +12,26 @@ const cwmpUsername = String(process.env.GENIEACS_CWMP_AUTH_USERNAME || 'admin');
 const cwmpPassword = String(process.env.GENIEACS_CWMP_AUTH_PASSWORD || '1sampai10');
 const mongoUrl = String(process.env.GENIEACS_MONGODB_CONNECTION_URL || 'mongodb://127.0.0.1:27017/genieacs');
 const assetsDir = path.join(__dirname, 'virtual-parameters');
+const autoProvisionEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_AUTO_VP_PROVISION || '').toLowerCase());
+const autoProvisionVirtualParameters = new Set([
+  'IPTR069',
+  'LANActiveClients',
+  'LANClients',
+  'PonMac',
+  'RXPower',
+  'activedevices',
+  'getSerialNumber',
+  'getdeviceuptime',
+  'getponmode',
+  'getpppuptime',
+  'gettemp',
+  'ip',
+  'pppoe',
+  'pppoeIP',
+  'pppoeMac',
+  'pppoeUsername',
+  'pppoeUsername2'
+]);
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -142,6 +162,157 @@ function installVirtualParametersViaMongo(rows = []) {
   if (result.stdout) process.stdout.write(result.stdout);
 }
 
+function sanitizeLegacyProvisionsViaMongo() {
+  const command = ['mongosh', 'mongo'].find((candidate) => {
+    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
+    return result.status === 0;
+  });
+  if (!command) return;
+
+  const script = [
+    'const names = ["default"];',
+    'for (const name of names) {',
+    '  const row = db.getCollection("provisions").findOne({ _id: name });',
+    '  if (!row || typeof row.script !== "string") continue;',
+    '  const legacyHeavy = /Remot Wan|Update Parameter|X_FH_Remoteweblogin|X_HW_Security\\.AclServices|VirtualParameters\\./.test(row.script);',
+    '  let next = row.script',
+    '    .replace(/Date\\.now\\(86400000\\)/g, "Date.now() - 86400000")',
+    '    .replace(/Date\\.now\\(3590000\\)/g, "Date.now() - 3590000")',
+    '    .replace(/Date\\.now\\(60000\\)/g, "Date.now() - 60000");',
+    '  next = next.split("\\n").filter((line) => !/declare\\(["\\\']VirtualParameters\\./.test(line)).join("\\n");',
+    '  if (next !== row.script) {',
+    '    db.getCollection("provisions").updateOne({ _id: name }, { $set: { script: next, updatedBy: "fakenet-billing-bootstrap", updatedAt: new Date() } });',
+    '    print("Provision legacy dibersihkan: " + name);',
+    '  }',
+    '  if (legacyHeavy) {',
+    '    db.getCollection("presets").updateOne({ _id: name }, { $set: { precondition: JSON.stringify({ _id: "__disabled_by_fakenet_billing__" }), disabledBy: "fakenet-billing-bootstrap", disabledAt: new Date() } });',
+    '    print("Preset legacy dinonaktifkan: " + name);',
+    '  }',
+    '}'
+  ].join('\n');
+  const args = command === 'mongosh'
+    ? ['--quiet', mongoUrl, '--eval', script]
+    : ['--quiet', mongoUrl, '--eval', script];
+  const result = spawnSync(command, args, { encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stderr.write(`Peringatan: sanitasi provision legacy gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
+    return;
+  }
+  if (result.stdout) process.stdout.write(result.stdout);
+}
+
+function backfillVirtualParameterValuesViaMongo() {
+  const command = ['mongosh', 'mongo'].find((candidate) => {
+    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
+    return result.status === 0;
+  });
+  if (!command) return;
+
+  const script = [
+    'function clean(value) { return value === undefined || value === null ? "" : String(value).trim(); }',
+    'function leaf(doc, path) {',
+    '  const node = path.split(".").reduce((item, key) => item && item[key], doc);',
+    '  if (node && typeof node === "object" && Object.prototype.hasOwnProperty.call(node, "_value")) return node._value;',
+    '  return "";',
+    '}',
+    'function first(doc, paths) {',
+    '  for (const path of paths) {',
+    '    const value = clean(leaf(doc, path));',
+    '    if (value) return { path, value };',
+    '  }',
+    '  return { path: "", value: "" };',
+    '}',
+    'function numberText(value) {',
+    '  const number = Number(clean(value).replace(",", ".").replace(/[^\\d.-]/g, ""));',
+    '  return Number.isFinite(number) ? String(Math.round(number * 100) / 100) : "";',
+    '}',
+    'function uptimeText(value) {',
+    '  let seconds = Number(value || 0);',
+    '  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;',
+    '  const days = Math.floor(seconds / 86400);',
+    '  let rem = seconds % 86400;',
+    '  const hours = String(Math.floor(rem / 3600)).padStart(2, "0");',
+    '  rem %= 3600;',
+    '  const minutes = String(Math.floor(rem / 60)).padStart(2, "0");',
+    '  const secs = String(Math.floor(rem % 60)).padStart(2, "0");',
+    '  return days + "d " + hours + ":" + minutes + ":" + secs;',
+    '}',
+    'function hostActive(doc, prefix) {',
+    '  const active = clean(leaf(doc, prefix + ".Active")).toLowerCase();',
+    '  if (["0","false","no","off","down","inactive","disabled","offline"].includes(active)) return false;',
+    '  return Boolean(clean(leaf(doc, prefix + ".IPAddress")) || clean(leaf(doc, prefix + ".MACAddress")) || clean(leaf(doc, prefix + ".HostName")));',
+    '}',
+    'function hostPrefixes(doc) {',
+    '  const roots = ["InternetGatewayDevice.LANDevice.1.Hosts.Host", "Device.Hosts.Host"];',
+    '  const rows = [];',
+    '  for (const root of roots) {',
+    '    const node = root.split(".").reduce((item, key) => item && item[key], doc);',
+    '    if (!node || typeof node !== "object") continue;',
+    '    for (const key of Object.keys(node)) if (/^\\d+$/.test(key)) rows.push(root + "." + key);',
+    '  }',
+    '  return rows;',
+    '}',
+    'function wifiTotal(doc) {',
+    '  let total = 0;',
+    '  for (let index = 1; index <= 8; index += 1) {',
+    '    for (const suffix of ["TotalAssociations","AssociatedDeviceNumberOfEntries","WLAN_AssociatedDeviceNumberOfEntries"]) {',
+    '      const value = Number(clean(leaf(doc, "InternetGatewayDevice.LANDevice.1.WLANConfiguration." + index + "." + suffix)));',
+    '      if (Number.isFinite(value) && value > 0) { total += value; break; }',
+    '    }',
+    '  }',
+    '  return total;',
+    '}',
+    'function setVp(set, name, value, type, writable) {',
+    '  if (value === undefined || value === null || value === "") return;',
+    '  set["VirtualParameters." + name] = { _object: false, _timestamp: new Date(), _type: type || "xsd:string", _value: value, _writable: writable === true };',
+    '}',
+    'const rxPaths = ["InternetGatewayDevice.DeviceInfo.XponInterface.RXPower","InternetGatewayDevice.DeviceInfo.XponInterface.RxPower","InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_HW_EponInterfaceConfig.RXPower","InternetGatewayDevice.X_HW_RMS.PonStatus.RXPower","Device.Optical.Interface.1.RXPower"];',
+    'const tempPaths = ["InternetGatewayDevice.DeviceInfo.XponInterface.TransceiverTemperature","InternetGatewayDevice.DeviceInfo.XponInterface.Temperature","InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.1.X_HW_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.X_HW_RMS.PonStatus.Temperature","Device.Optical.Interface.1.Temperature"];',
+    'const ponMacPaths = ["InternetGatewayDevice.DeviceInfo.XponInterface.MACAddress","InternetGatewayDevice.DeviceInfo.XponInterface.PONMACAddress","InternetGatewayDevice.DeviceInfo.XponInterface.PonMac","InternetGatewayDevice.DeviceInfo.XponInterface.MAC","InternetGatewayDevice.DeviceInfo.X_CU_SerialNumber","InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MACAddress","InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.MACAddress","InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.MACAddress","InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.MACAddress"];',
+    'const pppUserPaths = ["InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username","InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username","InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.Username","Device.PPP.Interface.1.Username"];',
+    'let updated = 0;',
+    'db.getCollection("devices").find({}).forEach((doc) => {',
+    '  const set = {};',
+    '  const rx = numberText(first(doc, rxPaths).value);',
+    '  const temp = numberText(first(doc, tempPaths).value);',
+    '  const pppUser = first(doc, pppUserPaths).value;',
+    '  const pppBase = first(doc, pppUserPaths).path.replace(/\\.Username$/, "");',
+    '  setVp(set, "RXPower", rx);',
+    '  setVp(set, "gettemp", temp);',
+    '  setVp(set, "getSerialNumber", clean(doc._deviceId && doc._deviceId._SerialNumber));',
+    '  setVp(set, "PonMac", first(doc, ponMacPaths).value);',
+    '  setVp(set, "getponmode", first(doc, ["InternetGatewayDevice.DeviceInfo.XponInterface.PonMode","InternetGatewayDevice.DeviceInfo.XponInterface.Mode","InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.WANAccessType"]).value);',
+    '  setVp(set, "getdeviceuptime", uptimeText(first(doc, ["InternetGatewayDevice.DeviceInfo.UpTime","Device.DeviceInfo.UpTime"]).value));',
+    '  if (pppBase) {',
+    '    setVp(set, "getpppuptime", uptimeText(leaf(doc, pppBase + ".Uptime")));',
+    '    setVp(set, "pppoeIP", first(doc, [pppBase + ".ExternalIPAddress", pppBase + ".IPCP.LocalIPAddress"]).value);',
+    '    setVp(set, "pppoeMac", leaf(doc, pppBase + ".MACAddress"));',
+    '  }',
+    '  setVp(set, "pppoeUsername", pppUser, "xsd:string", true);',
+    '  setVp(set, "pppoe", pppUser);',
+    '  setVp(set, "pppoeUsername2", pppUser);',
+    '  setVp(set, "activedevices", wifiTotal(doc), "xsd:int");',
+    '  const lanActive = hostPrefixes(doc).filter((prefix) => hostActive(doc, prefix)).length;',
+    '  setVp(set, "LANActiveClients", lanActive, "xsd:unsignedInt");',
+    '  setVp(set, "LANClients", lanActive, "xsd:unsignedInt");',
+    '  if (Object.keys(set).length) {',
+    '    db.getCollection("devices").updateOne({ _id: doc._id }, { $set: set });',
+    '    updated += 1;',
+    '  }',
+    '});',
+    'print("Backfill Virtual Parameters devices: " + updated);'
+  ].join('\n');
+  const args = command === 'mongosh'
+    ? ['--quiet', mongoUrl, '--eval', script]
+    : ['--quiet', mongoUrl, '--eval', script];
+  const result = spawnSync(command, args, { encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stderr.write(`Peringatan: backfill Virtual Parameters gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
+    return;
+  }
+  if (result.stdout) process.stdout.write(result.stdout);
+}
+
 async function installVirtualParameters(token) {
   const rows = virtualParameterScripts();
   let installed = false;
@@ -158,10 +329,11 @@ async function installVirtualParameters(token) {
   }
 
   const declarations = rows
-    .map((row) => `declare("VirtualParameters.${row.name}", {path: daily, value: daily});`)
+    .filter((row) => autoProvisionVirtualParameters.has(row.name))
+    .map((row) => `declare("VirtualParameters.${row.name}", {value: daily});`)
     .join('\n');
   const provision = [
-    'const daily = Date.now(86400000);',
+    'const daily = Date.now() - 86400000;',
     declarations
   ].join('\n');
   await request(`${nbiBase}/provisions/fakenet-virtual-parameters`, {
@@ -173,10 +345,12 @@ async function installVirtualParameters(token) {
     method: 'PUT',
     body: JSON.stringify({
       weight: 10,
-      precondition: '{}',
+      precondition: autoProvisionEnabled ? '{}' : JSON.stringify({ _id: '__disabled_by_fakenet_billing__' }),
       configurations: [{ type: 'provision', name: 'fakenet-virtual-parameters', args: [] }]
     })
   });
+  sanitizeLegacyProvisionsViaMongo();
+  backfillVirtualParameterValuesViaMongo();
 }
 
 async function main() {
