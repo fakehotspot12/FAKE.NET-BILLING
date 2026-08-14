@@ -88,6 +88,98 @@ test('normalizes GenieACS device wifi and optical parameters', () => {
   assert.equal(device.wifiNetworks[0].passwordParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase');
 });
 
+test('normalizes WAN VLAN from virtual parameter fallback', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'fd511gd-1',
+    _deviceId: {
+      _Manufacturer: 'CDTC',
+      _ProductClass: 'FD511GD',
+      _SerialNumber: 'FD511GD001'
+    },
+    VirtualParameters: {
+      pppoeUsername: { _value: 'member@isp.test' },
+      wanVlan: { _value: '131' }
+    }
+  }, {});
+  const pending = genieAcs._internal.recentPppState({
+    VirtualParameters: {
+      wanVlan: { _value: '131' }
+    }
+  }, {
+    username: device.username,
+    usernameParameter: 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username',
+    ipAddress: device.ipAddress,
+    online: true
+  });
+  const summary = genieAcsWan.summarizeWanConnections({
+    _deviceId: {
+      _Manufacturer: 'CDTC',
+      _ProductClass: 'FD511GD'
+    },
+    VirtualParameters: {
+      wanVlan: { _value: 'VID_131' }
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          WANConnectionDevice: {
+            1: {
+              WANPPPConnection: {
+                1: {
+                  Username: { _value: 'member@isp.test' },
+                  Enable: { _value: '1' },
+                  ConnectionStatus: { _value: 'Connected' }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, 'member@isp.test');
+
+  assert.equal(device.wanVlan, '131');
+  assert.equal(pending.vlan, 131);
+  assert.equal(summary.primary.vlan, 131);
+});
+
+test('normalizes CDATA SSID from virtual parameter fallback when raw SSID is missing', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'cdata-ssid-1',
+    _deviceId: {
+      _Manufacturer: 'CDTC',
+      _ProductClass: 'FD511GD',
+      _SerialNumber: 'FDSSID001'
+    },
+    VirtualParameters: {
+      wifiSsid24: { _value: 'NYNET-2G' },
+      wifiSsid5: { _value: 'NYNET-5G' }
+    },
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            2: {
+              TotalAssociations: { _value: '2' },
+              Enable: { _value: '1' }
+            },
+            5: {
+              TotalAssociations: { _value: '1' },
+              Enable: { _value: '1' }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.ssid24, 'NYNET-2G');
+  assert.equal(device.ssid5, 'NYNET-5G');
+  assert.equal(device.wifiNetworks.length, 2);
+  assert.equal(device.wifiNetworks.find((item) => item.band === '2.4G').ssidParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID');
+  assert.equal(device.wifiNetworks.find((item) => item.band === '5G').ssidParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID');
+});
+
 test('normalizes GenieACS temperature from virtual and raw parameters', () => {
   const virtualTemp = genieAcs.normalizeDevice({
     _id: 'temp-virtual',

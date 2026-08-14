@@ -33,7 +33,8 @@ function firstValue(source = {}, paths = []) {
 }
 
 function validVlanNumber(value) {
-  const number = Number(value);
+  const match = cleanText(value).match(/(\d{1,4})/);
+  const number = Number(match && match[1]);
   return Number.isInteger(number) && number >= 1 && number <= 4094 ? number : null;
 }
 
@@ -305,6 +306,10 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
     );
     return score(right) - score(left);
   })[0] || null;
+  const fallbackVlan = validVlanNumber(pathValue(device, 'VirtualParameters.wanVlan'));
+  if (primary && !primary.vlan && fallbackVlan !== null) {
+    primary.vlan = fallbackVlan;
+  }
   rows.forEach((row) => {
     row.primary = Boolean(primary && row.id === primary.id);
     row.label = wanDisplayLabel(row);

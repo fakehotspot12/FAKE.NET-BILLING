@@ -11,6 +11,9 @@ NPM_INSTALL_TIMEOUT_SECONDS="${FAKENET_NPM_INSTALL_TIMEOUT_SECONDS:-600}"
 STACK_CMD="${FAKENET_STACK_CMD:-/usr/local/bin/fakenet-billing-stack}"
 ARCHIVE_URL="${FAKENET_UPDATE_ARCHIVE_URL:-}"
 BRANCH="${FAKENET_UPDATE_BRANCH:-}"
+ARCHIVE_URL_OVERRIDE="$ARCHIVE_URL"
+BRANCH_OVERRIDE="$BRANCH"
+DOWNLOAD_TIMEOUT_SECONDS="${FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS:-180}"
 ENV_FILE="${FAKENET_ENV_FILE:-/etc/fakenet-billing.env}"
 WAHA_ENV_FILE="${FAKENET_WAHA_ENV_FILE:-/etc/fakenet-billing-waha.env}"
 GENIEACS_ENV_FILE="${FAKENET_GENIEACS_ENV_FILE:-/etc/fakenet-billing-genieacs.env}"
@@ -243,8 +246,9 @@ create_pre_update_backup
 # Refresh update source after backup because /etc/fakenet-billing.env is loaded
 # inside create_pre_update_backup(). Older installs can be archive-based without
 # .git, so FAKENET_UPDATE_ARCHIVE_URL from the env file must be honored here.
-ARCHIVE_URL="${FAKENET_UPDATE_ARCHIVE_URL:-$ARCHIVE_URL}"
-BRANCH="${FAKENET_UPDATE_BRANCH:-$BRANCH}"
+ARCHIVE_URL="${ARCHIVE_URL_OVERRIDE:-${FAKENET_UPDATE_ARCHIVE_URL:-$ARCHIVE_URL}}"
+BRANCH="${BRANCH_OVERRIDE:-${FAKENET_UPDATE_BRANCH:-$BRANCH}}"
+DOWNLOAD_TIMEOUT_SECONDS="${FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS:-$DOWNLOAD_TIMEOUT_SECONDS}"
 
 run_with_timeout() {
   local seconds="$1"
@@ -323,7 +327,7 @@ if [ -d "$APP_DIR/.git" ]; then
 elif [ -n "$ARCHIVE_URL" ]; then
   echo "Update via archive $ARCHIVE_URL"
   tmpdir="$(mktemp -d)"
-  curl -fsSL "$ARCHIVE_URL" -o "$tmpdir/source.tar.gz"
+  curl -fsSL --connect-timeout 15 --max-time "$DOWNLOAD_TIMEOUT_SECONDS" "$ARCHIVE_URL" -o "$tmpdir/source.tar.gz"
   mkdir -p "$tmpdir/source"
   tar -xzf "$tmpdir/source.tar.gz" -C "$tmpdir/source" --strip-components=1
   rsync -a --delete \

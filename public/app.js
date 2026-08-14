@@ -15040,7 +15040,7 @@ async function renderRadiusSettings(options = {}) {
           <form id="radiusSettingsForm" class="form-grid">
             <label class="field">
               <span>Rate Limit Isolir</span>
-              <input name="isolationRateLimit" value="${escapeHtml(radius.isolationRateLimit || '128k/128k')}" placeholder="128k/128k">
+              <input name="isolationRateLimit" value="${escapeHtml(radius.isolationRateLimit || '')}" placeholder="Kosong = disable akun">
             </label>
             <label class="field">
               <span>Group MikroTik Isolir</span>

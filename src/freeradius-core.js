@@ -787,8 +787,10 @@ function freeradiusRows(data) {
     const userReplyStart = radreply.length;
     const isolation = data.settings?.radius && typeof data.settings.radius === 'object' ? data.settings.radius : {};
     const restrictedAccess = user.status === 'isolated' || terminatedPortalAccess;
+    const isolationRateLimit = text(isolation.isolationRateLimit);
     const restrictedWithNetworkOverride = restrictedAccess
-      && (text(isolation.isolationMikrotikGroup) || text(isolation.isolationPool));
+      && (isolationRateLimit || text(isolation.isolationMikrotikGroup) || text(isolation.isolationPool));
+    const rejectRestrictedAccess = restrictedAccess && !restrictedWithNetworkOverride;
     radcheck.push({
       username: user.username,
       attribute: 'Cleartext-Password',
@@ -796,13 +798,22 @@ function freeradiusRows(data) {
       value: radiusUserPassword(user.username, user.password, serviceType)
     });
     if (restrictedAccess) {
-      const isolationRateLimit = text(isolation.isolationRateLimit) || '128k/128k';
-      radreply.push({
-        username: user.username,
-        attribute: 'Mikrotik-Rate-Limit',
-        op: ':=',
-        value: isolationRateLimit
-      });
+      if (rejectRestrictedAccess) {
+        radcheck.push({
+          username: user.username,
+          attribute: 'Auth-Type',
+          op: ':=',
+          value: 'Reject'
+        });
+      }
+      if (isolationRateLimit) {
+        radreply.push({
+          username: user.username,
+          attribute: 'Mikrotik-Rate-Limit',
+          op: ':=',
+          value: isolationRateLimit
+        });
+      }
       if (text(isolation.isolationMikrotikGroup)) {
         radreply.push({
           username: user.username,
@@ -834,7 +845,7 @@ function freeradiusRows(data) {
         });
       }
     }
-    if (user.staticIp && !restrictedWithNetworkOverride) {
+    if (user.staticIp && !restrictedWithNetworkOverride && !rejectRestrictedAccess) {
       radreply.push({
         username: user.username,
         attribute: 'Framed-IP-Address',
@@ -859,7 +870,7 @@ function freeradiusRows(data) {
       });
     }
     const groupname = profileGroupName(profile);
-    if (groupname && !restrictedWithNetworkOverride) {
+    if (groupname && !restrictedWithNetworkOverride && !rejectRestrictedAccess) {
       if (radreply.length > userReplyStart) {
         radreply.push({
           username: user.username,

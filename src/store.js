@@ -139,7 +139,7 @@ function createDefaultStore() {
         sensitiveUsers: []
       },
       radius: {
-        isolationRateLimit: process.env.RADIUS_ISOLATION_RATE_LIMIT || '128k/128k',
+        isolationRateLimit: process.env.RADIUS_ISOLATION_RATE_LIMIT || '',
         isolationMikrotikGroup: process.env.RADIUS_ISOLATION_MIKROTIK_GROUP || '',
         isolationPool: process.env.RADIUS_ISOLATION_POOL || '',
         accountingInterimIntervalSeconds: Math.max(0, Number(process.env.RADIUS_ACCOUNTING_INTERIM_INTERVAL_SECONDS || 60) || 60),
@@ -163,7 +163,7 @@ function createDefaultStore() {
         bhpUsoRate: 1.25
       },
       waGateway: {
-        enabled: true,
+        enabled: false,
         provider: 'waha',
         baseUrl: 'http://127.0.0.1:8895',
         token: '',

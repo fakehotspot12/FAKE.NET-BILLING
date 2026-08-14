@@ -97,6 +97,9 @@ const DEFAULT_WIFI_PASSWORD_PARAMETERS = [
 const DEFAULT_WIFI_SSID_PARAMETERS = [
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID',
+  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.SSID',
+  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.SSID',
+  'VirtualParameters.wifiSsid24',
   'Device.WiFi.SSID.1.SSID'
 ];
 
@@ -105,6 +108,7 @@ const DEFAULT_WIFI_5G_SSID_PARAMETERS = [
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.6.SSID',
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.7.SSID',
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.8.SSID',
+  'VirtualParameters.wifiSsid5',
   'Device.WiFi.SSID.5.SSID',
   'Device.WiFi.SSID.2.SSID'
 ];
@@ -141,6 +145,18 @@ const DEFAULT_LAN_CLIENT_COUNT_PARAMETERS = [
   'Device.Ethernet.Interface.2.AssociatedDeviceNumberOfEntries',
   'Device.Ethernet.Interface.3.AssociatedDeviceNumberOfEntries',
   'Device.Ethernet.Interface.4.AssociatedDeviceNumberOfEntries'
+];
+
+const DEFAULT_WAN_VLAN_PARAMETERS = [
+  'VirtualParameters.wanVlan',
+  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.X_HW_VLAN',
+  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.X_HW_VLAN',
+  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.X_ZTE-COM_VLANID',
+  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.X_ZTE-COM_VLANID',
+  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_CT-COM_WANEponLinkConfig.VLANIDMark',
+  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.X_CT-COM_WANEponLinkConfig.VLANIDMark',
+  'Device.Ethernet.VLANTermination.1.VLANID',
+  'Device.Ethernet.VLANTermination.2.VLANID'
 ];
 
 const WIFI_CONFIGURATION_INDEXES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -193,6 +209,7 @@ function normalizeSettings(settings = {}) {
     wifiClientCountParameters: DEFAULT_WIFI_CLIENT_COUNT_PARAMETERS.slice(),
     wifi5gClientCountParameters: DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS.slice(),
     lanClientCountParameters: DEFAULT_LAN_CLIENT_COUNT_PARAMETERS.slice(),
+    wanVlanParameters: DEFAULT_WAN_VLAN_PARAMETERS.slice(),
     excludeUsernameSuffixes: normalizeUsernameSuffixes(process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES || raw.excludeUsernameSuffixes || [])
   };
 }
@@ -679,7 +696,8 @@ function deviceListProjection(cfg = normalizeSettings({})) {
     cfg.temperatureParameters,
     cfg.wifiClientCountParameters,
     cfg.wifi5gClientCountParameters,
-    cfg.lanClientCountParameters
+    cfg.lanClientCountParameters,
+    cfg.wanVlanParameters
   ].forEach((list) => (list || []).forEach((path) => cleanText(path) && paths.add(cleanText(path))));
   (cfg.usernameParameters || []).forEach((path) => {
     pppIpParameterCandidates(path).forEach((candidate) => paths.add(candidate));
@@ -691,6 +709,7 @@ function deviceSummaryProjection(cfg = normalizeSettings({})) {
   const paths = new Set(['_id', '_lastInform']);
   (cfg.usernameParameters || []).forEach((path) => cleanText(path) && paths.add(cleanText(path)));
   (cfg.rxPowerParameters || []).forEach((path) => cleanText(path) && paths.add(cleanText(path)));
+  (cfg.wanVlanParameters || []).forEach((path) => cleanText(path) && paths.add(cleanText(path)));
   return [...paths].join(',');
 }
 
@@ -727,6 +746,7 @@ function recentPendingProjection(cfg = normalizeSettings({})) {
       `${base}.ConnectionStatus`
     ].forEach((candidate) => paths.add(candidate));
   });
+  (cfg.wanVlanParameters || []).forEach((path) => cleanText(path) && paths.add(cleanText(path)));
   return [...paths].join(',');
 }
 
@@ -765,8 +785,66 @@ function wifiSecurityEnabled(device = {}, base = '', password = {}) {
   return Boolean(password.value);
 }
 
+function fallbackWifiNetworkFromVirtual(device = {}, band = '2.4G', ssidPath = '', indexes = []) {
+  const virtualSsid = firstExistingParameter(device, [ssidPath]);
+  if (!virtualSsid.value) return null;
+  const candidates = indexes.map((index) => {
+    const base = wifiConfigBase(index);
+    const enable = getPathState(device, `${base}.Enable`);
+    const status = getPathState(device, `${base}.Status`);
+    const clients = firstParameter(device, wifiClientCountCandidates(index));
+    const hasConfig = getPathState(device, base).exists
+      || enable.exists
+      || status.exists
+      || clients.path;
+    if (!hasConfig) return null;
+    const enabled = enable.exists
+      ? truthyWifiValue(enable.value)
+      : (status.exists ? truthyWifiValue(status.value) : true);
+    return {
+      index,
+      base,
+      enable,
+      status,
+      clients,
+      enabled,
+      score: (normalizeCount(clients.value) > 0 ? 20 : 0) + (enabled ? 10 : 0) + (enable.exists || status.exists ? 1 : 0)
+    };
+  }).filter(Boolean).sort((left, right) => right.score - left.score || left.index - right.index);
+  const selected = candidates[0];
+  if (!selected) return null;
+  const password = firstExistingParameter(device, wifiPasswordParameterCandidates(selected.index));
+  const passwordParameter = password.path || wifiPasswordParameterCandidates(selected.index)[0] || '';
+  const securityValues = [
+    getPathState(device, `${selected.base}.BeaconType`).value,
+    getPathState(device, `${selected.base}.BasicAuthenticationMode`).value,
+    getPathState(device, `${selected.base}.WPAAuthenticationMode`).value,
+    getPathState(device, `${selected.base}.WPAEncryptionModes`).value,
+    getPathState(device, `${selected.base}.IEEE11iAuthenticationMode`).value,
+    getPathState(device, `${selected.base}.IEEE11iEncryptionModes`).value
+  ].filter(Boolean);
+  return {
+    index: selected.index,
+    band,
+    label: `${band} - ${virtualSsid.value}`,
+    ssid: virtualSsid.value,
+    ssidParameter: `${selected.base}.SSID`,
+    enableParameter: selected.enable.path || `${selected.base}.Enable`,
+    password: password.value,
+    passwordParameter,
+    passwordWritable: password.writable,
+    securityText: securityValues.join(' / '),
+    securityEnabled: wifiSecurityEnabled(device, selected.base, password),
+    clients: normalizeCount(selected.clients.value),
+    clientsParameter: selected.clients.path,
+    status: selected.status.value || (selected.enabled ? 'Up' : 'Disabled'),
+    enabled: selected.enabled,
+    source: 'virtual'
+  };
+}
+
 function normalizeWifiNetworks(device = {}) {
-  return WIFI_CONFIGURATION_INDEXES.map((index) => {
+  const rows = WIFI_CONFIGURATION_INDEXES.map((index) => {
     const base = wifiConfigBase(index);
     const ssid = getPathState(device, `${base}.SSID`);
     if (!ssid.value) return null;
@@ -807,6 +885,13 @@ function normalizeWifiNetworks(device = {}) {
       enabled
     };
   }).filter(Boolean);
+  const has24 = rows.some((row) => row.band === '2.4G');
+  const has5 = rows.some((row) => row.band === '5G');
+  const fallbackRows = [
+    has24 ? null : fallbackWifiNetworkFromVirtual(device, '2.4G', 'VirtualParameters.wifiSsid24', [1, 2, 3, 4]),
+    has5 ? null : fallbackWifiNetworkFromVirtual(device, '5G', 'VirtualParameters.wifiSsid5', [5, 6, 7, 8])
+  ].filter(Boolean);
+  return [...rows, ...fallbackRows].sort((left, right) => left.index - right.index);
 }
 
 function pathNode(source = {}, path = '') {
@@ -1081,6 +1166,7 @@ function normalizeDevice(device = {}, settings = {}) {
   const pppIpAddress = firstIpParameter(device, pppIpParameterCandidates(username.path));
   const rxPower = firstParameter(device, cfg.rxPowerParameters);
   const temperature = firstParameter(device, cfg.temperatureParameters);
+  const wanVlan = firstParameter(device, cfg.wanVlanParameters);
   const ssid24 = firstParameter(device, cfg.wifiSsidParameters);
   const ssid5 = firstParameter(device, cfg.wifi5gSsidParameters);
   const clients24 = firstParameter(device, cfg.wifiClientCountParameters);
@@ -1138,6 +1224,8 @@ function normalizeDevice(device = {}, settings = {}) {
     temperatureValue: temperatureNumber(temperature.value),
     temperatureText: normalizeTemperature(temperature.value) || '-',
     temperatureParameter: temperature.path,
+    wanVlan: wanVlan.value,
+    wanVlanParameter: wanVlan.path,
     ssid24: wifi24?.ssid || ssid24.value,
     ssid24Parameter: wifi24?.ssidParameter || ssid24.path,
     ssid5: wifi5?.ssid || ssid5.value,
@@ -1179,11 +1267,15 @@ function recentPppState(device = {}, row = {}) {
     `${base}.Status`
   ]).value;
   const vlanValue = firstExistingParameter(device, [
+    'VirtualParameters.wanVlan',
     `${base}.X_HW_VLAN`,
     `${base}.X_ZTE-COM_VLANID`,
     `${base}.X_FH_VLANID`,
     `${base}.X_CMCC_VLANIDMark`,
     `${base}.X_CMCC_VLANID`,
+    `${base}.X_CT-COM_VLANID`,
+    `${base}.X_CT-COM_VLANIDMark`,
+    `${base}.VLANID`,
     `${base}.VLANIDMark`
   ]).value;
   const vlan = Number(vlanValue);
@@ -2348,6 +2440,7 @@ module.exports = {
   DEFAULT_RX_POWER_PARAMETERS,
   DEFAULT_TEMPERATURE_PARAMETERS,
   DEFAULT_USERNAME_PARAMETERS,
+  DEFAULT_WAN_VLAN_PARAMETERS,
   DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS,
   DEFAULT_WIFI_5G_SSID_PARAMETERS,
   DEFAULT_WIFI_CLIENT_COUNT_PARAMETERS,

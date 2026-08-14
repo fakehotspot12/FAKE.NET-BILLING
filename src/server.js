@@ -9362,7 +9362,7 @@ function sanitizeWifiKuSettings(payload = {}, current = {}) {
 function sanitizeRadiusSettings(payload = {}, current = {}) {
   const next = { ...current };
   if (typeof payload.isolationRateLimit === 'string') {
-    next.isolationRateLimit = payload.isolationRateLimit.trim() || '128k/128k';
+    next.isolationRateLimit = payload.isolationRateLimit.trim();
   }
   if (typeof payload.isolationMikrotikGroup === 'string') {
     next.isolationMikrotikGroup = payload.isolationMikrotikGroup.trim();

@@ -118,7 +118,7 @@ Hal yang perlu diatur setelah install:
 - Isi data usaha, logo, dan subdomain publik jika dipakai.
 - Tambahkan Site/NAS, secret Radius, SNMP community, dan profile layanan.
 - Atur Payment Gateway.
-- Scan Whatsapp Gateway.
+- Aktifkan dan scan Whatsapp Gateway dari menu aplikasi jika ingin memakai pengiriman WA. Pada instalasi baru, gateway WA sengaja default `disable` sampai owner mengaktifkannya.
 - Buat rule MikroTik untuk Radius, isolir, dan redirect web isolir sesuai kebutuhan jaringan.
 
 Installer juga menyiapkan Tesseract OCR untuk pembacaan Nomor KTP dari foto pelanggan. Jika repository OS tidak menyediakan paket OCR, install paket `tesseract-ocr` atau `tesseract` sesuai distro lalu jalankan `sudo bash install.sh repair`.
@@ -237,6 +237,8 @@ Field tanggal di Billing Setting berfungsi sebagai berikut:
 Invoice otomatis dibuat per pelanggan sesuai tanggal jatuh temponya masing-masing. Untuk pelanggan prorata Billing Cycle, invoice pertama tidak dibuat sebelum `Active Date`, meskipun window generate invoice sudah masuk H-minus jatuh tempo.
 
 Jika batas terminate diisi lebih dari `0`, hanya isolir yang dibuat sistem karena tunggakan yang dapat berubah otomatis menjadi terminated. Isolir manual oleh admin tidak ikut diproses. Setelah terminated, invoice baru berhenti dibuat tetapi invoice terakhir yang belum lunas tetap tersimpan dan dapat dibayar. PPP-DHCP terminated tetap diarahkan ke profile/group isolir Radius agar halaman isolir dan tombol pembayaran dapat diakses. Pembayaran tidak langsung mengaktifkan akun terminated; aktivasi kembali harus dikonfirmasi admin. Voucher Hotspot terminated tetap diblokir dan tidak mendapatkan akses portal.
+
+Pada `Radius > Setting`, field Rate Limit/Group MikroTik/IP Pool Isolir boleh dikosongkan. Jika semua field isolir kosong, akun yang berstatus isolir/terminated akan disinkronkan ke FreeRADIUS sebagai `Auth-Type := Reject` sehingga login ditolak. Jika ingin pelanggan tetap diarahkan ke web isolir, isi Group MikroTik atau IP Pool isolir sesuai profile/router yang sudah disiapkan.
 
 ## Voucher Hotspot
 
@@ -426,7 +428,7 @@ Konfigurasi awal:
 | URL Inform | `http://IP-SERVER:7547` |
 | NBI untuk Billing | `http://127.0.0.1:7557` |
 
-Virtual Parameters `RXPower` dan `gettemp` dipasang bersama provision harian agar aplikasi dapat membaca redaman dan suhu dari beberapa keluarga ONU. Nilai tetap berasal dari parameter perangkat yang tersedia di GenieACS; perangkat yang tidak mengekspos parameter terkait akan tampil kosong.
+Virtual Parameters `RXPower`, `gettemp`, `wanVlan`, `wifiSsid24`, dan `wifiSsid5` dipasang bersama provision harian agar aplikasi dapat membaca redaman, suhu, VLAN WAN, dan SSID dari beberapa keluarga ONU termasuk beberapa modem CDATA/CDTC FDxxx. Nilai tetap berasal dari parameter perangkat yang tersedia di GenieACS; perangkat yang tidak mengekspos parameter terkait akan tampil kosong.
 
 Jika ingin memaksa instalasi tanpa membuat ACS lokal, gunakan:
 

@@ -8,9 +8,9 @@ const { messageJobId, redisConnectionOptions } = require('../src/whatsapp-queue'
 const { createDefaultStore } = require('../src/store');
 const { __test: serverInternals } = require('../src/server');
 
-test('new installations enable the local Whatsapp gateway for 24-hour delivery', () => {
+test('new installations keep Whatsapp gateway disabled until owner enables it', () => {
   const data = createDefaultStore();
-  assert.equal(data.settings.waGateway.enabled, true);
+  assert.equal(data.settings.waGateway.enabled, false);
   assert.equal(data.settings.waGateway.provider, 'waha');
   assert.equal(data.settings.waGateway.sender, 'default');
   assert.equal(data.settings.waGateway.quietStart, '00:00');

@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.12] - 2026-08-15
+
+### Fixed
+
+- Menambahkan Virtual Parameter `wanVlan`, `wifiSsid24`, dan `wifiSsid5` untuk GenieACS agar VLAN WAN serta SSID modem CDATA/CDTC FDxxx dan beberapa keluarga ONU lain ikut terbaca setelah install/update.
+- Mengubah default instalasi baru Whatsapp Gateway menjadi nonaktif sampai owner mengaktifkannya dari menu aplikasi.
+- Menjadikan isolir Radius kosong sebagai fallback disable akun (`Auth-Type := Reject`) dan memperkuat updater archive-based dengan timeout serta override source yang tidak tertimpa env file.
+
 ## [4.2.11] - 2026-08-15
 
 ### Fixed

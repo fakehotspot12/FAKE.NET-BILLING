@@ -80,6 +80,33 @@ test('terminated PPP keeps isolation portal access while terminated Hotspot stay
   assert.equal(rows.radcheck.some((row) => row.username === 'terminated-hotspot'), false);
 });
 
+test('isolated PPP falls back to disabled account when isolation network is not configured', () => {
+  const data = createDefaultStore();
+  data.settings.radius.isolationRateLimit = '';
+  data.settings.radius.isolationMikrotikGroup = '';
+  data.settings.radius.isolationPool = '';
+  const profile = freeradius.addProfile(data, {
+    name: 'Paket Bulanan',
+    serviceType: 'pppoe',
+    rateLimit: '10M/10M'
+  });
+  freeradius.addRadiusUser(data, {
+    username: 'isolated-user',
+    password: 'secret',
+    serviceType: 'pppoe',
+    profileId: profile.id,
+    status: 'isolated'
+  }, { username: 'admin', name: 'Admin' });
+
+  const rows = freeradius.freeradiusRows(data);
+
+  assert.ok(rows.radcheck.some((row) => (
+    row.username === 'isolated-user' && row.attribute === 'Auth-Type' && row.value === 'Reject'
+  )));
+  assert.equal(rows.radreply.some((row) => row.username === 'isolated-user' && row.attribute === 'Mikrotik-Rate-Limit'), false);
+  assert.equal(rows.radusergroup.some((row) => row.username === 'isolated-user'), false);
+});
+
 test('ppp static IP must be a usable host address', () => {
   const data = createDefaultStore();
 

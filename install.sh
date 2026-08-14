@@ -344,6 +344,9 @@ verify_repository_payload() {
     deploy/genieacs/virtual-parameters/superPassword.js
     deploy/genieacs/virtual-parameters/userAdmin.js
     deploy/genieacs/virtual-parameters/userPassword.js
+    deploy/genieacs/virtual-parameters/wanVlan.js
+    deploy/genieacs/virtual-parameters/wifiSsid24.js
+    deploy/genieacs/virtual-parameters/wifiSsid5.js
     deploy/sql/freeradius-postgresql.sql
     deploy/bin/fakenet-billing-stack
     deploy/bin/fakenet-billing-update
