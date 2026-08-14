@@ -98,7 +98,7 @@ function wanVlan(connection = {}, connectionDevice = {}, vendor = {}) {
     ? ['X_HW_VLAN', 'VLANID', 'X_ZTE-COM_VLANID']
     : (vendor.id === 'fiberhome'
       ? ['VLANID', 'X_FH_VLANID', 'X_ZTE-COM_VLANID']
-      : ['X_CMCC_VLANIDMark', 'X_CMCC_VLANID', 'X_ZTE-COM_VLANID', 'VLANID', 'X_HW_VLAN']);
+      : ['X_GC_VLANIDMark', 'X_GC_VLANID', 'X_CMCC_VLANIDMark', 'X_CMCC_VLANID', 'X_ZTE-COM_VLANID', 'VLANID', 'X_HW_VLAN']);
   const direct = firstValue(connection, paths);
   const xpon = firstValue(connectionDevice, [
     'X_CT-COM_WANEponLinkConfig.VLANIDMark',
@@ -119,6 +119,7 @@ function wanServiceList(connection = {}) {
     'X_ZTE-COM_ServiceList',
     'X_CT-COM_ServiceList',
     'X_CMCC_ServiceList',
+    'X_GC_ServiceList',
     'ServiceList'
   ]));
 }
@@ -136,7 +137,8 @@ function rawPathBindings(connection = {}) {
     'X_FH_LanInterface',
     'X_ZTE-COM_LanInterface',
     'X_CT-COM_LanInterface',
-    'X_CMCC_LanInterface'
+    'X_CMCC_LanInterface',
+    'X_GC_LanInterface'
   ]));
   return text.split(',').map((item) => cleanText(item)).filter(Boolean);
 }
@@ -160,7 +162,8 @@ function wanBindings(connection = {}, vendor = {}) {
     'X_FH_LanInterface',
     'X_ZTE-COM_LanInterface',
     'X_CT-COM_LanInterface',
-    'X_CMCC_LanInterface'
+    'X_CMCC_LanInterface',
+    'X_GC_LanInterface'
   ]));
 }
 
@@ -222,6 +225,9 @@ function wanParameterFamily(connection = {}, connectionDevice = {}, vendor = {})
   if (vendor.id === 'zte-xpon') return 'ctcom';
   if (firstValue(connection, ['X_CMCC_VLANIDMark', 'X_CMCC_VLANID', 'X_CMCC_ServiceList', 'X_CMCC_LanInterface']) !== '') {
     return 'cmcc';
+  }
+  if (firstValue(connection, ['X_GC_VLANIDMark', 'X_GC_VLANID', 'X_GC_ServiceList', 'X_GC_LanInterface']) !== '') {
+    return 'gc';
   }
   if (firstValue(connectionDevice, ['X_CT-COM_WANEponLinkConfig.VLANIDMark', 'X_CT-COM_WANGponLinkConfig.VLANIDMark']) !== '') {
     return 'ctcom';
@@ -432,6 +438,14 @@ function vendorParameterNames(vendor = {}, mode = 'pppoe') {
       vlan: 'X_CMCC_VLANIDMark',
       vlanEnable: '',
       serviceList: 'X_CMCC_ServiceList',
+      serviceValue: mode === 'bridge' ? 'OTHER' : 'INTERNET'
+    };
+  }
+  if (vendor.parameterFamily === 'gc') {
+    return {
+      vlan: 'X_GC_VLANIDMark',
+      vlanEnable: '',
+      serviceList: 'X_GC_ServiceList',
       serviceValue: mode === 'bridge' ? 'OTHER' : 'INTERNET'
     };
   }

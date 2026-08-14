@@ -180,6 +180,53 @@ test('normalizes CDATA SSID from virtual parameter fallback when raw SSID is mis
   assert.equal(device.wifiNetworks.find((item) => item.band === '5G').ssidParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID');
 });
 
+test('reads CDATA GC WAN VLAN and primary SSID from raw parameters', () => {
+  const device = {
+    _id: 'cdata-gc-1',
+    _deviceId: {
+      _Manufacturer: 'CDTC',
+      _ProductClass: 'FD511GD',
+      _SerialNumber: 'FDGC001'
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          WANConnectionDevice: {
+            1: {
+              WANPPPConnection: {
+                1: {
+                  Username: { _value: 'NY002' },
+                  Enable: { _value: true },
+                  ConnectionStatus: { _value: 'Connected' },
+                  ConnectionType: { _value: 'IP_Routed' },
+                  X_GC_ServiceList: { _value: 'INTERNET' },
+                  X_GC_VLANIDMark: { _value: '101' }
+                }
+              }
+            }
+          }
+        }
+      },
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: { SSID: { _value: 'Rumah ku' }, Enable: { _value: true } },
+            5: { SSID: { _value: 'Rumah ku 5G' }, Enable: { _value: true } }
+          }
+        }
+      }
+    }
+  };
+  const normalized = genieAcs.normalizeDevice(device, {});
+  const summary = genieAcsWan.summarizeWanConnections(device, 'NY002');
+
+  assert.equal(normalized.wanVlan, '101');
+  assert.equal(normalized.ssid24, 'Rumah ku');
+  assert.equal(normalized.ssid5, 'Rumah ku 5G');
+  assert.equal(summary.primary.vlan, 101);
+  assert.equal(summary.primary.parameterFamily, 'gc');
+});
+
 test('normalizes GenieACS temperature from virtual and raw parameters', () => {
   const virtualTemp = genieAcs.normalizeDevice({
     _id: 'temp-virtual',
@@ -757,7 +804,7 @@ test('uses a compact registration and PPP projection for recent ONT detection', 
   assert.match(projection, /WANPPPConnection\.1\.Username/);
   assert.match(projection, /ExternalIPAddress/);
   assert.doesNotMatch(projection, /KeyPassphrase|AssociatedDevice/);
-  assert.equal(projection.length < 4096, true);
+  assert.equal(projection.length < 4600, true);
 });
 
 test('splits the GenieACS list projection without requesting full device documents', () => {

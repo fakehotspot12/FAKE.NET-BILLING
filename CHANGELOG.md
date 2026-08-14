@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.13] - 2026-08-15
+
+### Fixed
+
+- Menambahkan pembacaan VLAN CData/GC melalui parameter `X_GC_VLANIDMark` dan `X_GC_VLANID` pada daftar GenieACS, detail WAN, dan deteksi ONT baru.
+- Menambahkan dukungan family WAN `gc` agar edit/provisioning WAN CData memakai parameter service, VLAN, dan binding yang sesuai jika tersedia dari modem.
+- Membatasi timeout bootstrap GenieACS agar install/update tidak menggantung lama pada mesin yang belum memiliki NBI GenieACS lokal.
+
 ## [4.2.12] - 2026-08-15
 
 ### Fixed

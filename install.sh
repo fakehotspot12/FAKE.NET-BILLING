@@ -865,7 +865,9 @@ bootstrap_genieacs() {
   local attempt bootstrap_status
   for attempt in $(seq 1 "${GENIEACS_BOOTSTRAP_ATTEMPTS:-3}"); do
     set +e
-    node "$APP_DIR/deploy/genieacs/bootstrap.js"
+    GENIEACS_NBI_BOOTSTRAP_ATTEMPTS="${GENIEACS_NBI_BOOTSTRAP_ATTEMPTS:-24}" \
+      GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS="${GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS:-3000}" \
+      node "$APP_DIR/deploy/genieacs/bootstrap.js"
     bootstrap_status=$?
     set -e
     [ "$bootstrap_status" -eq 0 ] && return 0

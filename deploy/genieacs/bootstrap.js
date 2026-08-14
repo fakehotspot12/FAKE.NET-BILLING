@@ -13,6 +13,7 @@ const cwmpPassword = String(process.env.GENIEACS_CWMP_AUTH_PASSWORD || '1sampai1
 const mongoUrl = String(process.env.GENIEACS_MONGODB_CONNECTION_URL || 'mongodb://127.0.0.1:27017/genieacs');
 const assetsDir = path.join(__dirname, 'virtual-parameters');
 const autoProvisionEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_AUTO_VP_PROVISION || '').toLowerCase());
+const requestTimeoutMs = Math.max(1000, Number(process.env.GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS || 2500) || 2500);
 const autoProvisionVirtualParameters = new Set([
   'IPTR069',
   'LANActiveClients',
@@ -37,13 +38,16 @@ const autoProvisionVirtualParameters = new Set([
 ]);
 
 async function request(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(options.timeoutMs || requestTimeoutMs) || requestTimeoutMs));
   const response = await fetch(url, {
     ...options,
+    signal: controller.signal,
     headers: {
       ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(options.headers || {})
     }
-  });
+  }).finally(() => clearTimeout(timer));
   const text = await response.text();
   if (!response.ok) throw new Error(`${options.method || 'GET'} ${url} HTTP ${response.status}: ${text.slice(0, 180)}`);
   if (!text) return null;
@@ -71,7 +75,8 @@ async function waitForUi() {
 
 async function waitForNbi() {
   let lastError = null;
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  const attempts = Math.max(1, Number(process.env.GENIEACS_NBI_BOOTSTRAP_ATTEMPTS || 6) || 6);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const devices = await request(`${nbiBase}/devices/?limit=1`);
       if (Array.isArray(devices)) return;
@@ -283,7 +288,7 @@ function backfillVirtualParameterValuesViaMongo() {
     'function wanVlanPaths(pppBase) {',
     '  const paths = [];',
     '  if (pppBase) {',
-    '    for (const suffix of ["X_HW_VLAN","X_ZTE-COM_VLANID","X_FH_VLANID","X_CMCC_VLANIDMark","X_CMCC_VLANID","X_CT-COM_VLANID","X_CT-COM_VLANIDMark","VLANID","VLANIDMark"]) paths.push(pppBase + "." + suffix);',
+    '    for (const suffix of ["X_HW_VLAN","X_ZTE-COM_VLANID","X_FH_VLANID","X_GC_VLANIDMark","X_GC_VLANID","X_CMCC_VLANIDMark","X_CMCC_VLANID","X_CT-COM_VLANID","X_CT-COM_VLANIDMark","VLANID","VLANIDMark"]) paths.push(pppBase + "." + suffix);',
     '    const connectionDeviceBase = pppBase.replace(/\\.(?:WANPPPConnection|WANIPConnection)\\.\\d+$/, "");',
     '    if (connectionDeviceBase && connectionDeviceBase !== pppBase) {',
     '      for (const suffix of ["X_CT-COM_WANEponLinkConfig.VLANIDMark","X_CT-COM_WANGponLinkConfig.VLANIDMark","X_CT-COM_WANEponLinkConfig.VLANID","X_CT-COM_WANGponLinkConfig.VLANID","X_CT-COM_VLANID","X_CT-COM_VLANIDMark"]) paths.push(connectionDeviceBase + "." + suffix);',
