@@ -134,6 +134,11 @@ const IMAGE_UPLOAD_LIMIT_BYTES = 12 * 1024 * 1024;
 const IMAGE_UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
 const IMAGE_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
 const IMAGE_ORPHAN_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const GENIEACS_AUTO_DELETE_STALE_REPLACED_ENABLED = !['0', 'false', 'no', 'off'].includes(String(process.env.GENIEACS_AUTO_DELETE_STALE_REPLACED_ENABLED || '1').toLowerCase());
+const GENIEACS_AUTO_DELETE_STALE_DAYS = clampInteger(process.env.GENIEACS_AUTO_DELETE_STALE_DAYS, 30, 730, 30);
+const GENIEACS_AUTO_DELETE_REPLACEMENT_MAX_AGE_DAYS = clampInteger(process.env.GENIEACS_AUTO_DELETE_REPLACEMENT_MAX_AGE_DAYS, 1, 365, 30);
+const GENIEACS_AUTO_DELETE_MAX_PER_RUN = clampInteger(process.env.GENIEACS_AUTO_DELETE_MAX_PER_RUN, 1, 50, 20);
+const GENIEACS_AUTO_DELETE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const KTP_PHOTO_PREFIX = 'ktp';
 const XENDIT_WITHDRAW_TTL_MS = 10 * 60 * 1000;
 const WA_GATEWAY_SEND_INTERVAL_MS = Math.max(15_000, Number(process.env.WA_GATEWAY_SEND_INTERVAL_MS || 30_000) || 30_000);
@@ -3466,6 +3471,97 @@ async function enrichGenieAcsRowsWithLocalData(data = {}, rows = [], period = cu
       }
     };
   });
+}
+
+function genieAcsLastInformMs(row = {}) {
+  const parsed = Date.parse(String(row.lastInform || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function genieAcsStaleReferenceMs(row = {}) {
+  const lastInformMs = genieAcsLastInformMs(row);
+  if (lastInformMs) return lastInformMs;
+  const registered = Date.parse(String(row.registered || row.createdAt || ''));
+  return Number.isFinite(registered) ? registered : 0;
+}
+
+function genieAcsRowHasUsableStatus(row = {}) {
+  const status = String(row.status || row.rawStatus || '').trim().toLowerCase();
+  if (!status || status === '-' || status === 'unknown') return false;
+  return Boolean(genieAcsLastInformMs(row));
+}
+
+function genieAcsRowLinkedToMember(row = {}) {
+  return Boolean(
+    String(row.customerId || '').trim()
+    || String(row.customerName || '').trim()
+  );
+}
+
+function genieAcsStaleReplacedCandidates(rows = [], options = {}) {
+  const now = Number(options.now || Date.now());
+  const staleMs = Math.max(30, Number(options.staleDays || GENIEACS_AUTO_DELETE_STALE_DAYS) || GENIEACS_AUTO_DELETE_STALE_DAYS) * 24 * 60 * 60 * 1000;
+  const replacementMaxAgeMs = Math.max(1, Number(options.replacementMaxAgeDays || GENIEACS_AUTO_DELETE_REPLACEMENT_MAX_AGE_DAYS) || GENIEACS_AUTO_DELETE_REPLACEMENT_MAX_AGE_DAYS) * 24 * 60 * 60 * 1000;
+  const staleCutoff = now - staleMs;
+  const replacementCutoff = now - replacementMaxAgeMs;
+  const groups = new Map();
+  const candidates = [];
+  const seenCandidateIds = new Set();
+  const pushCandidate = (row = {}, extra = {}) => {
+    const id = String(row.id || '').trim();
+    if (!id || seenCandidateIds.has(id)) return;
+    seenCandidateIds.add(id);
+    candidates.push({
+      id,
+      username: row.username || '',
+      serialNumber: row.serialNumber || '',
+      productClass: row.productClass || '',
+      lastInform: row.lastInform || '',
+      registered: row.registered || '',
+      reason: extra.reason || 'stale-orphan',
+      replacementId: extra.replacementId || '',
+      replacementSerialNumber: extra.replacementSerialNumber || '',
+      replacementLastInform: extra.replacementLastInform || ''
+    });
+  };
+  for (const row of rows || []) {
+    const referenceMs = genieAcsStaleReferenceMs(row);
+    if (
+      referenceMs
+      && referenceMs <= staleCutoff
+      && !genieAcsRowLinkedToMember(row)
+      && (!radiusSessionUsername(row.username) || !genieAcsRowHasUsableStatus(row))
+    ) {
+      pushCandidate(row, { reason: 'stale-orphan-no-status' });
+    }
+    const username = radiusSessionUsername(row.username);
+    if (!username) continue;
+    const lastInformMs = genieAcsLastInformMs(row);
+    if (!lastInformMs) continue;
+    const list = groups.get(username) || [];
+    list.push({ ...row, _lastInformMs: lastInformMs, _usernameKey: username });
+    groups.set(username, list);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const sorted = group.slice().sort((left, right) => right._lastInformMs - left._lastInformMs);
+    const replacement = sorted.find((row) => row._lastInformMs >= replacementCutoff);
+    if (!replacement) continue;
+    for (const row of sorted.slice(1)) {
+      if (row.id === replacement.id) continue;
+      if (row._lastInformMs > staleCutoff) continue;
+      if (genieAcsRowLinkedToMember(row)) continue;
+      pushCandidate(row, {
+        reason: 'stale-replaced',
+        replacementId: replacement.id || '',
+        replacementSerialNumber: replacement.serialNumber || '',
+        replacementLastInform: replacement.lastInform || ''
+      });
+    }
+  }
+  return candidates
+    .sort((left, right) => (Date.parse(left.lastInform) || 0) - (Date.parse(right.lastInform) || 0))
+    .slice(0, Math.max(1, Number(options.max || GENIEACS_AUTO_DELETE_MAX_PER_RUN) || GENIEACS_AUTO_DELETE_MAX_PER_RUN));
 }
 
 function dataWithResolvedCustomerStatuses(data = {}) {
@@ -17453,6 +17549,8 @@ let routerDashboardBackgroundRunning = false;
 let routerDashboardBackgroundTimer = null;
 let customerSummaryBackgroundRunning = false;
 let customerSummaryBackgroundTimer = null;
+let genieAcsStaleReplacedCleanupRunning = false;
+let genieAcsStaleReplacedCleanupTimer = null;
 
 async function warmRouterDashboardCache(reason = 'interval') {
   if (routerDashboardBackgroundRunning) {
@@ -17522,6 +17620,117 @@ function startCustomerSummaryBackgroundPolling() {
   customerSummaryBackgroundTimer = setInterval(() => run('interval'), CUSTOMER_SUMMARY_BACKGROUND_INTERVAL_MS);
   customerSummaryBackgroundTimer.unref?.();
   console.log(`Pelanggan Online cache aktif setiap ${Math.round(CUSTOMER_SUMMARY_BACKGROUND_INTERVAL_MS / 1000)} detik`);
+}
+
+async function runGenieAcsStaleReplacedCleanup(reason = 'interval') {
+  if (!GENIEACS_AUTO_DELETE_STALE_REPLACED_ENABLED || MIGRATION_MODE) {
+    return { skipped: true, reason: MIGRATION_MODE ? 'migration-mode' : 'disabled' };
+  }
+  if (genieAcsStaleReplacedCleanupRunning) {
+    return { skipped: true, reason: 'already-running' };
+  }
+  genieAcsStaleReplacedCleanupRunning = true;
+  const startedAt = Date.now();
+  try {
+    const data = await loadStore();
+    if (!genieAcs.configured(data.settings || {})) {
+      return { skipped: true, reason: 'genieacs-not-configured' };
+    }
+    const payload = await genieAcs.listDevices(data.settings || {}, {
+      page: 1,
+      limit: 'all',
+      status: 'all',
+      redaman: 'all',
+      refresh: false,
+      sourcePagination: false
+    });
+    const rows = await enrichGenieAcsRowsWithLocalData(data, payload.rows || [], currentPeriod());
+    const candidates = genieAcsStaleReplacedCandidates(rows, {
+      staleDays: GENIEACS_AUTO_DELETE_STALE_DAYS,
+      replacementMaxAgeDays: GENIEACS_AUTO_DELETE_REPLACEMENT_MAX_AGE_DAYS,
+      max: GENIEACS_AUTO_DELETE_MAX_PER_RUN
+    });
+    if (!candidates.length) {
+      return {
+        ok: true,
+        reason,
+        scanned: rows.length,
+        deleted: 0,
+        durationMs: Date.now() - startedAt
+      };
+    }
+    const results = [];
+    for (const candidate of candidates) {
+      try {
+        await genieAcs.deleteDevice(data.settings || {}, candidate.id);
+        results.push({ ...candidate, ok: true });
+      } catch (error) {
+        results.push({
+          ...candidate,
+          ok: false,
+          error: String(error.message || 'Device GenieACS gagal dihapus').slice(0, 300)
+        });
+      }
+    }
+    const deleted = results.filter((item) => item.ok).length;
+    const failed = results.length - deleted;
+    await mutate((store) => {
+      addActivity(store, 'monitoring', `GenieACS auto-delete membersihkan ${deleted}/${results.length} ONT orphan lama`, {
+        action: 'genieacs-auto-delete-stale-replaced',
+        reason,
+        scanned: rows.length,
+        staleDays: GENIEACS_AUTO_DELETE_STALE_DAYS,
+        replacementMaxAgeDays: GENIEACS_AUTO_DELETE_REPLACEMENT_MAX_AGE_DAYS,
+        deleted,
+        failed,
+        results: results.map((item) => ({
+          id: item.id,
+          username: item.username,
+          serialNumber: item.serialNumber,
+          productClass: item.productClass,
+          lastInform: item.lastInform,
+          replacementId: item.replacementId,
+          replacementSerialNumber: item.replacementSerialNumber,
+          ok: item.ok,
+          error: item.error || ''
+        }))
+      });
+    }, { collections: ['activity'], includeCore: false });
+    if (deleted) {
+      console.log(`GenieACS auto-delete ${reason}: ${deleted}/${results.length} ONT orphan lama dihapus`);
+    }
+    if (failed) {
+      console.warn(`GenieACS auto-delete ${reason}: ${failed} ONT gagal dihapus`);
+    }
+    return {
+      ok: true,
+      reason,
+      scanned: rows.length,
+      deleted,
+      failed,
+      durationMs: Date.now() - startedAt,
+      results
+    };
+  } finally {
+    genieAcsStaleReplacedCleanupRunning = false;
+  }
+}
+
+function startGenieAcsStaleReplacedCleanup() {
+  if (!GENIEACS_AUTO_DELETE_STALE_REPLACED_ENABLED || MIGRATION_MODE) {
+    console.log('GenieACS auto-delete ONT orphan lama dinonaktifkan');
+    return;
+  }
+  const run = (reason) => {
+    runGenieAcsStaleReplacedCleanup(reason).catch((error) => {
+      console.error(`GenieACS auto-delete ONT orphan lama gagal: ${error.message || error}`);
+    });
+  };
+  const initialTimer = setTimeout(() => run('startup'), 120_000);
+  initialTimer.unref?.();
+  genieAcsStaleReplacedCleanupTimer = setInterval(() => run('interval'), GENIEACS_AUTO_DELETE_INTERVAL_MS);
+  genieAcsStaleReplacedCleanupTimer.unref?.();
+  console.log(`GenieACS auto-delete ONT orphan lama aktif setiap ${Math.round(GENIEACS_AUTO_DELETE_INTERVAL_MS / 3600000)} jam`);
 }
 
 async function paymentGatewayChannels(data = {}, options = {}) {
@@ -21296,6 +21505,47 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/radius/ppp-dhcp/users/check-username') {
+    const authContext = await requireAnyPermission(req, res, ['radius:read', 'radius:write', 'radius:ppp-users:write']);
+    if (!authContext) return;
+    if (!radiusSectionAllowedForUser(authContext.user, 'ppp-dhcp')) {
+      forbidden(res);
+      return;
+    }
+    const username = String(url.searchParams.get('username') || '').trim();
+    const excludeId = String(url.searchParams.get('excludeId') || '').trim();
+    if (!username) {
+      sendJson(res, 200, { ok: true, exists: false, user: null });
+      return;
+    }
+    const normalized = username.toLowerCase();
+    const existing = (authContext.data.radiusUsers || []).find((user) => (
+      String(user.id || '') !== excludeId
+      && String(user.username || '').trim().toLowerCase() === normalized
+    ));
+    const customer = existing
+      ? (authContext.data.customers || []).find((item) => (
+        item.id === existing.customerId
+        || String(item.username || '').trim().toLowerCase() === normalized
+      ))
+      : null;
+    const profile = existing ? radiusFindProfile(authContext.data, existing.profileId || existing.profile, existing.serviceType || 'pppoe') : null;
+    const nas = existing ? radiusFindNas(authContext.data, existing.nasId || existing.nas || existing.routerNas) : null;
+    sendJson(res, 200, {
+      ok: true,
+      exists: Boolean(existing),
+      user: existing ? {
+        id: existing.id || '',
+        username: existing.username || '',
+        serviceType: existing.serviceType || '',
+        customerName: customer?.name || existing.customerName || '',
+        profileName: profile?.name || existing.profileName || '',
+        nasName: nas?.name || existing.nasName || ''
+      } : null
+    });
+    return;
+  }
+
   const radiusPppUserMatch = pathname.match(/^\/api\/radius\/ppp-dhcp\/users(?:\/([^/]+))?$/);
   if (radiusPppUserMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
     const authContext = await requireAnyPermission(req, res, ['radius:write', 'radius:ppp-users:write']);
@@ -24344,6 +24594,7 @@ if (require.main === module) {
       startPaymentGatewayHistorySync();
       startRouterDashboardBackgroundPolling();
       startCustomerSummaryBackgroundPolling();
+      startGenieAcsStaleReplacedCleanup();
       imageCleanupTimer = setInterval(() => {
         runImageCleanup().catch((error) => console.error(`Pembersihan upload gagal: ${error.message || error}`));
       }, IMAGE_ORPHAN_CLEANUP_INTERVAL_MS);
@@ -24365,6 +24616,7 @@ if (require.main === module) {
     if (paymentGatewayHistorySyncTimer) clearInterval(paymentGatewayHistorySyncTimer);
     if (routerDashboardBackgroundTimer) clearInterval(routerDashboardBackgroundTimer);
     if (customerSummaryBackgroundTimer) clearInterval(customerSummaryBackgroundTimer);
+    if (genieAcsStaleReplacedCleanupTimer) clearInterval(genieAcsStaleReplacedCleanupTimer);
     if (imageCleanupTimer) clearInterval(imageCleanupTimer);
     server.close();
     await waGatewayQueue?.close().catch((error) => {
@@ -24404,6 +24656,8 @@ module.exports = {
     hotspotLoginUrlForNas,
     hotspotVoucherPublicStatusUrl,
     hotspotFreeUserWritable,
+    genieAcsRowLinkedToMember,
+    genieAcsStaleReplacedCandidates,
     hasLegacyInlineImages,
     cleanupOrphanUploads,
     customerInvoiceGenerationDue,

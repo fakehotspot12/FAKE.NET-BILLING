@@ -549,8 +549,32 @@ ensure_wa_gateway_env_defaults() {
   fi
 }
 
+prepare_genieacs_env_file() {
+  local source_mode="${1:-bundled}" genieacs_jwt_secret
+  if [ ! -f "$GENIEACS_ENV_FILE" ]; then
+    cp "$APP_DIR/deploy/fakenet-billing-genieacs.env" "$GENIEACS_ENV_FILE"
+  fi
+  genieacs_jwt_secret="$(random_hex 64)"
+  if grep -q 'CHANGE_ME_GENIEACS_JWT_SECRET' "$GENIEACS_ENV_FILE"; then
+    sed -i "s/CHANGE_ME_GENIEACS_JWT_SECRET/$genieacs_jwt_secret/g" "$GENIEACS_ENV_FILE"
+  fi
+  append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_UI_USERNAME billing
+  append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_UI_PASSWORD billing123
+  append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_CWMP_AUTH_USERNAME admin
+  append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_CWMP_AUTH_PASSWORD 1sampai10
+  append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_MONGODB_CONNECTION_URL mongodb://127.0.0.1:27017/genieacs
+  replace_or_append_env "$GENIEACS_ENV_FILE" GENIEACS_NBI_INTERFACE 127.0.0.1
+  append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_NBI_PORT 7557
+  if [ "$source_mode" = "bundled" ]; then
+    ensure_genieacs_mongodb_image_env
+  else
+    append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_MONGODB_IMAGE "$GENIEACS_MONGODB_IMAGE_DEFAULT"
+  fi
+  chmod 600 "$GENIEACS_ENV_FILE"
+}
+
 install_env() {
-  local app_db_password radius_db_password waha_api_key waha_password waha_webhook_secret genieacs_jwt_secret
+  local app_db_password radius_db_password waha_api_key waha_password waha_webhook_secret
   if [ ! -f /etc/fakenet-billing.env ]; then
     cp "$APP_DIR/deploy/fakenet-billing.env" /etc/fakenet-billing.env
   fi
@@ -597,25 +621,13 @@ install_env() {
   append_env_if_missing /etc/fakenet-billing-waha.env WAHA_PRINT_QR false
 
   if [ "${INSTALL_GENIEACS:-1}" != "0" ]; then
-    if [ ! -f "$GENIEACS_ENV_FILE" ]; then
-      cp "$APP_DIR/deploy/fakenet-billing-genieacs.env" "$GENIEACS_ENV_FILE"
-    fi
-    genieacs_jwt_secret="$(random_hex 64)"
-    if grep -q 'CHANGE_ME_GENIEACS_JWT_SECRET' "$GENIEACS_ENV_FILE"; then
-      sed -i "s/CHANGE_ME_GENIEACS_JWT_SECRET/$genieacs_jwt_secret/g" "$GENIEACS_ENV_FILE"
-    fi
-    append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_UI_USERNAME billing
-    append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_UI_PASSWORD billing123
-    append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_CWMP_AUTH_USERNAME admin
-    append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_CWMP_AUTH_PASSWORD 1sampai10
-    replace_or_append_env "$GENIEACS_ENV_FILE" GENIEACS_NBI_INTERFACE 127.0.0.1
-    ensure_genieacs_mongodb_image_env
-    chmod 600 "$GENIEACS_ENV_FILE"
+    prepare_genieacs_env_file bundled
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_ENABLED 1
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_BASE_URL http://127.0.0.1:7557
     replace_or_append_env /etc/fakenet-billing.env FAKENET_BUNDLED_GENIEACS 1
     replace_or_append_env /etc/fakenet-billing.env GENIEACS_SOURCE bundled
   elif [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ]; then
+    prepare_genieacs_env_file existing
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_ENABLED 1
     if port_is_listening 7557; then
       append_env_if_missing /etc/fakenet-billing.env GENIEACS_BASE_URL http://127.0.0.1:7557

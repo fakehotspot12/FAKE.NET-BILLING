@@ -8298,6 +8298,10 @@ td {
   width: 124px;
 }
 
+.genieacs-mobile-cards {
+  display: none;
+}
+
 .genieacs-primary-cell strong,
 .genieacs-truncate,
 .genieacs-sn-cell,
@@ -18452,6 +18456,355 @@ dialog::backdrop {
   }
 }
 /* DEV mobile extended table cards - end */
+
+/* GenieACS mobile modem row polish - start */
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .genieacs-table tbody tr {
+    align-items: start;
+    border-radius: 14px;
+    gap: 7px 8px;
+    grid-template-areas:
+      "select pppoe status"
+      "ip ip ip"
+      "nas nas active"
+      "type type last"
+      "sn sn sn"
+      "redaman temp temp"
+      "action action action";
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    padding: 10px;
+  }
+
+  .genieacs-table tbody td {
+    min-width: 0;
+  }
+
+  .genieacs-table tbody td:nth-child(1),
+  .genieacs-table tbody td:nth-child(3) {
+    align-self: start;
+  }
+
+  .genieacs-table tbody td:nth-child(1)::before,
+  .genieacs-table tbody td:nth-child(3)::before {
+    content: none;
+  }
+
+  .genieacs-table tbody td:nth-child(3) {
+    justify-self: end;
+    max-width: 96px;
+    text-align: right;
+  }
+
+  .genieacs-table tbody td:nth-child(4) {
+    min-width: 0;
+  }
+
+  .genieacs-table .genieacs-pppoe-cell {
+    align-items: center;
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    gap: 8px;
+    min-height: 36px;
+    padding: 6px 8px;
+  }
+
+  .genieacs-table .genieacs-pppoe-cell strong {
+    font-size: 13px;
+    line-height: 1.25;
+    min-width: 0;
+  }
+
+  .genieacs-table tbody td:nth-child(5),
+  .genieacs-table tbody td:nth-child(6),
+  .genieacs-table tbody td:nth-child(7),
+  .genieacs-table tbody td:nth-child(8),
+  .genieacs-table tbody td:nth-child(9),
+  .genieacs-table tbody td:nth-child(10),
+  .genieacs-table tbody td:nth-child(11),
+  .genieacs-table tbody td:nth-child(12) {
+    background: color-mix(in srgb, var(--surface-soft) 72%, transparent) !important;
+    border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+    border-radius: 9px;
+    min-height: 42px;
+    padding: 6px 8px;
+  }
+
+  .genieacs-table tbody td:nth-child(5)::before,
+  .genieacs-table tbody td:nth-child(6)::before,
+  .genieacs-table tbody td:nth-child(7)::before,
+  .genieacs-table tbody td:nth-child(8)::before,
+  .genieacs-table tbody td:nth-child(9)::before,
+  .genieacs-table tbody td:nth-child(10)::before,
+  .genieacs-table tbody td:nth-child(11)::before,
+  .genieacs-table tbody td:nth-child(12)::before {
+    font-size: 9px;
+    letter-spacing: .025em;
+    margin-bottom: 2px;
+  }
+
+  .genieacs-table tbody td:nth-child(11),
+  .genieacs-table tbody td:nth-child(12) {
+    justify-self: stretch;
+    text-align: left;
+  }
+
+  .genieacs-table tbody td:nth-child(11)::before,
+  .genieacs-table tbody td:nth-child(12)::before {
+    text-align: left;
+  }
+
+  .genieacs-table .genieacs-client-button {
+    justify-content: flex-start;
+    min-height: 24px;
+    min-width: 0;
+    padding: 0;
+  }
+
+  .genieacs-table .nas-badge {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .genieacs-table code,
+  .genieacs-table .genieacs-sn-cell code,
+  .genieacs-table .genieacs-truncate,
+  .genieacs-table .genieacs-nowrap {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .genieacs-table tbody td:nth-child(13) {
+    border-top: 1px dashed var(--line);
+    margin-top: 1px;
+    padding-top: 8px;
+  }
+
+  .genieacs-table .genieacs-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .genieacs-table .genieacs-actions .ghost-button,
+  .genieacs-table .genieacs-actions .danger-button {
+    justify-content: center;
+    min-height: 34px;
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .genieacs-table tbody tr {
+    grid-template-areas:
+      "select status"
+      "pppoe pppoe"
+      "ip ip"
+      "nas active"
+      "type last"
+      "sn sn"
+      "redaman temp"
+      "action action";
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .genieacs-table tbody td:nth-child(3) {
+    justify-self: end;
+  }
+
+  .genieacs-table tbody td:nth-child(5),
+  .genieacs-table tbody td:nth-child(8),
+  .genieacs-table tbody td:nth-child(13) {
+    grid-column: 1 / -1;
+  }
+
+  .genieacs-table .genieacs-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+/* GenieACS mobile modem row polish - end */
+
+/* GenieACS dedicated mobile cards - start */
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+  .genieacs-table-wrap {
+    display: none !important;
+  }
+
+  .genieacs-mobile-cards {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .genieacs-device-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, .06);
+    display: grid;
+    gap: 9px;
+    min-width: 0;
+    padding: 10px;
+  }
+
+  [data-theme="dark"] .genieacs-device-card {
+    box-shadow: 0 14px 26px rgba(0, 0, 0, .2);
+  }
+
+  .genieacs-card-head {
+    align-items: center;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    min-width: 0;
+  }
+
+  .genieacs-card-head input[type="checkbox"] {
+    height: 16px;
+    margin: 0;
+    width: 16px;
+  }
+
+  .genieacs-card-title {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .genieacs-card-title strong,
+  .genieacs-card-title span {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .genieacs-card-title strong {
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 850;
+    line-height: 1.2;
+  }
+
+  .genieacs-card-title span {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.8px;
+  }
+
+  .genieacs-card-status {
+    justify-self: end;
+    max-width: 96px;
+  }
+
+  .genieacs-card-status .badge {
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .genieacs-card-grid {
+    display: grid;
+    gap: 7px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+  }
+
+  .genieacs-card-item {
+    background: color-mix(in srgb, var(--surface-soft) 80%, transparent);
+    border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+    border-radius: 10px;
+    display: grid;
+    gap: 2px;
+    min-height: 42px;
+    min-width: 0;
+    padding: 6px 8px;
+  }
+
+  .genieacs-card-item.wide {
+    grid-column: 1 / -1;
+  }
+
+  .genieacs-card-item span {
+    color: var(--muted);
+    display: block;
+    font-size: 9px;
+    font-weight: 850;
+    letter-spacing: .025em;
+    line-height: 1.1;
+    text-transform: uppercase;
+  }
+
+  .genieacs-card-item strong,
+  .genieacs-card-item .badge,
+  .genieacs-card-item .genieacs-client-button {
+    align-items: center;
+    color: var(--text);
+    display: flex;
+    font-size: 12.2px;
+    font-weight: 750;
+    line-height: 1.2;
+    min-height: 20px;
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .genieacs-card-item .badge {
+    justify-content: flex-start;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .genieacs-card-item .genieacs-client-button {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    justify-content: flex-start;
+    padding: 0;
+    width: auto;
+  }
+
+  .genieacs-card-actions {
+    border-top: 1px dashed var(--line);
+    display: grid;
+    gap: 7px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding-top: 9px;
+  }
+
+  .genieacs-card-actions .button,
+  .genieacs-card-actions .ghost-button,
+  .genieacs-card-actions .danger-button {
+    justify-content: center;
+    min-height: 34px;
+    padding-inline: 8px;
+    width: 100%;
+  }
+
+  .genieacs-mobile-empty {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+  }
+}
+
+@media (max-width: 380px) {
+  .genieacs-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .genieacs-card-actions {
+    grid-template-columns: 1fr;
+  }
+}
+/* GenieACS dedicated mobile cards - end */
 
 /* Reeltech-style monitoring map pages - start */
 .monitoring-map-page {

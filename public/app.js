@@ -39,7 +39,7 @@ const copyrightYear = document.getElementById('copyrightYear');
 const copyrightName = document.getElementById('copyrightName');
 const appVersion = document.getElementById('appVersion');
 const buildVersion = document.getElementById('buildVersion');
-const mobileMenuQuery = window.matchMedia('(max-width: 760px)');
+const mobileMenuQuery = window.matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)');
 const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100];
@@ -368,6 +368,7 @@ const state = {
 const LIVE_SEARCH_DEBOUNCE_MS = 450;
 const RADIUS_OPTIONS_CACHE_TTL_MS = 15000;
 const radiusOptionsCache = new Map();
+const radiusUsernameCheckCache = new Map();
 
 let monitoringCustomersTimer = null;
 let monitoringServicesTimer = null;
@@ -10148,6 +10149,32 @@ async function loadRadiusOptions(section = 'ppp', options = {}) {
   return value;
 }
 
+async function checkRadiusPppUsernameDuplicate(username = '', excludeId = '') {
+  const normalized = String(username || '').trim().toLowerCase();
+  if (!normalized) return { exists: false, user: null };
+  const cacheKey = `${normalized}|${String(excludeId || '')}`;
+  const cached = radiusUsernameCheckCache.get(cacheKey);
+  if (cached && (Date.now() - cached.time) < RADIUS_OPTIONS_CACHE_TTL_MS) {
+    return cached.value;
+  }
+  const payload = await api(`/api/radius/ppp-dhcp/users/check-username?${queryString({
+    username: normalized,
+    excludeId: excludeId || ''
+  })}`, { timeoutMs: 6000 });
+  const value = {
+    exists: payload.exists === true,
+    user: payload.user || null
+  };
+  radiusUsernameCheckCache.set(cacheKey, { time: Date.now(), value });
+  return value;
+}
+
+function radiusUsernameDuplicateMessage(username = '', duplicate = {}) {
+  const oldUser = duplicate?.user || {};
+  const owner = oldUser.customerName || oldUser.memberName || oldUser.name || oldUser.username || '';
+  return `Username PPP-DHCP ${username} sudah dipakai${owner ? ` oleh ${owner}` : ''}. Gunakan username lain.`;
+}
+
 function radiusStatusFilterOptions(section = 'ppp') {
   const options = [
     { value: 'active', label: 'Aktif' },
@@ -12372,7 +12399,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
     </label>
     ${canAddMember && !user ? `
       <label class="field full checkbox-field" data-auto-ppp-field>
-        <input name="autoPppCredential" id="radiusAutoPppCredential" type="checkbox" value="true" checked>
+        <input name="autoPppCredential" id="radiusAutoPppCredential" type="checkbox" value="true">
         <span>Buat username & password otomatis dari Member ID</span>
       </label>
       <div class="field full notice info" id="radiusAutoCredentialPreview" data-auto-ppp-field>
@@ -12383,6 +12410,7 @@ function radiusPppUserFormBody(user = null, options = {}) {
     <label class="field" data-ppp-credential>
       <span>Username</span>
       <input name="username" value="${escapeHtml(user?.username || '')}" autocomplete="off" required>
+      <small class="muted" data-radius-username-status></small>
     </label>
     <label class="field" data-ppp-credential>
       <span>Password</span>
@@ -12752,6 +12780,13 @@ async function openRadiusPppUserModal(user = null) {
     } else {
       delete payload.macAddress;
     }
+    const checkedUsername = String(payload.username || '').trim();
+    if (checkedUsername) {
+      const duplicate = await checkRadiusPppUsernameDuplicate(checkedUsername, user?.id || '');
+      if (duplicate.exists) {
+        throw new Error(radiusUsernameDuplicateMessage(checkedUsername, duplicate));
+      }
+    }
     if (payload.addToMember && !String(payload.memberName || '').trim()) {
       throw new Error('Nama Member wajib diisi');
     }
@@ -12817,8 +12852,51 @@ function bindRadiusPppWizard() {
   const stepKeys = ['account', 'member', 'payment', 'review'];
   let step = 0;
   let highestUnlockedStep = 0;
+  let usernameCheckTimer = null;
   const activeSteps = () => addToMember?.checked ? stepKeys : ['account'];
   const currentStepKey = () => activeSteps()[step] || 'account';
+  const usernameInput = () => modalBody.querySelector('input[name="username"]');
+  const usernameStatus = () => modalBody.querySelector('[data-radius-username-status]');
+  const setUsernameStatus = (message = '', tone = '') => {
+    const status = usernameStatus();
+    if (status) {
+      status.textContent = message;
+      status.hidden = !message;
+      status.style.color = tone === 'error' ? 'var(--danger)' : tone === 'warning' ? 'var(--warning)' : '';
+    }
+    const input = usernameInput();
+    if (input) input.setCustomValidity(tone === 'error' ? message : '');
+  };
+  const currentAccountUsername = () => {
+    const type = String(modalBody.querySelector('#radiusPppType')?.value || '').toLowerCase();
+    if (type === 'dhcp') return '';
+    return usernameInput()?.value.trim() || '';
+  };
+  const validateAccountUsernameDuplicate = async (quiet = false) => {
+    const username = currentAccountUsername();
+    if (!username) {
+      setUsernameStatus('');
+      return true;
+    }
+    try {
+      const duplicate = await checkRadiusPppUsernameDuplicate(username);
+      if (String(currentAccountUsername()).toLowerCase() !== String(username).toLowerCase()) {
+        return true;
+      }
+      if (duplicate.exists) {
+        const message = radiusUsernameDuplicateMessage(username, duplicate);
+        setUsernameStatus(message, 'error');
+        if (!quiet) setToast(message);
+        return false;
+      }
+      setUsernameStatus('');
+      return true;
+    } catch (error) {
+      setUsernameStatus('Validasi username belum bisa dibaca. Backend tetap akan mengecek saat Simpan.', 'warning');
+      if (!quiet) setToast(error.message || 'Validasi username belum bisa dibaca');
+      return true;
+    }
+  };
   const selectedText = (selector, fallback = '-') => {
     const select = modalBody.querySelector(selector);
     return select?.selectedOptions?.[0]?.textContent?.trim() || fallback;
@@ -12926,6 +13004,13 @@ function bindRadiusPppWizard() {
     }
     return true;
   };
+  const validateStepAsync = async () => {
+    if (!validateStep()) return false;
+    if (currentStepKey() === 'account') {
+      return validateAccountUsernameDuplicate(false);
+    }
+    return true;
+  };
   const renderStep = () => {
     const steps = activeSteps();
     const current = currentStepKey();
@@ -12971,7 +13056,7 @@ function bindRadiusPppWizard() {
     return form.dataset.radiusWizardReady === '1';
   };
   stepButtons.forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       const target = stepKeys[Number(button.dataset.radiusWizardGoto || 0)];
       const steps = activeSteps();
       const nextStep = steps.indexOf(target);
@@ -12980,7 +13065,7 @@ function bindRadiusPppWizard() {
         setToast('Selesaikan step saat ini terlebih dahulu');
         return;
       }
-      if (nextStep > step && nextStep > highestUnlockedStep && !validateStep()) return;
+      if (nextStep > step && nextStep > highestUnlockedStep && !(await validateStepAsync())) return;
       highestUnlockedStep = Math.max(highestUnlockedStep, nextStep);
       step = nextStep;
       renderStep();
@@ -12991,13 +13076,23 @@ function bindRadiusPppWizard() {
     step = Math.max(0, step - 1);
     renderStep();
   });
-  nextButton?.addEventListener('click', () => {
-    if (!validateStep()) return;
+  nextButton?.addEventListener('click', async () => {
+    if (!(await validateStepAsync())) return;
     const steps = activeSteps();
     step = Math.min(steps.length - 1, step + 1);
     highestUnlockedStep = Math.max(highestUnlockedStep, step);
     renderStep();
     window.setTimeout(() => modalBody.querySelector('#radiusLeafletMap')?._radiusMap?.invalidateSize?.(), 60);
+  });
+  usernameInput()?.addEventListener('input', () => {
+    setUsernameStatus('');
+    window.clearTimeout(usernameCheckTimer);
+    usernameCheckTimer = window.setTimeout(() => {
+      validateAccountUsernameDuplicate(true);
+    }, 450);
+  });
+  modalBody.querySelector('#radiusPppType')?.addEventListener('change', () => {
+    setUsernameStatus('');
   });
   addToMember?.addEventListener('change', () => {
     step = 0;
@@ -17776,6 +17871,65 @@ async function renderGenieAcs(options = {}) {
             <button class="danger-button compact" id="genieAcsBatchDelete" type="button">Hapus</button>
           ` : ''}
         </div>
+        <div class="genieacs-mobile-cards" aria-label="Daftar device CPE/ONU mobile">
+          ${rows.length ? rows.map((row, index) => {
+            const lastActive = dateTimeText(row.lastInform);
+            const ipAddress = row.ipAddress || row.framedIpAddress || '-';
+            const nasName = row.nasName || row.nasIpAddress || '-';
+            const clientsTotal = row.wifiClientsTotal || row.clientsTotal || 0;
+            return `
+              <article class="genieacs-device-card">
+                <div class="genieacs-card-head">
+                  <input type="checkbox" data-genieacs-select="${index}" aria-label="Pilih device ${escapeHtml(row.serialNumber || row.id || '')}" ${writeAllowed ? '' : 'disabled'}>
+                  <div class="genieacs-card-title">
+                    <strong title="${escapeHtml(row.username || '-')}">${escapeHtml(row.username || '-')}</strong>
+                    <span title="${escapeHtml(row.serialNumber || '-')}">${escapeHtml(row.serialNumber || '-')}</span>
+                  </div>
+                  <div class="genieacs-card-status">${genieStatusBadge(row)}</div>
+                </div>
+                <div class="genieacs-card-grid">
+                  <div class="genieacs-card-item wide">
+                    <span>IP Address</span>
+                    <strong title="${escapeHtml(ipAddress)}">${escapeHtml(ipAddress)}</strong>
+                  </div>
+                  <div class="genieacs-card-item">
+                    <span>NAS</span>
+                    ${nasActiveBadge(nasName)}
+                  </div>
+                  <div class="genieacs-card-item">
+                    <span>Type</span>
+                    <strong title="${escapeHtml(row.productClass || '-')}">${escapeHtml(row.productClass || '-')}</strong>
+                  </div>
+                  <div class="genieacs-card-item">
+                    <span>Redaman</span>
+                    <strong>${escapeHtml(row.rxPowerText || '-')}</strong>
+                  </div>
+                  <div class="genieacs-card-item">
+                    <span>Suhu</span>
+                    <strong>${escapeHtml(row.temperatureText || '-')}</strong>
+                  </div>
+                  <div class="genieacs-card-item">
+                    <span>Client</span>
+                    <button class="genieacs-client-button" type="button" data-genie-clients="${index}" title="Lihat client terkoneksi">
+                      ${displayNumber(clientsTotal)}
+                    </button>
+                  </div>
+                  <div class="genieacs-card-item wide">
+                    <span>Terakhir Aktif</span>
+                    <strong title="${escapeHtml(lastActive)}">${escapeHtml(lastActive)}</strong>
+                  </div>
+                </div>
+                ${writeAllowed ? `
+                  <div class="genieacs-card-actions">
+                    <button class="ghost-button compact" type="button" data-genie-wan="${escapeHtml(row.id)}">WAN</button>
+                    <button class="ghost-button compact" type="button" data-genie-wifi="${escapeHtml(row.id)}">WiFi</button>
+                    <button class="danger-button compact" type="button" data-genie-reboot="${escapeHtml(row.id)}">Reboot</button>
+                  </div>
+                ` : ''}
+              </article>
+            `;
+          }).join('') : '<div class="empty genieacs-mobile-empty">Belum ada device sesuai filter.</div>'}
+        </div>
         <div class="table-wrap genieacs-table-wrap">
           <table class="genieacs-table">
             <colgroup>
@@ -17910,9 +18064,12 @@ async function renderGenieAcs(options = {}) {
   }, (page) => {
     state.genieAcsPage = page;
   }, renderGenieAcs, 10);
-  const selectedGenieRows = () => [...app.querySelectorAll('[data-genieacs-select]:checked')]
-    .map((checkbox) => rows[Number(checkbox.dataset.genieacsSelect || -1)])
-    .filter(Boolean);
+  const selectedGenieRows = () => {
+    const indexes = new Set([...app.querySelectorAll('[data-genieacs-select]:checked')]
+      .map((checkbox) => Number(checkbox.dataset.genieacsSelect || -1))
+      .filter((index) => index >= 0));
+    return [...indexes].map((index) => rows[index]).filter(Boolean);
+  };
   const updateGenieSelection = () => {
     const selected = selectedGenieRows();
     const checkboxes = [...app.querySelectorAll('[data-genieacs-select]')];

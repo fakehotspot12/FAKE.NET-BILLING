@@ -2,6 +2,20 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.8] - 2026-08-15
+
+### Added
+
+- Menambahkan auto-delete GenieACS harian untuk ONT orphan yang sudah lama offline, tanpa menghapus modem yang masih terkait member walaupun pelanggan isolir, terminated, atau nonaktif.
+- Menambahkan env bootstrap GenieACS existing agar Virtual Parameters tetap bisa dipasang saat installer mendeteksi ACS yang sudah ada dan melewati instalasi GenieACS bawaan billing.
+
+### Fixed
+
+- Menurunkan batas default auto-delete ONT orphan dari 90 hari menjadi 30 hari dengan batas maksimal 20 device per run agar pembersihan lebih sesuai operasional.
+- Memastikan GenieACS NBI bawaan billing tetap bind ke `127.0.0.1:7557` dan tidak terbuka langsung ke publik.
+- Memperbaiki validasi tambah user PPP-DHCP agar username duplikat langsung menampilkan pesan error sebelum lanjut wizard atau simpan.
+- Merapikan tampilan row GenieACS di mobile dengan card khusus supaya data ONU tidak menumpuk.
+
 ## [4.2.7] - 2026-08-14
 
 ### Fixed
