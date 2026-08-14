@@ -390,7 +390,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Memasang command stack `fakenet-billing-stack`.
 - Menyesuaikan unit systemd atau OpenRC sesuai distro yang dipakai.
 - Menjalankan health check aplikasi dan worker BullMQ sebelum instalasi dinyatakan selesai.
-- Menjalankan health check GenieACS UI/NBI dan bootstrap parameter hanya pada instalasi GenieACS bawaan billing.
+- Menjalankan health check GenieACS UI/NBI pada instalasi GenieACS bawaan billing, serta bootstrap Virtual Parameters pada GenieACS existing jika NBI localhost tersedia.
 
 Yang tetap perlu diatur setelah install:
 
@@ -413,7 +413,7 @@ Env utama:
 
 Instalasi baru pada mesin kosong memasang GenieACS lokal secara default. MongoDB dijalankan dalam container dengan data persisten di `/opt/fakenet-billing-genieacs/mongodb`; proses CWMP, NBI, FS, dan UI berjalan sebagai user sistem `genieacs`.
 
-Jika installer menemukan GenieACS existing dari service, proses, atau port default `7547/7557/7567/7568`, instalasi GenieACS bawaan billing akan dilewati otomatis supaya tidak konflik dengan ACS yang sudah berjalan. Unit service bawaan billing yang sempat tertinggal akan di-stop, di-disable, dan dibersihkan dari systemd/OpenRC, tanpa menghapus data ACS existing. Aplikasi billing tetap diinstall normal. Jika NBI existing ada di `127.0.0.1:7557`, billing akan menggunakannya sebagai default; jika berbeda, isi URL NBI dari menu `GenieACS > Pengaturan`.
+Jika installer menemukan GenieACS existing dari service, proses, atau port default `7547/7557/7567/7568`, instalasi GenieACS bawaan billing akan dilewati otomatis supaya tidak konflik dengan ACS yang sudah berjalan. Unit service bawaan billing yang sempat tertinggal akan di-stop, di-disable, dan dibersihkan dari systemd/OpenRC, tanpa menghapus data ACS existing. Aplikasi billing tetap diinstall normal. Jika service `genieacs-nbi` tersedia, installer mencoba mengunci NBI existing ke `127.0.0.1:7557`; billing akan memakai URL tersebut sebagai default. Jika topologi ACS berbeda, isi URL NBI dari menu `GenieACS > Pengaturan`.
 
 Installer menulis marker `GENIEACS_SOURCE` dan `FAKENET_BUNDLED_GENIEACS` di `/etc/fakenet-billing.env`. Helper `fakenet-billing-stack` hanya akan start/restart service GenieACS bawaan jika marker tersebut menunjukkan instalasi `bundled`, sehingga update web tidak memaksa ACS bawaan pada mesin yang sudah punya GenieACS sendiri.
 

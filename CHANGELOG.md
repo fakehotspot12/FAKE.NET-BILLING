@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.10] - 2026-08-15
+
+### Fixed
+
+- Memastikan installer benar-benar melewati instalasi runtime GenieACS bawaan saat GenieACS existing sudah terdeteksi, sehingga tidak menambah service/paket yang tidak diperlukan.
+- Menambahkan pengunci otomatis GenieACS NBI existing ke `127.0.0.1:7557` bila service `genieacs-nbi` tersedia, tanpa mengganggu CWMP `7547`.
+- Memperbarui README agar jelas bahwa Virtual Parameters tetap dibootstrap ke GenieACS existing jika NBI localhost tersedia.
+
 ## [4.2.9] - 2026-08-15
 
 ### Fixed

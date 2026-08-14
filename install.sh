@@ -253,7 +253,7 @@ auto_skip_existing_genieacs() {
     export INSTALL_GENIEACS GENIEACS_EXTERNAL_DETECTED
     cleanup_fakenet_genieacs_services
     echo "GenieACS existing terdeteksi. Instalasi GenieACS bawaan FAKE.NET Billing dilewati agar tidak konflik service/port."
-    echo "Billing akan memakai GenieACS existing jika NBI localhost tersedia; jika berbeda, atur URL dari menu GenieACS > Setting."
+    echo "Billing akan memakai GenieACS existing dan mencoba mengunci NBI ke 127.0.0.1:7557."
   fi
 }
 
@@ -573,6 +573,67 @@ prepare_genieacs_env_file() {
   chmod 600 "$GENIEACS_ENV_FILE"
 }
 
+systemd_genieacs_nbi_env_file() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  local line entry path
+  while IFS= read -r line; do
+    for entry in $line; do
+      path="${entry#-}"
+      path="${path%\"}"
+      path="${path#\"}"
+      path="${path%\'}"
+      path="${path#\'}"
+      [ -f "$path" ] && printf '%s\n' "$path" && return 0
+    done
+  done < <(systemctl cat genieacs-nbi.service 2>/dev/null | sed -n 's/^[[:space:]]*EnvironmentFile=//p')
+  for path in /opt/genieacs/genieacs.env /etc/genieacs/genieacs.env /etc/default/genieacs /etc/sysconfig/genieacs; do
+    [ -f "$path" ] && printf '%s\n' "$path" && return 0
+  done
+  return 1
+}
+
+lock_existing_genieacs_nbi_localhost() {
+  [ "${FAKENET_LOCK_EXISTING_GENIEACS_NBI:-1}" = "0" ] && return 0
+  [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  systemctl cat genieacs-nbi.service >/dev/null 2>&1 || return 0
+
+  local env_file backup owner group attempt nbi_status
+  env_file="$(systemd_genieacs_nbi_env_file || true)"
+  if [ -n "$env_file" ]; then
+    backup="${env_file}.bak-fakenet-lock7557"
+    [ -f "$backup" ] || cp -a "$env_file" "$backup" 2>/dev/null || true
+    owner="$(stat -c %U "$env_file" 2>/dev/null || echo "")"
+    group="$(stat -c %G "$env_file" 2>/dev/null || echo "")"
+    replace_or_append_env "$env_file" GENIEACS_NBI_INTERFACE 127.0.0.1
+    replace_or_append_env "$env_file" GENIEACS_NBI_PORT 7557
+    [ -n "$owner" ] && [ -n "$group" ] && chown "$owner:$group" "$env_file" 2>/dev/null || true
+    chmod 600 "$env_file" 2>/dev/null || true
+  else
+    mkdir -p /etc/systemd/system/genieacs-nbi.service.d
+    cat > /etc/systemd/system/genieacs-nbi.service.d/fakenet-billing-localhost.conf <<'EOF'
+[Service]
+Environment=GENIEACS_NBI_INTERFACE=127.0.0.1
+Environment=GENIEACS_NBI_PORT=7557
+EOF
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+
+  if ! systemctl restart genieacs-nbi.service >/dev/null 2>&1; then
+    echo "Peringatan: gagal restart GenieACS NBI existing setelah lock localhost. Periksa genieacs-nbi.service." >&2
+    return 0
+  fi
+  for attempt in $(seq 1 "${GENIEACS_NBI_LOCK_ATTEMPTS:-45}"); do
+    nbi_status="$(curl -sS --max-time 2 http://127.0.0.1:7557/devices/?limit=1 2>/dev/null || true)"
+    if [[ "$nbi_status" == \[* ]]; then
+      echo "GenieACS existing NBI dikunci ke 127.0.0.1:7557."
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Peringatan: GenieACS NBI existing belum siap setelah lock localhost; billing tetap lanjut dan bootstrap akan dicoba ulang saat repair/update berikutnya." >&2
+}
+
 install_env() {
   local app_db_password radius_db_password waha_api_key waha_password waha_webhook_secret
   if [ ! -f /etc/fakenet-billing.env ]; then
@@ -628,6 +689,7 @@ install_env() {
     replace_or_append_env /etc/fakenet-billing.env GENIEACS_SOURCE bundled
   elif [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ]; then
     prepare_genieacs_env_file existing
+    lock_existing_genieacs_nbi_localhost
     append_env_if_missing /etc/fakenet-billing.env GENIEACS_ENABLED 1
     if port_is_listening 7557; then
       append_env_if_missing /etc/fakenet-billing.env GENIEACS_BASE_URL http://127.0.0.1:7557
@@ -1081,8 +1143,10 @@ install_systemd() {
   systemctl daemon-reload
   init_postgres_cluster
   start_systemd_base_units
-  prepare_genieacs_runtime
-  ensure_genieacs_mongodb_image
+  if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
+    prepare_genieacs_runtime
+    ensure_genieacs_mongodb_image
+  fi
   init_postgres_databases
   configure_freeradius_sql
   restart_systemd_unit_group "freeradius.service radiusd.service"
@@ -1508,7 +1572,9 @@ main() {
   auto_skip_existing_genieacs
   copy_source
   install_node_deps
-  install_genieacs_runtime
+  if [ "${INSTALL_GENIEACS:-1}" != "0" ]; then
+    install_genieacs_runtime
+  fi
   install_env
   mkdir -p /opt/fakenet-billing-waha/sessions
   if command -v systemctl >/dev/null 2>&1; then
@@ -1533,7 +1599,7 @@ main() {
     echo "Inform CPE: ${GENIEACS_CWMP_AUTH_USERNAME:-admin} / ${GENIEACS_CWMP_AUTH_PASSWORD:-1sampai10}"
   elif [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ]; then
     echo "GenieACS existing terdeteksi; GenieACS bawaan billing dilewati."
-    echo "Jika NBI existing tidak memakai 127.0.0.1:7557, atur dari menu GenieACS > Pengaturan."
+    echo "GenieACS NBI existing dikunci ke 127.0.0.1:7557 jika service genieacs-nbi tersedia."
   fi
   echo "Service stack: fakenet-billing-stack {start|restart|stop|status|update}"
 }
