@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.9] - 2026-08-15
+
+### Fixed
+
+- Memperbaiki updater archive-based agar membaca `FAKENET_UPDATE_ARCHIVE_URL` dari `/etc/fakenet-billing.env` setelah env dimuat, sehingga install tanpa `.git` tetap bisa update dari tombol aplikasi.
+- Menyesuaikan health check updater dengan endpoint `/api/health` yang sudah diamankan minimal `{"ok":true}`, sehingga update tidak tersangkut menunggu detail BullMQ yang memang tidak lagi dibuka.
+
 ## [4.2.8] - 2026-08-15
 
 ### Added
