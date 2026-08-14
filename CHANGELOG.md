@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.11] - 2026-08-15
+
+### Fixed
+
+- Memperkuat updater berbasis Git agar perubahan lokal source yang masih untracked ikut distash sebelum `git pull`, sehingga server lama tidak tersangkut saat file manual lama sudah menjadi file resmi di repository.
+
 ## [4.2.10] - 2026-08-15
 
 ### Fixed

@@ -314,10 +314,10 @@ if [ -d "$APP_DIR/.git" ]; then
   if [ -n "$BRANCH" ]; then
     git -C "$APP_DIR" checkout "$BRANCH"
   fi
-  dirty_status="$(git -C "$APP_DIR" status --short --untracked-files=no 2>/dev/null || true)"
+  dirty_status="$(git -C "$APP_DIR" status --short --untracked-files=normal 2>/dev/null || true)"
   if [ -n "$dirty_status" ]; then
-    echo "Worktree memiliki perubahan lokal tracked file; simpan sementara ke git stash"
-    git -C "$APP_DIR" stash push -m "fakenet-billing-pre-update-$(date +%Y%m%d%H%M%S)" -- . || true
+    echo "Worktree memiliki perubahan lokal source; simpan sementara ke git stash"
+    git -C "$APP_DIR" stash push --include-untracked -m "fakenet-billing-pre-update-$(date +%Y%m%d%H%M%S)" -- . || true
   fi
   git -C "$APP_DIR" pull --ff-only
 elif [ -n "$ARCHIVE_URL" ]; then
