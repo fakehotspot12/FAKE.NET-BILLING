@@ -13,9 +13,12 @@ const DEVICE_LIST_CACHE_STALE_MS = Math.max(
 );
 const DEVICE_PROJECTION_MAX_CHARS = Math.max(1200, Number(process.env.GENIEACS_PROJECTION_MAX_CHARS || 3500) || 3500);
 const DEVICE_LIST_CACHE_MAX = 12;
+const BEST_DEVICE_CACHE_TTL_MS = Math.max(5000, Number(process.env.GENIEACS_BEST_DEVICE_CACHE_MS || 30000) || 30000);
+const BEST_DEVICE_CACHE_MAX = 200;
 const deviceListCache = new Map();
 const deviceListInflight = new Map();
 const deviceMutationLocks = new Map();
+const bestDeviceCache = new Map();
 let deviceListCacheGeneration = 0;
 
 const DEFAULT_USERNAME_PARAMETERS = [
@@ -200,6 +203,7 @@ function clearDeviceListCache() {
   deviceListCacheGeneration += 1;
   deviceListCache.clear();
   deviceListInflight.clear();
+  bestDeviceCache.clear();
 }
 
 function deviceListCacheKey(cfg = {}, query = {}, projection = '', requestQuery = {}) {
@@ -1145,7 +1149,17 @@ function normalizeDevice(device = {}, settings = {}) {
 
 function recentPppState(device = {}, row = {}) {
   const usernamePath = cleanText(row.usernameParameter);
-  if (!usernamePath || !usernamePath.endsWith('.Username')) return null;
+  if (!usernamePath || !usernamePath.endsWith('.Username')) {
+    const username = cleanText(row.username);
+    if (!username) return null;
+    return {
+      username,
+      status: row.online ? 'Connected' : '',
+      ip: row.ipAddress,
+      vlan: null,
+      source: usernamePath || 'normalized'
+    };
+  }
   const base = usernamePath.replace(/\.Username$/, '');
   const status = firstExistingParameter(device, [
     `${base}.ConnectionStatus`,
@@ -1505,15 +1519,226 @@ async function getWifiConfiguration(settings = {}, deviceId = '', options = {}) 
   };
 }
 
-async function findDevice(settings = {}, search = '', options = {}) {
-  const result = await listDevices(settings, { search, page: 1, limit: 1, refresh: options.refresh === true });
-  const row = result.rows[0] || null;
-  if (!row || options.compact === true) return row;
-  try {
-    return await getDevice(settings, row.id, { refresh: options.refresh === true }) || row;
-  } catch {
-    return row;
+function cleanComparable(value = '') {
+  return cleanText(value).toLowerCase();
+}
+
+function activeIpScore(value = '') {
+  const ip = cleanText(value);
+  if (!ip || ip === '0.0.0.0' || ip === '::') return 0;
+  return validIpv4(ip) ? 90 : 35;
+}
+
+function timeScore(value = '', maxScore = 140) {
+  const timestamp = Date.parse(cleanText(value));
+  if (!Number.isFinite(timestamp)) return 0;
+  const ageMinutes = Math.max(0, (Date.now() - timestamp) / 60000);
+  if (ageMinutes <= 15) return maxScore;
+  if (ageMinutes <= 60) return Math.round(maxScore * 0.78);
+  if (ageMinutes <= 360) return Math.round(maxScore * 0.55);
+  if (ageMinutes <= 1440) return Math.round(maxScore * 0.35);
+  if (ageMinutes <= 10080) return Math.round(maxScore * 0.12);
+  return 1;
+}
+
+function rowNasMatches(row = {}, aliases = []) {
+  const values = [
+    row.nasId,
+    row.nasName,
+    row.nasIpAddress,
+    ...(Array.isArray(row.tags) ? row.tags : [])
+  ].map(cleanComparable).filter(Boolean);
+  if (!values.length || !aliases.length) return false;
+  return aliases.some((alias) => values.includes(cleanComparable(alias)));
+}
+
+function deviceCandidateScore(row = {}, options = {}) {
+  const username = cleanComparable(options.username);
+  const boundIds = (Array.isArray(options.boundDeviceIds) ? options.boundDeviceIds : [])
+    .map(cleanComparable)
+    .filter(Boolean);
+  const boundSerials = (Array.isArray(options.boundSerialNumbers) ? options.boundSerialNumbers : [])
+    .map(cleanComparable)
+    .filter(Boolean);
+  const nasAliases = Array.isArray(options.nasAliases) ? options.nasAliases : [];
+  const rowId = cleanComparable(row.id);
+  const rowSerial = cleanComparable(row.serialNumber);
+  const rowUsername = cleanComparable(row.username);
+
+  let score = 0;
+  const reasons = [];
+  if (username && rowUsername === username) {
+    score += 520;
+    reasons.push('username-exact');
+  } else if (username && rowUsername && rowUsername.includes(username)) {
+    score += 130;
+    reasons.push('username-partial');
   }
+  if (row.online) {
+    score += 260;
+    reasons.push('online');
+  }
+  const lastInformScore = timeScore(row.lastInform, 150);
+  if (lastInformScore) {
+    score += lastInformScore;
+    reasons.push('last-inform');
+  }
+  const ipScore = activeIpScore(row.ipAddress || row.pppoeIpAddress || row.framedIpAddress);
+  if (ipScore) {
+    score += ipScore;
+    reasons.push('pppoe-ip');
+  }
+  if (rowNasMatches(row, nasAliases)) {
+    score += 90;
+    reasons.push('nas-match');
+  }
+  if (boundIds.includes(rowId)) {
+    score += row.online ? 180 : 30;
+    reasons.push('bound-device');
+  }
+  if (boundSerials.includes(rowSerial)) {
+    score += row.online ? 160 : 25;
+    reasons.push('bound-serial');
+  }
+  score += timeScore(row.registered, 40);
+  return { score, reasons };
+}
+
+function sortDeviceCandidates(left = {}, right = {}) {
+  if (right._matchScore !== left._matchScore) return right._matchScore - left._matchScore;
+  if (Boolean(right.online) !== Boolean(left.online)) return right.online ? 1 : -1;
+  const rightInform = Date.parse(cleanText(right.lastInform)) || 0;
+  const leftInform = Date.parse(cleanText(left.lastInform)) || 0;
+  if (rightInform !== leftInform) return rightInform - leftInform;
+  const rightRegistered = Date.parse(cleanText(right.registered)) || 0;
+  const leftRegistered = Date.parse(cleanText(left.registered)) || 0;
+  return rightRegistered - leftRegistered;
+}
+
+function pruneBestDeviceCache(now = Date.now()) {
+  for (const [key, entry] of bestDeviceCache.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now) {
+      bestDeviceCache.delete(key);
+    }
+  }
+  while (bestDeviceCache.size > BEST_DEVICE_CACHE_MAX) {
+    bestDeviceCache.delete(bestDeviceCache.keys().next().value);
+  }
+}
+
+function bestDeviceCacheKey(cfg = {}, searchTerms = [], options = {}) {
+  return [
+    cfg.baseUrl,
+    cfg.token ? `token:${cfg.token.length}:${cfg.token.slice(-6)}` : 'token:',
+    deviceListCacheGeneration,
+    cleanComparable(options.username),
+    (Array.isArray(options.boundDeviceIds) ? options.boundDeviceIds : []).map(cleanComparable).sort().join(','),
+    (Array.isArray(options.boundSerialNumbers) ? options.boundSerialNumbers : []).map(cleanComparable).sort().join(','),
+    (Array.isArray(options.nasAliases) ? options.nasAliases : []).map(cleanComparable).sort().join(','),
+    searchTerms.map(cleanComparable).sort().join(','),
+    options.compact === true ? 'compact' : 'full'
+  ].join('|');
+}
+
+function orderedDeviceSearchTerms(searches = [], options = {}) {
+  const preferred = [
+    options.username,
+    ...(Array.isArray(searches) ? searches : [searches])
+  ].map(cleanText).filter(Boolean);
+  const seen = new Set();
+  const rows = [];
+  for (const item of preferred) {
+    const key = cleanComparable(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    rows.push(item);
+  }
+  return rows;
+}
+
+function rankedDeviceCandidates(rows = [], options = {}) {
+  const rowsById = new Map();
+  for (const row of rows) {
+    const id = cleanText(row.id);
+    if (!id || rowsById.has(id)) continue;
+    const match = deviceCandidateScore(row, options);
+    rowsById.set(id, {
+      ...row,
+      _matchScore: match.score,
+      _matchReasons: match.reasons
+    });
+  }
+  return [...rowsById.values()].sort(sortDeviceCandidates);
+}
+
+function confidentDeviceCandidate(row = null) {
+  if (!row) return false;
+  const reasons = Array.isArray(row._matchReasons) ? row._matchReasons : [];
+  return row.online === true
+    && reasons.includes('username-exact')
+    && reasons.includes('last-inform')
+    && Number(row._matchScore || 0) >= 900;
+}
+
+async function findBestDevice(settings = {}, searches = [], options = {}) {
+  const cfg = normalizeSettings(settings);
+  const searchRows = [];
+  const searchTerms = orderedDeviceSearchTerms(searches, options);
+  if (!searchTerms.length) return null;
+  const cacheKey = bestDeviceCacheKey(cfg, searchTerms, options);
+  if (options.refresh !== true) {
+    pruneBestDeviceCache();
+    const cached = bestDeviceCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cloneJson(cached.result);
+    }
+  }
+  for (const search of searchTerms) {
+    const result = await listDevices(settings, {
+      search,
+      page: 1,
+      limit: 20,
+      refresh: options.refresh === true
+    });
+    searchRows.push(...(result.rows || []));
+    const rankedAfterSearch = rankedDeviceCandidates(searchRows, options);
+    if (confidentDeviceCandidate(rankedAfterSearch[0])) {
+      break;
+    }
+  }
+  const rankedRows = rankedDeviceCandidates(searchRows, options);
+  const best = rankedRows[0] || null;
+  if (!best || options.compact === true) {
+    if (options.refresh !== true) {
+      bestDeviceCache.set(cacheKey, { expiresAt: Date.now() + BEST_DEVICE_CACHE_TTL_MS, result: best });
+      pruneBestDeviceCache();
+    }
+    return best;
+  }
+  try {
+    const full = await getDevice(settings, best.id, { refresh: options.refresh === true });
+    const payload = full ? {
+      ...full,
+      matchScore: best._matchScore,
+      matchReasons: best._matchReasons,
+      candidateCount: rankedRows.length
+    } : best;
+    if (options.refresh !== true) {
+      bestDeviceCache.set(cacheKey, { expiresAt: Date.now() + BEST_DEVICE_CACHE_TTL_MS, result: payload });
+      pruneBestDeviceCache();
+    }
+    return payload;
+  } catch {
+    if (options.refresh !== true) {
+      bestDeviceCache.set(cacheKey, { expiresAt: Date.now() + BEST_DEVICE_CACHE_TTL_MS, result: best });
+      pruneBestDeviceCache();
+    }
+    return best;
+  }
+}
+
+async function findDevice(settings = {}, search = '', options = {}) {
+  return findBestDevice(settings, [search], options);
 }
 
 async function task(settings = {}, deviceId = '', body = {}) {
@@ -2119,6 +2344,7 @@ module.exports = {
   configureWan,
   addWifiSsid,
   deleteDevice,
+  findBestDevice,
   findDevice,
   filterRowsByNas,
   getDevice,

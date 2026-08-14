@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.6] - 2026-08-14
+
+### Added
+
+- Menambahkan paket Virtual Parameters GenieACS lengkap untuk PPPoE username/IP/password, serial, PON/MAC, uptime, total active device, WiFi password, dan akun modem agar install/update baru langsung membaca parameter ONT yang umum dipakai.
+- Menambahkan alias `VirtualParameters.ip` dan `VirtualParameters.pppoe` agar fallback pembacaan modem tetap jalan pada beberapa template GenieACS lama.
+
+### Fixed
+
+- Memperbaiki deteksi ONT baru agar modem yang PPPoE-nya terbaca dari `VirtualParameters.pppoeUsername` tidak lagi muncul sebagai “WAN PPP belum ada”.
+- Mengoptimalkan pemilihan modem WifiKu saat ada modem lama dan baru untuk pelanggan yang sama dengan skor berdasarkan PPPoE, status online, `lastInform`, IP PPPoE, dan NAS.
+
 ## [4.2.5] - 2026-08-11
 
 ### Added

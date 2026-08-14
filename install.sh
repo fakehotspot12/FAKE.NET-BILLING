@@ -321,10 +321,29 @@ verify_repository_payload() {
     deploy/fakenet-billing-waha.env
     deploy/fakenet-billing-genieacs.env
     deploy/genieacs/bootstrap.js
+    deploy/genieacs/virtual-parameters/IPTR069.js
     deploy/genieacs/virtual-parameters/LANActiveClients.js
     deploy/genieacs/virtual-parameters/LANClients.js
+    deploy/genieacs/virtual-parameters/PonMac.js
     deploy/genieacs/virtual-parameters/RXPower.js
+    deploy/genieacs/virtual-parameters/WlanPassword.js
+    deploy/genieacs/virtual-parameters/activedevices.js
+    deploy/genieacs/virtual-parameters/getSerialNumber.js
+    deploy/genieacs/virtual-parameters/getdeviceuptime.js
+    deploy/genieacs/virtual-parameters/getponmode.js
+    deploy/genieacs/virtual-parameters/getpppuptime.js
     deploy/genieacs/virtual-parameters/gettemp.js
+    deploy/genieacs/virtual-parameters/ip.js
+    deploy/genieacs/virtual-parameters/pppoe.js
+    deploy/genieacs/virtual-parameters/pppoeIP.js
+    deploy/genieacs/virtual-parameters/pppoeMac.js
+    deploy/genieacs/virtual-parameters/pppoePassword.js
+    deploy/genieacs/virtual-parameters/pppoeUsername.js
+    deploy/genieacs/virtual-parameters/pppoeUsername2.js
+    deploy/genieacs/virtual-parameters/superAdmin.js
+    deploy/genieacs/virtual-parameters/superPassword.js
+    deploy/genieacs/virtual-parameters/userAdmin.js
+    deploy/genieacs/virtual-parameters/userPassword.js
     deploy/sql/freeradius-postgresql.sql
     deploy/bin/fakenet-billing-stack
     deploy/bin/fakenet-billing-update

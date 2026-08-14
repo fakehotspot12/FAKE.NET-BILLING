@@ -3065,6 +3065,34 @@ function publicWifiKuCustomer(data = {}, customer = {}, radiusUser = {}) {
   };
 }
 
+function wifiKuGenieAcsNasAliases(data = {}, customer = {}, radiusUser = {}) {
+  const directNas = radiusFindNas(
+    data,
+    radiusUser.nasId
+      || radiusUser.nasName
+      || radiusUser.nas
+      || customer.nasId
+      || customer.nasName
+      || customer.nas
+      || customer.siteName
+      || customer.site
+  ) || {};
+  return [
+    customer.nasId,
+    customer.nasName,
+    customer.nas,
+    customer.siteName,
+    customer.site,
+    radiusUser.nasId,
+    radiusUser.nasName,
+    radiusUser.nas,
+    directNas.id,
+    directNas.name,
+    directNas.address,
+    directNas.site
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
 function wifiKuInvoiceMatchesCustomer(invoice = {}, customer = {}, radiusUser = {}) {
   const customerKeys = [
     customer.id,
@@ -3344,21 +3372,28 @@ async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPer
   let device = null;
   let genieError = '';
   if (genieAcs.configured(data.settings || {})) {
-    const searchKeys = [
+    const boundDeviceIds = [
       customer.genieAcsDeviceId,
+      radiusUser.genieAcsDeviceId
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    const boundSerialNumbers = [
       customer.genieAcsSerialNumber,
-      radiusUser.genieAcsDeviceId,
-      radiusUser.genieAcsSerialNumber,
+      radiusUser.genieAcsSerialNumber
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    const searchKeys = [
+      ...boundDeviceIds,
+      ...boundSerialNumbers,
       username
     ].map((value) => String(value || '').trim()).filter(Boolean);
-    for (const search of searchKeys) {
-      try {
-        device = await genieAcs.findDevice(data.settings || {}, search);
-        if (device) break;
-      } catch (error) {
-        genieError = error.message || 'GenieACS tidak bisa dibaca';
-        break;
-      }
+    try {
+      device = await genieAcs.findBestDevice(data.settings || {}, searchKeys, {
+        username,
+        boundDeviceIds,
+        boundSerialNumbers,
+        nasAliases: wifiKuGenieAcsNasAliases(data, customer, radiusUser)
+      });
+    } catch (error) {
+      genieError = error.message || 'GenieACS tidak bisa dibaca';
     }
   }
   return {
