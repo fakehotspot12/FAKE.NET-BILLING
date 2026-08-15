@@ -16419,7 +16419,7 @@ dialog::backdrop {
 }
 
 /* DEV mobile bottom navigation override - start */
-@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   body.is-authenticated .app-shell {
     padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   }
@@ -16634,7 +16634,7 @@ dialog::backdrop {
   }
 }
 
-@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   body.is-authenticated .content .toolbar {
     align-items: stretch;
     gap: 8px;
@@ -16820,7 +16820,7 @@ dialog::backdrop {
   background: rgba(20, 83, 45, 0.22);
 }
 
-@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .router-nas-chart {
     height: 84px;
   }
@@ -16944,7 +16944,7 @@ dialog::backdrop {
   display: none;
 }
 
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .monitoring-billing-view {
     gap: 12px;
   }
@@ -17254,7 +17254,7 @@ dialog::backdrop {
 
 
 /* DEV mobile billing column visibility fix - start */
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(3),
   .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(6),
   .monitoring-billing-view .billing-table tbody tr.billing-row > td:nth-child(7),
@@ -17321,7 +17321,7 @@ dialog::backdrop {
   display: none;
 }
 
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .billing-mobile-primary {
     display: grid;
     gap: 7px;
@@ -17368,7 +17368,7 @@ dialog::backdrop {
 
 
 /* DEV mobile simple menu cards - start */
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .monitoring-members-view .table-wrap,
   .monitoring-customer-table-wrap,
   .daily-report-table-wrap,
@@ -17835,7 +17835,7 @@ dialog::backdrop {
 
 
 /* DEV mobile simple menu cards fix - start */
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .member-mobile-table tbody td[colspan],
   .monitoring-customer-table tbody td[colspan],
   .radius-user-table tbody td[colspan],
@@ -17974,7 +17974,7 @@ dialog::backdrop {
 /* DEV mobile icon density fix - end */
 
 /* DEV mobile extended table cards - start */
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .genieacs-table-wrap,
   .wa-message-table-wrap,
   .user-table-wrap,
@@ -18458,7 +18458,7 @@ dialog::backdrop {
 /* DEV mobile extended table cards - end */
 
 /* GenieACS mobile modem row polish - start */
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .genieacs-table tbody tr {
     align-items: start;
     border-radius: 14px;
@@ -18626,7 +18626,7 @@ dialog::backdrop {
 /* GenieACS mobile modem row polish - end */
 
 /* GenieACS dedicated mobile cards - start */
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .genieacs-table-wrap {
     display: none !important;
   }
@@ -19599,7 +19599,7 @@ dialog::backdrop {
   justify-content: flex-end;
 }
 
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .daily-report-table-wrap,
   .monthly-billing-daily-table-wrap,
   .voucher-daily-table-wrap,
@@ -20134,7 +20134,7 @@ dialog::backdrop {
   white-space: nowrap;
 }
 
-@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+@media (max-width: 760px) {
   .daily-report-table tbody tr {
     align-items: center;
     grid-template-areas:

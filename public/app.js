@@ -39,7 +39,7 @@ const copyrightYear = document.getElementById('copyrightYear');
 const copyrightName = document.getElementById('copyrightName');
 const appVersion = document.getElementById('appVersion');
 const buildVersion = document.getElementById('buildVersion');
-const mobileMenuQuery = window.matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)');
+const mobileMenuQuery = window.matchMedia('(max-width: 760px)');
 const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100];
@@ -15639,7 +15639,7 @@ function monitoringFiberPopup(row = {}) {
 }
 
 function monitoringMapMobileScrollGuardEnabled() {
-  return window.matchMedia?.('(max-width: 760px), (hover: none) and (pointer: coarse)')?.matches === true;
+  return window.matchMedia?.('(max-width: 760px)')?.matches === true;
 }
 
 function setLeafletMapInteraction(map, enabled = true) {
