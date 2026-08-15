@@ -95,3 +95,9 @@ test('CoA repeated disconnect is safe when RouterOS reports the session is alrea
   assert.match(radclient.calls[0].packet, /User-Name = "roni"/);
 });
 
+test('CoA marks sent-only radclient output as response lost', () => {
+  const parsed = freeradiusCoa.__test.parseRadclientResult(1, 'Sent Disconnect-Request Id 23 from 0.0.0.0:49791 to 10.1.13.15:3799 length 67');
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.responseLost, true);
+  assert.match(parsed.error, /Sent Disconnect-Request/);
+});

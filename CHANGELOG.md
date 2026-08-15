@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.20] - 2026-08-15
+
+### Fixed
+
+- Memperjelas deteksi timeout CoA saat `radclient` hanya mengirim packet tanpa menerima balasan NAS, sehingga audit isolir menampilkan penyebab yang tepat.
+
 ## [4.2.19] - 2026-08-15
 
 ### Fixed

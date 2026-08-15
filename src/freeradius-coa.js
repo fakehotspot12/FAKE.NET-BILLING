@@ -54,7 +54,7 @@ function uniqueLines(lines = []) {
 }
 
 function noResponse(result = {}) {
-  return /No response/i.test(result.output || result.error || '');
+  return result.responseLost === true || /(No response|No reply from server|Sent .*(?:Disconnect|CoA)-Request)/i.test(result.output || result.error || '');
 }
 
 function sessionAlreadyGone(result = {}) {
@@ -66,7 +66,9 @@ function parseRadclientResult(code, output = '') {
   const text = cleanText(output);
   const ack = /Disconnect-ACK/i.test(text);
   const nak = /Disconnect-NAK/i.test(text);
-  const responseLost = /No response/i.test(text);
+  const sentRequest = /Sent .*(?:Disconnect|CoA)-Request/i.test(text);
+  const receivedResponse = /(Received|Disconnect-ACK|Disconnect-NAK|CoA-ACK|CoA-NAK)/i.test(text);
+  const responseLost = /(No response|No reply from server)/i.test(text) || (sentRequest && !receivedResponse);
   const commandError = /\berror\b/i.test(text);
   const alreadyOffline = sessionAlreadyGone({ output: text });
   return {
