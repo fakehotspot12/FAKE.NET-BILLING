@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.17] - 2026-08-15
+
+### Fixed
+
+- Memperbaiki fallback isolir FreeRADIUS agar user isolir/terminated langsung `Auth-Type := Reject` saat group/pool isolir kosong, meskipun field rate-limit isolir lama masih terisi.
+
 ## [4.2.16] - 2026-08-15
 
 ### Fixed

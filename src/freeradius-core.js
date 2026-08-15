@@ -788,8 +788,9 @@ function freeradiusRows(data) {
     const isolation = data.settings?.radius && typeof data.settings.radius === 'object' ? data.settings.radius : {};
     const restrictedAccess = user.status === 'isolated' || terminatedPortalAccess;
     const isolationRateLimit = text(isolation.isolationRateLimit);
+    const isolationNetworkTarget = text(isolation.isolationMikrotikGroup) || text(isolation.isolationPool);
     const restrictedWithNetworkOverride = restrictedAccess
-      && (isolationRateLimit || text(isolation.isolationMikrotikGroup) || text(isolation.isolationPool));
+      && isolationNetworkTarget;
     const rejectRestrictedAccess = restrictedAccess && !restrictedWithNetworkOverride;
     radcheck.push({
       username: user.username,
