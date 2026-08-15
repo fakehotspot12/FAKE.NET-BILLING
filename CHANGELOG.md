@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.18] - 2026-08-15
+
+### Fixed
+
+- Membersihkan output FreeRADIUS untuk pelanggan isolir/terminated mode reject agar tidak lagi menyertakan `radreply` rate-limit/group/pool yang tidak digunakan.
+
 ## [4.2.17] - 2026-08-15
 
 ### Fixed

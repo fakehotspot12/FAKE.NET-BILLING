@@ -807,43 +807,45 @@ function freeradiusRows(data) {
           value: 'Reject'
         });
       }
-      if (isolationRateLimit) {
-        radreply.push({
-          username: user.username,
-          attribute: 'Mikrotik-Rate-Limit',
-          op: ':=',
-          value: isolationRateLimit
-        });
-      }
-      if (text(isolation.isolationMikrotikGroup)) {
-        radreply.push({
-          username: user.username,
-          attribute: 'Mikrotik-Group',
-          op: ':=',
-          value: text(isolation.isolationMikrotikGroup)
-        });
-      }
-      if (text(isolation.isolationPool)) {
-        radreply.push({
-          username: user.username,
-          attribute: 'Framed-Pool',
-          op: ':=',
-          value: text(isolation.isolationPool)
-        });
-      }
-      if (serviceType === 'pppoe') {
-        radreply.push({
-          username: user.username,
-          attribute: 'Service-Type',
-          op: ':=',
-          value: 'Framed-User'
-        });
-        radreply.push({
-          username: user.username,
-          attribute: 'Framed-Protocol',
-          op: ':=',
-          value: 'PPP'
-        });
+      if (restrictedWithNetworkOverride) {
+        if (isolationRateLimit) {
+          radreply.push({
+            username: user.username,
+            attribute: 'Mikrotik-Rate-Limit',
+            op: ':=',
+            value: isolationRateLimit
+          });
+        }
+        if (text(isolation.isolationMikrotikGroup)) {
+          radreply.push({
+            username: user.username,
+            attribute: 'Mikrotik-Group',
+            op: ':=',
+            value: text(isolation.isolationMikrotikGroup)
+          });
+        }
+        if (text(isolation.isolationPool)) {
+          radreply.push({
+            username: user.username,
+            attribute: 'Framed-Pool',
+            op: ':=',
+            value: text(isolation.isolationPool)
+          });
+        }
+        if (serviceType === 'pppoe') {
+          radreply.push({
+            username: user.username,
+            attribute: 'Service-Type',
+            op: ':=',
+            value: 'Framed-User'
+          });
+          radreply.push({
+            username: user.username,
+            attribute: 'Framed-Protocol',
+            op: ':=',
+            value: 'PPP'
+          });
+        }
       }
     }
     if (user.staticIp && !restrictedWithNetworkOverride && !rejectRestrictedAccess) {
