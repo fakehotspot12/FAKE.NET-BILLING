@@ -299,6 +299,32 @@ test('normalizes GenieACS temperature from virtual and raw parameters', () => {
   assert.equal(invalidTemp.temperatureValue, null);
 });
 
+test('detects recent GenieACS rows that need Virtual Parameter refresh', () => {
+  const now = Date.parse('2026-08-15T10:00:00.000Z');
+
+  assert.equal(genieAcs._internal.recentlyInformed({
+    lastInform: '2026-08-15T09:59:00.000Z'
+  }, now), true);
+  assert.equal(genieAcs._internal.recentlyInformed({
+    lastInform: '2026-08-14T00:00:00.000Z'
+  }, now), false);
+  assert.equal(genieAcs._internal.needsVirtualParameterRefresh({
+    id: 'device-temp-empty',
+    temperatureValue: null,
+    rxPowerValue: -21
+  }), true);
+  assert.equal(genieAcs._internal.needsVirtualParameterRefresh({
+    id: 'device-rx-empty',
+    temperatureValue: 45,
+    rxPowerValue: null
+  }), true);
+  assert.equal(genieAcs._internal.needsVirtualParameterRefresh({
+    id: 'device-ok',
+    temperatureValue: 45,
+    rxPowerValue: -21
+  }), false);
+});
+
 test('normalizes connected WiFi and LAN clients from GenieACS parameters', () => {
   const device = genieAcs.normalizeDevice({
     _id: 'client-detail-1',

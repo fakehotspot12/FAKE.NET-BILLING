@@ -19,7 +19,18 @@ const deviceListCache = new Map();
 const deviceListInflight = new Map();
 const deviceMutationLocks = new Map();
 const bestDeviceCache = new Map();
+const virtualParameterRefreshCooldown = new Map();
 let deviceListCacheGeneration = 0;
+
+const VIRTUAL_PARAMETER_AUTO_REFRESH_LIMIT = Math.max(1, Number(process.env.GENIEACS_AUTO_REFRESH_LIMIT || 8) || 8);
+const VIRTUAL_PARAMETER_AUTO_REFRESH_COOLDOWN_MS = Math.max(
+  60000,
+  Number(process.env.GENIEACS_AUTO_REFRESH_COOLDOWN_MS || 1800000) || 1800000
+);
+const VIRTUAL_PARAMETER_AUTO_REFRESH_RECENT_MS = Math.max(
+  300000,
+  Number(process.env.GENIEACS_AUTO_REFRESH_RECENT_MS || 21600000) || 21600000
+);
 
 const DEFAULT_USERNAME_PARAMETERS = [
   'VirtualParameters.pppoeUsername',
@@ -1441,6 +1452,53 @@ function filterRowsByNas(rows = [], selectedNas = 'all') {
     .some((value) => cleanText(value).toLowerCase() === selected));
 }
 
+function recentlyInformed(row = {}, now = Date.now()) {
+  const lastInformTime = Date.parse(row.lastInform || '');
+  return Number.isFinite(lastInformTime) && now - lastInformTime <= VIRTUAL_PARAMETER_AUTO_REFRESH_RECENT_MS;
+}
+
+function needsVirtualParameterRefresh(row = {}) {
+  if (!cleanText(row.id)) return false;
+  const missingTemperature = row.temperatureValue === null
+    || row.temperatureValue === undefined
+    || row.temperatureValue === ''
+    || !Number.isFinite(Number(row.temperatureValue));
+  const missingRxPower = row.rxPowerValue === null
+    || row.rxPowerValue === undefined
+    || row.rxPowerValue === ''
+    || !Number.isFinite(Number(row.rxPowerValue));
+  return missingTemperature || missingRxPower;
+}
+
+function pruneVirtualParameterRefreshCooldown(now = Date.now()) {
+  for (const [deviceId, expiresAt] of virtualParameterRefreshCooldown.entries()) {
+    if (!Number.isFinite(Number(expiresAt)) || Number(expiresAt) <= now) {
+      virtualParameterRefreshCooldown.delete(deviceId);
+    }
+  }
+}
+
+function queueVirtualParameterAutoRefresh(settings = {}, rows = [], options = {}) {
+  if (options.refresh !== true) return { queued: 0, eligible: 0 };
+  const now = Date.now();
+  pruneVirtualParameterRefreshCooldown(now);
+  const candidates = (Array.isArray(rows) ? rows : [])
+    .filter((row) => needsVirtualParameterRefresh(row) && recentlyInformed(row, now))
+    .filter((row) => !virtualParameterRefreshCooldown.has(row.id));
+  const selected = candidates.slice(0, VIRTUAL_PARAMETER_AUTO_REFRESH_LIMIT);
+  for (const row of selected) {
+    virtualParameterRefreshCooldown.set(row.id, now + VIRTUAL_PARAMETER_AUTO_REFRESH_COOLDOWN_MS);
+  }
+  if (selected.length) {
+    Promise.allSettled(selected.map((row) => refreshDevice(settings, row.id)))
+      .finally(() => clearDeviceListCache());
+  }
+  return {
+    queued: selected.length,
+    eligible: candidates.length
+  };
+}
+
 async function listDevices(settings = {}, options = {}) {
   const cfg = normalizeSettings(settings);
   const search = cleanText(options.search || '');
@@ -1489,6 +1547,7 @@ async function listDevices(settings = {}, options = {}) {
       const rows = (Array.isArray(rawRows) ? rawRows : [])
         .map((device) => normalizeDevice(device, cfg))
         .filter((row) => !rowExcludedByUsernameSuffix(row, cfg.excludeUsernameSuffixes));
+      const autoRefresh = queueVirtualParameterAutoRefresh(settings, rows, options);
       const rxValues = summaryRows
         .map((row) => row.rxPowerValue)
         .filter((value) => Number.isFinite(Number(value)));
@@ -1515,6 +1574,7 @@ async function listDevices(settings = {}, options = {}) {
           redamanAverage: rxAverage,
           redamanAverageText: rxPowerSummaryText(rxAverage)
         },
+        autoRefresh,
         pagination: {
           page: currentPage,
           limit,
@@ -1558,12 +1618,14 @@ async function listDevices(settings = {}, options = {}) {
   const totalPages = limit === Number.MAX_SAFE_INTEGER ? 1 : Math.max(1, Math.ceil(total / limit));
   const currentPage = Math.min(page, totalPages);
   const offset = limit === Number.MAX_SAFE_INTEGER ? 0 : (currentPage - 1) * limit;
+  const responseRows = limit === Number.MAX_SAFE_INTEGER ? filteredRows : filteredRows.slice(offset, offset + limit);
+  const autoRefresh = queueVirtualParameterAutoRefresh(settings, responseRows, options);
   return {
     ok: true,
     enabled: cfg.enabled,
     configured: configured(cfg),
     baseUrl: cfg.baseUrl,
-    rows: limit === Number.MAX_SAFE_INTEGER ? filteredRows : filteredRows.slice(offset, offset + limit),
+    rows: responseRows,
     summary: {
       total: rows.length,
       online: rows.filter((row) => row.online).length,
@@ -1578,6 +1640,7 @@ async function listDevices(settings = {}, options = {}) {
       redamanAverage: rxAverage,
       redamanAverageText: rxPowerSummaryText(rxAverage)
     },
+    autoRefresh,
     pagination: {
       page: currentPage,
       limit,
@@ -2504,6 +2567,8 @@ module.exports = {
     recentPppState,
     searchQuery,
     sameStringSet,
+    needsVirtualParameterRefresh,
+    recentlyInformed,
     usernameSuffixExclusionQuery,
     wanReadbackVerification,
     wifiCredentialsPlan,
