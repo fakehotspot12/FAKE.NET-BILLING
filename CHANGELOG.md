@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.15] - 2026-08-15
+
+### Fixed
+
+- Memperbaiki Virtual Parameter suhu GenieACS agar membaca ulang raw temperature secara ringan harian.
+- Menambahkan normalisasi suhu saat backfill Virtual Parameters, termasuk raw value GPON/EPON yang perlu dikonversi ke Celsius.
+
 ## [4.2.14] - 2026-08-15
 
 ### Fixed

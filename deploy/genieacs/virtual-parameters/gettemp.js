@@ -52,7 +52,7 @@ function normalize(value) {
 
 let result = null;
 for (const path of paths) {
-  const values = declare(path, {});
+  const values = declare(path, { value: Date.now() - 86400000 });
   for (const item of values) {
     const normalized = normalize(item.value && item.value[0]);
     if (normalized !== null) {
