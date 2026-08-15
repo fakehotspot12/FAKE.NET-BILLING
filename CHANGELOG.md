@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.21] - 2026-08-15
+
+### Fixed
+
+- Membuat klik ulang isolir/terminated tetap aman saat NAS membalas NAK tetapi FreeRADIUS sudah tidak memiliki session aktif, sehingga tombol isolir tidak dianggap gagal setelah pelanggan sebenarnya sudah offline.
+
 ## [4.2.20] - 2026-08-15
 
 ### Fixed

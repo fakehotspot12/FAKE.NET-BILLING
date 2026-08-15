@@ -54,7 +54,11 @@ function uniqueLines(lines = []) {
 }
 
 function noResponse(result = {}) {
-  return result.responseLost === true || /(No response|No reply from server|Sent .*(?:Disconnect|CoA)-Request)/i.test(result.output || result.error || '');
+  const text = result.output || result.error || '';
+  if (result.responseLost === true || /(No response|No reply from server)/i.test(text)) return true;
+  const sentRequest = /Sent .*(?:Disconnect|CoA)-Request/i.test(text);
+  const receivedResponse = /(Received|Disconnect-ACK|Disconnect-NAK|CoA-ACK|CoA-NAK)/i.test(text);
+  return sentRequest && !receivedResponse;
 }
 
 function sessionAlreadyGone(result = {}) {
@@ -208,6 +212,7 @@ function attemptSummary(mode = '', nas = {}, result = {}, lines = []) {
     ok: result.ok === true,
     alreadyOffline: result.alreadyOffline === true,
     responseLost: result.responseLost === true,
+    nak: result.nak === true,
     code: result.code,
     output: result.output || '',
     nas: nas.name || nas.address || '',
@@ -277,6 +282,18 @@ async function disconnectUser(data = {}, user = {}, runtime = {}) {
       }
       firstFailure = firstFailure || fallback;
     }
+  }
+  if (activeSessions.length === 0 && firstFailure?.nak && !noResponse(firstFailure)) {
+    return {
+      ...(firstFailure || {}),
+      ok: true,
+      alreadyOffline: true,
+      error: '',
+      attempts,
+      nas: attempts.find((attempt) => attempt.nas)?.nas || '',
+      username,
+      activeSessions: 0
+    };
   }
   return {
     ...(firstFailure || { ok: false, skipped: true, error: 'NAS Radius tidak ditemukan' }),

@@ -95,6 +95,33 @@ test('CoA repeated disconnect is safe when RouterOS reports the session is alrea
   assert.match(radclient.calls[0].packet, /User-Name = "roni"/);
 });
 
+test('CoA repeated disconnect is idempotent when no active session receives RouterOS NAK', async () => {
+  const radclient = fakeRadclient('Sent Disconnect-Request Id 135 from 0.0.0.0:44438 to 10.1.13.15:3799 length 32\nReceived Disconnect-NAK Id 135 from 10.1.13.15:3799 to 172.16.125.201:44438 length 44\nError-Cause = Unsupported-Extension');
+  const data = {
+    radiusNas: [{
+      id: 'nas-fakenet',
+      name: 'FAKE.NET',
+      address: '10.1.13.15',
+      secret: 'rad2026',
+      ports: 3799
+    }],
+    monitoringTargets: []
+  };
+
+  const result = await freeradiusCoa.disconnectUser(data, {
+    username: 'roni',
+    nasId: 'nas-fakenet'
+  }, {
+    spawn: radclient.spawn,
+    activeSessions: async () => ({ ok: true, rows: [] })
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyOffline, true);
+  assert.equal(result.activeSessions, 0);
+  assert.equal(radclient.calls.length, 1);
+});
+
 test('CoA marks sent-only radclient output as response lost', () => {
   const parsed = freeradiusCoa.__test.parseRadclientResult(1, 'Sent Disconnect-Request Id 23 from 0.0.0.0:49791 to 10.1.13.15:3799 length 67');
   assert.equal(parsed.ok, false);
