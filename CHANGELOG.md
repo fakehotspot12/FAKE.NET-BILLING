@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.22] - 2026-08-15
+
+### Fixed
+
+- Memperbaiki breakpoint desktop-tablet agar perangkat tablet atau desktop layar sentuh tidak lagi dipaksa memakai tampilan mobile, sementara tombol bawah mobile tetap berlaku untuk layar kecil.
+
 ## [4.2.21] - 2026-08-15
 
 ### Fixed
