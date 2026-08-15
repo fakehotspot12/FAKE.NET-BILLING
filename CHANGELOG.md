@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.14] - 2026-08-15
+
+### Fixed
+
+- Menambahkan deteksi modem Fazlink/Realtek `xPON+1GE+1FE+WIFI` sebagai WiFi single-band agar slot multi-SSID index 5 tidak tampil sebagai SSID 5G palsu di GenieACS dan WifiKu.
+- Menyesuaikan backfill Virtual Parameter GenieACS agar `wifiSsid5` dikosongkan pada modem single-band tersebut.
+
 ## [4.2.13] - 2026-08-15
 
 ### Fixed

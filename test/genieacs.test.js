@@ -227,6 +227,44 @@ test('reads CDATA GC WAN VLAN and primary SSID from raw parameters', () => {
   assert.equal(summary.primary.parameterFamily, 'gc');
 });
 
+test('keeps Fazlink Realtek XPON single-band WiFi indexes out of 5G tab', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: '48352E-xPON+1GE+1FE+WIFI-48352E33E4AA',
+    _deviceId: {
+      _Manufacturer: 'Realtek',
+      _ProductClass: 'xPON+1GE+1FE+WIFI',
+      _SerialNumber: '48352E33E4AA'
+    },
+    VirtualParameters: {
+      wifiSsid24: { _value: 'AZAM' },
+      wifiSsid5: { _value: 'FTTH4-33E4AE' }
+    },
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'AZAM' },
+              Enable: { _value: true },
+              TotalAssociations: { _value: 7 }
+            },
+            5: {
+              SSID: { _value: 'FTTH4-33E4AE' },
+              Enable: { _value: false },
+              TotalAssociations: { _value: 0 }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.ssid24, 'AZAM');
+  assert.equal(device.ssid5, '');
+  assert.equal(device.wifiClients5, 0);
+  assert.equal(device.wifiNetworks.every((item) => item.band === '2.4G'), true);
+});
+
 test('normalizes GenieACS temperature from virtual and raw parameters', () => {
   const virtualTemp = genieAcs.normalizeDevice({
     _id: 'temp-virtual',

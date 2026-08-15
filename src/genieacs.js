@@ -754,7 +754,22 @@ function recentPendingProjection(cfg = normalizeSettings({})) {
   return [...paths].join(',');
 }
 
-function wifiBandForIndex(index, ssid = '') {
+function isSingleBandWifiDevice(device = {}) {
+  const text = [
+    cleanText(device._deviceId?._ProductClass),
+    cleanText(device._deviceId?._Manufacturer),
+    getPathValue(device, 'InternetGatewayDevice.DeviceInfo.ProductClass'),
+    getPathValue(device, 'Device.DeviceInfo.ProductClass'),
+    getPathValue(device, 'InternetGatewayDevice.DeviceInfo.ModelName'),
+    getPathValue(device, 'Device.DeviceInfo.ModelName')
+  ].join(' ').toLowerCase();
+  if (!text) return false;
+  if (/5g|5ghz|5 ghz|dual|ac\d|ax\d|wifi6|wi-?fi 6/.test(text)) return false;
+  return /xpon\+1ge\+1fe\+wifi|1ge\+1fe\+wifi/.test(text);
+}
+
+function wifiBandForIndex(index, ssid = '', device = {}) {
+  if (isSingleBandWifiDevice(device)) return '2.4G';
   if (WIFI_5G_CONFIGURATION_INDEXES.has(Number(index)) || /(^|[^0-9])5g([^0-9]|$)|5 ghz/i.test(ssid)) {
     return '5G';
   }
@@ -870,7 +885,7 @@ function normalizeWifiNetworks(device = {}) {
     const securityText = securityValues.join(' / ');
     const securityEnabled = wifiSecurityEnabled(device, base, password);
     const clients = firstParameter(device, wifiClientCountCandidates(index));
-    const band = wifiBandForIndex(index, ssid.value);
+    const band = wifiBandForIndex(index, ssid.value, device);
     return {
       index,
       band,
@@ -891,9 +906,10 @@ function normalizeWifiNetworks(device = {}) {
   }).filter(Boolean);
   const has24 = rows.some((row) => row.band === '2.4G');
   const has5 = rows.some((row) => row.band === '5G');
+  const singleBand = isSingleBandWifiDevice(device);
   const fallbackRows = [
     has24 ? null : fallbackWifiNetworkFromVirtual(device, '2.4G', 'VirtualParameters.wifiSsid24', [1, 2, 3, 4]),
-    has5 ? null : fallbackWifiNetworkFromVirtual(device, '5G', 'VirtualParameters.wifiSsid5', [5, 6, 7, 8])
+    (has5 || singleBand) ? null : fallbackWifiNetworkFromVirtual(device, '5G', 'VirtualParameters.wifiSsid5', [5, 6, 7, 8])
   ].filter(Boolean);
   return [...rows, ...fallbackRows].sort((left, right) => left.index - right.index);
 }
@@ -1027,7 +1043,7 @@ function wifiAssociatedPrefixes(device = {}, index = 1) {
 }
 
 function wifiClientRows(device = {}, network = {}) {
-  const band = network.band || wifiBandForIndex(network.index, network.ssid);
+  const band = network.band || wifiBandForIndex(network.index, network.ssid, device);
   return wifiAssociatedPrefixes(device, network.index)
     .map((prefix) => {
       const macAddress = parameterValue(device, prefix, [
@@ -1177,6 +1193,7 @@ function normalizeDevice(device = {}, settings = {}) {
   const clients5 = firstParameter(device, cfg.wifi5gClientCountParameters);
   const lanClientsParameter = firstParameter(device, cfg.lanClientCountParameters);
   const lanHosts = lanHostSummary(device);
+  const singleBandWifi = isSingleBandWifiDevice(device);
   const wifiNetworks = normalizeWifiNetworks(device);
   const activeWifiNetworks = wifiNetworks.filter((item) => item.enabled);
   const wifi24 = activeWifiNetworks.find((item) => item.band === '2.4G') || wifiNetworks.find((item) => item.band === '2.4G');
@@ -1184,7 +1201,9 @@ function normalizeDevice(device = {}, settings = {}) {
   const wifiClients24 = wifiNetworks.length
     ? activeWifiNetworks.filter((item) => item.band === '2.4G').reduce((sum, item) => sum + item.clients, 0)
     : normalizeCount(clients24.value);
-  const wifiClients5 = wifiNetworks.length
+  const wifiClients5 = singleBandWifi
+    ? 0
+    : wifiNetworks.length
     ? activeWifiNetworks.filter((item) => item.band === '5G').reduce((sum, item) => sum + item.clients, 0)
     : normalizeCount(clients5.value);
   const explicitLanClients = normalizeCount(lanClientsParameter.value);
@@ -1232,12 +1251,12 @@ function normalizeDevice(device = {}, settings = {}) {
     wanVlanParameter: wanVlan.path,
     ssid24: wifi24?.ssid || ssid24.value,
     ssid24Parameter: wifi24?.ssidParameter || ssid24.path,
-    ssid5: wifi5?.ssid || ssid5.value,
-    ssid5Parameter: wifi5?.ssidParameter || ssid5.path,
+    ssid5: singleBandWifi ? '' : (wifi5?.ssid || ssid5.value),
+    ssid5Parameter: singleBandWifi ? '' : (wifi5?.ssidParameter || ssid5.path),
     wifiClients24,
     wifiClients24Parameter: wifi24?.clientsParameter || clients24.path,
     wifiClients5,
-    wifiClients5Parameter: wifi5?.clientsParameter || clients5.path,
+    wifiClients5Parameter: singleBandWifi ? '' : (wifi5?.clientsParameter || clients5.path),
     lanClients,
     lanClientsParameter: lanClientsParameter.path,
     hostClientsTotal: lanHosts.activeTotal,
