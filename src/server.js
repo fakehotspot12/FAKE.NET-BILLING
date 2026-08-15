@@ -158,6 +158,9 @@ const APP_UPDATE_LOCK = process.env.FAKENET_UPDATE_LOCK || '/tmp/fakenet-billing
 const APP_UPDATE_LOCK_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.FAKENET_UPDATE_LOCK_MAX_AGE_SECONDS || 3600) * 1000 || 3600 * 1000);
 const APP_UPDATE_REMOTE_TIMEOUT_MS = Math.max(2000, Number(process.env.FAKENET_UPDATE_REMOTE_TIMEOUT_MS || 5000) || 5000);
 const APP_UPDATE_STATUS_TTL_MS = Math.max(60_000, Number(process.env.FAKENET_UPDATE_STATUS_TTL_MS || 300_000) || 300_000);
+const APP_UPDATE_ARCHIVE_URL = String(process.env.FAKENET_UPDATE_ARCHIVE_URL || '').trim();
+const APP_UPDATE_BRANCH = String(process.env.FAKENET_UPDATE_BRANCH || 'main').trim() || 'main';
+const APP_UPDATE_RAW_BASE_URL = String(process.env.FAKENET_UPDATE_RAW_BASE_URL || '').trim();
 const SLOW_OPERATION_LOG_MS = Math.max(500, Number(process.env.SLOW_OPERATION_LOG_MS || 2000) || 2000);
 const CHANGELOG_PATH = path.join(APP_ROOT, 'CHANGELOG.md');
 const WA_GATEWAY_PROVIDERS = {
@@ -626,6 +629,92 @@ function redactGitRemoteUrl(value = '') {
   return String(value || '').replace(/:\/\/([^/@\s]+)@/g, '://***@');
 }
 
+function compareVersionStrings(left = '', right = '') {
+  const leftParts = String(left || '').replace(/^v/i, '').split(/[.-]/);
+  const rightParts = String(right || '').replace(/^v/i, '').split(/[.-]/);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = leftParts[index] || '0';
+    const rightValue = rightParts[index] || '0';
+    const leftNumber = Number(leftValue);
+    const rightNumber = Number(rightValue);
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+      if (leftNumber > rightNumber) return 1;
+      if (leftNumber < rightNumber) return -1;
+      continue;
+    }
+    const textCompare = leftValue.localeCompare(rightValue);
+    if (textCompare !== 0) return textCompare > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function archiveRawUrl(fileName = '') {
+  const cleanFile = String(fileName || '').replace(/^\/+/, '');
+  if (!cleanFile) return '';
+  if (APP_UPDATE_RAW_BASE_URL) {
+    return `${APP_UPDATE_RAW_BASE_URL.replace(/\/+$/, '')}/${cleanFile}`;
+  }
+  if (!APP_UPDATE_ARCHIVE_URL) return '';
+  try {
+    const parsed = new URL(APP_UPDATE_ARCHIVE_URL);
+    const match = parsed.pathname.match(/^\/([^/]+)\/([^/]+)\/archive\/refs\/heads\/(.+)\.tar\.gz$/);
+    if (!match) return '';
+    const owner = match[1];
+    const repo = match[2];
+    const branch = match[3] || APP_UPDATE_BRANCH;
+    return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${cleanFile}`;
+  } catch {
+    return '';
+  }
+}
+
+async function fetchTextWithTimeout(url, timeoutMs = APP_UPDATE_REMOTE_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(2000, timeoutMs));
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'text/plain, application/json;q=0.9, */*;q=0.8',
+        'User-Agent': `fakenet-billing/${APP_VERSION}`
+      },
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return await response.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function populateArchiveUpdateStatus(status) {
+  const packageUrl = archiveRawUrl('package.json');
+  const changelogUrl = archiveRawUrl('CHANGELOG.md');
+  status.branch = APP_UPDATE_BRANCH;
+  status.remoteUrl = APP_UPDATE_ARCHIVE_URL || APP_UPDATE_RAW_BASE_URL || '';
+  if (!packageUrl) {
+    status.error = 'Source aplikasi bukan Git checkout dan URL raw update belum diset';
+    return status;
+  }
+  try {
+    const timeout = Math.max(8000, APP_UPDATE_REMOTE_TIMEOUT_MS);
+    const packageRaw = await fetchTextWithTimeout(packageUrl, timeout);
+    const remotePackage = JSON.parse(packageRaw);
+    status.remoteVersion = String(remotePackage.version || APP_VERSION);
+    status.updateAvailable = compareVersionStrings(status.remoteVersion, APP_VERSION) > 0;
+    if (changelogUrl) {
+      const changelogRaw = await fetchTextWithTimeout(changelogUrl, timeout).catch(() => '');
+      status.remoteChangelog = changelogSummaryFromText(changelogRaw, 10);
+    }
+    status.error = '';
+  } catch (error) {
+    status.error = `Status update archive gagal dibaca: ${error.message || error}`;
+  }
+  return status;
+}
+
 async function appUpdateStatus(options = {}) {
   const now = Date.now();
   if (!options.force && updateStatusCache.value && updateStatusCache.expiresAt > now) {
@@ -652,7 +741,7 @@ async function appUpdateStatus(options = {}) {
   };
 
   if (status.sourceMode !== 'git') {
-    status.error = 'Source aplikasi bukan Git checkout';
+    await populateArchiveUpdateStatus(status);
     updateStatusCache = { value: status, expiresAt: now + APP_UPDATE_STATUS_TTL_MS };
     return status;
   }

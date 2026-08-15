@@ -13,7 +13,8 @@ ARCHIVE_URL="${FAKENET_UPDATE_ARCHIVE_URL:-}"
 BRANCH="${FAKENET_UPDATE_BRANCH:-}"
 ARCHIVE_URL_OVERRIDE="$ARCHIVE_URL"
 BRANCH_OVERRIDE="$BRANCH"
-DOWNLOAD_TIMEOUT_SECONDS="${FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS:-180}"
+DOWNLOAD_TIMEOUT_SECONDS="${FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS:-900}"
+DOWNLOAD_RETRIES="${FAKENET_UPDATE_DOWNLOAD_RETRIES:-4}"
 ENV_FILE="${FAKENET_ENV_FILE:-/etc/fakenet-billing.env}"
 WAHA_ENV_FILE="${FAKENET_WAHA_ENV_FILE:-/etc/fakenet-billing-waha.env}"
 GENIEACS_ENV_FILE="${FAKENET_GENIEACS_ENV_FILE:-/etc/fakenet-billing-genieacs.env}"
@@ -249,6 +250,7 @@ create_pre_update_backup
 ARCHIVE_URL="${ARCHIVE_URL_OVERRIDE:-${FAKENET_UPDATE_ARCHIVE_URL:-$ARCHIVE_URL}}"
 BRANCH="${BRANCH_OVERRIDE:-${FAKENET_UPDATE_BRANCH:-$BRANCH}}"
 DOWNLOAD_TIMEOUT_SECONDS="${FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS:-$DOWNLOAD_TIMEOUT_SECONDS}"
+DOWNLOAD_RETRIES="${FAKENET_UPDATE_DOWNLOAD_RETRIES:-$DOWNLOAD_RETRIES}"
 
 run_with_timeout() {
   local seconds="$1"
@@ -312,6 +314,30 @@ install_node_dependencies() {
   echo "Dependency baru berhasil diverifikasi dan diaktifkan"
 }
 
+download_update_archive() {
+  local archive_url="$1" output_file="$2" status
+  echo "Download archive update (timeout ${DOWNLOAD_TIMEOUT_SECONDS}s, retry ${DOWNLOAD_RETRIES}x)"
+  set +e
+  curl -fsSL \
+    --connect-timeout 20 \
+    --max-time "$DOWNLOAD_TIMEOUT_SECONDS" \
+    --retry "$DOWNLOAD_RETRIES" \
+    --retry-delay 5 \
+    --retry-max-time "$DOWNLOAD_TIMEOUT_SECONDS" \
+    "$archive_url" \
+    -o "$output_file"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    echo "Download archive update gagal (exit $status). Periksa koneksi server ke GitHub/codeload atau naikkan FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS." >&2
+    return "$status"
+  fi
+  if [ ! -s "$output_file" ]; then
+    echo "Download archive update gagal: file archive kosong." >&2
+    return 1
+  fi
+}
+
 if [ -d "$APP_DIR/.git" ]; then
   echo "Update via git pull"
   git -C "$APP_DIR" fetch --all --prune
@@ -327,7 +353,7 @@ if [ -d "$APP_DIR/.git" ]; then
 elif [ -n "$ARCHIVE_URL" ]; then
   echo "Update via archive $ARCHIVE_URL"
   tmpdir="$(mktemp -d)"
-  curl -fsSL --connect-timeout 15 --max-time "$DOWNLOAD_TIMEOUT_SECONDS" "$ARCHIVE_URL" -o "$tmpdir/source.tar.gz"
+  download_update_archive "$ARCHIVE_URL" "$tmpdir/source.tar.gz"
   mkdir -p "$tmpdir/source"
   tar -xzf "$tmpdir/source.tar.gz" -C "$tmpdir/source" --strip-components=1
   rsync -a --delete \

@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.16] - 2026-08-15
+
+### Fixed
+
+- Memperkuat updater untuk instalasi archive-based seperti Nynet agar `Check for Update` tetap bisa membaca versi remote meski folder aplikasi tidak punya `.git`.
+- Menambah timeout dan retry download archive update supaya koneksi GitHub/codeload yang lambat tidak mudah berhenti di tengah proses.
+- Menambahkan default env update archive/raw URL saat install/repair agar server lama dan install baru memakai jalur update yang sama.
+
 ## [4.2.15] - 2026-08-15
 
 ### Fixed

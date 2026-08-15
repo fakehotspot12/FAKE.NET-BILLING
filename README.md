@@ -499,7 +499,7 @@ Updater akan:
 
 Updater memakai aksi internal `restart-app`, sehingga Redis, PostgreSQL, Docker, dan FreeRADIUS tidak direstart saat pembaruan source. Perintah `restart` tetap tersedia untuk restart penuh ketika memang diperlukan oleh administrator.
 
-Timeout instal dependency default adalah 600 detik dan dapat diubah lewat `FAKENET_NPM_INSTALL_TIMEOUT_SECONDS`. Jika instalasi gagal atau timeout, dependency aktif tetap dipertahankan, service tidak direstart memakai dependency setengah terpasang, dan lock update dilepas otomatis.
+Timeout instal dependency default adalah 600 detik dan dapat diubah lewat `FAKENET_NPM_INSTALL_TIMEOUT_SECONDS`. Timeout download source archive default adalah 900 detik dengan retry, dan dapat diubah lewat `FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS` serta `FAKENET_UPDATE_DOWNLOAD_RETRIES`. Jika instalasi gagal atau timeout, dependency aktif tetap dipertahankan, service tidak direstart memakai dependency setengah terpasang, dan lock update dilepas otomatis.
 
 Data aplikasi di `data/` tidak dihapus oleh updater. Untuk install PostgreSQL, file backup berisi:
 

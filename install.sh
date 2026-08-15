@@ -552,6 +552,22 @@ ensure_wa_gateway_env_defaults() {
   fi
 }
 
+ensure_update_env_defaults() {
+  local file="/etc/fakenet-billing.env" timeout retries
+  [ -f "$file" ] || return 0
+  timeout="$(read_env_value_raw "$file" FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS || true)"
+  if ! [[ "$timeout" =~ ^[0-9]+$ ]] || [ "$timeout" -lt 900 ]; then
+    replace_or_append_env "$file" FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS 900
+  fi
+  retries="$(read_env_value_raw "$file" FAKENET_UPDATE_DOWNLOAD_RETRIES || true)"
+  if ! [[ "$retries" =~ ^[0-9]+$ ]] || [ "$retries" -lt 4 ]; then
+    replace_or_append_env "$file" FAKENET_UPDATE_DOWNLOAD_RETRIES 4
+  fi
+  append_env_if_missing "$file" FAKENET_UPDATE_BRANCH main
+  append_env_if_missing "$file" FAKENET_UPDATE_ARCHIVE_URL https://github.com/fakehotspot12/FAKE.NET-BILLING/archive/refs/heads/main.tar.gz
+  append_env_if_missing "$file" FAKENET_UPDATE_RAW_BASE_URL https://raw.githubusercontent.com/fakehotspot12/FAKE.NET-BILLING/main
+}
+
 prepare_genieacs_env_file() {
   local source_mode="${1:-bundled}" genieacs_jwt_secret
   if [ ! -f "$GENIEACS_ENV_FILE" ]; then
@@ -654,6 +670,7 @@ install_env() {
     replace_or_append_env /etc/fakenet-billing.env RADIUS_DATABASE_PASSWORD "$radius_db_password"
   fi
   ensure_wa_gateway_env_defaults
+  ensure_update_env_defaults
 
   if [ -n "${FAKENET_LICENSE_PUBLIC_KEY:-}" ] && ! grep -q '^LICENSE_PUBLIC_KEY=' /etc/fakenet-billing.env; then
     local escaped_public_key
