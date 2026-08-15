@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.19] - 2026-08-15
+
+### Fixed
+
+- Memperkuat CoA disconnect saat isolir/terminated dengan mengambil session aktif dari `radacct`, mengirim atribut session lengkap ke NAS, dan membuat klik ulang aman saat session sudah lebih dulu putus.
+
 ## [4.2.18] - 2026-08-15
 
 ### Fixed

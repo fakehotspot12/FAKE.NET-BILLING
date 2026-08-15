@@ -144,14 +144,14 @@ function cloneJson(value = {}) {
   }
 }
 
-function activeSessionsQuery(limit, columns = new Set(), usernames = []) {
+function activeSessionsQuery(limit, columns = new Set(), usernames = [], options = {}) {
   const rowLimit = clampLimit(limit);
   const usernameValues = [...new Set((usernames || []).map((username) => cleanText(username).toLowerCase()).filter(Boolean))]
     .slice(0, 5000);
   const usernameFilter = usernameValues.length
     ? `AND lower(radacct.username) IN (${usernameValues.map(sqlLiteral).join(',')})`
     : '';
-  const staleSeconds = sessionStaleSeconds();
+  const staleSeconds = options.ignoreStale ? 0 : sessionStaleSeconds();
   const staleFilter = staleSeconds > 0
     ? `AND COALESCE(radacct.acctupdatetime, radacct.acctstarttime) >= (now() - (${staleSeconds} * interval '1 second'))`
     : '';
@@ -1153,7 +1153,7 @@ async function activeSessions(options = {}) {
   }
   try {
     const columns = await radacctColumns();
-    const rows = await psqlJson(activeSessionsQuery(options.limit || 1000, columns, restrictedUsernames));
+    const rows = await psqlJson(activeSessionsQuery(options.limit || 1000, columns, restrictedUsernames, options));
     const payload = {
       ok: true,
       enabled: true,
