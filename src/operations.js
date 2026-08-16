@@ -497,8 +497,14 @@ function sanitizeSiteRadius(payload = {}, current = {}, target = {}) {
   const source = hasNestedRadius ? payload.radius : payload;
   const next = { ...current };
   const secret = cleanText(source.radiusSecret || source.secret);
+  const previousAddress = cleanText(current.address || target.host || target.ipAddress);
   next.enabled = boolValue(source.radiusEnabled ?? source.enabled, Boolean(next.secret || secret));
   next.address = cleanText(payload.host || payload.ipAddress || target.host);
+  const aliases = Array.isArray(current.aliases) ? [...current.aliases] : [];
+  if (previousAddress && next.address && previousAddress !== next.address && !aliases.includes(previousAddress)) {
+    aliases.push(previousAddress);
+  }
+  next.aliases = aliases.slice(-8);
   const radiusPort = hasNestedRadius ? source.port : source.radiusPort;
   next.port = Math.max(1, Math.min(65535, Number(radiusPort || next.port) || 3799));
   next.type = cleanText((hasNestedRadius ? source.type : source.radiusType) || next.type || 'mikrotik');

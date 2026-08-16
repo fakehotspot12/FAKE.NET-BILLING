@@ -255,6 +255,24 @@ function booleanValue(value, fallback = false) {
   return fallback;
 }
 
+function uniqueText(values = []) {
+  const seen = new Set();
+  const rows = [];
+  for (const value of values) {
+    const clean = text(value);
+    const key = clean.toLowerCase();
+    if (!clean || seen.has(key)) continue;
+    seen.add(key);
+    rows.push(clean);
+  }
+  return rows;
+}
+
+function radiusNasClientAddresses(entry = {}) {
+  return uniqueText([entry.address, ...(Array.isArray(entry.aliases) ? entry.aliases : [])])
+    .filter((value) => /[.:]/.test(value) && /^[a-z0-9_.:-]+$/i.test(value));
+}
+
 function radiusConfig(target = {}) {
   return target.radius && typeof target.radius === 'object' ? target.radius : {};
 }
@@ -317,9 +335,14 @@ function radiusNasEntries(data, options = {}) {
     };
     const key = entryKey(normalized);
     if (!key) return;
-    const existingIndex = seen.get(key);
+    const nameKey = text(normalized.name).toLowerCase();
+    const nameIndex = nameKey
+      ? entries.findIndex((item) => text(item.name).toLowerCase() === nameKey)
+      : -1;
+    const existingIndex = seen.get(key) ?? (nameIndex >= 0 ? nameIndex : undefined);
     if (existingIndex === undefined) {
       seen.set(key, entries.length);
+      if (nameKey) seen.set(`name:${nameKey}`, entries.length);
       entries.push(normalized);
       return;
     }
@@ -340,6 +363,9 @@ function radiusNasEntries(data, options = {}) {
       source: preferred.source || fallback.source || 'radius',
       aliases: aliasList(current, normalized)
     };
+    seen.set(key, existingIndex);
+    const mergedNameKey = text(entries[existingIndex].name).toLowerCase();
+    if (mergedNameKey) seen.set(`name:${mergedNameKey}`, existingIndex);
   };
 
   for (const item of data.radiusNas) {
@@ -691,16 +717,18 @@ function freeradiusRows(data) {
   const accountingInterimIntervalSeconds = Math.max(0, Math.trunc(numberValue(radiusSettings.accountingInterimIntervalSeconds, 60)) || 0);
 
   for (const item of radiusNasEntries(data)) {
-    nas.push({
-      nasname: item.address,
-      shortname: item.name,
-      type: item.type || 'mikrotik',
-      ports: item.ports || 3799,
-      secret: item.secret || '',
-      server: '',
-      community: '',
-      description: item.site || item.name
-    });
+    for (const address of radiusNasClientAddresses(item)) {
+      nas.push({
+        nasname: address,
+        shortname: item.name,
+        type: item.type || 'mikrotik',
+        ports: item.ports || 3799,
+        secret: item.secret || '',
+        server: '',
+        community: '',
+        description: item.site || item.name
+      });
+    }
   }
 
   for (const profile of data.radiusProfiles) {

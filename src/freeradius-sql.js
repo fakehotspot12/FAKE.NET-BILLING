@@ -197,6 +197,14 @@ function sqlList(values = []) {
   return clean.length ? clean.map(sqlLiteral).join(', ') : '';
 }
 
+function managedNasLabels(rows = {}) {
+  const nasRows = rows.nas || [];
+  return {
+    shortnames: unique(nasRows.map((row) => row.shortname)),
+    descriptions: unique(nasRows.map((row) => row.description))
+  };
+}
+
 function insertRows(table, columns, rows = {}) {
   const values = (rows[table] || []).map((row) => {
     const mapped = columns.map((column) => {
@@ -216,6 +224,9 @@ function buildSql(rows, previousManaged = {}) {
   const usernameList = sqlList(deleteKeys.usernames);
   const groupList = sqlList(deleteKeys.groupnames);
   const nasList = sqlList(deleteKeys.nasnames);
+  const nasLabels = managedNasLabels(rows);
+  const nasShortnameList = sqlList(nasLabels.shortnames);
+  const nasDescriptionList = sqlList(nasLabels.descriptions);
 
   if (usernameList) {
     statements.push(`DELETE FROM radcheck WHERE username IN (${usernameList});`);
@@ -229,6 +240,12 @@ function buildSql(rows, previousManaged = {}) {
   }
   if (nasList) {
     statements.push(`DELETE FROM nas WHERE nasname IN (${nasList});`);
+  }
+  if (nasShortnameList || nasDescriptionList) {
+    const filters = [];
+    if (nasShortnameList) filters.push(`shortname IN (${nasShortnameList})`);
+    if (nasDescriptionList) filters.push(`description IN (${nasDescriptionList})`);
+    statements.push(`DELETE FROM nas WHERE ${filters.join(' OR ')};`);
   }
 
   statements.push(insertRows('nas', [

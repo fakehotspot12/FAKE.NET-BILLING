@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.24] - 2026-08-16
+
+### Fixed
+
+- Menyimpan IP NAS lama sebagai alias ketika IP/Host Site diubah, sehingga sesi FreeRADIUS yang sudah aktif sebelum perubahan tetap terbaca online.
+- Menggabungkan NAS dengan nama yang sama agar perubahan IP Site tidak membuat NAS dobel di tampilan billing.
+- Membersihkan entri NAS FreeRADIUS lama berdasarkan nama Site saat sinkron SQL, lalu memasukkan IP/host alias sebagai client FreeRADIUS tambahan untuk jalur VPN yang source address-nya berbeda.
+
 ## [4.2.23] - 2026-08-16
 
 ### Fixed

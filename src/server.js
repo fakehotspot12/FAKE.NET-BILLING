@@ -4315,7 +4315,14 @@ function radiusNasAddressKey(value = '') {
 }
 
 function radiusNasByAddress(data = {}) {
-  return new Map(freeradius.radiusNasEntries(data, { includeUnconfigured: true }).map((nas) => [radiusNasAddressKey(nas.address), nas]));
+  const map = new Map();
+  for (const nas of freeradius.radiusNasEntries(data, { includeUnconfigured: true })) {
+    for (const value of [nas.address, ...(Array.isArray(nas.aliases) ? nas.aliases : [])]) {
+      const key = radiusNasAddressKey(value);
+      if (key && !map.has(key)) map.set(key, nas);
+    }
+  }
+  return map;
 }
 
 function radiusCustomerDirectory(data = {}) {
@@ -4389,8 +4396,10 @@ function radiusFindNas(data = {}, value = '') {
   const addressNeedle = radiusNasAddressKey(value);
   if (!needle) return null;
   return freeradius.radiusNasEntries(data, { includeUnconfigured: true }).find((nas) => {
+    const aliases = Array.isArray(nas.aliases) ? nas.aliases : [];
     return [nas.id, nas.name].some((item) => String(item || '').toLowerCase() === needle)
-      || radiusNasAddressKey(nas.address) === addressNeedle;
+      || radiusNasAddressKey(nas.address) === addressNeedle
+      || aliases.some((alias) => String(alias || '').toLowerCase() === needle || radiusNasAddressKey(alias) === addressNeedle);
   }) || null;
 }
 
