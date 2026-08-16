@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.23] - 2026-08-16
+
+### Fixed
+
+- Memaksa koneksi keluar Node.js memakai urutan DNS IPv4-first agar checkout dan auto-sync Tripay tidak gagal saat jalur IPv6 server tidak sehat.
+- Melonggarkan timeout pemilihan alamat jaringan Node.js untuk Tripay karena beberapa IP Tripay butuh waktu koneksi lebih dari default Node.
+- Menambahkan retry ringan pada request Tripay agar checkout, channel, dan auto-sync tidak langsung gagal ketika salah satu IP Tripay timeout dari jaringan server.
+- Memperjelas log auto-sync Tripay dengan kode penyebab jaringan seperti `ETIMEDOUT` agar audit payment gateway lebih cepat.
+
 ## [4.2.22] - 2026-08-15
 
 ### Fixed

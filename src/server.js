@@ -1,10 +1,12 @@
 'use strict';
 
 const crypto = require('crypto');
+const dns = require('dns');
 const { execFile, spawn } = require('child_process');
 const fsSync = require('fs');
 const fs = require('fs/promises');
 const http = require('http');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
@@ -16,6 +18,17 @@ const QRCode = require('qrcode');
 const sharp = require('sharp');
 const webPush = require('web-push');
 const packageInfo = require('../package.json');
+
+try {
+  if (typeof dns.setDefaultResultOrder === 'function') {
+    dns.setDefaultResultOrder('ipv4first');
+  }
+  if (typeof net.setDefaultAutoSelectFamilyAttemptTimeout === 'function') {
+    net.setDefaultAutoSelectFamilyAttemptTimeout(4000);
+  }
+} catch (error) {
+  console.warn(`DNS/network result order tetap default: ${error.message || error}`);
+}
 
 const execFileAsync = promisify(execFile);
 const gzipAsync = promisify(zlib.gzip);
@@ -17101,6 +17114,39 @@ function tripayApiBase(settings = {}) {
     : 'https://tripay.co.id/api-sandbox';
 }
 
+async function tripayFetch(settings = {}, endpoint = '', options = {}) {
+  const {
+    retries = 2,
+    retryDelayMs = 500,
+    timeoutMs = 12000,
+    ...fetchOptions
+  } = options || {};
+  const maxAttempts = Math.max(1, Math.min(4, Number(retries || 0) + 1));
+  const targetUrl = endpoint instanceof URL
+    ? endpoint
+    : new URL(String(endpoint || '').startsWith('http')
+      ? String(endpoint)
+      : `${tripayApiBase(settings)}${String(endpoint || '').startsWith('/') ? '' : '/'}${endpoint || ''}`);
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(3000, Number(timeoutMs || 12000)));
+    try {
+      return await fetch(targetUrl, {
+        ...fetchOptions,
+        signal: controller.signal
+      });
+    } catch (error) {
+      lastError = error.name === 'AbortError' ? new Error('Tripay request timeout') : error;
+      if (attempt >= maxAttempts) break;
+      await waitMs(Math.max(100, Number(retryDelayMs || 500)) * attempt);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error('Tripay request gagal');
+}
+
 function paymentGatewayReturnUrl(data = {}, fallbackPath = '/') {
   const origin = paymentGatewayOrigin(data.settings || {});
   if (!origin) return '';
@@ -17174,16 +17220,13 @@ async function tripayPaymentChannelRows(settings = {}, apiKey = '') {
   }
 
   const request = (async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetch(`${tripayApiBase(settings)}/merchant/payment-channel`, {
+      const response = await tripayFetch(settings, '/merchant/payment-channel', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           Accept: 'application/json'
-        },
-        signal: controller.signal
+        }
       });
       const bodyText = await response.text();
       let body = {};
@@ -17206,8 +17249,6 @@ async function tripayPaymentChannelRows(settings = {}, apiKey = '') {
       }
       if (error.name === 'AbortError') throw new Error('Tripay channel timeout');
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   })();
   const sameKey = tripayChannelCache.key === key;
@@ -17303,7 +17344,7 @@ async function tripayTransactionHistory(data = {}, options = {}) {
     endpoint.searchParams.set('page', String(page));
     endpoint.searchParams.set('per_page', String(perPage));
     endpoint.searchParams.set('sort', 'desc');
-    const response = await fetch(endpoint, {
+    const response = await tripayFetch(settings, endpoint, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         Accept: 'application/json'
@@ -17579,6 +17620,27 @@ function isTripayUnauthorizedIpError(error = null) {
   return /unauthorized\s+ip/i.test(String(error?.message || error || ''));
 }
 
+function describeTripaySyncError(error = null) {
+  const messages = [];
+  const pushPart = (value) => {
+    const text = String(value || '').trim();
+    if (text && !messages.includes(text)) messages.push(text);
+  };
+  pushPart(error?.message || error);
+  const cause = error?.cause;
+  if (cause) {
+    pushPart(cause.code);
+    pushPart(cause.message);
+    if (Array.isArray(cause.errors)) {
+      for (const item of cause.errors.slice(0, 3)) {
+        pushPart(item?.code);
+        pushPart(item?.message);
+      }
+    }
+  }
+  return messages.join(' | ') || 'unknown error';
+}
+
 async function runPaymentGatewayHistorySync(reason = 'interval') {
   if (MIGRATION_MODE || paymentGatewayHistorySyncRunning) return null;
   if (Date.now() < paymentGatewayHistorySyncPausedUntil) {
@@ -17624,7 +17686,7 @@ function startPaymentGatewayHistorySync() {
         console.error('Tripay auto-sync riwayat dijeda 6 jam karena IP keluar tidak terdaftar; callback pembayaran tetap aktif');
         return;
       }
-      console.error(`Tripay auto-sync gagal: ${error.message || error}`);
+      console.error(`Tripay auto-sync gagal: ${describeTripaySyncError(error)}`);
     });
   };
   const initialTimer = setTimeout(() => run('startup'), 20_000);
@@ -18210,7 +18272,7 @@ async function createTripayCheckout(data = {}, params = {}) {
   const callbackUrl = String(params.callbackUrl || settings.callbackUrl || '').trim();
   if (callbackUrl) payload.callback_url = callbackUrl;
   payload.method = method;
-  const response = await fetch(`${tripayApiBase(settings)}/transaction/create`, {
+  const response = await tripayFetch(settings, '/transaction/create', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
