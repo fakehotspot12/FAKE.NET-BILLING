@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const { createId } = require('./store');
 const redisCache = require('./redis-cache');
@@ -189,16 +189,68 @@ async function readSnmpIndexedValues(target, oid, options = {}) {
   });
   return String(output.stdout || output.stderr)
     .split(/\r?\n/)
-    .map((line) => {
-      const text = cleanText(line);
-      if (!text) return null;
-      const parts = text.split(/\s+/);
-      const oidText = cleanText(parts.shift()).replace(/^\.?/, '');
-      const index = oidText.split('.').at(-1);
-      const value = sanitizeSnmpValue(parts.join(' ').replace(/^=+\s*/, ''));
-      return index ? { index, value } : null;
-    })
+    .map(parseSnmpIndexedLine)
     .filter(Boolean);
+}
+
+function parseSnmpIndexedLine(line = '') {
+  const raw = cleanText(line);
+  if (!raw) return null;
+  const parts = raw.split(/\s+/);
+  const oidText = cleanText(parts.shift()).replace(/^\.?/, '');
+  const index = oidText.split('.').at(-1);
+  const value = sanitizeSnmpValue(parts.join(' ').replace(/^=+\s*/, ''));
+  return index ? { index, value } : null;
+}
+
+function readSnmpIndexedValueUntilMatch(target, oid, matcher, options = {}) {
+  const base = snmpTargetArgs(target, oid, '-Onq');
+  const timeoutOverride = Number(options.timeoutMs);
+  const timeoutMs = Number.isFinite(timeoutOverride)
+    ? Math.max(1000, Math.min(15000, Math.trunc(timeoutOverride)))
+    : Math.max(8000, base.timeoutMs);
+  const args = [...base.args];
+  const timeoutIndex = args.indexOf('-t');
+  if (timeoutIndex !== -1) {
+    args[timeoutIndex + 1] = String(Math.max(1, Math.ceil(timeoutMs / 1000)));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let buffer = '';
+    let stderr = '';
+    const child = spawn('snmpwalk', args, { windowsHide: true });
+    const finish = (error, row = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (child.exitCode === null && !child.killed) child.kill('SIGTERM');
+      if (error) reject(error);
+      else resolve(row);
+    };
+    const inspectLine = (line = '') => {
+      const row = parseSnmpIndexedLine(line);
+      if (row && matcher(row)) finish(null, row);
+    };
+    const timer = setTimeout(() => finish(null, null), timeoutMs + 1000);
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      lines.forEach(inspectLine);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once('error', finish);
+    child.once('close', (code) => {
+      if (settled) return;
+      if (buffer) inspectLine(buffer);
+      if (settled) return;
+      if (code === 0) finish(null, null);
+      else finish(new Error(cleanText(stderr) || `snmpwalk keluar dengan status ${code}`));
+    });
+  });
 }
 
 async function readSnmpRows(target, oid) {
@@ -318,6 +370,45 @@ async function dashboardInterfaceInfo(target = {}) {
       interfaceCount: cached.interfaceCount,
       fromCache: true
     };
+  }
+
+  if (selected) {
+    const timeoutMs = Math.max(15000, Math.min(15000, Number(target.dashboardSnmpTimeoutMs || target.timeoutMs || 15000) || 15000));
+    const needle = selected.toLowerCase();
+    const matcher = (row) => {
+      const value = cleanText(row.value).toLowerCase();
+      return row.index === selected || value === needle || value.includes(needle);
+    };
+    let direct = null;
+    try {
+      direct = await readSnmpIndexedValueUntilMatch(target, IF_NAME_OID, matcher, { timeoutMs });
+    } catch {
+      direct = null;
+    }
+    if (!direct) {
+      try {
+        direct = await readSnmpIndexedValueUntilMatch(target, IF_DESCR_OID, matcher, { timeoutMs });
+      } catch {
+        direct = null;
+      }
+    }
+    if (direct) {
+      const selectedInterface = {
+        index: direct.index,
+        name: direct.value,
+        value: direct.value
+      };
+      dashboardInterfaceResolutionCache.set(cacheKey, {
+        selectedInterface,
+        interfaceCount: 0,
+        expiresAt: Date.now() + ROUTER_DASHBOARD_INTERFACE_CACHE_MS
+      });
+      return {
+        selectedInterface,
+        interfaceCount: 0,
+        fromCache: false
+      };
+    }
   }
 
   const interfaces = await readDashboardInterfaceList(target);
