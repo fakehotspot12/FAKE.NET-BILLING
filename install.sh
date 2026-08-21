@@ -1083,6 +1083,9 @@ configure_freeradius_site_file() {
   # ISP usernames commonly use local suffixes such as user@site.
   # FreeRADIUS' default filter_username rejects realms without a dot before SQL auth.
   sed -i -E '/^[[:space:]]*filter_username[[:space:]]*$/s//        # filter_username disabled by fakenet-billing: allow local PPP-Hotspot suffix usernames/' "$site_file" || true
+  # SQL is the billing source of truth. Avoid duplicating every accounting packet
+  # into unbounded daily detail files under /var/log/freeradius/radacct.
+  sed -i -E '/^[[:space:]]*detail([[:space:]]*(#.*)?)$/s//        # detail disabled by fakenet-billing: accounting is persisted in SQL/' "$site_file" || true
   sed -i -E 's/^[[:space:]]*#?[[:space:]]*-?sql([[:space:]]*(#.*)?)$/        sql\1/' "$site_file" || true
   sed -i -E 's/^[[:space:]]*sqlippool([[:space:]]*(#.*)?)$/#        sqlippool\1/' "$site_file" || true
   sed -i -E 's/^[[:space:]]*sql_session_start([[:space:]]*(#.*)?)$/#        sql_session_start\1/' "$site_file" || true

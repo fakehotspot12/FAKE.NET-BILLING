@@ -21,6 +21,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 ### Fixed
 
 - Mempertahankan seluruh konfigurasi produksi Fakenet saat sinkron fitur dari environment pengembangan, termasuk port, Redis, scheduler billing, WhatsApp, Payment Gateway, FreeRADIUS, dan GenieACS.
+- Mencegah FreeRADIUS menggandakan SQL accounting ke file detail harian tanpa batas saat install atau repair, sehingga penggunaan disk tetap terkendali tanpa mengurangi data sesi billing.
 - Melengkapi helper lookup NAS, peta Leaflet, serta navigasi Mitra yang sebelumnya berisiko tidak terdefinisi ketika hanya sebagian patch diterapkan.
 - Menghapus implementasi peta yang terduplikasi agar optimasi terbaru benar-benar digunakan dan ukuran aset JavaScript berkurang sekitar 50 KB.
 - Merapikan aturan CSS responsif, judul tampilan Mitra, cache username Radius, dan duplikasi rule statistik agar tampilan serta interaksi tetap konsisten.

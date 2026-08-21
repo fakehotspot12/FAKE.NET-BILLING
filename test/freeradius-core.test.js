@@ -1,12 +1,21 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 
 const freeradius = require('../src/freeradius-core');
 const freeradiusSql = require('../src/freeradius-sql');
 const freeradiusSessions = require('../src/freeradius-sessions');
 const { createDefaultStore } = require('../src/store');
+
+test('installer disables unbounded FreeRADIUS detail accounting when SQL is enabled', () => {
+  const installer = fs.readFileSync(path.join(__dirname, '..', 'install.sh'), 'utf8');
+
+  assert.match(installer, /detail disabled by fakenet-billing: accounting is persisted in SQL/);
+  assert.match(installer, /\^\[\[:space:\]\]\*detail/);
+});
 
 test('FreeRADIUS NAS rows only contain valid IP addresses', () => {
   const data = createDefaultStore();
