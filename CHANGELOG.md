@@ -25,6 +25,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 - Melengkapi helper lookup NAS, peta Leaflet, serta navigasi Mitra yang sebelumnya berisiko tidak terdefinisi ketika hanya sebagian patch diterapkan.
 - Menghapus implementasi peta yang terduplikasi agar optimasi terbaru benar-benar digunakan dan ukuran aset JavaScript berkurang sekitar 50 KB.
 - Mencegah panel submenu tombol bawah mendorong halaman ke samping pada mode mobile; submenu sekarang konsisten naik vertikal dari bawah seperti bottom sheet.
+- Melengkapi ikon seluruh menu dan submenu, termasuk navigasi Mitra, Peta Pelanggan, serta ODP/ODC, dengan pemeriksaan otomatis agar menu baru tidak tampil tanpa ikon.
 - Merapikan aturan CSS responsif, judul tampilan Mitra, cache username Radius, dan duplikasi rule statistik agar tampilan serta interaksi tetap konsisten.
 
 ## [4.2.27] - 2026-08-21

@@ -19,8 +19,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=mobile-sheet-20260822"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=mobile-sheet-20260822"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=menu-icons-20260822"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=menu-icons-20260822"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
@@ -128,6 +128,20 @@ test('keeps one monitoring map implementation and complete partner titles', () =
   for (const view of ['partnerCustomers', 'partnerPackages', 'partnerInvoices', 'partnerPayments', 'partnerPppoe', 'partnerRadius', 'partnerReports', 'partnerSettlement']) {
     assert.match(appSource, new RegExp(`${view}: 'Mitra`));
   }
+});
+
+test('assigns icons to every sidebar view and all partner navigation actions', () => {
+  const html = publicSource('index.html');
+  const styles = publicSource('styles.css');
+  const sidebarViews = [...new Set([...html.matchAll(/data-view="([^"]+)"/g)].map((match) => match[1]))];
+
+  sidebarViews.forEach((view) => {
+    assert.match(styles, new RegExp(`\\[data-view=["']${view}["']\\][^{]*\\{[^}]*--menu-icon`), `missing icon for ${view}`);
+  });
+  for (const view of ['partnerReports', 'partnerCustomers', 'partnerInvoices', 'partnerSettlement', 'partnerPppoe', 'partnerPackages', 'partnerRadius', 'partnerPayments']) {
+    assert.match(styles, new RegExp(`\\[data-partner-view=["']${view}["']\\][^{]*\\{[^}]*--menu-icon`), `missing partner icon for ${view}`);
+  }
+  assert.match(styles, /\.partner-compact-nav \[data-partner-view\]::before[\s\S]*?mask:\s*var\(--menu-icon\)/);
 });
 
 test('keeps public security responses minimal and protected', () => {

@@ -1897,6 +1897,76 @@ input[type="checkbox"] {
   --menu-icon: var(--icon-dashboard);
 }
 
+[data-nav-group="customers"] .nav-section-label,
+[data-open-nav-group="customers"] {
+  --menu-icon: var(--icon-member);
+}
+
+[data-nav-group="partners"] .nav-section-label,
+[data-open-nav-group="partners"] {
+  --menu-icon: var(--icon-users);
+}
+
+[data-view="partnerCustomers"],
+[data-partner-view="partnerCustomers"] {
+  --menu-icon: var(--icon-member);
+}
+
+[data-view="partnerPackages"],
+[data-partner-view="partnerPackages"] {
+  --menu-icon: var(--icon-ticket);
+}
+
+[data-view="partnerInvoices"],
+[data-partner-view="partnerInvoices"] {
+  --menu-icon: var(--icon-billing);
+}
+
+[data-view="partnerPayments"],
+[data-partner-view="partnerPayments"] {
+  --menu-icon: var(--icon-payment);
+}
+
+[data-view="partnerPppoe"],
+[data-view="partnerRadius"],
+[data-partner-view="partnerPppoe"],
+[data-partner-view="partnerRadius"] {
+  --menu-icon: var(--icon-radius);
+}
+
+[data-view="partnerReports"],
+[data-partner-view="partnerReports"] {
+  --menu-icon: var(--icon-statistics);
+}
+
+[data-view="partnerSettlement"],
+[data-partner-view="partnerSettlement"] {
+  --menu-icon: var(--icon-finance);
+}
+
+[data-nav-group="radius"] .nav-section-label,
+[data-open-nav-group="radius"] {
+  --menu-icon: var(--icon-radius);
+}
+
+[data-nav-group="finance"] .nav-section-label,
+[data-open-nav-group="finance"] {
+  --menu-icon: var(--icon-finance);
+}
+
+[data-nav-group="monitoring"] .nav-section-label,
+[data-open-nav-group="monitoring"] {
+  --menu-icon: var(--icon-monitoring);
+}
+
+[data-nav-group="settings-menu"] .nav-section-label {
+  --menu-icon: var(--icon-settings);
+}
+
+[data-nav-group="admin"] .nav-section-label {
+  --menu-icon: var(--icon-report);
+}
+
 [data-nav-toggle="radius"] {
   --menu-icon: var(--icon-radius);
 }
@@ -2006,6 +2076,14 @@ input[type="checkbox"] {
 
 [data-view="monitoringSite"] {
   --menu-icon: var(--icon-site);
+}
+
+[data-view="monitoringCustomerMap"] {
+  --menu-icon: var(--icon-location-sync);
+}
+
+[data-view="monitoringFiberNetwork"] {
+  --menu-icon: var(--icon-asset);
 }
 
 [data-view="monitoringMembers"] {
@@ -2273,6 +2351,22 @@ input[type="checkbox"] {
 
 .partner-compact-nav .tab-switcher {
   max-width: 100%;
+}
+
+.partner-compact-nav [data-partner-view] {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.partner-compact-nav [data-partner-view]::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  background: currentColor;
+  -webkit-mask: var(--menu-icon) center / contain no-repeat;
+  mask: var(--menu-icon) center / contain no-repeat;
 }
 
 .partner-compact-nav .partner-detail-tabs {
@@ -18550,7 +18644,7 @@ body.is-authenticated .content button[id$="Refresh"].compact {
 
 /* DEV mobile icon density fix - start */
 [data-open-nav-group="customers"] {
-  --menu-icon: var(--icon-users);
+  --menu-icon: var(--icon-member);
 }
 
 [data-nav-group="customers"] [data-view="monitoringMembers"] {
