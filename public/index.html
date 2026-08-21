@@ -12,7 +12,7 @@
     <link id="appFavicon" rel="icon" href="__FAKENET_META_ICON__">
     <link id="appleTouchIcon" rel="apple-touch-icon" href="__FAKENET_META_ICON__">
     <link rel="manifest" href="/manifest.webmanifest?v=fakenet-billing-__FAKENET_APP_VERSION__">
-    <link rel="stylesheet" href="/boot.css?ui=billing-nas-genie-pending-20260811">
+    <link rel="stylesheet" href="/boot.css?ui=ui-safe-20260822">
   </head>
   <body class="is-loading-auth">
     <div class="app-shell">
@@ -80,6 +80,15 @@
           <div class="nav-submenu">
             <button class="nav-subitem" type="button" data-view="monitoringMembers">Pelanggan</button>
             <button class="nav-subitem" type="button" data-view="monitoringBilling">Tagihan Pelanggan</button>
+          </div>
+        </div>
+        <div class="nav-group nav-section" data-nav-group="partners">
+          <div class="nav-section-label"><span>Mitra / Reseller</span></div>
+          <div class="nav-submenu">
+            <button class="nav-subitem" type="button" data-view="partnerReports">Ringkasan</button>
+            <button class="nav-subitem" type="button" data-view="partnerCustomers" data-related-views="partnerPppoe,partnerPackages,partnerRadius">Pelanggan</button>
+            <button class="nav-subitem" type="button" data-view="partnerInvoices" data-related-views="partnerPayments">Keuangan</button>
+            <button class="nav-subitem" type="button" data-view="partnerSettlement">Settlement</button>
           </div>
         </div>
         <div class="nav-group nav-section" data-nav-group="radius">
@@ -159,6 +168,6 @@
       </form>
     </dialog>
 
-    <script src="/bootstrap.js?ui=billing-nas-genie-pending-20260811" defer></script>
+    <script src="/bootstrap.js?ui=ui-safe-20260822" defer></script>
   </body>
 </html>

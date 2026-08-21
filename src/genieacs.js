@@ -61,6 +61,7 @@ const DEFAULT_RX_POWER_PARAMETERS = [
   'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.2.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_HW_EponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.X_ZTE-COM_RxPower',
@@ -146,8 +147,8 @@ const DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS = [
 ];
 
 const DEFAULT_LAN_CLIENT_COUNT_PARAMETERS = [
-  'VirtualParameters.LANClients',
   'VirtualParameters.LANActiveClients',
+  'VirtualParameters.LANClients',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.AssociatedDeviceNumberOfEntries',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.AssociatedDeviceNumberOfEntries',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.AssociatedDeviceNumberOfEntries',
@@ -156,6 +157,10 @@ const DEFAULT_LAN_CLIENT_COUNT_PARAMETERS = [
   'Device.Ethernet.Interface.2.AssociatedDeviceNumberOfEntries',
   'Device.Ethernet.Interface.3.AssociatedDeviceNumberOfEntries',
   'Device.Ethernet.Interface.4.AssociatedDeviceNumberOfEntries'
+];
+
+const DEFAULT_ACTIVE_DEVICE_COUNT_PARAMETERS = [
+  'VirtualParameters.activedevices'
 ];
 
 const DEFAULT_WAN_VLAN_PARAMETERS = [
@@ -179,6 +184,10 @@ const WIFI_5G_CONFIGURATION_INDEXES = new Set([5, 6, 7, 8, 10]);
 
 function cleanText(value = '') {
   return String(value || '').trim();
+}
+
+function parameterText(value) {
+  return value === undefined || value === null ? '' : String(value).trim();
 }
 
 function normalizeUsernameSuffixes(value = []) {
@@ -224,6 +233,7 @@ function normalizeSettings(settings = {}) {
     wifiClientCountParameters: DEFAULT_WIFI_CLIENT_COUNT_PARAMETERS.slice(),
     wifi5gClientCountParameters: DEFAULT_WIFI_5G_CLIENT_COUNT_PARAMETERS.slice(),
     lanClientCountParameters: DEFAULT_LAN_CLIENT_COUNT_PARAMETERS.slice(),
+    activeDeviceCountParameters: DEFAULT_ACTIVE_DEVICE_COUNT_PARAMETERS.slice(),
     wanVlanParameters: DEFAULT_WAN_VLAN_PARAMETERS.slice(),
     excludeUsernameSuffixes: normalizeUsernameSuffixes(process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES || raw.excludeUsernameSuffixes || [])
   };
@@ -465,20 +475,20 @@ function getPathValue(source = {}, path = '') {
   if (!path) return '';
   const direct = source[path];
   if (direct && typeof direct === 'object' && Object.prototype.hasOwnProperty.call(direct, '_value')) {
-    return cleanText(direct._value);
+    return parameterText(direct._value);
   }
   if (direct !== undefined && direct !== null && typeof direct !== 'object') {
-    return cleanText(direct);
+    return parameterText(direct);
   }
   const value = path.split('.').reduce((node, part) => {
     if (!node || typeof node !== 'object') return undefined;
     return node[part];
   }, source);
   if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, '_value')) {
-    return cleanText(value._value);
+    return parameterText(value._value);
   }
   if (value === undefined || value === null || typeof value === 'object') return '';
-  return cleanText(value);
+  return parameterText(value);
 }
 
 function getPathState(source = {}, path = '') {
@@ -491,7 +501,7 @@ function getPathState(source = {}, path = '') {
     return {
       exists: true,
       path,
-      value: cleanText(value._value),
+      value: parameterText(value._value),
       writable: value._writable === true
     };
   }
@@ -499,7 +509,7 @@ function getPathState(source = {}, path = '') {
     return {
       exists: true,
       path,
-      value: cleanText(value),
+      value: parameterText(value),
       writable: false
     };
   }
@@ -510,6 +520,15 @@ function firstParameter(device = {}, paths = []) {
   for (const path of paths) {
     const value = getPathValue(device, path);
     if (value) return { path, value };
+  }
+  return { path: '', value: '' };
+}
+
+function firstValidRxPowerParameter(device = {}, paths = []) {
+  for (const path of paths) {
+    const value = getPathValue(device, path);
+    if (!value || rxPowerNumber(value, path) === null) continue;
+    return { path, value };
   }
   return { path: '', value: '' };
 }
@@ -712,6 +731,7 @@ function deviceListProjection(cfg = normalizeSettings({})) {
     cfg.wifiClientCountParameters,
     cfg.wifi5gClientCountParameters,
     cfg.lanClientCountParameters,
+    cfg.activeDeviceCountParameters,
     cfg.wanVlanParameters
   ].forEach((list) => (list || []).forEach((path) => cleanText(path) && paths.add(cleanText(path))));
   (cfg.usernameParameters || []).forEach((path) => {
@@ -985,7 +1005,7 @@ function hostActiveValue(device = {}, prefix = '') {
     getPathValue(device, `${prefix}.Active`),
     getPathValue(device, `${prefix}.Enable`),
     getPathValue(device, `${prefix}.Status`)
-  ].find((value) => value !== '') || '';
+  ].find((value) => value !== '' && value !== null && value !== undefined && typeof value !== 'object') || '';
 }
 
 function hostLooksActive(device = {}, prefix = '') {
@@ -1009,8 +1029,12 @@ function hostInterfaceText(device = {}, prefix = '') {
 
 function hostLooksLan(device = {}, prefix = '') {
   const text = hostInterfaceText(device, prefix);
-  if (/wifi|wi-fi|wlan|ssid|radio/i.test(text)) return false;
+  if (/wifi|wi-fi|wlan|ssid|radio|wireless|802\.11/i.test(text)) return false;
   return /ethernet|lanethernet|eth|lan/i.test(text);
+}
+
+function hostLooksWifi(device = {}, prefix = '') {
+  return /wifi|wi-fi|wlan|ssid|radio|wireless|802\.11/i.test(hostInterfaceText(device, prefix));
 }
 
 function lanHostSummary(device = {}) {
@@ -1019,9 +1043,12 @@ function lanHostSummary(device = {}) {
     ...hostPrefixes(device, 'Device.Hosts.Host')
   ];
   const activePrefixes = prefixes.filter((prefix) => hostLooksActive(device, prefix));
+  const lanPrefixes = activePrefixes.filter((prefix) => hostLooksLan(device, prefix));
+  const wifiPrefixes = activePrefixes.filter((prefix) => hostLooksWifi(device, prefix));
   return {
     activeTotal: activePrefixes.length,
-    lanTotal: activePrefixes.filter((prefix) => hostLooksLan(device, prefix)).length
+    lanTotal: lanPrefixes.length,
+    classifiedTotal: lanPrefixes.length + wifiPrefixes.length
   };
 }
 
@@ -1142,7 +1169,7 @@ function lanClientRows(device = {}, wifiRows = [], hostRows = hostClientRows(dev
     .filter((row) => {
       const normalizedMac = normalizeClientMac(row.macAddress);
       if (normalizedMac && wifiMacs.has(normalizedMac)) return false;
-      if (/wifi|wi-fi|wlan|ssid|radio/i.test(row.interfaceText || '')) return false;
+      if (/wifi|wi-fi|wlan|ssid|radio|wireless|802\.11/i.test(row.interfaceText || '')) return false;
       return row.type === 'LAN' || row.ipAddress || row.macAddress || row.name;
     })
     .map((row) => ({
@@ -1195,7 +1222,7 @@ function normalizeDevice(device = {}, settings = {}) {
   const cfg = normalizeSettings(settings);
   const username = firstParameter(device, cfg.usernameParameters);
   const pppIpAddress = firstIpParameter(device, pppIpParameterCandidates(username.path));
-  const rxPower = firstParameter(device, cfg.rxPowerParameters);
+  const rxPower = firstValidRxPowerParameter(device, cfg.rxPowerParameters);
   const temperature = firstParameter(device, cfg.temperatureParameters);
   const wanVlan = firstParameter(device, cfg.wanVlanParameters);
   const ssid24 = firstParameter(device, cfg.wifiSsidParameters);
@@ -1203,6 +1230,7 @@ function normalizeDevice(device = {}, settings = {}) {
   const clients24 = firstParameter(device, cfg.wifiClientCountParameters);
   const clients5 = firstParameter(device, cfg.wifi5gClientCountParameters);
   const lanClientsParameter = firstParameter(device, cfg.lanClientCountParameters);
+  const activeDevicesParameter = firstParameter(device, cfg.activeDeviceCountParameters);
   const lanHosts = lanHostSummary(device);
   const singleBandWifi = isSingleBandWifiDevice(device);
   const wifiNetworks = normalizeWifiNetworks(device);
@@ -1218,13 +1246,22 @@ function normalizeDevice(device = {}, settings = {}) {
     ? activeWifiNetworks.filter((item) => item.band === '5G').reduce((sum, item) => sum + item.clients, 0)
     : normalizeCount(clients5.value);
   const explicitLanClients = normalizeCount(lanClientsParameter.value);
-  const lanClients = Math.max(explicitLanClients, lanHosts.lanTotal);
+  const activeWifiClients = normalizeCount(activeDevicesParameter.value);
+  const virtualLanCounter = cleanText(lanClientsParameter.path).startsWith('VirtualParameters.');
+  const trustedExplicitLanClients = virtualLanCounter && lanHosts.classifiedTotal > 0
+    ? lanHosts.lanTotal
+    : explicitLanClients;
+  const lanClients = Math.max(trustedExplicitLanClients, lanHosts.lanTotal);
   const clientSummary = connectedClientSummary(device, wifiNetworks, {
     wifi24: wifiClients24,
     wifi5: wifiClients5,
     lan: lanClients
   });
-  const clientsTotal = Math.max(clientSummary.total, wifiClients24 + wifiClients5 + lanClients);
+  const clientsTotal = Math.max(
+    clientSummary.total,
+    wifiClients24 + wifiClients5 + lanClients,
+    activeWifiClients + lanClients
+  );
   const serial = cleanText(device._deviceId?._SerialNumber)
     || getPathValue(device, 'InternetGatewayDevice.DeviceInfo.SerialNumber')
     || getPathValue(device, 'Device.DeviceInfo.SerialNumber');
@@ -1270,6 +1307,8 @@ function normalizeDevice(device = {}, settings = {}) {
     wifiClients5Parameter: singleBandWifi ? '' : (wifi5?.clientsParameter || clients5.path),
     lanClients,
     lanClientsParameter: lanClientsParameter.path,
+    activeWifiClients,
+    activeWifiClientsParameter: activeDevicesParameter.path,
     hostClientsTotal: lanHosts.activeTotal,
     clientsTotal,
     wifiClientsTotal: clientsTotal,

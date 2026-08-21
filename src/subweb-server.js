@@ -29,6 +29,10 @@ const PUBLIC_URLS = {
   wifiku: process.env.WIFIKU_PUBLIC_URL || process.env.PUBLIC_WIFIKU_URL || '',
   payment: process.env.PAYMENT_PUBLIC_URL || process.env.PUBLIC_PAYMENT_URL || ''
 };
+const FETCH_BILLING_JSON_MAX_BYTES = Math.max(
+  64 * 1024,
+  Number(process.env.SUBWEB_FETCH_BILLING_JSON_MAX_BYTES || 512 * 1024) || 512 * 1024
+);
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -257,7 +261,15 @@ function fetchBillingJson(pathname = '/', req = {}) {
       timeout: 2500
     }, (response) => {
       const chunks = [];
-      response.on('data', (chunk) => chunks.push(chunk));
+      let totalBytes = 0;
+      response.on('data', (chunk) => {
+        totalBytes += chunk.length;
+        if (totalBytes > FETCH_BILLING_JSON_MAX_BYTES) {
+          request.destroy(new Error('Response branding billing terlalu besar'));
+          return;
+        }
+        chunks.push(chunk);
+      });
       response.on('end', () => {
         try {
           resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));

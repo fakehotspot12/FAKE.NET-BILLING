@@ -130,13 +130,14 @@ const KTP_UPLOAD_ROOT = path.join(PRIVATE_ROOT, 'member-ktp');
 const WEB_PUSH_VAPID_PATH = path.join(APP_ROOT, 'data', 'webpush-vapid.json');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-08-11');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-08-21');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
 const PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS = Math.max(60_000, Number(process.env.PAYMENT_GATEWAY_HISTORY_SYNC_INTERVAL_MS || 120_000) || 120_000);
 const PAYMENT_GATEWAY_HISTORY_AUTO_PER_PAGE = Math.min(100, Math.max(10, Number(process.env.PAYMENT_GATEWAY_HISTORY_AUTO_PER_PAGE || 30) || 30));
 const PAYMENT_GATEWAY_HISTORY_AUTO_MAX_PAGES = Math.min(3, Math.max(1, Number(process.env.PAYMENT_GATEWAY_HISTORY_AUTO_MAX_PAGES || 1) || 1));
+const PAYMENT_GATEWAY_HTTP_TIMEOUT_MS = Math.max(5_000, Number(process.env.PAYMENT_GATEWAY_HTTP_TIMEOUT_MS || 15_000) || 15_000);
 const RADBOOX_AUTO_SYNC_DEFAULT_SECONDS = 120;
 const RADBOOX_DASHBOARD_MEMBER_TTL_MS = 5 * 60 * 1000;
 const RADBOOX_DASHBOARD_MEMBER_MAX_PAGES = 1;
@@ -188,6 +189,8 @@ const WIFIKU_OTP_COOLDOWN_MS = Math.max(15_000, Number(process.env.WIFIKU_OTP_CO
 const WIFIKU_OTP_RATE_WINDOW_MS = Math.max(5 * 60_000, Number(process.env.WIFIKU_OTP_RATE_WINDOW_SECONDS || 3600) * 1000 || 3600_000);
 const WIFIKU_OTP_MAX_PER_WINDOW = Math.max(3, Number(process.env.WIFIKU_OTP_MAX_PER_WINDOW || 8) || 8);
 const PUBLIC_INVOICE_LOOKUP_WINDOW_MS = Math.max(60_000, Number(process.env.PUBLIC_INVOICE_LOOKUP_WINDOW_SECONDS || 300) * 1000 || 300_000);
+const RATE_LIMIT_BUCKET_MAX_KEYS = Math.max(500, Number(process.env.RATE_LIMIT_BUCKET_MAX_KEYS || 2000) || 2000);
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = Math.max(60_000, Number(process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
 const PUBLIC_INVOICE_LOOKUP_MAX_PER_WINDOW = Math.max(10, Number(process.env.PUBLIC_INVOICE_LOOKUP_MAX_PER_WINDOW || 80) || 80);
 const INDONESIAN_MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 const DEFAULT_WA_TEMPLATES = {
@@ -308,6 +311,76 @@ function requestIsHttps(req = {}) {
   return forwardedProto === 'https' || req.socket?.encrypted === true;
 }
 
+const CSRF_HEADER_NAME = 'x-csrf-token';
+const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function csrfHeaderValue(req = {}) {
+  return String(req.headers?.[CSRF_HEADER_NAME] || req.headers?.['x-xsrf-token'] || '').trim();
+}
+
+function sameOriginUrl(value = '', expectedOrigin = '') {
+  const raw = String(value || '').trim();
+  const expected = String(expectedOrigin || '').trim().toLowerCase();
+  if (!raw || !expected) return true;
+  if (raw.toLowerCase() === 'null') return false;
+  try {
+    return new URL(raw).origin.toLowerCase() === expected;
+  } catch {
+    return false;
+  }
+}
+
+function csrfOriginAllowed(req = {}) {
+  const expectedOrigin = requestOrigin(req);
+  const origin = String(req.headers?.origin || '').split(',')[0].trim();
+  const referer = String(req.headers?.referer || '').split(',')[0].trim();
+  const secFetchSite = String(req.headers?.['sec-fetch-site'] || '').trim().toLowerCase();
+  if (secFetchSite === 'cross-site') {
+    return { ok: false, reason: 'Request lintas situs ditolak' };
+  }
+  if (origin && !sameOriginUrl(origin, expectedOrigin)) {
+    return { ok: false, reason: 'Origin request tidak sesuai aplikasi' };
+  }
+  if (!origin && referer && !sameOriginUrl(referer, expectedOrigin)) {
+    return { ok: false, reason: 'Referer request tidak sesuai aplikasi' };
+  }
+  return { ok: true };
+}
+
+function csrfExemptPath(method = 'GET', pathname = '') {
+  const verb = String(method || 'GET').toUpperCase();
+  if (!CSRF_UNSAFE_METHODS.has(verb)) return true;
+  const cleanPath = String(pathname || '').replace(/\/+$/, '') || '/';
+  if (!cleanPath.startsWith('/api/')) return true;
+  if (cleanPath.startsWith('/api/public/')) return true;
+  if (cleanPath === '/api/auth/login') return true;
+  if (cleanPath === '/api/license/activate') return true;
+  if (isWahaWebhookPath(cleanPath)) return true;
+  if (isPaymentGatewayWebhookPath(cleanPath)) return true;
+  return false;
+}
+
+function validateCsrfRequest(req = {}, res = {}, pathname = '') {
+  const method = req.method || 'GET';
+  if (csrfExemptPath(method, pathname)) return true;
+  const origin = csrfOriginAllowed(req);
+  if (!origin.ok) {
+    sendJson(res, 403, {
+      error: origin.reason || 'Request ditolak oleh proteksi CSRF',
+      code: 'CSRF_ORIGIN_MISMATCH'
+    });
+    return false;
+  }
+  if (!auth.validateCsrfToken(req, csrfHeaderValue(req))) {
+    sendJson(res, 419, {
+      error: 'Token keamanan halaman tidak valid. Muat ulang halaman lalu coba lagi.',
+      code: 'CSRF_TOKEN_INVALID'
+    });
+    return false;
+  }
+  return true;
+}
+
 function applySecurityHeaders(req = {}, res = {}) {
   if (!res || typeof res.setHeader !== 'function') return;
   const headers = {
@@ -380,15 +453,32 @@ function rateLimitBucket(map, key = '', options = {}) {
   } else {
     map.set(bucketKey, current);
   }
-  if (map.size > 5000) {
-    for (const [itemKey, values] of map.entries()) {
-      const nextValues = (values || []).filter((timestamp) => now - Number(timestamp || 0) < windowMs);
-      if (nextValues.length) map.set(itemKey, nextValues);
-      else map.delete(itemKey);
-    }
+  if (map.size > RATE_LIMIT_BUCKET_MAX_KEYS) {
+    pruneRateLimitMap(map, windowMs, now);
   }
   return { allowed: true, waitSeconds: 0 };
 }
+
+function pruneRateLimitMap(map = new Map(), windowMs = 60_000, now = Date.now()) {
+  const safeWindowMs = Math.max(1000, Number(windowMs || 60_000) || 60_000);
+  for (const [itemKey, values] of map.entries()) {
+    const nextValues = (values || []).filter((timestamp) => now - Number(timestamp || 0) < safeWindowMs);
+    if (nextValues.length) map.set(itemKey, nextValues);
+    else map.delete(itemKey);
+  }
+  while (map.size > RATE_LIMIT_BUCKET_MAX_KEYS) {
+    map.delete(map.keys().next().value);
+  }
+}
+
+function pruneVolatileRateLimitMaps(now = Date.now()) {
+  pruneRateLimitMap(wifiKuOtpRateLimits, WIFIKU_OTP_RATE_WINDOW_MS, now);
+  pruneRateLimitMap(publicInvoiceLookupRateLimits, PUBLIC_INVOICE_LOOKUP_WINDOW_MS, now);
+  pruneRateLimitMap(loginRateLimits, LOGIN_RATE_LIMIT_WINDOW_MS, now);
+}
+
+const rateLimitCleanupTimer = setInterval(pruneVolatileRateLimitMaps, RATE_LIMIT_CLEANUP_INTERVAL_MS);
+rateLimitCleanupTimer.unref?.();
 
 function wifiKuOtpRateLimit(req = {}, phone = '') {
   const ip = requestClientIp(req) || 'unknown';
@@ -2947,10 +3037,18 @@ function statusSeverity(status = '') {
 }
 
 function strongestCustomerStatus(...statuses) {
-  return statuses
-    .map(normalizeCustomerStatusLocal)
-    .filter(Boolean)
-    .sort((a, b) => statusSeverity(b) - statusSeverity(a))[0] || 'active';
+  let strongest = '';
+  let strongestScore = -1;
+  for (const status of statuses) {
+    const normalized = normalizeCustomerStatusLocal(status);
+    if (!normalized) continue;
+    const score = statusSeverity(normalized);
+    if (score > strongestScore) {
+      strongest = normalized;
+      strongestScore = score;
+    }
+  }
+  return strongest || 'active';
 }
 
 function customerKeys(customer = {}) {
@@ -2979,23 +3077,29 @@ function radiusStatusResolver(data = {}) {
     add(user.customerId, status);
     add(user.username, status);
   }
+  const strongestForKeys = (initialStatuses = [], keys = []) => {
+    let resolved = strongestCustomerStatus(...initialStatuses);
+    for (const key of keys) {
+      const cleanKey = String(key || '').trim().toLowerCase();
+      if (!cleanKey) continue;
+      const radiusStatus = byKey.get(cleanKey);
+      if (radiusStatus) resolved = strongestCustomerStatus(resolved, radiusStatus);
+    }
+    return resolved;
+  };
   return {
     byKey,
     statusForCustomer(customer = {}) {
-      const keys = customerKeys(customer);
-      const radiusStatuses = keys.map((key) => byKey.get(key)).filter(Boolean);
-      return strongestCustomerStatus(customer.status, ...radiusStatuses);
+      return strongestForKeys([customer.status], customerKeys(customer));
     },
     statusForInvoice(invoice = {}, customer = {}) {
-      const keys = [
+      return strongestForKeys([customer.status, invoice.customerStatus], [
         invoice.customerId,
         invoice.username,
         invoice.accountId,
         invoice.internet,
         ...customerKeys(customer)
-      ];
-      const radiusStatuses = keys.map((key) => byKey.get(String(key || '').trim().toLowerCase())).filter(Boolean);
-      return strongestCustomerStatus(customer.status, invoice.customerStatus, ...radiusStatuses);
+      ]);
     },
     statusForRadiusUser(user = {}) {
       return radiusStatusForCustomer(user);
@@ -3087,6 +3191,9 @@ function cleanupWifiKuAuth(now = Date.now()) {
     }
   }
 }
+
+const wifiKuAuthCleanupTimer = setInterval(cleanupWifiKuAuth, 60_000);
+wifiKuAuthCleanupTimer.unref?.();
 
 function wifiKuTokenFromRequest(req) {
   const header = String(req.headers.authorization || '');
@@ -3795,6 +3902,41 @@ function billingMonitorInvoiceIncluded(invoice = {}, selectedPeriod = currentPer
   return inSelectedPeriod || dueBySelectedPeriod;
 }
 
+function invoiceCoveredPeriodIncludesFast(invoice = {}, selectedPeriod = currentPeriod()) {
+  const normalizedPeriod = normalizePeriod(selectedPeriod || currentPeriod());
+  if (Array.isArray(invoice.coveredPeriods) && invoice.coveredPeriods.length) {
+    for (const period of invoice.coveredPeriods) {
+      const value = String(period || '').trim();
+      if (/^\d{4}-\d{2}$/.test(value) && value === normalizedPeriod) return true;
+    }
+    return false;
+  }
+  return String(invoice.period || '').trim() === normalizedPeriod;
+}
+
+function invoicePrimaryPeriodFast(invoice = {}, fallbackPeriod = currentPeriod()) {
+  if (Array.isArray(invoice.coveredPeriods) && invoice.coveredPeriods.length) {
+    for (const period of invoice.coveredPeriods) {
+      const value = String(period || '').trim();
+      if (/^\d{4}-\d{2}$/.test(value)) return value;
+    }
+  }
+  const raw = String(invoice.period || invoiceIssuePeriodKeyFast(invoice) || fallbackPeriod || '').trim();
+  return /^\d{4}-\d{2}/.test(raw) ? normalizePeriod(raw.slice(0, 7)) : normalizePeriod(fallbackPeriod);
+}
+
+function billingMonitorInvoiceIncludedFast(invoice = {}, selectedPeriod = currentPeriod(), runtimeStatus = invoiceRuntimeStatus(invoice)) {
+  const normalizedPeriod = normalizePeriod(selectedPeriod || currentPeriod());
+  const inSelectedPeriod = invoiceCoveredPeriodIncludesFast(invoice, normalizedPeriod);
+  const needsCollection = ['pending', 'overdue'].includes(runtimeStatus);
+  if (!needsCollection) return inSelectedPeriod;
+  const invoicePeriod = invoicePrimaryPeriodFast(invoice, normalizedPeriod);
+  const duePeriod = /^\d{4}-\d{2}/.test(String(invoice.dueDate || ''))
+    ? String(invoice.dueDate).slice(0, 7)
+    : invoicePeriod;
+  return inSelectedPeriod || invoicePeriod <= normalizedPeriod || duePeriod <= normalizedPeriod;
+}
+
 function localBillingInvoiceRows(data = {}, period = currentPeriod(), options = {}) {
   const selectedPeriod = normalizePeriod(period);
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
@@ -4126,11 +4268,15 @@ function billingMonitorRowMatchesNasTarget(row = {}, nas = {}) {
 }
 
 function billingMonitorRowsForUser(data = {}, rows = [], user = {}) {
-  if (!userIsCollector(user)) return rows || [];
+  let scopedRows = rows || [];
+  if (userIsPartner(user)) {
+    scopedRows = scopedRows.filter((row) => partnerScopedRowVisible(data, row, user));
+  }
+  if (!userIsCollector(user)) return scopedRows;
   const nas = billingMonitorCollectorNas(data, user);
   if (!nas) return [];
-  if (nas.all === true) return rows || [];
-  return (rows || []).filter((row) => billingMonitorRowMatchesNasTarget(row, nas));
+  if (nas.all === true) return scopedRows;
+  return scopedRows.filter((row) => billingMonitorRowMatchesNasTarget(row, nas));
 }
 
 function billingMonitorSitesForUser(data = {}, sites = [], user = {}) {
@@ -4191,6 +4337,7 @@ function billingMonitorSummaryForUser(summary = {}, user = {}) {
 }
 
 function invoiceMatchesBillingMonitorScope(data = {}, invoice = {}, user = {}) {
+  if (userIsPartner(user) && !partnerScopedRowVisible(data, invoice, user)) return false;
   if (!userIsCollector(user)) return true;
   const nas = billingMonitorCollectorNas(data, user);
   if (!nas) return false;
@@ -4333,6 +4480,54 @@ function radiusSessionUsername(value = '') {
   return String(value || '').trim().toLowerCase();
 }
 
+function indexedRadiusUserLookupEntry(user = {}, index = 0) {
+  return { user, index };
+}
+
+function addIndexedRadiusUserLookup(map = new Map(), key = '', entry = null, normalize = false) {
+  const cleanKey = normalize
+    ? String(key || '').trim().toLowerCase()
+    : String(key || '').trim();
+  if (!cleanKey || !entry || map.has(cleanKey)) return;
+  map.set(cleanKey, entry);
+}
+
+function indexedRadiusUserLookup(dataOrUsers = {}) {
+  const users = Array.isArray(dataOrUsers)
+    ? dataOrUsers
+    : (Array.isArray(dataOrUsers.radiusUsers) ? dataOrUsers.radiusUsers : []);
+  const lookup = {
+    byCustomerId: new Map(),
+    byRadiusUserId: new Map(),
+    byUsername: new Map()
+  };
+  users.forEach((user, index) => {
+    const entry = indexedRadiusUserLookupEntry(user, index);
+    addIndexedRadiusUserLookup(lookup.byCustomerId, user.customerId, entry);
+    addIndexedRadiusUserLookup(lookup.byRadiusUserId, user.id, entry);
+    addIndexedRadiusUserLookup(lookup.byUsername, user.username, entry, true);
+  });
+  return lookup;
+}
+
+function firstIndexedRadiusUser(entries = []) {
+  let best = null;
+  for (const entry of entries) {
+    if (!entry) continue;
+    if (!best || entry.index < best.index) best = entry;
+  }
+  return best?.user || null;
+}
+
+function indexedRadiusUserForCustomer(lookup = {}, customer = {}) {
+  if (!customer?.id && !customer?.username && !customer?.radiusUserId) return null;
+  return firstIndexedRadiusUser([
+    lookup.byCustomerId?.get(String(customer.id || '').trim()),
+    lookup.byRadiusUserId?.get(String(customer.radiusUserId || '').trim()),
+    lookup.byUsername?.get(String(customer.username || '').trim().toLowerCase())
+  ]);
+}
+
 function radiusActiveSessionMap(sessions = []) {
   const map = new Map();
   for (const session of sessions) {
@@ -4401,6 +4596,32 @@ function radiusFindNas(data = {}, value = '') {
       || radiusNasAddressKey(nas.address) === addressNeedle
       || aliases.some((alias) => String(alias || '').toLowerCase() === needle || radiusNasAddressKey(alias) === addressNeedle);
   }) || null;
+}
+
+function createRadiusNasLookup(data = {}, options = {}) {
+  const entries = freeradius.radiusNasEntries(data, options);
+  const byKey = new Map();
+  const add = (value = '', nas = null) => {
+    const key = String(value || '').trim().toLowerCase();
+    if (key && nas && !byKey.has(key)) byKey.set(key, nas);
+  };
+  for (const nas of entries) {
+    add(nas.id, nas);
+    add(nas.name, nas);
+    add(nas.site, nas);
+    add(nas.address, nas);
+    add(radiusNasAddressKey(nas.address), nas);
+    for (const alias of Array.isArray(nas.aliases) ? nas.aliases : []) add(alias, nas);
+  }
+  return { entries, byKey };
+}
+
+function radiusNasLookupFind(lookup = {}, value = '') {
+  const needle = String(value || '').trim().toLowerCase();
+  if (!needle) return null;
+  return lookup.byKey?.get(needle)
+    || lookup.byKey?.get(radiusNasAddressKey(value))
+    || null;
 }
 
 function nasDomainToken(value = '') {
@@ -4787,7 +5008,7 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         password: user.password || '',
         internetStatus: session ? 'online' : 'offline',
         sessionOnline: Boolean(session),
-        psb: serviceType === 'pppoe' ? isNewPsbPppAccount(data, user, currentPeriod()) : false,
+        psb: serviceType === 'pppoe' ? isNewPsbPppAccount(data, user, currentPeriod(), customer) : false,
         sessionId: session?.sessionId || '',
         startedAt: session?.startedAt || '',
         lastActiveAt: session?.updatedAt || session?.startedAt || user.lastActiveAt || user.updatedAt || user.createdAt || '',
@@ -5084,6 +5305,9 @@ async function radiusPayloadLocal(data = {}, section = 'ppp-dhcp', query = {}) {
     rows = serviceType === 'hotspot' ? radiusTemplateRowsLocal(data) : [];
   } else {
     rows = radiusUserRowsLocal(data, serviceType, sessionsByUsername);
+  }
+  if (section === 'ppp-dhcp' && ['users', 'sessions'].includes(tab) && query.viewer) {
+    rows = rows.filter((row) => partnerScopedRowVisible(data, row, query.viewer));
   }
   if (section === 'hotspot' && ['users', 'sessions'].includes(tab) && query.viewer) {
     rows = rows.filter((row) => resellerHotspotVoucherRowVisible(row, query.viewer));
@@ -6679,7 +6903,255 @@ function dashboardFinanceAllowed(user = {}) {
     || auth.hasPermission(user, 'expenses:read');
 }
 
+function userIsPartner(user = {}) {
+  return String(user.role || '').trim().toLowerCase() === 'partner';
+}
+
+function normalizePartnerUsernameSuffix(value = '') {
+  let text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+  text = text.replace(/^\*+/, '').replace(/^@?/, '@');
+  return /^@[a-z0-9.-]+\.[a-z]{2,}$/i.test(text) ? text : '';
+}
+
+function partnerRows(data = {}) {
+  return Array.isArray(data.partners) ? data.partners : [];
+}
+
+function partnerForUser(data = {}, user = {}) {
+  if (!userIsPartner(user)) return null;
+  const partnerId = String(user.partnerId || '').trim().toLowerCase();
+  const partnerCode = String(user.partnerCode || user.username || '').trim().toLowerCase();
+  const suffixes = normalizePartnerUsernameSuffixes(user);
+  return partnerRows(data).find((partner) => {
+    const id = String(partner.id || '').trim().toLowerCase();
+    const code = String(partner.code || '').trim().toLowerCase();
+    const partnerSuffixes = normalizePartnerUsernameSuffixes({
+      partnerUsernameSuffixes: partner.usernameSuffixes,
+      partnerUsernameSuffix: partner.usernameSuffix,
+      partnerDomain: partner.domain
+    });
+    if (partnerId && id === partnerId) return true;
+    if (partnerCode && code === partnerCode) return true;
+    return suffixes.some((suffix) => partnerSuffixes.includes(suffix));
+  }) || null;
+}
+
+function normalizePartnerUsernameSuffixes(source = {}) {
+  const values = [];
+  const append = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(append);
+      return;
+    }
+    String(value || '')
+      .split(',')
+      .map((item) => normalizePartnerUsernameSuffix(item))
+      .filter(Boolean)
+      .forEach((item) => values.push(item));
+  };
+  append(source.partnerUsernameSuffixes);
+  append(source.partnerUsernameSuffix);
+  append(source.usernameSuffixes);
+  append(source.usernameSuffix);
+  append(source.partnerDomain);
+  const unique = [];
+  for (const value of values) {
+    if (!unique.includes(value)) unique.push(value);
+  }
+  return unique;
+}
+
+function partnerSuffixesForUser(data = {}, user = {}) {
+  if (!userIsPartner(user)) return [];
+  const values = normalizePartnerUsernameSuffixes(user);
+  const partner = partnerForUser(data, user);
+  if (partner) {
+    normalizePartnerUsernameSuffixes({
+      partnerUsernameSuffixes: partner.usernameSuffixes,
+      partnerUsernameSuffix: partner.usernameSuffix,
+      partnerDomain: partner.domain
+    }).forEach((suffix) => values.push(suffix));
+  }
+  const unique = [];
+  for (const value of values) {
+    if (!unique.includes(value)) unique.push(value);
+  }
+  return unique;
+}
+
+function partnerUsernameMatches(username = '', suffixes = []) {
+  const text = String(username || '').trim().toLowerCase();
+  return Boolean(text) && suffixes.some((suffix) => text.endsWith(suffix));
+}
+
+function partnerRecordUsernameCandidates(data = {}, row = {}) {
+  const values = [];
+  const append = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(append);
+      return;
+    }
+    const text = String(value || '').trim();
+    if (text) values.push(text);
+  };
+  append(row.username);
+  append(row.internet);
+  append(row.accountId);
+  append(row.userId);
+  append(row.code);
+  append(row.customerUsername);
+  const customerId = String(row.customerId || '').trim();
+  if (customerId) {
+    const customer = (data.customers || []).find((item) => String(item.id || '') === customerId) || null;
+    if (customer) {
+      append(customer.username);
+      append(customer.internet);
+      append(customer.code);
+      append(customer.accountId);
+    }
+  }
+  const invoiceId = String(row.invoiceId || '').trim();
+  if (invoiceId) {
+    const invoice = (data.invoices || []).find((item) => String(item.id || '') === invoiceId) || null;
+    if (invoice) {
+      append(invoice.username);
+      append(invoice.accountId);
+      append(invoice.memberCode);
+      const customer = invoice.customerId
+        ? (data.customers || []).find((item) => String(item.id || '') === String(invoice.customerId || ''))
+        : null;
+      if (customer) {
+        append(customer.username);
+        append(customer.internet);
+        append(customer.code);
+        append(customer.accountId);
+      }
+    }
+  }
+  return [...new Set(values)];
+}
+
+function partnerScopedRowVisible(data = {}, row = {}, user = {}) {
+  if (!userIsPartner(user)) return true;
+  const suffixes = partnerSuffixesForUser(data, user);
+  if (!suffixes.length) return false;
+  return partnerRecordUsernameCandidates(data, row).some((username) => partnerUsernameMatches(username, suffixes));
+}
+
+function allPartnerScopeOption(data = {}) {
+  const partners = partnerSettlementPartnerRows(data).filter((partner) => partner.active !== false);
+  const suffixes = [];
+  partners.forEach((partner) => {
+    partnerRowSuffixes(partner).forEach((suffix) => {
+      if (suffix && !suffixes.includes(suffix)) suffixes.push(suffix);
+    });
+  });
+  return {
+    id: 'all',
+    code: 'all',
+    name: 'Semua Mitra',
+    domain: '',
+    usernameSuffix: suffixes[0] || '',
+    usernameSuffixes: suffixes,
+    active: true,
+    ispSharePercent: 0,
+    partnerIspSharePercent: 0,
+    partnerSharePercent: 0,
+    resellerSharePercent: 0
+  };
+}
+
+function partnerScopeOptions(data = {}) {
+  const partners = partnerSettlementPartnerRows(data).filter((partner) => partner.active !== false);
+  const allOption = allPartnerScopeOption(data);
+  return [
+    partnerSettlementOption(allOption),
+    ...partners.map(partnerSettlementOption)
+  ];
+}
+
+function selectPartnerScope(data = {}, user = {}, requestedPartnerId = '', enabled = false) {
+  if (userIsPartner(user)) {
+    const ownSelection = selectPartnerForSettlement(data, user, '');
+    const selected = ownSelection.selected
+      ? partnerSettlementOption(ownSelection.selected)
+      : partnerSettlementOption(partnerSettlementScopeUser(user));
+    return {
+      enabled: true,
+      selected,
+      partners: selected.id ? [selected] : [],
+      user
+    };
+  }
+  if (!enabled) {
+    return {
+      enabled: false,
+      selected: null,
+      partners: partnerScopeOptions(data),
+      user
+    };
+  }
+  const partners = partnerSettlementPartnerRows(data).filter((partner) => partner.active !== false);
+  const requested = String(requestedPartnerId || '').trim();
+  const requestedKey = requested.toLowerCase();
+  const selectedPartner = requested && requestedKey !== 'all'
+    ? partners.find((partner) => String(partner.id || '') === requested
+        || String(partner.code || '').toLowerCase() === requestedKey
+        || partnerRowSuffixes(partner).includes(normalizePartnerUsernameSuffix(requested)))
+    : null;
+  const selected = selectedPartner || allPartnerScopeOption(data);
+  return {
+    enabled: true,
+    selected: partnerSettlementOption(selected),
+    partners: partnerScopeOptions(data),
+    user: partnerSettlementScopeUser(selected)
+  };
+}
+
+function partnerScopeQueryEnabled(url = {}) {
+  return truthyQuery(url.searchParams?.get('partnerScope'))
+    || url.searchParams?.has('partnerId')
+    || url.searchParams?.has('partner');
+}
+
+function partnerScopeResponse(scope = {}) {
+  return {
+    enabled: scope.enabled === true,
+    selected: scope.selected || null,
+    partners: Array.isArray(scope.partners) ? scope.partners : []
+  };
+}
+
+function requirePartnerScopedUsername(data = {}, user = {}, username = '') {
+  if (!userIsPartner(user)) return;
+  const suffixes = partnerSuffixesForUser(data, user);
+  if (!partnerUsernameMatches(username, suffixes)) {
+    throw new Error(`Username mitra harus berakhiran ${suffixes.join(' / ') || 'suffix mitra'}`);
+  }
+}
+
+function applyPartnerPppPayloadScope(data = {}, payload = {}, user = {}) {
+  if (!userIsPartner(user)) return { ...payload };
+  const next = { ...payload };
+  if (String(next.accessType || next.type || 'pppoe').toLowerCase() !== 'dhcp') {
+    requirePartnerScopedUsername(data, user, next.username || '');
+  }
+  if (!next.nasId && !next.nas && !next.routerNas) {
+    const target = resolveUserLockedNasList(data, user).find((nas) => nas && nas.all !== true);
+    if (target) {
+      next.nasId = target.id;
+      next.nas = target.id;
+      next.routerNas = target.id;
+    }
+  }
+  return next;
+}
+
 function radiusSectionAllowedForUser(user = {}, section = '') {
+  if (userIsPartner(user)) {
+    return section === 'ppp-dhcp';
+  }
   if (String(user.role || '') === 'reseller_voucher') {
     return section === 'hotspot';
   }
@@ -6864,10 +7336,450 @@ function publicManagedUser(data = {}, user = {}) {
   return safe;
 }
 
+function managedUserText(value = '', maxLength = 120) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
+}
+
+function managedPartnerCode(value = '', fallback = 'mitra') {
+  const clean = managedUserText(value, 80)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return clean || fallback;
+}
+
+function partnerRowSuffixes(partner = {}) {
+  return normalizePartnerUsernameSuffixes({
+    partnerUsernameSuffixes: partner.usernameSuffixes || partner.partnerUsernameSuffixes,
+    partnerUsernameSuffix: partner.usernameSuffix || partner.partnerUsernameSuffix,
+    usernameSuffixes: partner.usernameSuffixes,
+    usernameSuffix: partner.usernameSuffix,
+    partnerDomain: partner.domain || partner.partnerDomain
+  });
+}
+
+function managedSharePercent(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(numeric * 100) / 100));
+}
+
+function partnerShareSettings(source = {}) {
+  const isp = managedSharePercent(source.partnerIspSharePercent ?? source.ispSharePercent ?? source.ispPercent, 40);
+  const partner = managedSharePercent(source.partnerSharePercent ?? source.resellerSharePercent ?? source.partnerPercent, 100 - isp);
+  return {
+    ispPercent: isp,
+    partnerPercent: partner
+  };
+}
+
+function prepareManagedPartnerUserPayload(data = {}, next = {}, existing = null) {
+  let suffixes = normalizePartnerUsernameSuffixes(next);
+  if (!suffixes.length && existing) {
+    suffixes = normalizePartnerUsernameSuffixes(existing);
+  }
+  if (!suffixes.length) {
+    throw new Error('Suffix username mitra wajib diisi, contoh @gio.net');
+  }
+
+  const existingUserId = String(existing?.id || '');
+  const conflictUser = (data.users || []).find((user) => {
+    if (String(user.id || '') === existingUserId) return false;
+    if (String(user.role || '').trim().toLowerCase() !== 'partner') return false;
+    return normalizePartnerUsernameSuffixes(user).some((suffix) => suffixes.includes(suffix));
+  });
+  if (conflictUser) {
+    throw new Error(`Suffix ${suffixes.join(' / ')} sudah dipakai oleh mitra ${conflictUser.name || conflictUser.username || '-'}`);
+  }
+
+  const primarySuffix = suffixes[0];
+  const partnerDomain = primarySuffix.replace(/^@/, '');
+  const requestedIspShare = next.partnerIspSharePercent ?? next.ispSharePercent ?? existing?.partnerIspSharePercent ?? existing?.ispSharePercent ?? 40;
+  const requestedPartnerShare = next.partnerSharePercent ?? next.resellerSharePercent ?? existing?.partnerSharePercent ?? existing?.resellerSharePercent ?? (100 - Number(requestedIspShare || 40));
+  const ispSharePercent = managedSharePercent(requestedIspShare, 40);
+  const partnerSharePercent = managedSharePercent(requestedPartnerShare, 100 - ispSharePercent);
+  if (Math.round((ispSharePercent + partnerSharePercent) * 100) / 100 !== 100) {
+    throw new Error('Total porsi ISP dan mitra harus 100%');
+  }
+  const fallbackCode = managedPartnerCode(partnerDomain.split('.')[0] || next.username || existing?.username || 'mitra');
+  const partnerCode = managedPartnerCode(next.partnerCode || existing?.partnerCode || next.username || existing?.username || fallbackCode, fallbackCode);
+  let partnerId = managedUserText(next.partnerId || existing?.partnerId || '', 80);
+  data.partners = Array.isArray(data.partners) ? data.partners : [];
+
+  const conflictPartner = data.partners.find((partner) => {
+    const partnerIdValue = String(partner.id || '').trim();
+    const partnerCodeValue = String(partner.code || '').trim().toLowerCase();
+    if (partnerId && partnerIdValue === partnerId) return false;
+    if (partnerCode && partnerCodeValue === partnerCode) return false;
+    return partnerRowSuffixes(partner).some((suffix) => suffixes.includes(suffix));
+  });
+  if (conflictPartner) {
+    throw new Error(`Suffix ${suffixes.join(' / ')} sudah dipakai oleh mitra ${conflictPartner.name || conflictPartner.code || conflictPartner.id || '-'}`);
+  }
+
+  let partner = partnerId ? data.partners.find((item) => String(item.id || '') === partnerId) : null;
+  if (!partner) {
+    partner = data.partners.find((item) => String(item.code || '').trim().toLowerCase() === partnerCode)
+      || data.partners.find((item) => partnerRowSuffixes(item).some((suffix) => suffixes.includes(suffix)));
+  }
+  if (!partner) {
+    partner = {
+      id: partnerId || createId('prt'),
+      createdAt: new Date().toISOString()
+    };
+    data.partners.push(partner);
+  }
+  partnerId = String(partner.id || '').trim() || partnerId || createId('prt');
+  partner.id = partnerId;
+  partner.code = partnerCode;
+  partner.name = managedUserText(next.partnerName || next.name || existing?.partnerName || existing?.name || partnerCode.toUpperCase(), 120);
+  partner.domain = partnerDomain;
+  partner.usernameSuffix = primarySuffix;
+  partner.usernameSuffixes = suffixes;
+  partner.ispSharePercent = ispSharePercent;
+  partner.partnerIspSharePercent = ispSharePercent;
+  partner.partnerSharePercent = partnerSharePercent;
+  partner.resellerSharePercent = partnerSharePercent;
+  partner.active = next.active !== false && next.active !== 'false';
+  partner.updatedAt = new Date().toISOString();
+
+  next.partnerId = partnerId;
+  next.partnerCode = partnerCode;
+  next.partnerName = partner.name;
+  next.partnerDomain = partnerDomain;
+  next.partnerUsernameSuffix = primarySuffix;
+  next.partnerUsernameSuffixes = suffixes;
+  next.partnerIspSharePercent = ispSharePercent;
+  next.partnerSharePercent = partnerSharePercent;
+  return next;
+}
+
+function clearManagedPartnerPayload(next = {}) {
+  next.partnerId = '';
+  next.partnerCode = '';
+  next.partnerName = '';
+  next.partnerDomain = '';
+  next.partnerUsernameSuffix = '';
+  next.partnerUsernameSuffixes = [];
+  next.partnerIspSharePercent = 40;
+  next.partnerSharePercent = 60;
+  return next;
+}
+
+function partnerSettlementRows(data = {}) {
+  data.partnerSettlements = Array.isArray(data.partnerSettlements) ? data.partnerSettlements : [];
+  return data.partnerSettlements;
+}
+
+function partnerSettlementPartnerRows(data = {}) {
+  const rows = [];
+  const seen = new Set();
+  const append = (partner = {}) => {
+    const suffixes = partnerRowSuffixes(partner);
+    if (!suffixes.length) return;
+    const id = String(partner.id || partner.partnerId || partner.code || suffixes[0]).trim();
+    const key = id || suffixes.join(',');
+    if (seen.has(key)) return;
+    seen.add(key);
+    const share = partnerShareSettings(partner);
+    rows.push({
+      id: id || createId('prt'),
+      code: partner.code || partner.partnerCode || '',
+      name: partner.name || partner.partnerName || partner.code || suffixes[0],
+      domain: partner.domain || partner.partnerDomain || suffixes[0].replace(/^@/, ''),
+      usernameSuffix: suffixes[0],
+      usernameSuffixes: suffixes,
+      active: partner.active !== false,
+      ispSharePercent: share.ispPercent,
+      partnerIspSharePercent: share.ispPercent,
+      partnerSharePercent: share.partnerPercent,
+      resellerSharePercent: share.partnerPercent
+    });
+  };
+  (data.partners || []).forEach(append);
+  (data.users || [])
+    .filter((user) => String(user.role || '').trim().toLowerCase() === 'partner')
+    .forEach((user) => append({
+      id: user.partnerId || user.id,
+      code: user.partnerCode || user.username,
+      name: user.partnerName || user.name || user.username,
+      domain: user.partnerDomain,
+      usernameSuffix: user.partnerUsernameSuffix,
+      usernameSuffixes: user.partnerUsernameSuffixes,
+      active: user.active,
+      partnerIspSharePercent: user.partnerIspSharePercent,
+      partnerSharePercent: user.partnerSharePercent
+    }));
+  return rows.sort((left, right) => String(left.name || left.code).localeCompare(String(right.name || right.code), 'id'));
+}
+
+function partnerSettlementScopeUser(partner = {}) {
+  return {
+    role: 'partner',
+    partnerId: partner.id || '',
+    partnerCode: partner.code || '',
+    partnerName: partner.name || '',
+    partnerDomain: partner.domain || '',
+    partnerUsernameSuffix: partner.usernameSuffix || '',
+    partnerUsernameSuffixes: partner.usernameSuffixes || []
+  };
+}
+
+function partnerSettlementOption(partner = {}) {
+  const share = partnerShareSettings(partner);
+  return {
+    id: partner.id || '',
+    code: partner.code || '',
+    name: partner.name || partner.code || partner.usernameSuffix || 'Mitra',
+    domain: partner.domain || '',
+    usernameSuffix: partner.usernameSuffix || '',
+    usernameSuffixes: partner.usernameSuffixes || [],
+    ispSharePercent: share.ispPercent,
+    partnerSharePercent: share.partnerPercent
+  };
+}
+
+function selectPartnerForSettlement(data = {}, user = {}, requestedPartnerId = '') {
+  const partners = partnerSettlementPartnerRows(data);
+  if (userIsPartner(user)) {
+    const ownPartner = partnerForUser(data, user);
+    const fallback = {
+      id: user.partnerId || user.id || '',
+      code: user.partnerCode || user.username || '',
+      name: user.partnerName || user.name || user.username || 'Mitra',
+      domain: user.partnerDomain || '',
+      usernameSuffix: user.partnerUsernameSuffix || '',
+      usernameSuffixes: normalizePartnerUsernameSuffixes(user),
+      partnerIspSharePercent: user.partnerIspSharePercent,
+      partnerSharePercent: user.partnerSharePercent
+    };
+    const selected = ownPartner
+      ? (partners.find((partner) => String(partner.id || '') === String(ownPartner.id || '')) || ownPartner)
+      : fallback;
+    return {
+      selected,
+      partners: selected ? [partnerSettlementOption(selected)] : []
+    };
+  }
+  const requested = String(requestedPartnerId || '').trim();
+  const selected = partners.find((partner) => {
+    return String(partner.id || '') === requested
+      || String(partner.code || '').toLowerCase() === requested.toLowerCase()
+      || partnerRowSuffixes(partner).includes(normalizePartnerUsernameSuffix(requested));
+  }) || partners[0] || null;
+  return {
+    selected,
+    partners: partners.map(partnerSettlementOption)
+  };
+}
+
+function latestActivePaymentForInvoice(data = {}, invoice = {}) {
+  const invoiceId = String(invoice.id || '');
+  if (!invoiceId) return null;
+  return activePayments(data)
+    .filter((payment) => String(payment.invoiceId || '') === invoiceId)
+    .sort((left, right) => String(paymentReportTimestamp(right, invoice)).localeCompare(String(paymentReportTimestamp(left, invoice))))
+    [0] || null;
+}
+
+async function partnerSettlementPayload(data = {}, user = {}, options = {}) {
+  const period = normalizePeriod(options.period || currentPeriod());
+  const selection = selectPartnerForSettlement(data, user, options.partnerId || options.partner || '');
+  const partner = selection.selected;
+  if (!partner) {
+    return {
+      ok: true,
+      period,
+      partners: selection.partners,
+      partner: null,
+      partnerScope: partnerScopeResponse({
+        enabled: true,
+        selected: null,
+        partners: selection.partners
+      }),
+      share: { ispPercent: 40, partnerPercent: 60 },
+      summary: {
+        paidInvoiceCount: 0,
+        grossAmount: 0,
+        cashAmount: 0,
+        transferAmount: 0,
+        onlineAmount: 0,
+        ispShareAmount: 0,
+        partnerShareAmount: 0,
+        settledAmount: 0,
+        outstandingAmount: 0
+      },
+      settlements: [],
+      invoices: []
+    };
+  }
+
+  const scopeUser = partnerSettlementScopeUser(partner);
+  const sourceInvoices = await invoiceCandidatesForPeriod(data, period);
+  const paidInvoices = sourceInvoices
+    .filter((invoice) => invoiceCoversPeriod(invoice, period))
+    .filter((invoice) => invoiceRuntimeStatus(invoice) === 'paid')
+    .filter((invoice) => partnerScopedRowVisible(data, invoice, scopeUser));
+  const invoiceRows = paidInvoices.map((invoice) => {
+    const customer = customerForInvoice(data, invoice);
+    const payment = latestActivePaymentForInvoice(data, invoice);
+    const amount = Number(invoice.amount || payment?.amount || 0);
+    const category = paymentCategoryForRecord(payment || invoice, payment?.method || invoice.paymentMethod || invoice.method || '', invoice);
+    const paidAt = paymentReportTimestamp(payment || {}, invoice);
+    return {
+      id: invoice.id || '',
+      invoiceNo: displayBillingInvoiceNo(invoice.externalId || invoice.invoiceNo || invoice.id || ''),
+      username: customer.username || invoice.username || '',
+      customerName: customer.name || invoice.customerName || invoice.username || '',
+      packageName: invoice.packageName || customer.packageName || '',
+      amount,
+      amountText: formatCurrencyText(amount),
+      paymentCategory: category,
+      paymentMethod: payment?.method || invoice.paymentMethod || invoice.method || '-',
+      paidAt,
+      paidDate: timestampLocalDateKey(paidAt),
+      period: invoice.period || period
+    };
+  });
+  const sumByCategory = (category) => invoiceRows
+    .filter((invoice) => invoice.paymentCategory === category)
+    .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+  const grossAmount = invoiceRows.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+  const share = partnerShareSettings(partner);
+  const ispShareAmount = Math.round(grossAmount * share.ispPercent / 100);
+  const partnerShareAmount = Math.round(grossAmount * share.partnerPercent / 100);
+  const settlements = partnerSettlementRows(data)
+    .filter((row) => String(row.partnerId || '') === String(partner.id || ''))
+    .filter((row) => String(row.period || '') === period)
+    .filter((row) => String(row.status || 'active') !== 'cancelled')
+    .sort((left, right) => String(right.date || right.createdAt || '').localeCompare(String(left.date || left.createdAt || '')))
+    .map((row) => ({
+      id: row.id || '',
+      date: row.date || timestampLocalDateKey(row.createdAt) || '',
+      amount: Number(row.amount || 0),
+      amountText: formatCurrencyText(row.amount || 0),
+      method: row.method || 'Transfer',
+      notes: row.notes || '',
+      createdByName: row.createdByName || '',
+      createdAt: row.createdAt || ''
+    }));
+  const settledAmount = settlements.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  return {
+    ok: true,
+    period,
+    partners: selection.partners,
+    partner: partnerSettlementOption(partner),
+    partnerScope: partnerScopeResponse({
+      enabled: true,
+      selected: partnerSettlementOption(partner),
+      partners: selection.partners
+    }),
+    share,
+    summary: {
+      paidInvoiceCount: invoiceRows.length,
+      grossAmount,
+      cashAmount: sumByCategory('cash'),
+      transferAmount: sumByCategory('transfer'),
+      onlineAmount: sumByCategory('online'),
+      ispShareAmount,
+      partnerShareAmount,
+      settledAmount,
+      outstandingAmount: Math.max(0, ispShareAmount - settledAmount)
+    },
+    settlements,
+    invoices: invoiceRows.sort((left, right) => String(left.customerName || left.username).localeCompare(String(right.customerName || right.username), 'id'))
+  };
+}
+
+
+function partnerReportSummarySignature(data = {}, period = currentPeriod(), partner = {}) {
+  return [
+    normalizePeriod(period),
+    partner.id || '',
+    partner.code || '',
+    (partner.usernameSuffixes || []).join(','),
+    runtimeDataSignature(data, ['customers', 'invoices', 'payments', 'radiusUsers', 'partners', 'partnerSettlements'])
+  ].join('|');
+}
+
+async function partnerReportSummaryPayload(data = {}, user = {}, options = {}) {
+  const period = normalizePeriod(options.period || currentPeriod());
+  const selection = selectPartnerScope(data, user, options.partnerId || options.partner || 'all', true);
+  const partner = selection.selected;
+  if (!partner) {
+    return {
+      ok: true,
+      source: 'partner-report-summary',
+      period,
+      partners: selection.partners,
+      partner: null,
+      members: { total: 0 },
+      summary: {
+        total: 0,
+        totalAmount: 0,
+        paid: 0,
+        paidAmount: 0,
+        periodPaidCount: 0,
+        periodPaidAmount: 0,
+        unpaid: 0,
+        unpaidAmount: 0,
+        overdue: 0,
+        overdueAmount: 0,
+        filteredCount: 0,
+        filteredAmount: 0
+      },
+      checkedAt: new Date().toISOString()
+    };
+  }
+
+  const signature = partnerReportSummarySignature(data, period, partner);
+  const cacheKey = runtimeCacheKey('partner-report-summary', signature);
+  if (!options.force) {
+    const cached = await runtimeJsonCacheGet(cacheKey);
+    if (cached) return cached;
+  }
+
+  const scopeUser = selection.user || partnerSettlementScopeUser(partner);
+  const base = await cachedBillingMonitorBasePayload(data, period, 'month', { force: options.force === true });
+  const periodRows = billingMonitorRowsForUser(data, Array.isArray(base.periodRows) ? base.periodRows : [], scopeUser)
+    .filter((invoice) => invoice.status !== 'cancelled');
+  const filteredRows = periodRows;
+  const summary = billingMonitorSummaryFromRows(periodRows, periodRows, filteredRows, 'month');
+  const memberTotal = (data.customers || [])
+    .filter((customer) => partnerScopedRowVisible(data, customer, scopeUser))
+    .length;
+  const payload = {
+    ok: true,
+    source: 'partner-report-summary',
+    period,
+    partners: selection.partners,
+    partner,
+    partnerScope: partnerScopeResponse(selection),
+    members: {
+      total: memberTotal
+    },
+    summary,
+    checkedAt: new Date().toISOString()
+  };
+  await runtimeJsonCacheSet(cacheKey, payload, Math.min(REPORT_BASE_CACHE_TTL_SECONDS, 60));
+  return payload;
+}
+
+function csvCell(value = '') {
+  const text = String(value ?? '');
+  return /[",\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+
 function prepareManagedUserPayload(data = {}, payload = {}, existing = null) {
   const next = { ...payload };
   const nextRole = String(next.role || existing?.role || 'viewer').trim().toLowerCase();
-  if (!['reseller_voucher', 'collector', 'technician'].includes(nextRole)) {
+  if (nextRole === 'partner') {
+    prepareManagedPartnerUserPayload(data, next, existing);
+  } else {
+    clearManagedPartnerPayload(next);
+  }
+  if (!['partner', 'reseller_voucher', 'collector', 'technician'].includes(nextRole)) {
     next.lockedNasId = '';
     next.lockedNasIds = [];
     next.lockedNasName = '';
@@ -6921,11 +7833,13 @@ function prepareManagedUserPayload(data = {}, payload = {}, existing = null) {
   }
   const nasRows = selectedNasIds.map((id) => radiusFindNas(data, id)).filter(Boolean);
   if (!nasRows.length || nasRows.length !== selectedNasIds.length) {
-    const roleTargetLabel = nextRole === 'collector'
-      ? 'collector'
-      : nextRole === 'technician'
-        ? 'teknisi'
-        : 'reseller hotspot';
+    const roleTargetLabel = nextRole === 'partner'
+      ? 'mitra'
+      : nextRole === 'collector'
+        ? 'collector'
+        : nextRole === 'technician'
+          ? 'teknisi'
+          : 'reseller hotspot';
     throw new Error(`NAS target ${roleTargetLabel} wajib dipilih`);
   }
   const normalizedRows = nasRows;
@@ -7058,6 +7972,60 @@ function activePayments(data = {}) {
   return rows;
 }
 
+const PAYMENT_REPORT_ROWS_CACHE_MS = 15000;
+const paymentReportRowsCache = new Map();
+
+function paymentReportRowsCacheKey(data = {}) {
+  return [
+    activeAppTimeZone || '',
+    activePaymentsCacheKey(data)
+  ].join('|');
+}
+
+function paymentReportRows(data = {}, options = {}) {
+  const customPayments = Array.isArray(options.payments);
+  const includeCategory = options.includeCategory !== false;
+  const cacheKey = customPayments ? '' : `${paymentReportRowsCacheKey(data)}|cat:${includeCategory ? 1 : 0}`;
+  if (cacheKey) {
+    const cached = paymentReportRowsCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+  }
+  const payments = customPayments ? options.payments : (data.payments || []);
+  const invoices = new Map((data.invoices || []).map((invoice) => [String(invoice.id || ''), invoice]));
+  const referenceDate = todayIso();
+  const rows = [];
+  for (const payment of payments) {
+    if (!paymentIsActive(payment)) continue;
+    const invoiceId = String(payment.invoiceId || '');
+    const invoice = invoiceId ? (invoices.get(invoiceId) || {}) : {};
+    if (invoiceId && invoice.id && invoiceRuntimeStatus(invoice, referenceDate) !== 'paid') continue;
+    const date = paymentDateKeyFast(payment, invoice);
+    const category = includeCategory ? paymentCategoryForRecord(payment, payment.method || invoice.paymentMethod, invoice) : '';
+    rows.push({
+      payment,
+      invoice,
+      invoiceId,
+      customerId: payment.customerId || invoice.customerId || '',
+      date,
+      period: date.slice(0, 7),
+      amount: Number(payment.amount || invoice.amount || 0),
+      category
+    });
+  }
+  if (cacheKey) {
+    paymentReportRowsCache.set(cacheKey, {
+      expiresAt: Date.now() + PAYMENT_REPORT_ROWS_CACHE_MS,
+      value: rows
+    });
+    while (paymentReportRowsCache.size > 16) {
+      paymentReportRowsCache.delete(paymentReportRowsCache.keys().next().value);
+    }
+  }
+  return rows;
+}
+
 function userIsCollector(user = {}) {
   return String(user.role || '') === 'collector';
 }
@@ -7123,6 +8091,37 @@ function paymentDateKey(payment = {}, invoice = {}) {
   return timestampLocalDateKey(paymentReportTimestamp(payment, invoice));
 }
 
+function exactLocalDateKey(value = '') {
+  const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2}T00:00(?::00(?:\.000)?)?(?:Z|[+-]00:00)?$/.test(raw)) {
+    return raw.slice(0, 10);
+  }
+  return '';
+}
+
+function paymentDateKeyFast(payment = {}, invoice = {}) {
+  const rawPaidAt = payment.paidAt || invoice.paidAt || '';
+  const paidDate = exactLocalDateKey(rawPaidAt);
+  if (paidDate) return paidDate;
+  if (!rawPaidAt) {
+    const createdDate = exactLocalDateKey(payment.createdAt || invoice.createdAt || '');
+    if (createdDate) return createdDate;
+  }
+  return paymentDateKey(payment, invoice);
+}
+
+function paymentTimestampSortKeyFast(payment = {}, invoice = {}) {
+  const rawPaidAt = String(payment.paidAt || invoice.paidAt || '').trim();
+  const createdAt = String(payment.createdAt || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawPaidAt)) {
+    return createdAt.startsWith(rawPaidAt) ? createdAt : rawPaidAt;
+  }
+  if (/^\d{4}-\d{2}-\d{2}T/.test(rawPaidAt)) return rawPaidAt;
+  if (!rawPaidAt && /^\d{4}-\d{2}-\d{2}T/.test(createdAt)) return createdAt;
+  return paymentReportTimestamp(payment, invoice) || createdAt || rawPaidAt;
+}
+
 function paymentPeriodKey(payment = {}, invoice = {}) {
   return paymentDateKey(payment, invoice).slice(0, 7);
 }
@@ -7137,8 +8136,8 @@ function periodKeyFromDateOrTimestamp(value = '', fallbackPeriod = '') {
 }
 
 function paymentPeriodKeyFast(payment = {}, invoice = {}) {
-  const raw = String(payment.paidAt || invoice.paidAt || payment.createdAt || '').trim();
-  const resolved = periodKeyFromDateOrTimestamp(raw);
+  const fastDate = paymentDateKeyFast(payment, invoice);
+  const resolved = fastDate ? fastDate.slice(0, 7) : '';
   return resolved || paymentPeriodKey(payment, invoice);
 }
 
@@ -7499,9 +8498,9 @@ function radiusRemovedRecordCount(data = {}, serviceType = 'pppoe', period = cur
   }).length;
 }
 
-function isNewPsbPppAccount(data = {}, user = {}, period = currentPeriod()) {
+function isNewPsbPppAccount(data = {}, user = {}, period = currentPeriod(), resolvedCustomer = null) {
   if (String(user.serviceType || '').trim().toLowerCase() !== 'pppoe') return false;
-  const customer = (data.customers || []).find((item) => item.id === user.customerId);
+  const customer = resolvedCustomer || (data.customers || []).find((item) => item.id === user.customerId);
   if (!customer || customer.countsAsPsb === false || !user.customerId) return false;
   const createdPeriod = String(user.createdAt || '').slice(0, 7);
   const activePeriod = String(customer.activeDate || customer.installedAt || user.activeDate || '').slice(0, 7);
@@ -7533,7 +8532,7 @@ function dashboardRadiusServiceSummary(data = {}, serviceType = 'pppoe', period 
     if (String(user.createdAt || '').slice(0, 7) === selectedPeriod) counts.new += 1;
     if (serviceType === 'pppoe' && user.customerId && !psbCustomerIds.has(user.customerId)) {
       const customer = customersById.get(user.customerId);
-      if (customer && isNewPsbPppAccount(data, user, selectedPeriod)) {
+      if (customer && isNewPsbPppAccount(data, user, selectedPeriod, customer)) {
         psbCustomerIds.add(user.customerId);
         counts.psb += 1;
       }
@@ -7638,13 +8637,62 @@ async function dashboardRadiusSummary(data = {}, period = currentPeriod()) {
   return summary;
 }
 
+function monitoringSessionRowTimestamp(row = {}) {
+  const stamp = Date.parse(row.updatedAt || row.startedAt || '');
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
+function monitoringHotspotUsernameBase(value = '') {
+  const username = radiusSessionUsername(value);
+  if (!username) return '';
+  return username.replace(/-\d+$/i, '') || username;
+}
+
+function monitoringSessionSharedLimit(row = {}) {
+  const raw = Number(row.sharedUsers || row.sharedUserLimit || 1);
+  if (!Number.isFinite(raw) || raw < 1) return 1;
+  return Math.max(1, Math.trunc(raw));
+}
+
+function dedupeMonitoringHotspotSessionRows(rows = []) {
+  const output = [];
+  const hotspotGroups = new Map();
+  for (const row of rows || []) {
+    const type = String(row.type || '').trim().toLowerCase();
+    const usernameKey = monitoringHotspotUsernameBase(row.username || '').toLowerCase();
+    if (type !== 'hotspot' || !usernameKey) {
+      output.push(row);
+      continue;
+    }
+    const rowsForUser = hotspotGroups.get(usernameKey) || [];
+    rowsForUser.push({
+      ...row,
+      username: monitoringHotspotUsernameBase(row.username || ''),
+      duplicateSessionCount: 1
+    });
+    hotspotGroups.set(usernameKey, rowsForUser);
+  }
+  for (const rowsForUser of hotspotGroups.values()) {
+    const ordered = rowsForUser.sort((left, right) => monitoringSessionRowTimestamp(right) - monitoringSessionRowTimestamp(left));
+    const limit = Math.max(...ordered.map((row) => monitoringSessionSharedLimit(row)));
+    const visible = ordered.slice(0, limit);
+    for (const row of visible) {
+      output.push({
+        ...row,
+        duplicateSessionCount: ordered.length
+      });
+    }
+  }
+  return output;
+}
+
 function monitoringRadiusSessionRows(data = {}, sessions = []) {
   const profiles = radiusProfileDirectory(data);
   const nasMap = radiusNasDirectory(data);
   const nasAddressMap = radiusNasByAddress(data);
   const customers = radiusCustomerDirectory(data);
   const usersByUsername = radiusUserByUsername(data);
-  return (sessions || [])
+  const rows = (sessions || [])
     .map((session) => {
       const user = usersByUsername.get(radiusSessionUsername(session.username)) || null;
       const type = radiusSessionServiceType(data, session, user);
@@ -7668,6 +8716,7 @@ function monitoringRadiusSessionRows(data = {}, sessions = []) {
         interfaceName: session.nasPortId || (type === 'pppoe' ? `<pppoe-${username}>` : username) || '-',
         customerName: customer.name || user?.customerName || '',
         profile: profile.name || '',
+        sharedUsers: profile.sharedUsers || 1,
         ipAddress: clientIp,
         framedIpAddress: session.framedIpAddress || '',
         staticIp: user?.staticIp || '',
@@ -7682,6 +8731,7 @@ function monitoringRadiusSessionRows(data = {}, sessions = []) {
       };
     })
     .filter(Boolean);
+  return dedupeMonitoringHotspotSessionRows(rows);
 }
 
 function siteMatchesMonitoringRow(site = {}, row = {}) {
@@ -7693,7 +8743,9 @@ function siteMatchesMonitoringRow(site = {}, row = {}) {
 
 function monitoringCustomerRowKey(row = {}, fallbackType = '') {
   const type = String(row.type || fallbackType || '').trim().toLowerCase();
-  const username = radiusSessionUsername(row.username || row.interfaceName || '');
+  const username = type === 'hotspot'
+    ? monitoringHotspotUsernameBase(row.username || row.interfaceName || '')
+    : radiusSessionUsername(row.username || row.interfaceName || '');
   return type && username ? `${type}:${username}` : '';
 }
 
@@ -7732,7 +8784,14 @@ function applyRadiusSessionsToMonitoringCustomers(data = {}, payload = {}, sessi
   }
 
   const rows = monitoringRadiusSessionRows(data, sessionPayload.rows || []);
-  const rowsByKey = new Map(rows.map((row) => [monitoringCustomerRowKey(row), row]).filter(([key]) => key));
+  const pppoeRowsByKey = new Map(rows
+    .filter((row) => row.type !== 'hotspot')
+    .map((row) => [monitoringCustomerRowKey(row), row])
+    .filter(([key]) => key));
+  const hotspotUsernamesWithRadius = new Set(rows
+    .filter((row) => row.type === 'hotspot')
+    .map((row) => monitoringHotspotUsernameBase(row.username || row.interfaceName || '').toLowerCase())
+    .filter(Boolean));
   const usedKeys = new Set();
   const ensureSite = (row) => {
     let site = sites.find((entry) => siteMatchesMonitoringRow(entry, row));
@@ -7762,21 +8821,21 @@ function applyRadiusSessionsToMonitoringCustomers(data = {}, payload = {}, sessi
   for (const site of sites) {
     site.pppoeUsers = (Array.isArray(site.pppoeUsers) ? site.pppoeUsers : []).map((row) => {
       const key = monitoringCustomerRowKey(row, 'pppoe');
-      const radiusRow = key ? rowsByKey.get(key) : null;
+      const radiusRow = key ? pppoeRowsByKey.get(key) : null;
       if (key && radiusRow) usedKeys.add(key);
       return enrichMonitoringCustomerRow(row, radiusRow, 'pppoe');
     });
-    site.hotspotUsers = (Array.isArray(site.hotspotUsers) ? site.hotspotUsers : []).map((row) => {
-      const key = monitoringCustomerRowKey(row, 'hotspot');
-      const radiusRow = key ? rowsByKey.get(key) : null;
-      if (key && radiusRow) usedKeys.add(key);
-      return enrichMonitoringCustomerRow(row, radiusRow, 'hotspot');
-    });
+    site.hotspotUsers = (Array.isArray(site.hotspotUsers) ? site.hotspotUsers : [])
+      .map((row) => enrichMonitoringCustomerRow(row, null, 'hotspot'))
+      .filter((row) => {
+        const username = monitoringHotspotUsernameBase(row.username || row.interfaceName || '').toLowerCase();
+        return !username || !hotspotUsernamesWithRadius.has(username);
+      });
   }
 
   for (const row of rows) {
     const key = monitoringCustomerRowKey(row);
-    if (key && usedKeys.has(key)) continue;
+    if (row.type !== 'hotspot' && key && usedKeys.has(key)) continue;
     const site = ensureSite(row);
     const next = {
       ...row,
@@ -7785,7 +8844,7 @@ function applyRadiusSessionsToMonitoringCustomers(data = {}, payload = {}, sessi
       siteLocation: row.siteLocation || site.location || site.host || '',
       host: row.host || site.host || ''
     };
-    if (key) usedKeys.add(key);
+    if (row.type !== 'hotspot' && key) usedKeys.add(key);
     if (row.type === 'hotspot') site.hotspotUsers.push(next);
     else site.pppoeUsers.push(next);
   }
@@ -8118,14 +9177,12 @@ function localMonitoringMemberRows(data = {}, query = {}) {
   const selectedNas = String(query.nas || query.site || 'all').trim().toLowerCase();
   const search = String(query.search || '').trim().toLowerCase();
   const sort = String(query.sort || 'created_desc').trim().toLowerCase();
+  const viewer = query.viewer || {};
   const resolver = radiusStatusResolver(data);
   const radiusUsers = data.radiusUsers || [];
+  const radiusUserLookup = indexedRadiusUserLookup(radiusUsers);
   let members = (data.customers || []).map((customer) => {
-    const radiusUser = radiusUsers.find((user) => {
-      return user.customerId === customer.id
-        || user.id === customer.radiusUserId
-        || String(user.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase();
-    }) || {};
+    const radiusUser = indexedRadiusUserForCustomer(radiusUserLookup, customer) || {};
     const memberPaymentType = normalizeImportPaymentType(customer.paymentType || 'postpaid');
     const memberBillingPeriod = normalizeImportBillingPeriod(customer.billingPeriod || 'fixed', memberPaymentType);
     const registeredAt = customer.activeDate || customer.installedAt || customer.createdAt || radiusUser.activeDate || radiusUser.createdAt || '';
@@ -8147,6 +9204,7 @@ function localMonitoringMemberRows(data = {}, query = {}) {
     const normalizedStatus = resolver.statusForCustomer(customer);
     const createdByName = customer.createdByName || radiusUser.createdByName || '';
     const createdByUsername = customer.createdByUsername || radiusUser.createdByUsername || '';
+    const addOns = normalizeBillingAddons(customer);
     const member = {
       id: customer.id,
       memberId: customer.id,
@@ -8184,8 +9242,8 @@ function localMonitoringMemberRows(data = {}, query = {}) {
       price: Number(customer.price || customer.amount || 0),
       ppn: customer.ppn || '',
       discount: customer.discount || '',
-      addOns: normalizeBillingAddons(customer),
-      addons: normalizeBillingAddons(customer),
+      addOns,
+      addons: addOns,
       addOnMonthlyTotal: billingAddonsMonthlyTotal(customer),
       packageName: customer.packageName || '',
       billingIsolationOverride: customer.billingIsolationOverride === true || radiusUser.billingIsolationOverride === true,
@@ -8203,6 +9261,10 @@ function localMonitoringMemberRows(data = {}, query = {}) {
       && !['terminate', 'removed'].includes(normalizeCustomerStatusLocal(radiusUser.status || customer.status));
     return member;
   });
+
+  if (userIsPartner(viewer)) {
+    members = members.filter((member) => partnerScopedRowVisible(data, member, viewer));
+  }
 
   const nasOptions = monitoringMemberNasOptions(data, members);
   const creatorMap = new Map();
@@ -8274,6 +9336,513 @@ function localMonitoringMemberRows(data = {}, query = {}) {
     : sortMonitoringMembersByCreatedDesc(members);
 
   return { members, creators, nasOptions, summary: monitoringMemberSummaryFromRows(members) };
+}
+
+function fiberNumber(value, fallback = 0) {
+  const number = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function fiberCoordinate(value) {
+  const number = fiberNumber(value, NaN);
+  return Number.isFinite(number) ? number : null;
+}
+
+function fiberHasCoordinate(row = {}) {
+  const latitude = fiberCoordinate(row.latitude);
+  const longitude = fiberCoordinate(row.longitude);
+  return latitude !== null
+    && longitude !== null
+    && latitude >= -90
+    && latitude <= 90
+    && longitude >= -180
+    && longitude <= 180
+    && latitude !== 0
+    && longitude !== 0;
+}
+
+function fiberStatus(value = 'active') {
+  const status = String(value || '').trim().toLowerCase();
+  if (['inactive', 'disabled', 'off', 'nonaktif'].includes(status)) return 'inactive';
+  if (['maintenance', 'maintain', 'repair', 'gangguan'].includes(status)) return 'maintenance';
+  return 'active';
+}
+
+function fiberStatusLabel(status = 'active') {
+  return {
+    active: 'Aktif',
+    inactive: 'Nonaktif',
+    maintenance: 'Maintenance'
+  }[fiberStatus(status)] || 'Aktif';
+}
+
+function fiberNodeTone(status = 'active') {
+  return fiberStatus(status) === 'active' ? 'active' : fiberStatus(status) === 'maintenance' ? 'maintenance' : 'inactive';
+}
+
+function monitoringFiberNodeLabelServer(row = {}) {
+  return [row.code, row.name].filter(Boolean).join(' - ') || '-';
+}
+
+function fiberPrimarySiteId(data = {}) {
+  const rows = Array.isArray(data.monitoringTargets) ? data.monitoringTargets : [];
+  if (!rows.length) return '';
+  const explicit = rows.find((target) => target && target.isPrimarySite === true);
+  if (explicit?.id) return explicit.id;
+  const activeWithCoordinate = rows.find((target) => (
+    String(target.status || '').toLowerCase() !== 'inactive'
+    && fiberCoordinate(target.latitude ?? target.siteLatitude) !== null
+    && fiberCoordinate(target.longitude ?? target.siteLongitude) !== null
+  ));
+  if (activeWithCoordinate?.id) return activeWithCoordinate.id;
+  const withCoordinate = rows.find((target) => (
+    fiberCoordinate(target.latitude ?? target.siteLatitude) !== null
+    && fiberCoordinate(target.longitude ?? target.siteLongitude) !== null
+  ));
+  return withCoordinate?.id || rows[0]?.id || '';
+}
+
+function normalizeMonitoringPrimarySite(store = {}, preferredId = '') {
+  store.monitoringTargets = Array.isArray(store.monitoringTargets) ? store.monitoringTargets : [];
+  if (!store.monitoringTargets.length) return;
+  const preferred = String(preferredId || '').trim();
+  const fallback = fiberPrimarySiteId(store);
+  const targetId = preferred && store.monitoringTargets.some((target) => String(target.id || '') === preferred)
+    ? preferred
+    : fallback;
+  if (!targetId) return;
+  store.monitoringTargets.forEach((target) => {
+    target.isPrimarySite = String(target.id || '') === String(targetId);
+  });
+}
+
+function fiberNocRows(data = {}) {
+  const primarySiteId = fiberPrimarySiteId(data);
+  return (data.monitoringTargets || []).map((target) => {
+    const rawStatus = String(target.status || '').toLowerCase();
+    const status = ['down', 'error'].includes(rawStatus)
+      ? 'maintenance'
+      : (rawStatus === 'inactive' ? 'inactive' : 'active');
+    return {
+      id: target.id || '',
+      source: 'monitoringTarget',
+      type: 'noc',
+      code: target.name || target.host || '',
+      name: target.location || target.host || '',
+      area: target.location || '',
+      latitude: fiberCoordinate(target.latitude ?? target.siteLatitude),
+      longitude: fiberCoordinate(target.longitude ?? target.siteLongitude),
+      status,
+      statusLabel: status === 'maintenance'
+        ? (rawStatus === 'down' ? 'Down' : 'Perlu cek')
+        : fiberStatusLabel(status),
+      tone: fiberNodeTone(status),
+      isPrimary: String(target.id || '') === String(primarySiteId || ''),
+      note: target.notes || target.host || ''
+    };
+  });
+}
+
+function customerFiberPointId(customer = {}) {
+  return String(
+    customer.fiberPointId
+    || customer.odpId
+    || customer.distributionPointId
+    || customer.distribution_point_id
+    || customer.odp
+    || ''
+  ).trim();
+}
+
+function customerOdpPort(customer = {}) {
+  return String(customer.odpPort || customer.fiberPort || customer.distributionPort || customer.port || '').trim();
+}
+
+function customerMapStatus(customer = {}) {
+  const normalized = normalizeCustomerStatusLocal(customer.status || customer.accessState || '');
+  if (['isolated', 'suspend'].includes(normalized)) return 'isolated';
+  if (['terminated', 'removed', 'inactive', 'disabled'].includes(normalized)) return 'inactive';
+  return 'active';
+}
+
+function customerMapTone(customer = {}) {
+  const status = customerMapStatus(customer);
+  return status === 'isolated' ? 'isolated' : status === 'inactive' ? 'inactive' : 'active';
+}
+
+function customerPlanName(data = {}, customer = {}, radiusUser = {}) {
+  const profile = radiusFindProfile(data, radiusUser.profileId || customer.packageName || customer.profile || '', 'pppoe') || {};
+  return profile.name || customer.packageName || customer.profile || radiusUser.profile || radiusUser.profileName || '';
+}
+
+function customerMapRows(data = {}, query = {}) {
+  const search = String(query.search || '').trim().toLowerCase();
+  const statusFilter = String(query.status || 'all').trim().toLowerCase();
+  const accessFilter = String(query.accessState || query.access_state || 'all').trim().toLowerCase();
+  const planFilter = String(query.plan || query.servicePlan || query.service_plan_id || 'all').trim().toLowerCase();
+  const locationFilter = String(query.location || 'all').trim().toLowerCase();
+  const radiusUsers = data.radiusUsers || [];
+  const radiusUserLookup = indexedRadiusUserLookup(radiusUsers);
+  let rows = (data.customers || []).map((customer) => {
+    const radiusUser = indexedRadiusUserForCustomer(radiusUserLookup, customer) || {};
+    const latitude = fiberCoordinate(customer.latitude ?? customer.memberLatitude);
+    const longitude = fiberCoordinate(customer.longitude ?? customer.memberLongitude);
+    const status = customerMapStatus(customer);
+    const plan = customerPlanName(data, customer, radiusUser);
+    const hasLocation = fiberHasCoordinate({ latitude, longitude });
+    const fiberPointId = customerFiberPointId(customer);
+    return {
+      id: customer.id || '',
+      customerNumber: customer.code || customer.accountId || customer.memberCode || customer.id || '',
+      name: customer.name || customer.customerName || customer.username || '',
+      phone: normalizeLocalPhone(customer.whatsapp || customer.phone || ''),
+      status,
+      statusLabel: status === 'isolated' ? 'Isolir' : status === 'inactive' ? 'Nonaktif' : 'Aktif',
+      accessState: status === 'isolated' ? 'isolated' : status === 'inactive' ? 'inactive' : 'normal',
+      currentPlan: plan,
+      username: radiusUser.username || customer.username || '',
+      connectionType: radiusUser.serviceType || customer.serviceType || 'pppoe',
+      latitude,
+      longitude,
+      accuracy: fiberNumber(customer.locationAccuracy, null),
+      source: customer.locationSource || customer.memberLocationSource || (hasLocation ? 'manual' : ''),
+      note: customer.locationNote || customer.note || '',
+      geotaggedAt: customer.locationUpdatedAt || customer.updatedAt || customer.createdAt || '',
+      address: customer.address || '',
+      fiberPointId,
+      odpPort: customerOdpPort(customer),
+      hasLocation,
+      url: customer.id ? `#monitoringMembers?member=${encodeURIComponent(customer.id)}` : ''
+    };
+  });
+
+  if (statusFilter && statusFilter !== 'all') {
+    rows = rows.filter((row) => row.status === statusFilter || row.accessState === statusFilter);
+  }
+  if (accessFilter && accessFilter !== 'all') {
+    rows = rows.filter((row) => row.accessState === accessFilter || row.status === accessFilter);
+  }
+  if (planFilter && planFilter !== 'all') {
+    rows = rows.filter((row) => String(row.currentPlan || '').trim().toLowerCase() === planFilter);
+  }
+  if (locationFilter === 'tagged') rows = rows.filter((row) => row.hasLocation);
+  if (locationFilter === 'missing') rows = rows.filter((row) => !row.hasLocation);
+  if (search) {
+    rows = rows.filter((row) => [
+      row.customerNumber,
+      row.name,
+      row.phone,
+      row.username,
+      row.currentPlan,
+      row.address,
+      row.fiberPointId,
+      row.odpPort
+    ].some((value) => String(value || '').toLowerCase().includes(search)));
+  }
+
+  const markers = [];
+  const missingCustomers = [];
+  const servicePlanSet = new Set();
+  const summary = {
+    total: rows.length,
+    tagged: 0,
+    missing: 0,
+    isolated: 0,
+    inactive: 0
+  };
+  for (const row of rows) {
+    if (row.currentPlan) servicePlanSet.add(row.currentPlan);
+    if (row.hasLocation) {
+      summary.tagged += 1;
+      markers.push(row);
+    } else {
+      summary.missing += 1;
+      if (missingCustomers.length < 40) missingCustomers.push(row);
+    }
+    if (row.status === 'isolated') summary.isolated += 1;
+    if (row.status === 'inactive') summary.inactive += 1;
+  }
+
+  const servicePlanOptions = [...servicePlanSet]
+    .sort((a, b) => String(a).localeCompare(String(b), 'id', { numeric: true, sensitivity: 'base' }))
+    .map((name) => ({ id: name, name }));
+
+  return {
+    rows,
+    markers,
+    missingCustomers,
+    summary,
+    servicePlanOptions
+  };
+}
+
+function fiberTaggedCustomerMap(data = {}) {
+  const map = new Map();
+  for (const row of customerMapRows(data, {}).rows) {
+    const pointId = String(row.fiberPointId || '').trim();
+    if (!pointId) continue;
+    if (!map.has(pointId)) map.set(pointId, []);
+    map.get(pointId).push({
+      id: row.id,
+      customerNumber: row.customerNumber,
+      name: row.name,
+      username: row.username,
+      phone: row.phone,
+      odpPort: row.odpPort,
+      status: row.status
+    });
+  }
+  return map;
+}
+
+function fiberCenterLookup(data = {}) {
+  return new Map((data.fiberCenters || []).map((center) => [String(center.id || ''), center]));
+}
+
+function fiberCenterRows(data = {}, options = {}) {
+  const pointsByCenter = new Map();
+  for (const point of data.fiberPoints || []) {
+    const centerId = String(point.centerId || '').trim();
+    if (!centerId) continue;
+    if (!pointsByCenter.has(centerId)) pointsByCenter.set(centerId, []);
+    pointsByCenter.get(centerId).push(point);
+  }
+  const taggedMap = options.taggedMap || fiberTaggedCustomerMap(data);
+  const centerMap = options.centerMap || fiberCenterLookup(data);
+  return (data.fiberCenters || []).map((center) => {
+    const childPoints = (pointsByCenter.get(String(center.id || '')) || []).map((point) => fiberPointPublicRow(data, point, { includeTaggedCustomers: false, taggedMap, centerMap }));
+    const capacityPorts = Math.max(0, Math.round(fiberNumber(center.capacityPorts ?? center.capacity ?? center.ports, 0)));
+    const usedPorts = childPoints.length;
+    return {
+      id: center.id || '',
+      type: 'odc',
+      code: center.code || '',
+      name: center.name || '',
+      area: center.area || '',
+      latitude: fiberCoordinate(center.latitude),
+      longitude: fiberCoordinate(center.longitude),
+      capacityPorts,
+      usedPorts,
+      availablePorts: capacityPorts ? Math.max(0, capacityPorts - usedPorts) : null,
+      status: fiberStatus(center.status),
+      statusLabel: fiberStatusLabel(center.status),
+      tone: fiberNodeTone(center.status),
+      note: center.note || '',
+      distributionPointsCount: childPoints.length,
+      childPoints: childPoints.map((point) => ({
+        id: point.id,
+        code: point.code,
+        name: point.name,
+        status: point.status,
+        capacityPorts: point.capacityPorts,
+        usedPorts: point.usedPorts,
+        availablePorts: point.availablePorts
+      }))
+    };
+  });
+}
+
+function fiberPointPublicRow(data = {}, point = {}, options = {}) {
+  const centerMap = options.centerMap || fiberCenterLookup(data);
+  const center = centerMap.get(String(point.centerId || '')) || {};
+  const taggedCustomers = (options.taggedMap || fiberTaggedCustomerMap(data)).get(String(point.id || '')) || [];
+  const capacityPorts = Math.max(0, Math.round(fiberNumber(point.capacityPorts ?? point.capacity ?? point.ports, 0)));
+  const damagedPorts = Math.max(0, Math.round(fiberNumber(point.damagedPorts, 0)));
+  const manualUsedPorts = Math.max(0, Math.round(fiberNumber(point.usedPorts, 0)));
+  const taggedUsedPorts = taggedCustomers.length;
+  const usedPorts = Math.max(manualUsedPorts, taggedUsedPorts);
+  const reservedPorts = Math.max(usedPorts, Math.round(fiberNumber(point.reservedPorts, 0)));
+  const availablePorts = capacityPorts ? Math.max(0, capacityPorts - reservedPorts - damagedPorts) : null;
+  return {
+    id: point.id || '',
+    type: 'odp',
+    centerId: point.centerId || '',
+    centerName: center.id ? `${center.code || '-'} - ${center.name || '-'}` : '',
+    code: point.code || '',
+    name: point.name || '',
+    area: point.area || center.area || '',
+    latitude: fiberCoordinate(point.latitude),
+    longitude: fiberCoordinate(point.longitude),
+    capacityPorts,
+    reservedPorts,
+    damagedPorts,
+    usedPorts,
+    availablePorts,
+    status: fiberStatus(point.status),
+    statusLabel: fiberStatusLabel(point.status),
+    tone: fiberNodeTone(point.status),
+    note: point.note || '',
+    taggedCustomers: options.includeTaggedCustomers === false ? undefined : taggedCustomers
+  };
+}
+
+function fiberPointRows(data = {}, options = {}) {
+  const taggedMap = options.taggedMap || fiberTaggedCustomerMap(data);
+  const centerMap = options.centerMap || fiberCenterLookup(data);
+  return (data.fiberPoints || []).map((point) => fiberPointPublicRow(data, point, { taggedMap, centerMap }));
+}
+
+function fiberAreaOptions(data = {}) {
+  return [...new Set([
+    ...fiberNocRows(data).map((row) => row.area),
+    ...(data.fiberCenters || []).map((row) => row.area),
+    ...(data.fiberPoints || []).map((row) => row.area)
+  ].map((value) => String(value || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'id', { numeric: true, sensitivity: 'base' }));
+}
+
+function fiberNetworkPayload(data = {}, query = {}) {
+  const area = String(query.area || '').trim().toLowerCase();
+  const search = String(query.search || '').trim().toLowerCase();
+  const taggedMap = fiberTaggedCustomerMap(data);
+  const centerMap = fiberCenterLookup(data);
+  const allNocs = fiberNocRows(data);
+  const allCenters = fiberCenterRows(data, { taggedMap, centerMap });
+  let nocs = allNocs;
+  let centers = allCenters;
+  let points = fiberPointRows(data, { taggedMap, centerMap });
+  if (area && area !== 'all') {
+    nocs = nocs.filter((row) => String(row.area || '').trim().toLowerCase() === area);
+    centers = centers.filter((row) => String(row.area || '').trim().toLowerCase() === area);
+    points = points.filter((row) => String(row.area || '').trim().toLowerCase() === area);
+  }
+  if (search) {
+    const matches = (row = {}) => [
+      row.code,
+      row.name,
+      row.area,
+      row.centerName,
+      row.statusLabel,
+      row.note
+    ].some((value) => String(value || '').toLowerCase().includes(search));
+    nocs = nocs.filter(matches);
+    centers = centers.filter(matches);
+    points = points.filter(matches);
+  }
+  const availablePorts = points.reduce((sum, point) => sum + Math.max(0, Number(point.availablePorts || 0)), 0);
+  const primarySite = allNocs.find((noc) => noc.isPrimary) || null;
+  return {
+    summary: {
+      noc: nocs.length,
+      odc: centers.length,
+      odp: points.length,
+      odpActive: points.filter((point) => point.status === 'active').length,
+      availablePorts,
+      primarySite: primarySite ? monitoringFiberNodeLabelServer(primarySite) : ''
+    },
+    primarySite,
+    nocs,
+    centers,
+    points,
+    areaOptions: fiberAreaOptions(data),
+    centerOptions: allCenters.map((center) => ({
+      id: center.id,
+      label: `${center.code || '-'} - ${center.name || '-'}`
+    })),
+    filters: {
+      area: query.area || '',
+      search: query.search || ''
+    }
+  };
+}
+
+function customerMapPayload(data = {}, query = {}) {
+  const customerRows = customerMapRows(data, query);
+  const publicRows = [];
+  const markers = [];
+  const missingCustomers = [];
+  for (const row of customerRows.rows) {
+    const publicRow = {
+      id: row.id,
+      customerNumber: row.customerNumber,
+      name: row.name,
+      phone: row.phone,
+      status: row.status,
+      statusLabel: row.statusLabel,
+      accessState: row.accessState,
+      currentPlan: row.currentPlan,
+      username: row.username,
+      connectionType: row.connectionType,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      accuracy: row.accuracy,
+      source: row.source,
+      note: row.note,
+      geotaggedAt: row.geotaggedAt,
+      address: row.address,
+      fiberPointId: row.fiberPointId,
+      odpPort: row.odpPort,
+      hasLocation: row.hasLocation,
+      tone: customerMapTone(row),
+      url: row.url
+    };
+    publicRows.push(publicRow);
+    if (publicRow.hasLocation) {
+      markers.push(publicRow);
+    } else if (missingCustomers.length < 40) {
+      missingCustomers.push(publicRow);
+    }
+  }
+  const taggedMap = fiberTaggedCustomerMap(data);
+  const centerMap = fiberCenterLookup(data);
+  return {
+    filters: {
+      search: query.search || '',
+      status: query.status || '',
+      accessState: query.accessState || '',
+      servicePlan: query.plan || '',
+      location: query.location || ''
+    },
+    summary: customerRows.summary,
+    customers: publicRows,
+    markers,
+    infrastructureNodes: [
+      ...fiberNocRows(data).filter(fiberHasCoordinate),
+      ...fiberCenterRows(data, { taggedMap, centerMap }).filter(fiberHasCoordinate),
+      ...fiberPointRows(data, { taggedMap, centerMap }).filter(fiberHasCoordinate)
+    ],
+    missingCustomers,
+    servicePlanOptions: customerRows.servicePlanOptions,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+function sanitizeFiberNodePayload(data = {}, type = 'odc', payload = {}, existing = {}) {
+  const now = new Date().toISOString();
+  const code = String(payload.code || existing.code || '').trim().toUpperCase();
+  const name = String(payload.name || existing.name || '').trim();
+  if (!code) throw new Error(type === 'odc' ? 'Kode ODC wajib diisi' : 'Kode ODP wajib diisi');
+  if (!name) throw new Error(type === 'odc' ? 'Nama ODC wajib diisi' : 'Nama ODP wajib diisi');
+  const latitude = String(payload.latitude ?? existing.latitude ?? '').trim();
+  const longitude = String(payload.longitude ?? existing.longitude ?? '').trim();
+  if (latitude && fiberCoordinate(latitude) === null) throw new Error('Latitude tidak valid');
+  if (longitude && fiberCoordinate(longitude) === null) throw new Error('Longitude tidak valid');
+  if (type === 'odp') {
+    const centerId = String(payload.centerId || existing.centerId || '').trim();
+    if (centerId && !(data.fiberCenters || []).some((center) => center.id === centerId)) {
+      throw new Error('ODC tidak ditemukan');
+    }
+  }
+  return {
+    ...existing,
+    id: existing.id || createId(type),
+    code,
+    name,
+    area: String(payload.area ?? existing.area ?? '').trim().toUpperCase(),
+    latitude,
+    longitude,
+    capacityPorts: Math.max(0, Math.round(fiberNumber(payload.capacityPorts ?? existing.capacityPorts, type === 'odc' ? 8 : 8))),
+    status: fiberStatus(payload.status ?? existing.status ?? 'active'),
+    note: String(payload.note ?? existing.note ?? '').trim(),
+    ...(type === 'odp' ? {
+      centerId: String(payload.centerId || existing.centerId || '').trim(),
+      reservedPorts: Math.max(0, Math.round(fiberNumber(payload.reservedPorts ?? existing.reservedPorts, 0))),
+      damagedPorts: Math.max(0, Math.round(fiberNumber(payload.damagedPorts ?? existing.damagedPorts, 0))),
+      usedPorts: Math.max(0, Math.round(fiberNumber(payload.usedPorts ?? existing.usedPorts, 0)))
+    } : {}),
+    createdAt: existing.createdAt || now,
+    updatedAt: now
+  };
 }
 
 function fiberNumber(value, fallback = 0) {
@@ -8798,7 +10367,8 @@ async function cachedMonitoringMemberBasePayload(data = {}, user = {}, query = {
   }
   const payload = localMonitoringMemberRows(data, {
     ...query,
-    search: ''
+    search: '',
+    viewer: user
   });
   const next = {
     ...payload,
@@ -9119,105 +10689,125 @@ function localDailyReport(data = {}, date = normalizeDateParam(), options = {}) 
   const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const sites = localBillingSites(data);
-  const payments = Array.isArray(options.payments) ? options.payments : activePayments(data);
+  const resolveSite = createLocalBillingSiteResolver(data);
+  const paymentTimeFormatter = cachedDateTimeFormatter('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: appTimeZone(data.settings || {})
+  });
+  const currencyTextCache = new Map();
+  const cachedCurrencyText = (amount = 0) => {
+    const key = Math.round(Number(amount || 0));
+    if (!currencyTextCache.has(key)) currencyTextCache.set(key, formatCurrencyText(key));
+    return currencyTextCache.get(key);
+  };
   const includeDueInvoices = options.includeDueInvoices === true;
-  const transactionSources = payments
-    .filter((payment) => paymentDateKey(payment, invoices.get(payment.invoiceId) || {}) === date)
-    .map((payment) => ({ invoiceId: payment.invoiceId || '', payment }));
-  if (includeDueInvoices) {
-    const paidInvoiceIds = new Set(transactionSources.map((item) => item.invoiceId).filter(Boolean));
-    transactionSources.push(...(data.invoices || [])
-      .filter((invoice) => (
-        String(invoice.dueDate || '').slice(0, 10) === date
-        && String(invoice.status || '').toLowerCase() !== 'cancelled'
-        && !paidInvoiceIds.has(invoice.id)
-      ))
-      .map((invoice) => ({ invoiceId: invoice.id, payment: null })));
+  const transactionSources = [];
+  const paidInvoiceIds = includeDueInvoices ? new Set() : null;
+  for (const row of paymentReportRows(data, { payments: options.payments })) {
+    if (row.date !== date) continue;
+    const invoiceId = row.invoiceId || '';
+    if (paidInvoiceIds && invoiceId) paidInvoiceIds.add(invoiceId);
+    transactionSources.push({
+      invoiceId,
+      payment: row.payment,
+      invoice: row.invoice,
+      paymentCategory: row.category
+    });
   }
-  const transactions = transactionSources
-    .map(({ invoiceId, payment }) => {
-      const invoice = invoices.get(invoiceId) || {};
-      const customer = customers.get(payment?.customerId || invoice.customerId) || {};
-      const site = localBillingSite(data, customer, invoice);
-      const method = payment?.method || invoice.paymentMethod || 'Tunai';
-      const paymentCategory = payment
-        ? paymentCategoryForRecord({ ...invoice, ...payment }, method)
-        : '';
-      const status = invoiceRuntimeStatus(invoice);
-      const admin = payment?.admin || payment?.createdBy || payment?.createdByName || invoice.createdByName || 'Sistem';
-      const storedInvoiceNo = invoice.externalId || invoice.invoiceNo || invoice.id
-        || payment?.sourceInvoiceNo || payment?.invoiceNo || payment?.invoiceId || payment?.reference || payment?.id;
-      const paidAt = paymentReportTimestamp(payment || {}, invoice);
-      const addOns = invoiceBillingAddons(invoice, customer);
-      const addOnsTotal = billingAddonsTotal(addOns);
-      const reportAmount = Number(payment?.amount || invoice.amount || 0);
-      const receiptAmount = paymentCategory === 'online'
-        ? Number(payment?.customerAmount || payment?.gatewayAmount || payment?.checkoutAmount || payment?.amount || invoice.amount || 0)
-        : reportAmount;
-      return {
-        id: payment?.id || invoice.id,
-        invoiceId: invoice.id || payment?.invoiceId || '',
-        invoiceNo: displayBillingInvoiceNo(storedInvoiceNo),
-        externalId: displayBillingInvoiceNo(storedInvoiceNo),
-        legacyInvoiceNo: storedInvoiceNo,
-        info: customer.name || invoice.customerName || payment?.customerName || invoice.username || payment?.description || payment?.id || invoice.id,
-        customerName: customer.name || invoice.customerName || payment?.customerName || '',
-        username: customer.username || invoice.username || payment?.username || '',
-        phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
-        item: invoice.packageName || customer.packageName || payment?.item || payment?.notes || 'Tagihan internet',
-        method: payment ? method : '-',
-        paymentCategory,
-        status: payment ? 'paid' : status,
-        admin,
-        adminName: admin,
-        adminId: admin,
-        siteId: site.id || '',
-        siteName: site.name || '',
-        dueDate: invoice.dueDate || '',
-        paymentAt: paidAt,
-        paymentRaw: paidAt,
-        paymentTime: paidAt ? new Date(paidAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: appTimeZone(data.settings || {}) }) : '',
-        subtotal: Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0),
-        baseAmount: Number(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount ?? 0),
-        packageSubtotal: Number(invoice.packageSubtotal || 0),
-        addOnSubtotal: Number(invoice.addOnSubtotal || addOnsTotal || 0),
-        addOns,
-        addons: addOns,
-        addOnsText: billingAddonsDisplayText(addOns),
-        addOnsTotal,
-        ppnRate: Number(invoice.ppnRate ?? invoice.vatRate ?? invoice.taxRate ?? 0),
-        ppnAmount: Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0),
-        ppnText: invoicePpnDisplayText(invoice),
-        bhpUsoAmount: Number(invoice.bhpUsoAmount || 0),
-        discountAmount: Number(invoice.discountAmount || 0),
-        discountText: invoiceDiscountDisplayText(invoice),
-        baseDiscountAmount: invoiceBaseDiscountAmount(invoice),
-        manualDiscountAmount: invoiceManualDiscountAmount(invoice),
-        invoiceDiscountAmount: invoiceManualDiscountAmount(invoice),
-        discountNote: invoice.discountNote || '',
-        discountUpdatedAt: invoice.discountUpdatedAt || '',
-        discountUpdatedBy: invoice.discountUpdatedBy || '',
-        discountUpdatedByUsername: invoice.discountUpdatedByUsername || '',
-        discountUpdatedByRole: invoice.discountUpdatedByRole || '',
-        totalBeforeDiscount: invoiceGrossBeforeDiscount(invoice),
-        amount: reportAmount,
-        income: payment ? reportAmount : 0,
-        receiptAmount,
-        receiptAmountText: formatCurrencyText(receiptAmount)
-      };
-    })
-    .filter(Boolean)
-    .sort(sortReportTransactionsNewestFirst);
-  const cashIncome = transactions
-    .filter((item) => item.paymentCategory === 'cash')
-    .reduce((sum, item) => sum + Number(item.income || 0), 0);
-  const transferIncome = transactions
-    .filter((item) => item.paymentCategory === 'transfer')
-    .reduce((sum, item) => sum + Number(item.income || 0), 0);
-  const onlineIncome = transactions
-    .filter((item) => item.paymentCategory === 'online')
-    .reduce((sum, item) => sum + Number(item.income || 0), 0);
-  const totalIncome = transactions.reduce((sum, item) => sum + Number(item.income || 0), 0);
+  if (includeDueInvoices) {
+    for (const invoice of data.invoices || []) {
+      if (String(invoice.dueDate || '').slice(0, 10) !== date) continue;
+      if (String(invoice.status || '').toLowerCase() === 'cancelled') continue;
+      if (paidInvoiceIds.has(invoice.id)) continue;
+      transactionSources.push({ invoiceId: invoice.id, payment: null });
+    }
+  }
+  const transactions = [];
+  let cashIncome = 0;
+  let transferIncome = 0;
+  let onlineIncome = 0;
+  let totalIncome = 0;
+  for (const { invoiceId, payment, invoice: sourceInvoice, paymentCategory: sourcePaymentCategory } of transactionSources) {
+    const invoice = sourceInvoice || invoices.get(invoiceId) || {};
+    const customer = customers.get(payment?.customerId || invoice.customerId) || {};
+    const site = resolveSite(customer, invoice);
+    const method = payment?.method || invoice.paymentMethod || 'Tunai';
+    const paymentCategory = payment
+      ? sourcePaymentCategory || paymentCategoryForRecord({ ...invoice, ...payment }, method)
+      : '';
+    const status = invoiceRuntimeStatus(invoice);
+    const admin = payment?.admin || payment?.createdBy || payment?.createdByName || invoice.createdByName || 'Sistem';
+    const storedInvoiceNo = invoice.externalId || invoice.invoiceNo || invoice.id
+      || payment?.sourceInvoiceNo || payment?.invoiceNo || payment?.invoiceId || payment?.reference || payment?.id;
+    const paidAt = paymentReportTimestamp(payment || {}, invoice);
+    const paidDate = paidAt ? new Date(paidAt) : null;
+    const paymentTime = paidDate && Number.isFinite(paidDate.getTime()) ? paymentTimeFormatter.format(paidDate) : '';
+    const addOns = invoiceBillingAddons(invoice, customer);
+    const addOnsTotal = billingAddonsTotal(addOns);
+    const reportAmount = Number(payment?.amount || invoice.amount || 0);
+    const receiptAmount = paymentCategory === 'online'
+      ? Number(payment?.customerAmount || payment?.gatewayAmount || payment?.checkoutAmount || payment?.amount || invoice.amount || 0)
+      : reportAmount;
+    const row = {
+      id: payment?.id || invoice.id,
+      invoiceId: invoice.id || payment?.invoiceId || '',
+      invoiceNo: displayBillingInvoiceNo(storedInvoiceNo),
+      externalId: displayBillingInvoiceNo(storedInvoiceNo),
+      legacyInvoiceNo: storedInvoiceNo,
+      info: customer.name || invoice.customerName || payment?.customerName || invoice.username || payment?.description || payment?.id || invoice.id,
+      customerName: customer.name || invoice.customerName || payment?.customerName || '',
+      username: customer.username || invoice.username || payment?.username || '',
+      phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
+      item: invoice.packageName || customer.packageName || payment?.item || payment?.notes || 'Tagihan internet',
+      method: payment ? method : '-',
+      paymentCategory,
+      status: payment ? 'paid' : status,
+      admin,
+      adminName: admin,
+      adminId: admin,
+      siteId: site.id || '',
+      siteName: site.name || '',
+      dueDate: invoice.dueDate || '',
+      paymentAt: paidAt,
+      paymentRaw: paidAt,
+      paymentTime,
+      subtotal: Number(invoice.subtotal ?? invoice.baseAmount ?? invoice.amount ?? 0),
+      baseAmount: Number(invoice.baseAmount ?? invoice.subtotal ?? invoice.amount ?? 0),
+      packageSubtotal: Number(invoice.packageSubtotal || 0),
+      addOnSubtotal: Number(invoice.addOnSubtotal || addOnsTotal || 0),
+      addOns,
+      addons: addOns,
+      addOnsText: billingAddonsDisplayText(addOns),
+      addOnsTotal,
+      ppnRate: Number(invoice.ppnRate ?? invoice.vatRate ?? invoice.taxRate ?? 0),
+      ppnAmount: Number(invoice.ppnAmount ?? invoice.vatAmount ?? invoice.taxAmount ?? 0),
+      ppnText: invoicePpnDisplayText(invoice),
+      bhpUsoAmount: Number(invoice.bhpUsoAmount || 0),
+      discountAmount: Number(invoice.discountAmount || 0),
+      discountText: invoiceDiscountDisplayText(invoice),
+      baseDiscountAmount: invoiceBaseDiscountAmount(invoice),
+      manualDiscountAmount: invoiceManualDiscountAmount(invoice),
+      invoiceDiscountAmount: invoiceManualDiscountAmount(invoice),
+      discountNote: invoice.discountNote || '',
+      discountUpdatedAt: invoice.discountUpdatedAt || '',
+      discountUpdatedBy: invoice.discountUpdatedBy || '',
+      discountUpdatedByUsername: invoice.discountUpdatedByUsername || '',
+      discountUpdatedByRole: invoice.discountUpdatedByRole || '',
+      totalBeforeDiscount: invoiceGrossBeforeDiscount(invoice),
+      amount: reportAmount,
+      income: payment ? reportAmount : 0,
+      receiptAmount,
+      receiptAmountText: cachedCurrencyText(receiptAmount)
+    };
+    transactions.push(row);
+    const income = Number(row.income || 0);
+    totalIncome += income;
+    if (row.paymentCategory === 'cash') cashIncome += income;
+    if (row.paymentCategory === 'transfer') transferIncome += income;
+    if (row.paymentCategory === 'online') onlineIncome += income;
+  }
+  transactions.sort(sortReportTransactionsNewestFirst);
   return {
     source: 'local',
     date,
@@ -9690,6 +11280,7 @@ function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, tod
   const terminateAfterDays = clampInteger(settings.autoTerminateAfterDays, 0, 3650, 0);
   if (terminateAfterDays <= 0) return [];
   const paidCoverage = paidInvoiceCoverageByCustomer(data);
+  const radiusLookup = indexedRadiusUserLookup(data);
   const unpaidCustomerIds = new Set((data.invoices || [])
     .filter((invoice) => ['pending', 'overdue'].includes(invoiceRuntimeStatus(invoice, today)))
     .filter((invoice) => invoiceUncoveredPeriods(invoice, paidCoverage).length > 0)
@@ -9701,7 +11292,7 @@ function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, tod
   for (const customer of data.customers || []) {
     if (!unpaidCustomerIds.has(String(customer.id || ''))) continue;
     if (normalizeCustomerStatusLocal(customer.status) !== 'isolated') continue;
-    const user = radiusUserForCustomer(data, customer);
+    const user = radiusUserForCustomer(data, customer, radiusLookup);
     if (!user || radiusStatusForCustomer(user) !== 'isolated') continue;
     const isolationSource = String(customer.isolationSource || user.isolationSource || '').trim().toLowerCase();
     if (!['billing', 'overdue', 'system', 'auto'].includes(isolationSource)) continue;
@@ -9840,8 +11431,9 @@ function syncCustomerToRadiusActive(data = {}, customer = {}, actor = {}) {
   return user;
 }
 
-function radiusUserForCustomer(data = {}, customer = {}) {
+function radiusUserForCustomer(data = {}, customer = {}, lookup = null) {
   if (!customer?.id && !customer?.username && !customer?.radiusUserId) return null;
+  if (lookup) return indexedRadiusUserForCustomer(lookup, customer);
   const username = String(customer.username || '').trim().toLowerCase();
   return (data.radiusUsers || []).find((item) => {
     return item.customerId === customer.id
@@ -11331,30 +12923,30 @@ function monthlyBillingDailyRows(data = {}, period = currentPeriod(), options = 
   const selectedNas = String(options.nas || options.site || 'all').trim();
   const scopedNas = selectedNas && selectedNas.toLowerCase() !== 'all';
   const groups = options.includeExpenses === false || scopedNas ? new Map() : periodExpenseDailyGroups(data, period);
-  const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
-  const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
-  const resolveSite = createLocalBillingSiteResolver(data);
-  const payments = Array.isArray(options.payments) ? options.payments : (data.payments || []);
-  for (const payment of payments) {
-    if (!paymentIsActive(payment)) continue;
-    const invoice = invoices.get(payment.invoiceId) || {};
-    if (payment.invoiceId && invoice.id && invoiceRuntimeStatus(invoice) !== 'paid') continue;
-    const date = paymentDateKey(payment, invoice);
-    if (date.slice(0, 7) !== period) continue;
-    const customer = customers.get(payment.customerId || invoice.customerId) || {};
-    const site = resolveSite(customer, invoice);
-    if (scopedNas && !reportMatchesNas({
-      ...invoice,
-      ...customer,
-      siteId: site.id,
-      siteName: site.name,
-      nasId: site.id,
-      nasName: site.name
-    }, selectedNas)) continue;
-    const method = paymentCategoryForRecord(payment, payment.method || invoice.paymentMethod, invoice);
-    const amount = Number(payment.amount || invoice.amount || 0);
+  const customers = scopedNas ? new Map((data.customers || []).map((customer) => [customer.id, customer])) : null;
+  const resolveSite = scopedNas ? createLocalBillingSiteResolver(data) : null;
+  const payments = Array.isArray(options.paymentRows)
+    ? options.paymentRows
+    : paymentReportRows(data, { payments: options.payments });
+  for (const row of payments) {
+    if (row.period !== period) continue;
+    const invoice = row.invoice || {};
+    const payment = row.payment || {};
+    if (scopedNas) {
+      const customer = customers.get(row.customerId || invoice.customerId) || {};
+      const site = resolveSite(customer, invoice);
+      if (!reportMatchesNas({
+        ...invoice,
+        ...customer,
+        siteId: site.id,
+        siteName: site.name,
+        nasId: site.id,
+        nasName: site.name
+      }, selectedNas)) continue;
+    }
+    const method = row.category;
     const field = method === 'cash' ? 'incomeCash' : method === 'online' ? 'incomeOnline' : 'incomeTransfer';
-    addDailyFinanceAmount(groups, date, field, amount, 1);
+    addDailyFinanceAmount(groups, row.date, field, row.amount, 1);
   }
   return periodDailyRows(period, groups);
 }
@@ -12075,21 +13667,79 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
     const code = String(customer.code || customer.accountId || '').trim().toLowerCase();
     if (code && !customersByCode.has(code)) customersByCode.set(code, customer);
   }
-  const latestInvoiceByKey = new Map();
-  for (const invoice of data.invoices || []) {
-    if (invoiceRuntimeStatus(invoice) === 'cancelled') continue;
-    const stamp = String(invoice.period || invoice.dueDate || invoice.invoiceDate || invoice.createdAt || '');
-    const amount = Math.max(0, Math.round(toNumber(invoice.totalAmount || invoice.total || invoice.amount || 0)));
-    const keys = [
-      invoice.customerId ? `id:${String(invoice.customerId).trim()}` : '',
-      invoice.username ? `username:${String(invoice.username).trim().toLowerCase()}` : '',
-      (invoice.accountId || invoice.memberCode) ? `code:${String(invoice.accountId || invoice.memberCode).trim().toLowerCase()}` : ''
-    ].filter(Boolean);
-    for (const key of keys) {
-      const current = latestInvoiceByKey.get(key);
-      if (!current || stamp > current.stamp) latestInvoiceByKey.set(key, { stamp, amount });
+  let latestInvoiceByRemovedKey = null;
+  const latestInvoiceAmountDirectoryForRemovedKeys = () => {
+    if (latestInvoiceByRemovedKey) return latestInvoiceByRemovedKey;
+    latestInvoiceByRemovedKey = new Map();
+    const wantedKeys = new Set();
+    for (const record of data.radiusRemovedRecords || []) {
+      const customerId = String(record.customerId || '').trim();
+      const username = String(record.username || '').trim().toLowerCase();
+      const memberCode = String(record.memberCode || record.accountId || '').trim().toLowerCase();
+      if (customerId) wantedKeys.add(`id:${customerId}`);
+      if (username) wantedKeys.add(`username:${username}`);
+      if (memberCode) wantedKeys.add(`code:${memberCode}`);
     }
-  }
+    if (!wantedKeys.size) return latestInvoiceByRemovedKey;
+    const update = (key = '', stamp = '', amount = 0) => {
+      if (!key || !wantedKeys.has(key)) return;
+      const current = latestInvoiceByRemovedKey.get(key);
+      if (!current || stamp > current.stamp) latestInvoiceByRemovedKey.set(key, { stamp, amount });
+    };
+    for (const invoice of data.invoices || []) {
+      if (invoiceRuntimeStatus(invoice) === 'cancelled') continue;
+      const stamp = String(invoice.period || invoice.dueDate || invoice.invoiceDate || invoice.createdAt || '');
+      const amount = Math.max(0, Math.round(toNumber(invoice.totalAmount || invoice.total || invoice.amount || 0)));
+      update(invoice.customerId ? `id:${String(invoice.customerId).trim()}` : '', stamp, amount);
+      update(invoice.username ? `username:${String(invoice.username).trim().toLowerCase()}` : '', stamp, amount);
+      update((invoice.accountId || invoice.memberCode) ? `code:${String(invoice.accountId || invoice.memberCode).trim().toLowerCase()}` : '', stamp, amount);
+    }
+    return latestInvoiceByRemovedKey;
+  };
+  const latestInvoiceAmountForKeys = (keys = []) => {
+    const wanted = keys.map((key) => String(key || '').trim()).filter(Boolean);
+    if (!wanted.length) return 0;
+    const directory = latestInvoiceAmountDirectoryForRemovedKeys();
+    let latest = null;
+    for (const key of wanted) {
+      const candidate = directory.get(key);
+      if (candidate && (!latest || candidate.stamp > latest.stamp)) latest = candidate;
+    }
+    return Math.max(0, Math.round(Number(latest?.amount || 0)));
+  };
+  const recurringAmountCache = new Map();
+  const recurringAmountForStatistics = (customer = {}, related = {}) => {
+    const merged = { ...related, ...customer };
+    const addOns = normalizeBillingAddons(merged);
+    const cacheKey = JSON.stringify({
+      profileId: merged.profileId || '',
+      radiusProfileId: merged.radiusProfileId || '',
+      profileName: merged.profileName || '',
+      packageName: merged.packageName || '',
+      profile: merged.profile || '',
+      serviceType: merged.serviceType || '',
+      monthlyAmount: merged.monthlyAmount || '',
+      billingAmount: merged.billingAmount || '',
+      recurringAmount: merged.recurringAmount || '',
+      totalAmount: merged.totalAmount || '',
+      amount: merged.amount || '',
+      price: merged.price || '',
+      paymentType: merged.paymentType || '',
+      billingCycle: merged.billingCycle || '',
+      ppnRate: merged.ppnRate ?? merged.vatRate ?? merged.taxRate ?? '',
+      ppnAmount: merged.ppnAmount ?? merged.vatAmount ?? merged.taxAmount ?? '',
+      bhpUsoEnabled: merged.bhpUsoEnabled ?? '',
+      bhpUsoRate: merged.bhpUsoRate ?? '',
+      discountRate: merged.discountRate ?? '',
+      discountAmount: merged.discountAmount ?? merged.discountValue ?? '',
+      manualDiscountAmount: merged.manualDiscountAmount ?? '',
+      addOns
+    });
+    if (!recurringAmountCache.has(cacheKey)) {
+      recurringAmountCache.set(cacheKey, statisticsCustomerRecurringAmount(data, customer, related));
+    }
+    return recurringAmountCache.get(cacheKey);
+  };
   const removedRecurringAmount = (record = {}) => {
     const customerId = String(record.customerId || '').trim();
     const username = String(record.username || '').trim().toLowerCase();
@@ -12098,22 +13748,27 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
       || customersByUsername.get(username)
       || customersByCode.get(memberCode)
       || null;
-    if (customer) return statisticsCustomerRecurringAmount(data, customer, record);
+    if (customer) return recurringAmountForStatistics(customer, record);
     const stored = Math.max(0, Math.round(toNumber(record.monthlyAmount || record.billingAmount || record.recurringAmount || 0)));
     if (stored > 0) return stored;
-    const latest = latestInvoiceByKey.get(customerId ? `id:${customerId}` : '')
-      || latestInvoiceByKey.get(username ? `username:${username}` : '')
-      || latestInvoiceByKey.get(memberCode ? `code:${memberCode}` : '');
-    if (Number(latest?.amount || 0) > 0) return latest.amount;
-    return statisticsCustomerRecurringAmount(data, record);
+    const latestAmount = latestInvoiceAmountForKeys([
+      customerId ? `id:${customerId}` : '',
+      username ? `username:${username}` : '',
+      memberCode ? `code:${memberCode}` : ''
+    ]);
+    if (latestAmount > 0) return latestAmount;
+    return recurringAmountForStatistics(record);
   };
+  const nasLookup = scopedNas ? createRadiusNasLookup(data, { includeUnconfigured: true }) : null;
   const pppStatisticRows = (data.radiusUsers || [])
     .filter((user) => String(user.serviceType || '').trim().toLowerCase() === 'pppoe')
     .map((user) => {
       const customer = customersById.get(String(user.customerId || '').trim())
         || customersByRadiusUserId.get(String(user.id || '').trim())
         || null;
-      const nas = radiusFindNas(data, user.nasId || customer?.nasId || user.nasName || user.nas || customer?.nas || customer?.siteName || customer?.site) || {};
+      const nas = scopedNas
+        ? radiusNasLookupFind(nasLookup, user.nasId || customer?.nasId || user.nasName || user.nas || customer?.nas || customer?.siteName || customer?.site) || {}
+        : {};
       const nasId = nas.id || user.nasId || customer?.nasId || '';
       const nasName = nas.name || user.nasName || user.nas || customer?.nas || customer?.siteName || customer?.site || '';
       const installDate = customer
@@ -12194,7 +13849,7 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
     if (!key || newInstallKeys.has(key)) continue;
     newInstallKeys.add(key);
     addRow(date, 'newInstallCount', 1);
-    addRow(date, 'newInstallAmount', statisticsCustomerRecurringAmount(data, customer, user));
+    addRow(date, 'newInstallAmount', recurringAmountForStatistics(customer, user));
   }
   markStatisticsStage('newInstall');
 
@@ -12225,27 +13880,25 @@ async function reportStatisticsPayload(data = {}, period = currentPeriod(), opti
   }
   markStatisticsStage('removed');
 
-  const invoices = new Map((data.invoices || []).map((invoice) => [invoice.id, invoice]));
-  const paymentCustomers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
-  const resolveBillingSite = createLocalBillingSiteResolver(data);
-  for (const payment of data.payments || []) {
-    if (!paymentIsActive(payment)) continue;
-    const invoice = invoices.get(payment.invoiceId) || {};
-    if (payment.invoiceId && invoice.id && invoiceRuntimeStatus(invoice) !== 'paid') continue;
-    const date = paymentDateKey(payment, invoice);
-    if (!monthPeriodSet.has(date.slice(0, 7))) continue;
-    const customer = paymentCustomers.get(payment.customerId || invoice.customerId) || {};
-    const site = resolveBillingSite(customer, invoice);
-    if (scopedNas && !reportMatchesNas({
-      ...invoice,
-      ...customer,
-      siteId: site.id,
-      siteName: site.name,
-      nasId: site.id,
-      nasName: site.name
-    }, selectedNas)) continue;
-    const category = paymentCategoryForRecord(payment, payment.method || invoice.paymentMethod, invoice);
-    addRevenueRow(date, 'billingRevenueAmount', Number(payment.amount || invoice.amount || 0), 1, category);
+  const paymentRows = paymentReportRows(data);
+  const paymentCustomers = scopedNas ? new Map((data.customers || []).map((customer) => [customer.id, customer])) : null;
+  const resolveBillingSite = scopedNas ? createLocalBillingSiteResolver(data) : null;
+  for (const row of paymentRows) {
+    if (!monthPeriodSet.has(row.period)) continue;
+    const invoice = row.invoice || {};
+    if (scopedNas) {
+      const customer = paymentCustomers.get(row.customerId || invoice.customerId) || {};
+      const site = resolveBillingSite(customer, invoice);
+      if (!reportMatchesNas({
+        ...invoice,
+        ...customer,
+        siteId: site.id,
+        siteName: site.name,
+        nasId: site.id,
+        nasName: site.name
+      }, selectedNas)) continue;
+    }
+    addRevenueRow(row.date, 'billingRevenueAmount', row.amount, 1, row.category);
   }
   markStatisticsStage('payments');
 
@@ -12454,6 +14107,17 @@ function collectionNewestTimestamp(rows = []) {
 }
 
 function runtimeDataSignature(data = {}, collections = []) {
+  const storageMode = String(STORAGE_MODE || '').toLowerCase();
+  const storeUpdatedAt = String(data.updatedAt || '').trim();
+  if (!['postgres', 'postgresql'].includes(storageMode) && storeUpdatedAt) {
+    return [
+      `store:${storeUpdatedAt}`,
+      ...collections.map((name) => {
+        const rows = Array.isArray(data[name]) ? data[name] : [];
+        return `${name}:${rows.length}`;
+      })
+    ].join('|');
+  }
   return collections.map((name) => {
     const rows = Array.isArray(data[name]) ? data[name] : [];
     return `${name}:${rows.length}:${collectionNewestTimestamp(rows)}`;
@@ -12541,6 +14205,7 @@ function runtimeUserCacheScope(data = {}, user = {}) {
     status: user.status || '',
     updatedAt: user.updatedAt || '',
     lockedNas: lockedNas.map((nas) => nas.id || nas.name || '').filter(Boolean).sort(),
+    partnerSuffixes: partnerSuffixesForUser(data, user),
     permissions: user.permissions || null
   });
   return crypto.createHash('sha1').update(raw).digest('hex').slice(0, 16);
@@ -13321,19 +14986,10 @@ function dashboardBillingSummary(data = {}, period = currentPeriod(), options = 
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const resolver = radiusStatusResolver(data);
   const invoiceStatuses = new Map();
-  const activePaymentRows = activePayments(data);
+  const activePaymentRows = paymentReportRows(data, { includeCategory: false });
   const latestPaymentByInvoiceId = new Map();
   const latestPaymentTimestampByInvoiceId = new Map();
-  for (const payment of activePaymentRows) {
-    const invoiceId = String(payment.invoiceId || '');
-    if (!invoiceId) continue;
-    const nextAt = paymentReportTimestamp(payment, {}) || payment.createdAt || '';
-    const currentAt = latestPaymentTimestampByInvoiceId.get(invoiceId) || '';
-    if (!latestPaymentByInvoiceId.has(invoiceId) || String(nextAt) >= String(currentAt)) {
-      latestPaymentByInvoiceId.set(invoiceId, payment);
-      latestPaymentTimestampByInvoiceId.set(invoiceId, nextAt);
-    }
-  }
+  const selectedPaidInvoiceIds = [];
   const referenceDate = todayIso();
   const summary = {
     dashboardInvoiceCount: 0,
@@ -13367,12 +15023,11 @@ function dashboardBillingSummary(data = {}, period = currentPeriod(), options = 
       summary.dashboardInvoiceCount += 1;
       summary.dashboardInvoiceAmount += amount;
       if (runtimeStatus === 'paid') {
-        const paidPayment = invoiceId ? latestPaymentByInvoiceId.get(invoiceId) : null;
         summary.monthlyPaidCount += 1;
-        summary.monthlyPaidAmount += Number(paidPayment?.amount ?? amount);
+        selectedPaidInvoiceIds.push({ id: invoiceId, fallbackAmount: amount });
       }
     }
-    if (invoiceNeedsCollection(invoice) && billingMonitorInvoiceIncluded(invoice, selectedPeriod, 'collectible')) {
+    if (['pending', 'overdue'].includes(runtimeStatus) && billingMonitorInvoiceIncludedFast(invoice, selectedPeriod, runtimeStatus)) {
       summary.totalUnpaidCount += 1;
       summary.totalUnpaidAmount += amount;
       if (runtimeStatus === 'overdue' || customerStatus === 'isolated' || customerStatus === 'terminate') {
@@ -13382,12 +15037,31 @@ function dashboardBillingSummary(data = {}, period = currentPeriod(), options = 
     }
   }
 
-  for (const payment of activePaymentRows) {
-    const invoiceId = String(payment.invoiceId || '');
+  if (selectedPaidInvoiceIds.length) {
+    const selectedPaidInvoiceIdSet = new Set(selectedPaidInvoiceIds.map((item) => item.id).filter(Boolean));
+    for (const row of activePaymentRows) {
+      const payment = row.payment || {};
+      const invoiceId = row.invoiceId || String(payment.invoiceId || '');
+      if (!invoiceId || !selectedPaidInvoiceIdSet.has(invoiceId)) continue;
+      const nextAt = paymentTimestampSortKeyFast(payment, row.invoice || {});
+      const currentAt = latestPaymentTimestampByInvoiceId.get(invoiceId) || '';
+      if (!latestPaymentByInvoiceId.has(invoiceId) || String(nextAt) >= String(currentAt)) {
+        latestPaymentByInvoiceId.set(invoiceId, payment);
+        latestPaymentTimestampByInvoiceId.set(invoiceId, nextAt);
+      }
+    }
+    for (const item of selectedPaidInvoiceIds) {
+      const paidPayment = item.id ? latestPaymentByInvoiceId.get(item.id) : null;
+      summary.monthlyPaidAmount += Number(paidPayment?.amount ?? item.fallbackAmount);
+    }
+  }
+
+  for (const row of activePaymentRows) {
+    const invoiceId = row.invoiceId || String(row.payment?.invoiceId || '');
     if (invoiceId && invoiceStatuses.has(invoiceId) && invoiceStatuses.get(invoiceId) !== 'paid') continue;
-    if (paymentPeriodKeyFast(payment) !== selectedPeriod) continue;
+    if (row.period !== selectedPeriod) continue;
     summary.monthlyPaymentCount += 1;
-    summary.monthlyPaymentAmount += Number(payment.amount || 0);
+    summary.monthlyPaymentAmount += Number(row.payment?.amount || 0);
   }
 
   dashboardBillingSummaryCache.set(cacheKey, {
@@ -14114,7 +15788,30 @@ function invoiceAutomationWaOptions(data = {}, invoice = {}) {
     : {};
 }
 
-function queueWaGatewayMessage(data = {}, payload = {}) {
+function waGatewayDuplicateKey(type = '', invoiceId = '', phone = '', text = '') {
+  return JSON.stringify([String(type || ''), String(invoiceId || ''), normalizeLocalPhone(phone), String(text || '')]);
+}
+
+function waGatewayQueuedDuplicateMap(messages = []) {
+  const map = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (String(message.status || '') !== 'queued') continue;
+    const key = waGatewayDuplicateKey(message.type, message.invoiceId, message.phone, message.text);
+    if (!map.has(key)) map.set(key, message);
+  }
+  return map;
+}
+
+function pruneWaGatewayMessageHistory(data = {}) {
+  let historyCount = 0;
+  data.waMessages = (data.waMessages || []).filter((item) => {
+    if (['queued', 'failed'].includes(String(item.status || ''))) return true;
+    historyCount += 1;
+    return historyCount <= 500;
+  });
+}
+
+function queueWaGatewayMessage(data = {}, payload = {}, runtime = {}) {
   data.waMessages = Array.isArray(data.waMessages) ? data.waMessages : [];
   const settings = data.settings?.waGateway || {};
   const now = Date.now();
@@ -14123,13 +15820,16 @@ function queueWaGatewayMessage(data = {}, payload = {}) {
   const text = String(payload.text || '');
   const invoiceNo = displayBillingInvoiceNo(payload.invoiceNo || '') || String(payload.invoiceNo || '').replace(/^payment\s+inv\s*#?/i, '').replace(/^#/, '').trim();
   const invoiceId = String(payload.invoiceId || '').trim();
-  const duplicate = data.waMessages.find((message) => {
-    return String(message.status || '') === 'queued'
-      && String(message.type || '') === type
-      && String(message.invoiceId || '') === invoiceId
-      && normalizeLocalPhone(message.phone) === phone
-      && String(message.text || '') === text;
-  });
+  const duplicateKey = waGatewayDuplicateKey(type, invoiceId, phone, text);
+  const duplicate = runtime.queuedDuplicateMap
+    ? runtime.queuedDuplicateMap.get(duplicateKey)
+    : data.waMessages.find((message) => {
+      return String(message.status || '') === 'queued'
+        && String(message.type || '') === type
+        && String(message.invoiceId || '') === invoiceId
+        && normalizeLocalPhone(message.phone) === phone
+        && String(message.text || '') === text;
+    });
   if (duplicate) return duplicate;
 
   const requestedBulk = payload.bulk === true || type === 'broadcast';
@@ -14137,7 +15837,9 @@ function queueWaGatewayMessage(data = {}, payload = {}) {
   const bulkProfile = bulk ? normalizeWaGatewayBulkProfile(payload.bulkProfile || payload.bulkCategory || (type === 'broadcast' ? 'broadcast' : 'bulk')) : 'transactional';
   const throttle = waGatewayThrottleProfile(settings, bulkProfile);
   const queuedCount = bulk
-    ? data.waMessages.filter((message) => message.status === 'queued' && (message.deliveryMode === 'bulk' || message.type === 'broadcast')).length
+    ? (Number.isFinite(runtime.bulkQueuedCount)
+      ? runtime.bulkQueuedCount
+      : data.waMessages.filter((message) => message.status === 'queued' && (message.deliveryMode === 'bulk' || message.type === 'broadcast')).length)
     : 0;
   const scheduleMs = bulk ? waGatewayBulkScheduleOffsetMs(queuedCount, type, phone, text, throttle) : 0;
   const message = {
@@ -14167,12 +15869,9 @@ function queueWaGatewayMessage(data = {}, payload = {}) {
     updatedAt: new Date(now).toISOString()
   };
   data.waMessages.unshift(message);
-  let historyCount = 0;
-  data.waMessages = data.waMessages.filter((item) => {
-    if (['queued', 'failed'].includes(String(item.status || ''))) return true;
-    historyCount += 1;
-    return historyCount <= 500;
-  });
+  if (runtime.queuedDuplicateMap) runtime.queuedDuplicateMap.set(duplicateKey, message);
+  if (bulk && Number.isFinite(runtime.bulkQueuedCount)) runtime.bulkQueuedCount = queuedCount + 1;
+  if (!runtime.deferPrune) pruneWaGatewayMessageHistory(data);
   return message;
 }
 
@@ -14261,6 +15960,11 @@ function queueBroadcastMessages(data = {}, payload = {}, actor = {}) {
   if (!text) throw new Error('Text broadcast wajib diisi');
   const recipients = broadcastRecipients(data, payload);
   const queued = [];
+  const runtime = {
+    queuedDuplicateMap: waGatewayQueuedDuplicateMap(data.waMessages || []),
+    bulkQueuedCount: (data.waMessages || []).filter((message) => message.status === 'queued' && (message.deliveryMode === 'bulk' || message.type === 'broadcast')).length,
+    deferPrune: true
+  };
   for (const customer of recipients) {
     queued.push(queueWaGatewayMessage(data, {
       type: 'broadcast',
@@ -14269,8 +15973,9 @@ function queueBroadcastMessages(data = {}, payload = {}, actor = {}) {
       subject: subject || 'Broadcast',
       text: [subject ? `*${subject}*` : '', text].filter(Boolean).join('\n\n'),
       actorName: actor.name || actor.username || ''
-    }));
+    }, runtime));
   }
+  pruneWaGatewayMessageHistory(data);
   return { queued, recipientCount: recipients.length };
 }
 
@@ -15929,6 +17634,9 @@ function cleanupXenditWithdrawRequests() {
     }
   }
 }
+
+const xenditWithdrawCleanupTimer = setInterval(cleanupXenditWithdrawRequests, Math.min(XENDIT_WITHDRAW_TTL_MS, 60_000));
+xenditWithdrawCleanupTimer.unref?.();
 
 function createXenditWithdrawRequest(userId, result = {}) {
   cleanupXenditWithdrawRequests();
@@ -17893,6 +19601,117 @@ function startGenieAcsStaleReplacedCleanup() {
   console.log(`GenieACS auto-delete ONT orphan lama aktif setiap ${Math.round(GENIEACS_AUTO_DELETE_INTERVAL_MS / 3600000)} jam`);
 }
 
+async function runGenieAcsStaleReplacedCleanup(reason = 'interval') {
+  if (!GENIEACS_AUTO_DELETE_STALE_REPLACED_ENABLED || MIGRATION_MODE) {
+    return { skipped: true, reason: MIGRATION_MODE ? 'migration-mode' : 'disabled' };
+  }
+  if (genieAcsStaleReplacedCleanupRunning) {
+    return { skipped: true, reason: 'already-running' };
+  }
+  genieAcsStaleReplacedCleanupRunning = true;
+  const startedAt = Date.now();
+  try {
+    const data = await loadStore();
+    if (!genieAcs.configured(data.settings || {})) {
+      return { skipped: true, reason: 'genieacs-not-configured' };
+    }
+    const payload = await genieAcs.listDevices(data.settings || {}, {
+      page: 1,
+      limit: 'all',
+      status: 'all',
+      redaman: 'all',
+      refresh: false,
+      sourcePagination: false
+    });
+    const rows = await enrichGenieAcsRowsWithLocalData(data, payload.rows || [], currentPeriod());
+    const candidates = genieAcsStaleReplacedCandidates(rows, {
+      staleDays: GENIEACS_AUTO_DELETE_STALE_DAYS,
+      replacementMaxAgeDays: GENIEACS_AUTO_DELETE_REPLACEMENT_MAX_AGE_DAYS,
+      max: GENIEACS_AUTO_DELETE_MAX_PER_RUN
+    });
+    if (!candidates.length) {
+      return {
+        ok: true,
+        reason,
+        scanned: rows.length,
+        deleted: 0,
+        durationMs: Date.now() - startedAt
+      };
+    }
+    const results = [];
+    for (const candidate of candidates) {
+      try {
+        await genieAcs.deleteDevice(data.settings || {}, candidate.id);
+        results.push({ ...candidate, ok: true });
+      } catch (error) {
+        results.push({
+          ...candidate,
+          ok: false,
+          error: String(error.message || 'Device GenieACS gagal dihapus').slice(0, 300)
+        });
+      }
+    }
+    const deleted = results.filter((item) => item.ok).length;
+    const failed = results.length - deleted;
+    await mutate((store) => {
+      addActivity(store, 'monitoring', `GenieACS auto-delete membersihkan ${deleted}/${results.length} ONT orphan lama`, {
+        action: 'genieacs-auto-delete-stale-replaced',
+        reason,
+        scanned: rows.length,
+        staleDays: GENIEACS_AUTO_DELETE_STALE_DAYS,
+        replacementMaxAgeDays: GENIEACS_AUTO_DELETE_REPLACEMENT_MAX_AGE_DAYS,
+        deleted,
+        failed,
+        results: results.map((item) => ({
+          id: item.id,
+          username: item.username,
+          serialNumber: item.serialNumber,
+          productClass: item.productClass,
+          lastInform: item.lastInform,
+          replacementId: item.replacementId,
+          replacementSerialNumber: item.replacementSerialNumber,
+          ok: item.ok,
+          error: item.error || ''
+        }))
+      });
+    }, { collections: ['activity'], includeCore: false });
+    if (deleted) {
+      console.log(`GenieACS auto-delete ${reason}: ${deleted}/${results.length} ONT orphan lama dihapus`);
+    }
+    if (failed) {
+      console.warn(`GenieACS auto-delete ${reason}: ${failed} ONT gagal dihapus`);
+    }
+    return {
+      ok: true,
+      reason,
+      scanned: rows.length,
+      deleted,
+      failed,
+      durationMs: Date.now() - startedAt,
+      results
+    };
+  } finally {
+    genieAcsStaleReplacedCleanupRunning = false;
+  }
+}
+
+function startGenieAcsStaleReplacedCleanup() {
+  if (!GENIEACS_AUTO_DELETE_STALE_REPLACED_ENABLED || MIGRATION_MODE) {
+    console.log('GenieACS auto-delete ONT orphan lama dinonaktifkan');
+    return;
+  }
+  const run = (reason) => {
+    runGenieAcsStaleReplacedCleanup(reason).catch((error) => {
+      console.error(`GenieACS auto-delete ONT orphan lama gagal: ${error.message || error}`);
+    });
+  };
+  const initialTimer = setTimeout(() => run('startup'), 120_000);
+  initialTimer.unref?.();
+  genieAcsStaleReplacedCleanupTimer = setInterval(() => run('interval'), GENIEACS_AUTO_DELETE_INTERVAL_MS);
+  genieAcsStaleReplacedCleanupTimer.unref?.();
+  console.log(`GenieACS auto-delete ONT orphan lama aktif setiap ${Math.round(GENIEACS_AUTO_DELETE_INTERVAL_MS / 3600000)} jam`);
+}
+
 async function paymentGatewayChannels(data = {}, options = {}) {
   const settings = data.settings?.paymentGateway || {};
   if (settings.enabled !== true) throw new Error('Payment Gateway belum aktif');
@@ -19306,9 +21125,10 @@ async function handleApi(req, res, url) {
       user: result,
       roles: auth.publicRoles(),
       settings: publicAppSettings(data.settings),
-      branding: publicBranding(data.settings)
+      branding: publicBranding(data.settings),
+      csrfToken: auth.csrfTokenForSessionId(sessionId)
     }, {
-      'Set-Cookie': auth.sessionCookie(sessionId)
+      'Set-Cookie': auth.sessionCookie(sessionId, { secure: requestIsHttps(req) })
     });
     return;
   }
@@ -19324,10 +21144,27 @@ async function handleApi(req, res, url) {
       user,
       roles: auth.publicRoles(),
       settings: publicAppSettings(data.settings),
-      branding: publicBranding(data.settings)
+      branding: publicBranding(data.settings),
+      csrfToken: auth.ensureCsrfToken(req)
     });
     return;
   }
+
+  if (method === 'GET' && pathname === '/api/auth/csrf') {
+    const data = await requestStore(req);
+    const user = auth.requestUser(req, data);
+    if (!user) {
+      unauthorized(res);
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      csrfToken: auth.ensureCsrfToken(req)
+    });
+    return;
+  }
+
+  if (!validateCsrfRequest(req, res, pathname)) return;
 
   if ((method === 'PUT' || method === 'PATCH') && pathname === '/api/auth/profile') {
     const data = await requestStore(req);
@@ -19390,6 +21227,9 @@ async function handleApi(req, res, url) {
       const { data: secureData } = await mutate((store) => {
         privateStorageKey(store);
         return true;
+      }, {
+        collections: [],
+        includeCore: true
       });
       const result = await saveMemberKtpUpload(secureData, payload, user);
       sendJson(res, 200, {
@@ -20140,7 +21980,7 @@ async function handleApi(req, res, url) {
     const data = authContext.data;
     const { status, search } = normalizeListQuery(url);
     const { page, limit } = paginationParams(url, 10, 100);
-    const databasePage = await normalizedPageOrNull('customers', {
+    const databasePage = userIsPartner(authContext.user) ? null : await normalizedPageOrNull('customers', {
       page,
       limit,
       filters: status === 'all' ? [] : [{ field: 'status', value: status, caseInsensitive: true }],
@@ -20154,6 +21994,9 @@ async function handleApi(req, res, url) {
       return;
     }
     let customers = [...data.customers];
+    if (userIsPartner(authContext.user)) {
+      customers = customers.filter((customer) => partnerScopedRowVisible(data, customer, authContext.user));
+    }
     if (status !== 'all') {
       customers = customers.filter((customer) => customer.status === status);
     }
@@ -20169,6 +22012,14 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'customers:manage');
     if (!authContext) return;
     const payload = await readBody(req);
+    try {
+      if (userIsPartner(authContext.user)) {
+        requirePartnerScopedUsername(authContext.data, authContext.user, payload.username || payload.internet || payload.accountId || '');
+      }
+    } catch (error) {
+      badRequest(res, error.message || 'Username pelanggan mitra tidak sesuai');
+      return;
+    }
     if (!payload.name && !payload.username) {
       badRequest(res, 'Nama atau username pelanggan wajib diisi');
       return;
@@ -20190,6 +22041,7 @@ async function handleApi(req, res, url) {
     const sourceInvoices = await invoiceCandidatesForPeriod(data, period);
     let invoices = sourceInvoices
       .filter((invoice) => invoiceCoversPeriod(invoice, period))
+      .filter((invoice) => invoiceMatchesBillingMonitorScope(data, invoice, authContext.user))
       .map((invoice) => ({
         ...invoice,
         period: normalizePeriod(period),
@@ -20217,6 +22069,10 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'invoices:manage');
     if (!authContext) return;
     const payload = await readBody(req);
+    if (userIsPartner(authContext.user)) {
+      forbidden(res);
+      return;
+    }
     const period = payload.period || currentPeriod();
     const { result } = await mutate((data) => {
       if (standaloneMode(data)) {
@@ -20240,6 +22096,9 @@ async function handleApi(req, res, url) {
     const invoiceId = decodeURIComponent(payMatch[1]);
     const { result } = await mutate(async (data) => {
       const currentInvoice = (data.invoices || []).find((invoice) => invoice.id === invoiceId);
+      if (currentInvoice && !invoiceMatchesBillingMonitorScope(data, currentInvoice, authContext.user)) {
+        throw new Error('Invoice di luar scope mitra');
+      }
       const wasPaid = currentInvoice && invoiceRuntimeStatus(currentInvoice) === 'paid';
       const invoice = markInvoicePaid(data, invoiceId, {
         ...payload,
@@ -20281,7 +22140,13 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const invoiceId = decodeURIComponent(unpayMatch[1]);
     try {
-      const { result } = await mutate((data) => markInvoiceUnpaid(data, invoiceId));
+      const { result } = await mutate((data) => {
+        const currentInvoice = (data.invoices || []).find((invoice) => invoice.id === invoiceId);
+        if (currentInvoice && !invoiceMatchesBillingMonitorScope(data, currentInvoice, authContext.user)) {
+          throw new Error('Invoice di luar scope mitra');
+        }
+        return markInvoiceUnpaid(data, invoiceId);
+      });
       if (!result) {
         notFound(res);
         return;
@@ -21508,6 +23373,12 @@ async function handleApi(req, res, url) {
       forbidden(res);
       return;
     }
+    const partnerScope = selectPartnerScope(
+      authContext.data,
+      authContext.user,
+      url.searchParams.get('partnerId') || url.searchParams.get('partner') || '',
+      partnerScopeQueryEnabled(url)
+    );
     const { page, limit } = paginationParams(url, 10, 100);
     const result = await runtimeSearchCachedPayload(
       authContext,
@@ -21523,10 +23394,11 @@ async function handleApi(req, res, url) {
         status: String(url.searchParams.get('status') || '').trim(),
         profile: String(url.searchParams.get('profile') || '').trim(),
         internet: String(url.searchParams.get('internet') || '').trim(),
-        viewer: authContext.user
+        viewer: partnerScope.user
       }),
       { force: true }
     );
+    result.partnerScope = partnerScopeResponse(partnerScope);
     sendJson(res, 200, result);
     return;
   }
@@ -21558,7 +23430,7 @@ async function handleApi(req, res, url) {
     sendBinary(
       res,
       200,
-      await workbookBuffer({ ppp_dhcp_users: pppExportRows(authContext.data) }),
+      await workbookBuffer({ ppp_dhcp_users: pppExportRows(authContext.data).filter((row) => partnerScopedRowVisible(authContext.data, row, authContext.user)) }),
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       `export-ppp-dhcp-${localTodayIso()}.xlsx`
     );
@@ -21729,16 +23601,20 @@ async function handleApi(req, res, url) {
             ? (store.radiusUsers || []).find((user) => user.id === id)
             : null;
         const previousStatus = String(existing?.status || '').trim().toLowerCase();
+        if (existing && !partnerScopedRowVisible(store, existing, authContext.user)) {
+          throw new Error('User PPP-DHCP di luar mitra login');
+        }
         if (existing && !resellerHotspotVoucherRowVisible(existing, authContext.user)) {
           throw new Error('Role user tidak memiliki akses ke voucher Hotspot ini');
         }
+        const scopedPayload = method === 'DELETE' ? payload : applyPartnerPppPayloadScope(store, payload, authContext.user);
         if (method === 'POST') {
-          requireRadiusUserProfile(store, payload, 'pppoe', 'PPP-DHCP');
+          requireRadiusUserProfile(store, scopedPayload, 'pppoe', 'PPP-DHCP');
         }
         const next = method === 'POST'
-          ? freeradius.addRadiusUser(store, radiusUserPayload(payload, 'pppoe', store), authContext.user)
+          ? freeradius.addRadiusUser(store, radiusUserPayload(scopedPayload, 'pppoe', store), authContext.user)
           : method === 'PUT'
-            ? freeradius.updateRadiusUser(store, id, radiusUserPayload(payload, 'pppoe', store), authContext.user)
+            ? freeradius.updateRadiusUser(store, id, radiusUserPayload(scopedPayload, 'pppoe', store), authContext.user)
             : freeradius.deleteRadiusUser(store, id);
         if (method === 'PUT') {
           const reactivationFromIsolation = ['isolated', 'isolir', 'suspend', 'suspended'].includes(previousStatus)
@@ -21769,7 +23645,7 @@ async function handleApi(req, res, url) {
           if (!canCreateRadiusLinkedMember(authContext.user)) {
             throw new Error('Role user tidak memiliki akses membuat member');
           }
-          member = radiusMemberFromPayload(store, payload, next, authContext.user);
+          member = radiusMemberFromPayload(store, scopedPayload, next, authContext.user);
           next.customerId = member.id;
           if (String(member.firstInvoiceStatus || member.initialInvoiceStatus || '').toLowerCase() === 'unpaid') {
             const created = createLocalManualInvoice(store, member, 1, authContext.user, {
@@ -21813,6 +23689,14 @@ async function handleApi(req, res, url) {
           coa = await freeradiusCoa.disconnectUser(store, next);
         }
         return { user: next, member, invoice, waQueued, removedMember, orphanMembers, memberProfileSync, coa };
+      }, {
+        includeCore: true,
+        persistCollections(result) {
+          const collections = ['customers', 'activity'];
+          if (result?.invoice) collections.push('invoices');
+          if (result?.waQueued) collections.push('waMessages');
+          return collections;
+        }
       });
       sendJson(res, 200, {
         ok: true,
@@ -21883,6 +23767,10 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/radius/hotspot') {
     const authContext = await requirePermission(req, res, 'radius:read');
     if (!authContext) return;
+    if (userIsPartner(authContext.user)) {
+      forbidden(res);
+      return;
+    }
     const tab = String(url.searchParams.get('tab') || 'users').trim();
     if (tab === 'voucher-online') {
       if (String(authContext.user.role || '') === 'reseller_voucher') {
@@ -21934,6 +23822,10 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/radius/hotspot/voucher-online') {
     const authContext = await requirePermission(req, res, 'radius:read');
     if (!authContext) return;
+    if (userIsPartner(authContext.user)) {
+      forbidden(res);
+      return;
+    }
     if (String(authContext.user.role || '') === 'reseller_voucher') {
       forbidden(res);
       return;
@@ -22064,6 +23956,10 @@ async function handleApi(req, res, url) {
           const existing = (store.radiusUsers || []).find((user) => user.id === id);
           if (!existing || String(existing.serviceType || '').toLowerCase() !== serviceType) {
             failed.push({ id, error: 'User tidak ditemukan' });
+            continue;
+          }
+          if (section === 'ppp-dhcp' && !partnerScopedRowVisible(store, existing, authContext.user)) {
+            failed.push({ id, error: 'User PPP-DHCP di luar mitra login' });
             continue;
           }
           if (!canManageHotspotUser(authContext.user, existing) && section === 'hotspot') {
@@ -22378,6 +24274,10 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/radius/hotspot/voucher-revision') {
     const authContext = await requireAnyPermission(req, res, ['radius:read', 'reports:voucher:read']);
     if (!authContext) return;
+    if (userIsPartner(authContext.user)) {
+      forbidden(res);
+      return;
+    }
     sendJson(res, 200, {
       ok: true,
       revision: hotspotVoucherRevision(authContext.data, authContext.user)
@@ -22395,6 +24295,12 @@ async function handleApi(req, res, url) {
     const period = url.searchParams.get('period') || currentPeriod();
     const scope = billingMonitorScope(url.searchParams.get('scope') || 'collectible');
     const search = String(url.searchParams.get('search') || '').trim();
+    const partnerScope = selectPartnerScope(
+      authContext.data,
+      authContext.user,
+      url.searchParams.get('partnerId') || url.searchParams.get('partner') || '',
+      partnerScopeQueryEnabled(url)
+    );
     const billingSites = (authContext.data.monitoringTargets || [])
       .filter((target) => target.status !== 'inactive')
       .map((target) => ({
@@ -22406,9 +24312,18 @@ async function handleApi(req, res, url) {
       const base = await cachedBillingMonitorBasePayload(authContext.data, period, scope, {
         force: truthyQuery(url.searchParams.get('refresh'))
       });
-      let rows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.rows) ? base.rows : [], authContext.user);
-      const periodRows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.periodRows) ? base.periodRows : [], authContext.user);
-      const summaryRows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.summaryRows) ? base.summaryRows : [], authContext.user);
+      let rows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.rows) ? base.rows : [], partnerScope.user);
+      const periodRows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.periodRows) ? base.periodRows : [], partnerScope.user);
+      const summaryRows = billingMonitorRowsForUser(authContext.data, Array.isArray(base.summaryRows) ? base.summaryRows : [], partnerScope.user);
+      if (userIsCollector(authContext.user)) {
+        rows = billingMonitorRowsForUser(authContext.data, rows, authContext.user);
+      }
+      const scopedPeriodRows = userIsCollector(authContext.user)
+        ? billingMonitorRowsForUser(authContext.data, periodRows, authContext.user)
+        : periodRows;
+      const scopedSummaryRows = userIsCollector(authContext.user)
+        ? billingMonitorRowsForUser(authContext.data, summaryRows, authContext.user)
+        : summaryRows;
       if (status !== 'all') {
         rows = rows.filter((invoice) => {
           if (status === 'collectible') return ['unpaid', 'pending', 'overdue'].includes(invoice.status);
@@ -22425,8 +24340,8 @@ async function handleApi(req, res, url) {
       const pagination = paginationPayload(page, limit, rows.length);
       const offset = (pagination.page - 1) * limit;
       const summary = billingMonitorSummaryFromRows(
-        periodRows,
-        summaryRows,
+        scopedPeriodRows,
+        scopedSummaryRows,
         rows,
         base.scope || scope
       );
@@ -22437,6 +24352,7 @@ async function handleApi(req, res, url) {
         paymentGatewayEnabled: authContext.data.settings?.paymentGateway?.enabled === true,
         sites: billingMonitorSitesForUser(authContext.data, Array.isArray(base.sites) && base.sites.length ? base.sites : billingSites, authContext.user),
         collector: billingMonitorCollectorScopePayload(authContext.data, authContext.user),
+        partnerScope: partnerScopeResponse(partnerScope),
         summary: billingMonitorSummaryForUser(summary, authContext.user),
         invoices: rows.slice(offset, offset + limit).map(stripSearchText),
         pagination,
@@ -22924,6 +24840,12 @@ async function handleApi(req, res, url) {
       sendJson(res, 501, { ok: false, error: 'Export member hanya tersedia pada mode standalone' });
       return;
     }
+    const partnerScope = selectPartnerScope(
+      authContext.data,
+      authContext.user,
+      url.searchParams.get('partnerId') || url.searchParams.get('partner') || '',
+      partnerScopeQueryEnabled(url)
+    );
     const { members } = localMonitoringMemberRows(authContext.data, {
       status: url.searchParams.get('status') || 'all',
       paymentType: url.searchParams.get('paymentType') || 'all',
@@ -22935,7 +24857,8 @@ async function handleApi(req, res, url) {
       creator: url.searchParams.get('creator') || 'all',
       nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all',
       search: url.searchParams.get('search') || '',
-      sort: 'az'
+      sort: 'az',
+      viewer: partnerScope.user
     });
     const rows = members.map((member, index) => ({
       no: index + 1,
@@ -22969,6 +24892,12 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     if (standaloneMode(authContext.data)) {
       const { page, limit } = paginationParams(url, 10, 100);
+      const partnerScope = selectPartnerScope(
+        authContext.data,
+        authContext.user,
+        url.searchParams.get('partnerId') || url.searchParams.get('partner') || '',
+        partnerScopeQueryEnabled(url)
+      );
       const query = {
         status: url.searchParams.get('status') || 'all',
         paymentType: url.searchParams.get('paymentType') || 'all',
@@ -22981,7 +24910,7 @@ async function handleApi(req, res, url) {
         nas: url.searchParams.get('nas') || url.searchParams.get('site') || 'all',
         sort: url.searchParams.get('sort') || 'created_desc'
       };
-      const base = await cachedMonitoringMemberBasePayload(authContext.data, authContext.user, query, {
+      const base = await cachedMonitoringMemberBasePayload(authContext.data, partnerScope.user, query, {
         force: truthyQuery(url.searchParams.get('refresh'))
       });
       const members = filterPreparedSearch(Array.isArray(base.members) ? base.members : [], url.searchParams.get('search') || '');
@@ -22995,6 +24924,7 @@ async function handleApi(req, res, url) {
         members: members.slice(offset, offset + limit).map(stripSearchText),
         creators: base.creators || [],
         nasOptions: base.nasOptions || [],
+        partnerScope: partnerScopeResponse(partnerScope),
         summary: monitoringMemberSummaryFromRows(members),
         pagination: {
           page: currentPage,
@@ -23797,6 +25727,118 @@ async function handleApi(req, res, url) {
         ok: false,
         error: error.message || 'Verifikasi withdraw Xendit gagal'
       });
+    }
+    return;
+  }
+
+
+
+  if (method === 'GET' && pathname === '/api/partners/report-summary') {
+    const authContext = await requireAnyPermission(req, res, ['billing-monitor:read', 'invoices:manage']);
+    if (!authContext) return;
+    const payload = await partnerReportSummaryPayload(authContext.data, authContext.user, {
+      period: url.searchParams.get('period') || currentPeriod(),
+      partnerId: url.searchParams.get('partnerId') || url.searchParams.get('partner') || '',
+      force: url.searchParams.get('refresh') === '1'
+    });
+    sendJson(res, 200, payload);
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/partners/settlement') {
+    const authContext = await requireAnyPermission(req, res, ['billing-monitor:read', 'invoices:manage']);
+    if (!authContext) return;
+    const payload = await partnerSettlementPayload(authContext.data, authContext.user, {
+      period: url.searchParams.get('period') || currentPeriod(),
+      partnerId: url.searchParams.get('partnerId') || url.searchParams.get('partner') || ''
+    });
+    sendJson(res, 200, payload);
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/partners/settlement/export.csv') {
+    const authContext = await requireAnyPermission(req, res, ['billing-monitor:read', 'invoices:manage']);
+    if (!authContext) return;
+    const payload = await partnerSettlementPayload(authContext.data, authContext.user, {
+      period: url.searchParams.get('period') || currentPeriod(),
+      partnerId: url.searchParams.get('partnerId') || url.searchParams.get('partner') || ''
+    });
+    const summary = payload.summary || {};
+    const partner = payload.partner || {};
+    const lines = [
+      ['Settlement Mitra', partner.name || '-', payload.period || ''].map(csvCell).join(';'),
+      ['Suffix', partner.usernameSuffix || '', ''].map(csvCell).join(';'),
+      ['Porsi ISP', `${payload.share?.ispPercent ?? 40}%`, formatCurrencyText(summary.ispShareAmount || 0)].map(csvCell).join(';'),
+      ['Porsi Mitra', `${payload.share?.partnerPercent ?? 60}%`, formatCurrencyText(summary.partnerShareAmount || 0)].map(csvCell).join(';'),
+      ['Total Lunas', String(summary.paidInvoiceCount || 0), formatCurrencyText(summary.grossAmount || 0)].map(csvCell).join(';'),
+      ['Sudah Disetor', '', formatCurrencyText(summary.settledAmount || 0)].map(csvCell).join(';'),
+      ['Sisa Setor', '', formatCurrencyText(summary.outstandingAmount || 0)].map(csvCell).join(';'),
+      '',
+      ['Invoice', 'Username', 'Nama', 'Paket', 'Metode', 'Tanggal Bayar', 'Nominal'].map(csvCell).join(';'),
+      ...(payload.invoices || []).map((invoice) => [
+        invoice.invoiceNo,
+        invoice.username,
+        invoice.customerName,
+        invoice.packageName,
+        invoice.paymentMethod,
+        invoice.paidDate || invoice.paidAt,
+        invoice.amount
+      ].map(csvCell).join(';')),
+      '',
+      ['Setoran', 'Tanggal', 'Metode', 'Catatan', 'Nominal'].map(csvCell).join(';'),
+      ...(payload.settlements || []).map((row) => [
+        row.id,
+        row.date,
+        row.method,
+        row.notes,
+        row.amount
+      ].map(csvCell).join(';'))
+    ];
+    sendBinary(res, 200, lines.join('\n'), 'text/csv; charset=utf-8', `settlement-${partner.code || partner.name || 'mitra'}-${payload.period}.csv`);
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/partners/settlement') {
+    const authContext = await requireAnyPermission(req, res, ['invoices:manage']);
+    if (!authContext) return;
+    const payload = await readBody(req);
+    try {
+      const { result } = await mutate(async (data) => {
+        const period = normalizePeriod(payload.period || currentPeriod());
+        const selection = selectPartnerForSettlement(data, authContext.user, payload.partnerId || payload.partner || '');
+        const partner = selection.selected;
+        if (!partner) throw new Error('Mitra settlement tidak ditemukan');
+        const amount = Math.max(0, Math.round(Number(payload.amount || 0) || 0));
+        if (amount <= 0) throw new Error('Nominal setoran wajib lebih dari 0');
+        const row = {
+          id: createId('pst'),
+          partnerId: partner.id || '',
+          partnerCode: partner.code || '',
+          partnerName: partner.name || '',
+          partnerUsernameSuffix: partner.usernameSuffix || '',
+          period,
+          date: String(payload.date || todayIso()).slice(0, 10),
+          amount,
+          method: managedUserText(payload.method || 'Transfer', 80),
+          notes: managedUserText(payload.notes || '', 240),
+          status: 'active',
+          createdByName: authContext.user.name || authContext.user.username || '',
+          createdByUsername: authContext.user.username || '',
+          createdByRole: authContext.user.role || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        partnerSettlementRows(data).push(row);
+        addActivity(data, 'partner-settlement', `Setoran settlement ${partner.name || partner.code || partner.usernameSuffix} ${formatCurrencyText(amount)} tercatat`, {
+          partnerId: row.partnerId,
+          period,
+          amount
+        });
+        return row;
+      });
+      sendJson(res, 201, { ok: true, settlement: result });
+    } catch (error) {
+      badRequest(res, error.message || 'Settlement tidak bisa disimpan');
     }
     return;
   }

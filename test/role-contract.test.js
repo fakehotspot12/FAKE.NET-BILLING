@@ -52,6 +52,18 @@ test('reseller voucher remains blocked from Radius settings and profile administ
   assert.match(hotspotProfileRoute, /forbidden\(res\)/);
 });
 
+test('partner can manage scoped PPPoE billing without global system settings', () => {
+  const permissions = role('partner').permissions;
+  assert.ok(permissions.includes('customers:manage'));
+  assert.ok(permissions.includes('invoices:manage'));
+  assert.ok(permissions.includes('radius:ppp-users:write'));
+  assert.ok(permissions.includes('billing-monitor:read'));
+  assert.equal(permissions.includes('radius:write'), false);
+  assert.equal(permissions.includes('settings:write'), false);
+  assert.equal(permissions.includes('payment-gateway:manage'), false);
+  assert.equal(permissions.includes('wa-gateway:manage'), false);
+});
+
 test('viewer remains a dashboard-only role', () => {
   assert.deepEqual(role('viewer').permissions, ['dashboard:read']);
 });

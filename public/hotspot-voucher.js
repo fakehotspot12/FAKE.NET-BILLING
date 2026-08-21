@@ -10,6 +10,39 @@ const voucherCheckoutCache = new Map();
 const voucherCheckoutRequests = new Map();
 const voucherCheckoutFailures = new Map();
 let voucherAutoLoginTimer = null;
+const VOUCHER_CHECKOUT_CACHE_TTL_MS = 10 * 60 * 1000;
+const VOUCHER_CHECKOUT_CACHE_MAX_ENTRIES = 50;
+
+function pruneVoucherCheckoutMaps(now = Date.now()) {
+  for (const [reference, entry] of voucherCheckoutCache.entries()) {
+    if (!entry || now - Number(entry.time || 0) >= VOUCHER_CHECKOUT_CACHE_TTL_MS) {
+      voucherCheckoutCache.delete(reference);
+    }
+  }
+  for (const [reference, entry] of voucherCheckoutFailures.entries()) {
+    if (!entry || now - Number(entry.time || 0) >= VOUCHER_CHECKOUT_CACHE_TTL_MS) {
+      voucherCheckoutFailures.delete(reference);
+    }
+  }
+  while (voucherCheckoutCache.size > VOUCHER_CHECKOUT_CACHE_MAX_ENTRIES) {
+    voucherCheckoutCache.delete(voucherCheckoutCache.keys().next().value);
+  }
+  while (voucherCheckoutFailures.size > VOUCHER_CHECKOUT_CACHE_MAX_ENTRIES) {
+    voucherCheckoutFailures.delete(voucherCheckoutFailures.keys().next().value);
+  }
+}
+
+function cachedVoucherCheckout(reference = '') {
+  pruneVoucherCheckoutMaps();
+  const entry = reference ? voucherCheckoutCache.get(reference) : null;
+  return entry ? entry.value : null;
+}
+
+function cachedVoucherCheckoutFailure(reference = '') {
+  pruneVoucherCheckoutMaps();
+  const entry = reference ? voucherCheckoutFailures.get(reference) : null;
+  return entry ? entry.message : '';
+}
 
 function currentNasValue() {
   const params = new URLSearchParams(window.location.search);
@@ -470,7 +503,8 @@ async function voucherCheckout(order = {}, force = false) {
     voucherCheckoutRequests.delete(reference);
     voucherCheckoutFailures.delete(reference);
   }
-  if (voucherCheckoutCache.has(reference)) return voucherCheckoutCache.get(reference);
+  const cached = cachedVoucherCheckout(reference);
+  if (cached) return cached;
   if (voucherCheckoutRequests.has(reference)) return voucherCheckoutRequests.get(reference);
   const request = api(`/api/public/hotspot-voucher-orders/${encodeURIComponent(reference)}/checkout`, {
     method: 'POST',
@@ -481,8 +515,9 @@ async function voucherCheckout(order = {}, force = false) {
     if (!(checkout.qrUrl || checkout.qrString || checkout.checkoutUrl || checkout.paymentUrl)) {
       throw new Error('Payment Gateway belum mengembalikan QRIS');
     }
-    voucherCheckoutCache.set(reference, checkout);
+    voucherCheckoutCache.set(reference, { time: Date.now(), value: checkout });
     voucherCheckoutFailures.delete(reference);
+    pruneVoucherCheckoutMaps();
     return checkout;
   }).finally(() => voucherCheckoutRequests.delete(reference));
   voucherCheckoutRequests.set(reference, request);
@@ -499,7 +534,11 @@ async function ensureVoucherCheckout(order = {}, force = false) {
     }
     renderVoucherCheckout(order, checkout);
   } catch (error) {
-    voucherCheckoutFailures.set(order.reference || order.id || '', error.message || 'Checkout QRIS gagal disiapkan');
+    voucherCheckoutFailures.set(order.reference || order.id || '', {
+      time: Date.now(),
+      message: error.message || 'Checkout QRIS gagal disiapkan'
+    });
+    pruneVoucherCheckoutMaps();
     renderVoucherCheckoutError(order, error.message);
   }
 }
@@ -522,8 +561,9 @@ function renderPaymentInfo(order = {}) {
   }
   const instruction = byId('os_instruksi_pembayaran');
   if (instruction) instruction.textContent = 'QRIS sedang disiapkan...';
-  const cached = voucherCheckoutCache.get(order.reference || order.id || '');
-  const failure = voucherCheckoutFailures.get(order.reference || order.id || '');
+  const reference = order.reference || order.id || '';
+  const cached = cachedVoucherCheckout(reference);
+  const failure = cachedVoucherCheckoutFailure(reference);
   if (cached) renderVoucherCheckout(order, cached);
   else if (failure) renderVoucherCheckoutError(order, failure);
   else ensureVoucherCheckout(order);

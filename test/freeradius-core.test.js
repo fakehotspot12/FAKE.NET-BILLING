@@ -4,8 +4,52 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const freeradius = require('../src/freeradius-core');
+const freeradiusSql = require('../src/freeradius-sql');
 const freeradiusSessions = require('../src/freeradius-sessions');
 const { createDefaultStore } = require('../src/store');
+
+test('FreeRADIUS NAS rows only contain valid IP addresses', () => {
+  const data = createDefaultStore();
+  data.radiusNas.push({
+    id: 'site-fake',
+    name: 'FAKE.NET',
+    address: '172.16.125.254',
+    aliases: ['FAKE.NET', '172.16.125.254/32'],
+    secret: 'radius-secret',
+    active: true
+  });
+
+  const rows = freeradius.freeradiusRows(data);
+  assert.deepEqual(rows.nas.map((row) => row.nasname), ['172.16.125.254']);
+
+  const built = freeradiusSql.__test.buildSql(rows, {
+    nasnames: ['172.16.125.254', 'FAKE.NET']
+  });
+  assert.doesNotMatch(built.sql, /DELETE FROM nas WHERE nasname IN \('FAKE\.NET'\)/);
+
+  const unsafe = freeradiusSql.__test.buildSql({
+    ...rows,
+    nas: [...rows.nas, {
+      nasname: 'KAMPUNG.NET',
+      shortname: 'KAMPUNG.NET',
+      type: 'mikrotik',
+      ports: 3799,
+      secret: 'radius-secret',
+      server: '',
+      community: '',
+      description: 'Alias yang tidak valid'
+    }, {
+      ...rows.nas[0],
+      nasname: '172.16.125.254/32'
+    }]
+  }, {});
+  assert.deepEqual(unsafe.currentManaged.nasnames, ['172.16.125.254']);
+  assert.doesNotMatch(unsafe.sql, /'KAMPUNG\.NET'/);
+  const nasInsert = unsafe.sql.match(/INSERT INTO nas .*? VALUES\n([\s\S]*?);/);
+  assert.ok(nasInsert);
+  assert.equal((nasInsert[1].match(/\('172\.16\.125\.254'/g) || []).length, 1);
+  assert.doesNotMatch(nasInsert[1], /172\.16\.125\.254\/32/);
+});
 
 test('hotspot radius users always use username as password', () => {
   const data = createDefaultStore();

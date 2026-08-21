@@ -997,6 +997,7 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
     }
   }
   const created = [];
+  let nextInvoiceSeq = nextBillingInvoiceSequence(data);
 
   for (const customer of data.customers) {
     if (!customerIsActive(customer)) {
@@ -1027,7 +1028,12 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
 
     const billingAmount = billingAmountBreakdownForPeriods(data.settings, customer, [selectedPeriod]);
     const amount = billingAmount.totalAmount;
-    const numbering = nextBillingInvoiceNumber(data, selectedPeriod);
+    const invoiceSeq = nextInvoiceSeq;
+    nextInvoiceSeq += 1;
+    const numbering = {
+      invoiceSeq,
+      invoiceNo: formatBillingInvoiceNumber(data, invoiceSeq, selectedPeriod)
+    };
     const invoice = {
       id: createId('inv'),
       source: 'generated',

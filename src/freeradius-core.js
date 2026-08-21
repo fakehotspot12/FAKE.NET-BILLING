@@ -1,5 +1,6 @@
 'use strict';
 
+const net = require('node:net');
 const { createId } = require('./store');
 
 function text(value) {
@@ -268,9 +269,29 @@ function uniqueText(values = []) {
   return rows;
 }
 
+function normalizeRadiusNasAddress(value = '') {
+  const raw = text(value);
+  if (!raw) return '';
+  const parts = raw.split('/');
+  if (parts.length > 2) return '';
+  const family = net.isIP(parts[0]);
+  if (!family) return '';
+  const address = family === 6 ? parts[0].toLowerCase() : parts[0];
+  if (parts.length === 1) return address;
+  if (!/^\d+$/.test(parts[1])) return '';
+  const prefix = Number(parts[1]);
+  const maximum = family === 4 ? 32 : 128;
+  if (prefix < 0 || prefix > maximum) return '';
+  return prefix === maximum ? address : `${address}/${prefix}`;
+}
+
+function isRadiusNasAddress(value = '') {
+  return Boolean(normalizeRadiusNasAddress(value));
+}
+
 function radiusNasClientAddresses(entry = {}) {
-  return uniqueText([entry.address, ...(Array.isArray(entry.aliases) ? entry.aliases : [])])
-    .filter((value) => /[.:]/.test(value) && /^[a-z0-9_.:-]+$/i.test(value));
+  return uniqueText([entry.address, ...(Array.isArray(entry.aliases) ? entry.aliases : [])]
+    .map(normalizeRadiusNasAddress));
 }
 
 function radiusConfig(target = {}) {
@@ -938,6 +959,8 @@ module.exports = {
   queueTypeRouterValue,
   publicRadiusUser,
   radiusUserServiceType,
+  isRadiusNasAddress,
+  normalizeRadiusNasAddress,
   radiusNasEntries,
   updateNas,
   updateProfile,

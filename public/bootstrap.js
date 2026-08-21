@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'desktop-tablet-breakpoint-20260815';
+  const assetRevision = 'ui-safe-20260822';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {
@@ -91,10 +91,23 @@
     </div>`;
   }
 
-  function showDashboardSkeleton() {
+  function loadingMarkup(message = 'Menyiapkan dashboard...') {
+    return `<section class="fakenet-boot boot-app-pending boot-login-screen boot-login-transition">
+      <div class="boot-login-card boot-loading-card" role="status" aria-live="polite">
+        ${brandMarkup()}
+        <div class="boot-loading-state">
+          <span class="boot-loading-spinner" aria-hidden="true"></span>
+          <strong>${escapeHtml(message)}</strong>
+          <small>Mohon tunggu, aplikasi sedang menyiapkan tampilan awal.</small>
+        </div>
+      </div>
+    </section>`;
+  }
+
+  function showDashboardSkeleton(message = 'Menyiapkan dashboard...') {
     document.body.classList.add('is-loading-auth');
     document.body.classList.remove('is-bootstrap-login', 'is-login');
-    app.innerHTML = '<div class="boot-app-pending" aria-hidden="true"></div>';
+    app.innerHTML = loadingMarkup(message);
   }
 
   function verificationMarkup() {
@@ -204,6 +217,7 @@
         method: 'POST',
         body: JSON.stringify(payload)
       });
+      setLoginMessage('Login berhasil. Menyiapkan dashboard...');
       localStorage.setItem(authHintKey, '1');
       applyBranding(authPayload);
       await loadApplication(authPayload);
@@ -268,7 +282,7 @@
     if (applicationLoading) return;
     applicationLoading = true;
     if (authPayload?.user) window.__FAKENET_BOOTSTRAP_AUTH__ = authPayload;
-    showDashboardSkeleton();
+    showDashboardSkeleton(authPayload?.user ? 'Menyiapkan dashboard...' : 'Memuat aplikasi...');
     preloadApplicationScript();
     try {
       await loadApplicationStyle();
@@ -281,7 +295,7 @@
 
   async function start() {
     const hintedAuthenticated = localStorage.getItem(authHintKey) === '1';
-    if (hintedAuthenticated) showDashboardSkeleton();
+    if (hintedAuthenticated) showDashboardSkeleton('Memeriksa sesi...');
 
     const brandingRequest = request('/api/branding')
       .then((payload) => {

@@ -13,6 +13,10 @@ const SESSION_SAVE_THROTTLE_MS = Math.max(
   5_000,
   Number(process.env.AUTH_SESSION_SAVE_THROTTLE_MS || 30_000) || 30_000
 );
+const SESSION_CLEANUP_INTERVAL_MS = Math.max(
+  60_000,
+  Number(process.env.AUTH_SESSION_CLEANUP_INTERVAL_MS || 10 * 60 * 1000) || 10 * 60 * 1000
+);
 const PASSWORD_MIN_LENGTH = 6;
 const PROFILE_PHOTO_URL_MAX_LENGTH = 240;
 const SESSION_STORE_PATH = process.env.AUTH_SESSION_STORE_PATH
@@ -183,6 +187,18 @@ const ROLE_DEFINITIONS = {
       'monitoring:check'
     ]
   },
+  partner: {
+    label: 'Mitra / Reseller',
+    description: 'Kelola pelanggan, invoice, pembayaran, dan PPPoE milik mitra sesuai suffix username yang ditentukan.',
+    permissions: [
+      'billing-monitor:read',
+      'customers:manage',
+      'invoices:manage',
+      'members:read',
+      'radius:read',
+      'radius:ppp-users:write'
+    ]
+  },
   reseller_voucher: {
     label: 'Reseller Voucher',
     description: 'Jual dan kelola voucher hotspot, melihat member/tagihan yang terkait, tanpa akses kas pengeluaran.',
@@ -215,6 +231,27 @@ const ROLE_DEFINITIONS = {
 
 const sessions = new Map();
 let sessionsLoaded = false;
+let sessionCleanupTimer = null;
+
+function pruneExpiredSessions(now = Date.now()) {
+  let changed = false;
+  for (const [id, session] of sessions.entries()) {
+    if (!session || Number(session.expiresAt || 0) <= now) {
+      sessions.delete(id);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function startSessionCleanupTimer() {
+  if (sessionCleanupTimer) return;
+  sessionCleanupTimer = setInterval(() => {
+    if (!sessionsLoaded) return;
+    if (pruneExpiredSessions()) saveSessions();
+  }, SESSION_CLEANUP_INTERVAL_MS);
+  sessionCleanupTimer.unref?.();
+}
 
 function loadSessions() {
   if (sessionsLoaded) return;
@@ -226,17 +263,20 @@ function loadSessions() {
         sessions.set(String(item.id), {
           userId: String(item.userId),
           maxAgeSeconds: Number(item.maxAgeSeconds) || SESSION_DEFAULT_AGE_SECONDS,
-          expiresAt: Number(item.expiresAt)
+          expiresAt: Number(item.expiresAt),
+          csrfToken: typeof item.csrfToken === 'string' ? item.csrfToken : ''
         });
       }
     }
   } catch {
     // Sesi lama yang hilang atau file belum ada tidak boleh menghalangi login.
   }
+  startSessionCleanupTimer();
 }
 
 function saveSessions() {
   try {
+    pruneExpiredSessions();
     fs.mkdirSync(path.dirname(SESSION_STORE_PATH), { recursive: true });
     const rows = [...sessions.entries()]
       .filter(([, session]) => Number(session.expiresAt) > Date.now())
@@ -269,7 +309,7 @@ function roleUnitLabel(role) {
 }
 
 function roleSupportsNasLock(role) {
-  return ['reseller_voucher', 'collector', 'technician'].includes(normalizeRole(role));
+  return ['partner', 'reseller_voucher', 'collector', 'technician'].includes(normalizeRole(role));
 }
 
 function permissionsForRole(role) {
@@ -343,8 +383,48 @@ function publicUser(user) {
     lockedNasName: user.lockedNasName || '',
     lockedNasNames: user.lockedNasNames || user.lockedNasName || '',
     resellerNasId: lockedNasId,
+    partnerId: user.partnerId || '',
+    partnerCode: user.partnerCode || '',
+    partnerName: user.partnerName || '',
+    partnerDomain: user.partnerDomain || '',
+    partnerUsernameSuffix: user.partnerUsernameSuffix || user.usernameSuffix || '',
+    partnerUsernameSuffixes: normalizePartnerUsernameSuffixes(user),
+    partnerIspSharePercent: Number(user.partnerIspSharePercent ?? user.ispSharePercent ?? 40) || 40,
+    partnerSharePercent: Number(user.partnerSharePercent ?? user.resellerSharePercent ?? 60) || 60,
     permissions: permissionsForRole(role)
   };
+}
+
+function normalizePartnerUsernameSuffix(value = '') {
+  let text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+  text = text.replace(/^\*+/, '').replace(/^@?/, '@');
+  return /^@[a-z0-9.-]+\.[a-z]{2,}$/i.test(text) ? text : '';
+}
+
+function normalizePartnerUsernameSuffixes(payload = {}) {
+  const values = [];
+  const append = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(append);
+      return;
+    }
+    String(value || '')
+      .split(',')
+      .map((item) => normalizePartnerUsernameSuffix(item))
+      .filter(Boolean)
+      .forEach((item) => values.push(item));
+  };
+  append(payload.partnerUsernameSuffixes);
+  append(payload.partnerUsernameSuffix);
+  append(payload.usernameSuffixes);
+  append(payload.usernameSuffix);
+  append(payload.partnerDomain);
+  const unique = [];
+  for (const value of values) {
+    if (!unique.includes(value)) unique.push(value);
+  }
+  return unique;
 }
 
 function normalizeLockedNasIds(payload = {}) {
@@ -445,7 +525,8 @@ function createSession(user) {
   sessions.set(sessionId, {
     userId: user.id,
     maxAgeSeconds,
-    expiresAt: Date.now() + maxAgeSeconds * 1000
+    expiresAt: Date.now() + maxAgeSeconds * 1000,
+    csrfToken: crypto.randomBytes(32).toString('base64url')
   });
   saveSessions();
   return sessionId;
@@ -459,18 +540,58 @@ function destroySession(sessionId) {
   }
 }
 
-function sessionCookie(sessionId) {
-  return [
+function sessionCookie(sessionId, options = {}) {
+  const parts = [
     `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${sessionMaxAgeSeconds()}`
-  ].join('; ');
+  ];
+  if (options.secure === true) parts.push('Secure');
+  return parts.join('; ');
 }
 
 function clearSessionCookie() {
   return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+}
+
+function timingSafeStringEqual(left = '', right = '') {
+  const leftBuffer = Buffer.from(String(left || ''));
+  const rightBuffer = Buffer.from(String(right || ''));
+  if (!leftBuffer.length || leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function ensureCsrfToken(req) {
+  loadSessions();
+  const sessionId = getSessionId(req);
+  const session = sessions.get(sessionId);
+  if (!session || Number(session.expiresAt || 0) <= Date.now()) return '';
+  if (!session.csrfToken) {
+    session.csrfToken = crypto.randomBytes(32).toString('base64url');
+    scheduleSessionSave();
+  }
+  return session.csrfToken;
+}
+
+function csrfTokenForSessionId(sessionId = '') {
+  loadSessions();
+  const session = sessions.get(String(sessionId || ''));
+  if (!session || Number(session.expiresAt || 0) <= Date.now()) return '';
+  if (!session.csrfToken) {
+    session.csrfToken = crypto.randomBytes(32).toString('base64url');
+    scheduleSessionSave();
+  }
+  return session.csrfToken;
+}
+
+function validateCsrfToken(req, token = '') {
+  loadSessions();
+  const sessionId = getSessionId(req);
+  const session = sessions.get(sessionId);
+  if (!session || Number(session.expiresAt || 0) <= Date.now()) return false;
+  return timingSafeStringEqual(session.csrfToken || '', token);
 }
 
 function requestUser(req, data) {
@@ -634,6 +755,14 @@ function createUser(data, payload = {}) {
     passwordHash: hashPassword(validatePassword(payload.password)),
     radbooxUsername: String(payload.radbooxUsername || '').trim(),
     radbooxPasswordEnc: secureSecrets.encryptSecret(data, payload.radbooxPassword || ''),
+    partnerId: cleanText(payload.partnerId, 80),
+    partnerCode: cleanText(payload.partnerCode, 80),
+    partnerName: cleanText(payload.partnerName, 120),
+    partnerDomain: cleanText(payload.partnerDomain, 120),
+    partnerUsernameSuffix: normalizePartnerUsernameSuffix(payload.partnerUsernameSuffix || payload.usernameSuffix || payload.partnerDomain || ''),
+    partnerUsernameSuffixes: normalizePartnerUsernameSuffixes(payload),
+    partnerIspSharePercent: Number(payload.partnerIspSharePercent ?? payload.ispSharePercent ?? 40) || 40,
+    partnerSharePercent: Number(payload.partnerSharePercent ?? payload.resellerSharePercent ?? 60) || 60,
     lockedNasId: roleSupportsNasLock(role) ? lockedNasId : '',
     lockedNasIds: roleSupportsNasLock(role) ? lockedNasIds : [],
     lockedNasName: roleSupportsNasLock(role) ? String(payload.lockedNasName || '').trim() : '',
@@ -729,6 +858,35 @@ function updateUser(data, userId, payload = {}) {
   if (payload.password) {
     user.passwordHash = hashPassword(validatePassword(payload.password));
   }
+  if (Object.prototype.hasOwnProperty.call(payload, 'partnerId')) {
+    user.partnerId = cleanText(payload.partnerId, 80);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'partnerCode')) {
+    user.partnerCode = cleanText(payload.partnerCode, 80);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'partnerName')) {
+    user.partnerName = cleanText(payload.partnerName, 120);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'partnerDomain')) {
+    user.partnerDomain = cleanText(payload.partnerDomain, 120);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'partnerUsernameSuffix')
+    || Object.prototype.hasOwnProperty.call(payload, 'usernameSuffix')
+    || Object.prototype.hasOwnProperty.call(payload, 'partnerDomain')) {
+    user.partnerUsernameSuffix = normalizePartnerUsernameSuffix(payload.partnerUsernameSuffix || payload.usernameSuffix || payload.partnerDomain || '');
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'partnerUsernameSuffixes')
+    || Object.prototype.hasOwnProperty.call(payload, 'usernameSuffixes')) {
+    user.partnerUsernameSuffixes = normalizePartnerUsernameSuffixes(payload);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'partnerIspSharePercent')
+    || Object.prototype.hasOwnProperty.call(payload, 'ispSharePercent')) {
+    user.partnerIspSharePercent = Number(payload.partnerIspSharePercent ?? payload.ispSharePercent ?? 40) || 40;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'partnerSharePercent')
+    || Object.prototype.hasOwnProperty.call(payload, 'resellerSharePercent')) {
+    user.partnerSharePercent = Number(payload.partnerSharePercent ?? payload.resellerSharePercent ?? 60) || 60;
+  }
   if (Object.prototype.hasOwnProperty.call(payload, 'radbooxUsername')) {
     user.radbooxUsername = String(payload.radbooxUsername || '').trim();
   }
@@ -780,10 +938,12 @@ module.exports = {
   SESSION_COOKIE,
   clearSessionCookie,
   createSession,
+  csrfTokenForSessionId,
   createUser,
   deleteUser,
   destroySession,
   ensureDefaultUsers,
+  ensureCsrfToken,
   findUserByUsername,
   getSessionId,
   hashPassword,
@@ -796,5 +956,6 @@ module.exports = {
   sessionCookie,
   updateOwnProfile,
   updateUser,
+  validateCsrfToken,
   verifyPassword
 };

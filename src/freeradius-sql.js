@@ -217,14 +217,29 @@ function insertRows(table, columns, rows = {}) {
   return `INSERT INTO ${table} (${columns.map((column) => column.name).join(', ')}) VALUES\n${values.join(',\n')};`;
 }
 
+function safeNasRows(rows = []) {
+  const seen = new Set();
+  return rows.reduce((result, row) => {
+    const nasname = freeradius.normalizeRadiusNasAddress(row.nasname);
+    if (!nasname || seen.has(nasname)) return result;
+    seen.add(nasname);
+    result.push({ ...row, nasname });
+    return result;
+  }, []);
+}
+
 function buildSql(rows, previousManaged = {}) {
-  const currentManaged = managedKeys(rows);
+  const safeRows = {
+    ...rows,
+    nas: safeNasRows(rows.nas || [])
+  };
+  const currentManaged = managedKeys(safeRows);
   const deleteKeys = mergeManagedKeys(previousManaged, currentManaged);
   const statements = ['BEGIN;'];
   const usernameList = sqlList(deleteKeys.usernames);
   const groupList = sqlList(deleteKeys.groupnames);
-  const nasList = sqlList(deleteKeys.nasnames);
-  const nasLabels = managedNasLabels(rows);
+  const nasList = sqlList(deleteKeys.nasnames.filter(freeradius.isRadiusNasAddress));
+  const nasLabels = managedNasLabels(safeRows);
   const nasShortnameList = sqlList(nasLabels.shortnames);
   const nasDescriptionList = sqlList(nasLabels.descriptions);
 
@@ -257,36 +272,36 @@ function buildSql(rows, previousManaged = {}) {
     { name: 'server', key: 'server' },
     { name: 'community', key: 'community' },
     { name: 'description', key: 'description' }
-  ], rows));
+  ], safeRows));
   statements.push(insertRows('radcheck', [
     { name: 'username', key: 'username' },
     { name: 'attribute', key: 'attribute' },
     { name: 'op', key: 'op' },
     { name: 'value', key: 'value' }
-  ], rows));
+  ], safeRows));
   statements.push(insertRows('radreply', [
     { name: 'username', key: 'username' },
     { name: 'attribute', key: 'attribute' },
     { name: 'op', key: 'op' },
     { name: 'value', key: 'value' }
-  ], rows));
+  ], safeRows));
   statements.push(insertRows('radusergroup', [
     { name: 'username', key: 'username' },
     { name: 'groupname', key: 'groupname' },
     { name: 'priority', key: 'priority', numeric: true, fallback: 1 }
-  ], rows));
+  ], safeRows));
   statements.push(insertRows('radgroupcheck', [
     { name: 'groupname', key: 'groupname' },
     { name: 'attribute', key: 'attribute' },
     { name: 'op', key: 'op' },
     { name: 'value', key: 'value' }
-  ], rows));
+  ], safeRows));
   statements.push(insertRows('radgroupreply', [
     { name: 'groupname', key: 'groupname' },
     { name: 'attribute', key: 'attribute' },
     { name: 'op', key: 'op' },
     { name: 'value', key: 'value' }
-  ], rows));
+  ], safeRows));
   statements.push('COMMIT;');
   return {
     currentManaged,
@@ -460,5 +475,6 @@ module.exports = {
   configured,
   enabled,
   status,
-  syncAll
+  syncAll,
+  __test: { buildSql }
 };

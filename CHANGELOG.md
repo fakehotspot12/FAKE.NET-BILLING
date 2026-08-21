@@ -2,6 +2,29 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.0] - 2026-08-21
+
+### Added
+
+- Menambahkan role dan modul Mitra/Reseller yang membatasi pelanggan, PPPoE, invoice, pembayaran, laporan, dan settlement berdasarkan suffix username serta NAS yang ditentukan.
+- Menambahkan validasi CSRF untuk request perubahan data dengan pengecualian khusus endpoint publik dan webhook terverifikasi.
+
+### Changed
+
+- Merapikan susunan menu menjadi kelompok kerja yang lebih ringkas, mempertahankan lima tombol navigasi bawah, dan menempatkan menu Mitra di lembar Menu agar layar kecil tidak bergeser horizontal.
+- Menyelaraskan komponen UI terbaru dari environment pengembangan Cempaka secara selektif, tanpa mengambil pembatasan role atau konfigurasi yang berbeda dari kebijakan Fakenet.
+- Merampingkan kartu inventaris, posisi tombol refresh, topbar, dan grafik statistik agar tetap presisi pada ponsel kecil, tablet, serta desktop.
+- Mempercepat generator invoice massal dengan satu kali pembacaan sequence serta membatasi cache session, voucher checkout, rate limit, dan konektor eksternal agar penggunaan memori tetap terkendali.
+- Mengurangi beban peta pelanggan melalui popup lazy, render bertahap, marker canvas, dan batas daftar yang menyesuaikan perangkat.
+- Menampilkan transisi login yang jelas selama modul aplikasi dimuat tanpa memperlihatkan dashboard sebelum autentikasi selesai.
+
+### Fixed
+
+- Mempertahankan seluruh konfigurasi produksi Fakenet saat sinkron fitur dari environment pengembangan, termasuk port, Redis, scheduler billing, WhatsApp, Payment Gateway, FreeRADIUS, dan GenieACS.
+- Melengkapi helper lookup NAS, peta Leaflet, serta navigasi Mitra yang sebelumnya berisiko tidak terdefinisi ketika hanya sebagian patch diterapkan.
+- Menghapus implementasi peta yang terduplikasi agar optimasi terbaru benar-benar digunakan dan ukuran aset JavaScript berkurang sekitar 50 KB.
+- Merapikan aturan CSS responsif, judul tampilan Mitra, cache username Radius, dan duplikasi rule statistik agar tampilan serta interaksi tetap konsisten.
+
 ## [4.2.27] - 2026-08-21
 
 ### Changed

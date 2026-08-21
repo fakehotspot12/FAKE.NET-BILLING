@@ -88,6 +88,115 @@ test('normalizes GenieACS device wifi and optical parameters', () => {
   assert.equal(device.wifiNetworks[0].passwordParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase');
 });
 
+test('falls back to raw FL327D GPON RX power when virtual value is zero', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'fl327d-gpon',
+    _deviceId: {
+      _Manufacturer: 'MHAR',
+      _ProductClass: 'FL327D',
+      _SerialNumber: 'FL327D001'
+    },
+    VirtualParameters: {
+      RXPower: { _value: '0' }
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          'X_CT-COM_GponInterfaceConfig': {
+            RXPower: { _value: '-22' }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.rxPowerValue, -22);
+  assert.equal(device.rxPowerText, '-22 dBm');
+  assert.equal(device.rxPowerParameter, 'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower');
+});
+
+test('does not classify FL327D 802.11 host history as active LAN clients', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'fl327d-host-history',
+    VirtualParameters: {
+      activedevices: { _value: '2' },
+      LANActiveClients: { _value: '48' }
+    },
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: { SSID: { _value: 'FL-2G' }, TotalAssociations: { _value: '1' } },
+            5: { SSID: { _value: 'FL-5G' }, TotalAssociations: { _value: '1' } }
+          },
+          Hosts: {
+            Host: {
+              1: {
+                Active: { _object: false, _writable: false },
+                IPAddress: { _value: '192.168.1.2' },
+                MACAddress: { _value: 'AA:BB:CC:00:00:01' },
+                InterfaceType: { _value: '802.11' }
+              },
+              2: {
+                Active: { _object: false, _writable: false },
+                IPAddress: { _value: '10.10.10.20' },
+                MACAddress: { _value: 'AA:BB:CC:00:00:02' },
+                InterfaceType: { _value: '802.11' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.wifiClients24, 1);
+  assert.equal(device.wifiClients5, 1);
+  assert.equal(device.lanClients, 0);
+  assert.equal(device.activeWifiClients, 2);
+  assert.equal(device.clientsTotal, 2);
+});
+
+test('keeps numeric zero as a valid active LAN counter', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'numeric-zero-lan',
+    VirtualParameters: {
+      LANActiveClients: { _value: 0 },
+      LANClients: { _value: 48 },
+      activedevices: { _value: 2 }
+    },
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: { SSID: { _value: 'FL-2G' }, TotalAssociations: { _value: 1 } },
+            5: { SSID: { _value: 'FL-5G' }, TotalAssociations: { _value: 1 } }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.lanClients, 0);
+  assert.equal(device.clientsTotal, 2);
+});
+
+test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () => {
+  const bootstrap = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'genieacs', 'bootstrap.js'), 'utf8');
+  const lanActive = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'genieacs', 'virtual-parameters', 'LANActiveClients.js'), 'utf8');
+  const lanClients = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'genieacs', 'virtual-parameters', 'LANClients.js'), 'utf8');
+
+  assert.match(bootstrap, /X_CT-COM_GponInterfaceConfig\.RXPower/);
+  assert.match(bootstrap, /802\\\\\.11/);
+  assert.match(bootstrap, /const text = clean\(value\)/);
+  assert.doesNotMatch(lanActive, /Date\.now/);
+  assert.match(lanActive, /LANEthernetInterfaceConfig\.\*\.AssociatedDeviceNumberOfEntries/);
+  assert.doesNotMatch(lanActive, /Hosts\.Host/);
+  assert.doesNotMatch(lanClients, /Date\.now/);
+  assert.match(lanClients, /LANEthernetInterfaceConfig\.\*\.AssociatedDeviceNumberOfEntries/);
+  assert.doesNotMatch(lanClients, /Hosts\.Host/);
+});
+
 test('normalizes WAN VLAN from virtual parameter fallback', () => {
   const device = genieAcs.normalizeDevice({
     _id: 'fd511gd-1',

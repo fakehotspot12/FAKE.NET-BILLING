@@ -43,7 +43,7 @@ const mobileMenuQuery = window.matchMedia('(max-width: 760px)');
 const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100];
-const MOBILE_FULL_MENU_GROUPS = new Set(['monitoring', 'settings-menu', 'admin']);
+const MOBILE_FULL_MENU_GROUPS = new Set(['partners', 'monitoring', 'settings-menu', 'admin']);
 const MOBILE_FULL_MENU_VIEWS = new Set(['monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'billingSettings', 'paymentGateway', 'waGateway', 'inventory', 'users', 'settings', 'logDetection', 'activity']);
 const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
 const APP_TIME_ZONE_LABELS = {
@@ -61,6 +61,7 @@ const DEFAULT_BUSINESS_NAME = 'ISP Billing';
 const DEFAULT_APP_SUBTITLE = 'Billing ISP dan RT/RW Net';
 const DEFAULT_BUSINESS_CODE = 'ISP';
 const APP_COPYRIGHT_NAME = 'FAKE.NET';
+const LOGIN_TRANSITION_OVERLAY_ID = 'loginTransitionOverlay';
 const LEAFLET_CSS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
 const LEAFLET_JS_URL = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
 const DEFAULT_PROFILE_PHOTO_URL = '/default-user-avatar.svg';
@@ -115,6 +116,14 @@ const titles = {
   monitoringCustomers: 'Sesi Online',
   monitoringBilling: 'Tagihan Pelanggan',
   monitoringServices: 'Status Layanan',
+  partnerCustomers: 'Mitra - Pelanggan',
+  partnerPackages: 'Mitra - Paket',
+  partnerInvoices: 'Mitra - Tagihan',
+  partnerPayments: 'Mitra - Pembayaran',
+  partnerPppoe: 'Mitra - PPPoE',
+  partnerRadius: 'Mitra - Radius',
+  partnerReports: 'Mitra - Laporan',
+  partnerSettlement: 'Mitra - Settlement Bagi Hasil',
   financeCash: 'Kas & Rekap',
   externalIncomes: 'Pemasukan',
   expenses: 'Pengeluaran',
@@ -171,6 +180,14 @@ const viewPermissions = {
   monitoringCustomers: 'monitoring:read',
   monitoringBilling: 'billing-monitor:read',
   monitoringServices: 'monitoring:read',
+  partnerCustomers: ['billing-monitor:read', 'members:read'],
+  partnerPackages: 'radius:read',
+  partnerInvoices: 'billing-monitor:read',
+  partnerPayments: 'billing-monitor:read',
+  partnerPppoe: 'radius:read',
+  partnerRadius: 'radius:read',
+  partnerReports: 'billing-monitor:read',
+  partnerSettlement: 'billing-monitor:read',
   users: 'users:manage',
   settings: 'settings:write'
 };
@@ -256,6 +273,8 @@ const state = {
   monitoringBillingPeriod: todayInput().slice(0, 7),
   monitoringBillingScope: 'collectible',
   monitoringBillingKeepPreset: false,
+  partnerSettlementPartnerId: '',
+  partnerScopeOptions: [],
   monitoringCustomerMapSearch: '',
   monitoringCustomerMapStatus: 'all',
   monitoringCustomerMapAccess: 'all',
@@ -362,11 +381,13 @@ const state = {
   notifications: null,
   paymentNotifications: [],
   loginVerification: null,
+  csrfToken: '',
   search: ''
 };
 
 const LIVE_SEARCH_DEBOUNCE_MS = 450;
 const RADIUS_OPTIONS_CACHE_TTL_MS = 15000;
+const RADIUS_USERNAME_CHECK_CACHE_MAX_ENTRIES = 200;
 const radiusOptionsCache = new Map();
 const radiusUsernameCheckCache = new Map();
 
@@ -417,6 +438,9 @@ const SEARCH_API_CACHE_MAX_ENTRIES = 120;
 const SEARCH_FOCUS_INTENT_MS = 5000;
 const MONITORING_MAP_CANVAS_THRESHOLD = 320;
 const MONITORING_MAP_CHUNK_SIZE = 120;
+const MONITORING_MAP_DEFAULT_CENTER = [-2.5489, 118.0149];
+const MONITORING_MAP_SERVICE_RADIUS_KM = 3000;
+const MONITORING_MAP_TILE_STORAGE_KEY = 'fakenetMonitoringMapTileMode';
 let activeSearchFocusIntent = null;
 
 const money = new Intl.NumberFormat('id-ID', {
@@ -725,6 +749,37 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+function showLoginTransition(message = 'Menyiapkan dashboard...') {
+  document.body.classList.add('is-login-transition');
+  let overlay = document.getElementById(LOGIN_TRANSITION_OVERLAY_ID);
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = LOGIN_TRANSITION_OVERLAY_ID;
+    overlay.className = 'login-transition-overlay';
+    document.body.appendChild(overlay);
+  }
+  const branding = currentBranding();
+  overlay.innerHTML = `
+    <div class="login-transition-card" role="status" aria-live="polite">
+      <div class="login-transition-brand">
+        <img src="${escapeHtml(branding.logoUrl)}" alt="Logo ${escapeHtml(branding.businessName)}">
+        <div>
+          <strong>${escapeHtml(branding.businessName)}</strong>
+          <span>${escapeHtml(branding.appSubtitle)}</span>
+        </div>
+      </div>
+      <span class="login-transition-spinner" aria-hidden="true"></span>
+      <strong>${escapeHtml(message)}</strong>
+      <small>Mohon tunggu, aplikasi sedang menyiapkan tampilan awal.</small>
+    </div>
+  `;
+}
+
+function hideLoginTransition() {
+  document.body.classList.remove('is-login-transition');
+  document.getElementById(LOGIN_TRANSITION_OVERLAY_ID)?.remove();
 }
 
 function chartTooltipAttr(value = '') {
@@ -1422,6 +1477,46 @@ function themeColor(name, fallback) {
   return value || fallback;
 }
 
+function apiPathname(path = '') {
+  try {
+    return new URL(path, window.location.origin).pathname.replace(/\/+$/, '') || '/';
+  } catch {
+    return String(path || '').split('?')[0].replace(/\/+$/, '') || '/';
+  }
+}
+
+function apiRequiresCsrf(path = '', method = 'GET') {
+  const verb = String(method || 'GET').toUpperCase();
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(verb)) return false;
+  const pathname = apiPathname(path);
+  if (!pathname.startsWith('/api/')) return false;
+  if (pathname.startsWith('/api/public/')) return false;
+  if (pathname === '/api/auth/login') return false;
+  if (pathname === '/api/license/activate') return false;
+  if (pathname === '/api/webhooks/waha') return false;
+  return true;
+}
+
+async function ensureCsrfToken() {
+  if (!state.auth) return '';
+  if (state.csrfToken) return state.csrfToken;
+  const response = await fetch('/api/auth/csrf', {
+    cache: 'no-store',
+    headers: {
+      Accept: 'application/json'
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.csrfToken) {
+    const error = new Error(payload.error || 'Token keamanan halaman tidak tersedia');
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  state.csrfToken = payload.csrfToken;
+  return state.csrfToken;
+}
+
 async function api(path, options = {}) {
   const { skipAuthRedirect = false, timeoutMs = 0, signal, ...fetchOptions } = options;
   const requestMethod = String(fetchOptions.method || 'GET').toUpperCase();
@@ -1435,19 +1530,25 @@ async function api(path, options = {}) {
   const controller = timeoutMs > 0 && !signal && !pageSignal ? new AbortController() : null;
   const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      ...(fetchOptions.headers || {})
+    };
+    if (apiRequiresCsrf(path, requestMethod)) {
+      const csrfToken = await ensureCsrfToken();
+      if (csrfToken) requestHeaders['X-CSRF-Token'] = csrfToken;
+    }
     const response = await fetch(path, {
       ...fetchOptions,
       cache: fetchOptions.cache || 'no-store',
       signal: signal || pageSignal || controller?.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(fetchOptions.headers || {})
-      }
+      headers: requestHeaders
     });
     const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
     if (response.status === 401 && !skipAuthRedirect) {
       rememberLoginReturnView();
       state.auth = null;
+      state.csrfToken = '';
       abortPageRequests();
       renderLogin();
       const error = new Error(payload.error || 'Sesi login habis');
@@ -1464,6 +1565,9 @@ async function api(path, options = {}) {
         detail: 'Sesi login habis atau akses API ditolak'
       });
       throw error;
+    }
+    if (response.status === 419) {
+      state.csrfToken = '';
     }
     if (!response.ok) {
       const error = new Error(payload.error || 'Request gagal');
@@ -2114,16 +2218,172 @@ function canView(view) {
   if (role === 'collector') {
     return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringIsolatedMembers', 'monitoringTerminatedMembers', 'monitoringBilling', 'reportsDaily', 'reportsMonthlyBilling'].includes(view) && can(viewPermissions[view]);
   }
+  if (role === 'partner') {
+    return ['partnerCustomers', 'partnerPackages', 'partnerInvoices', 'partnerPayments', 'partnerPppoe', 'partnerRadius', 'partnerReports', 'partnerSettlement'].includes(view) && can(viewPermissions[view]);
+  }
   return can(viewPermissions[view]);
 }
 
 function firstAvailableView() {
-  return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringBilling', 'billingSettings', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'monitoringCustomers', 'financeCash', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'networkAssets', 'paymentGateway', 'waGateway', 'reportsStatistics', 'reportsDaily', 'reportsVoucherDaily', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity'].find(canView) || 'dashboard';
+  return ['dashboard', 'partnerReports', 'partnerCustomers', 'partnerInvoices', 'partnerPppoe', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringBilling', 'billingSettings', 'radiusPppDhcp', 'radiusHotspot', 'radiusSettings', 'monitoringCustomers', 'financeCash', 'externalIncomes', 'expenses', 'reportsTransactions', 'reportsFinanceRecap', 'monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'networkAssets', 'paymentGateway', 'waGateway', 'reportsStatistics', 'reportsDaily', 'reportsVoucherDaily', 'reportsInventoryStock', 'inventory', 'users', 'settings', 'logDetection', 'activity'].find(canView) || 'dashboard';
 }
 
 function normalizeView(view) {
   if (view === 'monitoring') return 'monitoringSite';
   return view;
+}
+
+function partnerScopeLabel() {
+  const suffixes = Array.isArray(state.auth?.partnerUsernameSuffixes) ? state.auth.partnerUsernameSuffixes : [];
+  return suffixes.length ? suffixes.join(', ') : (state.auth?.partnerDomain || state.auth?.partnerUsernameSuffix || 'Mitra');
+}
+
+const PARTNER_OPERATION_VIEWS = ['partnerCustomers', 'partnerPppoe', 'partnerPackages', 'partnerRadius'];
+const PARTNER_FINANCE_VIEWS = ['partnerInvoices', 'partnerPayments'];
+const PARTNER_VIEWS = ['partnerReports', ...PARTNER_OPERATION_VIEWS, ...PARTNER_FINANCE_VIEWS, 'partnerSettlement'];
+
+function isPartnerModuleView(view = state.view) {
+  return PARTNER_VIEWS.includes(view);
+}
+
+function partnerModuleGroup(view = state.view) {
+  if (PARTNER_OPERATION_VIEWS.includes(view)) return 'operation';
+  if (PARTNER_FINANCE_VIEWS.includes(view)) return 'finance';
+  if (view === 'partnerSettlement') return 'settlement';
+  return 'report';
+}
+
+function partnerCompactNavButton(item, activeViews = [item.view]) {
+  const active = activeViews.includes(state.view);
+  return `<button class="tab-button ${active ? 'is-active' : ''}" type="button" data-partner-view="${escapeHtml(item.view)}">${escapeHtml(item.label)}</button>`;
+}
+
+function partnerCompactNav() {
+  if (!isPartnerModuleView()) return '';
+  const group = partnerModuleGroup();
+  const mainItems = [
+    { view: 'partnerReports', label: 'Ringkasan', activeViews: ['partnerReports'] },
+    { view: 'partnerCustomers', label: 'Pelanggan', activeViews: PARTNER_OPERATION_VIEWS },
+    { view: 'partnerInvoices', label: 'Keuangan', activeViews: PARTNER_FINANCE_VIEWS },
+    { view: 'partnerSettlement', label: 'Settlement', activeViews: ['partnerSettlement'] }
+  ];
+  const detailItems = group === 'operation'
+    ? [
+        { view: 'partnerCustomers', label: 'Data Pelanggan' },
+        { view: 'partnerPppoe', label: 'PPPoE' },
+        { view: 'partnerPackages', label: 'Paket' },
+        { view: 'partnerRadius', label: 'Session Radius' }
+      ]
+    : group === 'finance'
+      ? [
+          { view: 'partnerInvoices', label: 'Tagihan' },
+          { view: 'partnerPayments', label: 'Pembayaran' }
+        ]
+      : [];
+  return `
+    <section class="partner-compact-nav" aria-label="Navigasi Mitra">
+      <div class="tab-switcher partner-main-tabs">
+        ${mainItems.map((item) => partnerCompactNavButton(item, item.activeViews)).join('')}
+      </div>
+      ${detailItems.length ? `
+        <div class="tab-switcher partner-detail-tabs">
+          ${detailItems.map((item) => partnerCompactNavButton(item)).join('')}
+        </div>
+      ` : ''}
+    </section>
+  `;
+}
+
+function updatePartnerScopeOptions(payload = {}) {
+  const scope = payload.partnerScope || {};
+  const rows = Array.isArray(scope.partners)
+    ? scope.partners
+    : (Array.isArray(payload.partners) ? payload.partners : []);
+  if (!rows.length) return;
+  const normalized = [];
+  const seen = new Set();
+  rows.forEach((partner) => {
+    const id = String(partner.id || partner.code || partner.usernameSuffix || '').trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    normalized.push({
+      id,
+      name: partner.name || partner.code || partner.usernameSuffix || id,
+      code: partner.code || '',
+      usernameSuffix: partner.usernameSuffix || ''
+    });
+  });
+  if (!normalized.some((item) => item.id === 'all')) {
+    normalized.unshift({ id: 'all', name: 'Semua Mitra', code: 'all', usernameSuffix: '' });
+  }
+  state.partnerScopeOptions = normalized;
+  const selected = String(scope.selected?.id || state.partnerSettlementPartnerId || '').trim();
+  if (selected && selected !== 'all' && normalized.some((item) => item.id === selected)) {
+    state.partnerSettlementPartnerId = selected;
+  } else if (!state.partnerSettlementPartnerId) {
+    state.partnerSettlementPartnerId = 'all';
+  }
+}
+
+function partnerScopeQueryParams() {
+  if (!isPartnerModuleView()) return {};
+  if (state.auth?.role === 'partner') return { partnerScope: '1' };
+  return {
+    partnerScope: '1',
+    partnerId: state.partnerSettlementPartnerId || 'all'
+  };
+}
+
+function partnerScopeSelectMarkup() {
+  if (!isPartnerModuleView() || state.view === 'partnerSettlement' || state.auth?.role === 'partner') return '';
+  const options = Array.isArray(state.partnerScopeOptions) && state.partnerScopeOptions.length
+    ? state.partnerScopeOptions
+    : [{ id: 'all', name: 'Semua Mitra', code: 'all', usernameSuffix: '' }];
+  const selected = state.partnerSettlementPartnerId || 'all';
+  return `
+    <label class="field compact-field partner-scope-select">
+      <span>Tampilkan</span>
+      <select id="partnerScopeSelect">
+        ${options.map((partner) => {
+          const label = partner.id === 'all'
+            ? 'Semua Mitra'
+            : `${partner.name || partner.code || 'Mitra'}${partner.usernameSuffix ? ` · ${partner.usernameSuffix}` : ''}`;
+          return `<option value="${escapeHtml(String(partner.id))}" ${String(partner.id) === String(selected) ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+        }).join('')}
+      </select>
+    </label>
+  `;
+}
+
+function resetPartnerScopedPages() {
+  state.monitoringMemberPage = 1;
+  state.monitoringNewCustomerPage = 1;
+  state.monitoringIsolatedMemberPage = 1;
+  state.monitoringTerminatedMemberPage = 1;
+  state.monitoringBillingPage = 1;
+  state.radiusPppPage = 1;
+}
+
+function bindPartnerCompactNav() {
+  app.querySelectorAll('[data-partner-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const view = button.dataset.partnerView || '';
+      if (view && view !== state.view) setView(view);
+    });
+  });
+  document.getElementById('partnerScopeSelect')?.addEventListener('change', (event) => {
+    state.partnerSettlementPartnerId = event.target.value || 'all';
+    resetPartnerScopedPages();
+    render({ refresh: true });
+  });
+}
+
+function partnerContextNotice(payload = {}) {
+  updatePartnerScopeOptions(payload);
+  const notice = state.auth?.role === 'partner'
+    ? nasTargetContext('Area Mitra', partnerScopeLabel(), 'Data member, invoice, pembayaran, dan PPPoE dibatasi sesuai suffix username mitra.')
+    : '';
+  return `${notice}${partnerCompactNav()}${partnerScopeSelectMarkup()}`;
 }
 
 function financeCashViewFromAlias(view) {
@@ -2282,6 +2542,53 @@ function clearRealtimeTimers() {
     if (chart && typeof chart.destroy === 'function') chart.destroy();
   });
   dashboardRouterNasCharts = {};
+}
+
+const LEAFLET_MAP_INSTANCE_KEYS = [
+  '_monitoringCustomerMap',
+  '_fiberNetworkMap',
+  '_fiberNodeMap',
+  '_customerLocationMap',
+  '_memberMap',
+  '_radiusMap'
+];
+
+function cleanupLeafletMaps(root = document) {
+  if (!root) return;
+  const candidates = new Set();
+  if (root instanceof Element) candidates.add(root);
+  const selector = [
+    '#customerMapLeaflet',
+    '#fiberNetworkLeaflet',
+    '#fiberNodeCoordinateMap',
+    '#customerLocationLeafletMap',
+    '#memberContactLeafletMap',
+    '#radiusLeafletMap',
+    '.leaflet-container'
+  ].join(',');
+  root.querySelectorAll?.(selector).forEach((element) => candidates.add(element));
+  candidates.forEach((element) => {
+    if (!element) return;
+    if (typeof element._monitoringMapGuardCleanup === 'function') {
+      try {
+        element._monitoringMapGuardCleanup();
+      } catch {
+        // Cleanup peta tidak boleh mengganggu render halaman berikutnya.
+      }
+      delete element._monitoringMapGuardCleanup;
+    }
+    LEAFLET_MAP_INSTANCE_KEYS.forEach((key) => {
+      const map = element[key];
+      if (map && typeof map.remove === 'function') {
+        try {
+          map.remove();
+        } catch {
+          // Abaikan map yang sudah dilepas Leaflet.
+        }
+      }
+      if (map) delete element[key];
+    });
+  });
 }
 
 function menuIsMobile() {
@@ -2754,6 +3061,30 @@ function openModal(title, body, onSubmit) {
   modalTitle.textContent = title;
   modalBody.innerHTML = body;
   const form = modal.querySelector('.modal-frame');
+  const submitStatus = document.createElement('div');
+  submitStatus.className = 'muted modal-submit-status';
+  submitStatus.setAttribute('role', 'status');
+  submitStatus.setAttribute('aria-live', 'polite');
+  submitStatus.hidden = true;
+  form.appendChild(submitStatus);
+  const setSubmitStatus = (message = '') => {
+    const text = String(message || '').trim();
+    submitStatus.textContent = text;
+    submitStatus.hidden = !text;
+  };
+  const controlLabel = (control) => {
+    if (!control) return '';
+    if ('value' in control && control.tagName !== 'BUTTON') return control.value;
+    return control.textContent;
+  };
+  const setControlLabel = (control, value = '') => {
+    if (!control || !value) return;
+    if ('value' in control && control.tagName !== 'BUTTON') {
+      control.value = value;
+    } else {
+      control.textContent = value;
+    }
+  };
   modalBody.scrollTop = 0;
   form.scrollTop = 0;
   modal.querySelectorAll('[value="cancel"], [data-close-modal]').forEach((button) => {
@@ -2783,11 +3114,33 @@ function openModal(title, body, onSubmit) {
       return;
     }
     event.preventDefault();
+    if (form.dataset.submitting === '1') {
+      setSubmitStatus('Proses simpan masih berjalan. Tunggu sampai selesai.');
+      return;
+    }
+    const controls = [...form.querySelectorAll('button, input[type="button"], input[type="submit"]')];
+    const previousControls = controls.map((control) => ({
+      control,
+      disabled: control.disabled,
+      label: control === event.submitter ? controlLabel(control) : ''
+    }));
     try {
-      const result = await onSubmit(formData(form), form);
+      form.dataset.submitting = '1';
+      setSubmitStatus('Menyiapkan data...');
+      controls.forEach((control) => { control.disabled = true; });
+      setControlLabel(event.submitter, 'Menyimpan...');
+      const result = await onSubmit(formData(form), form, setSubmitStatus);
       if (result !== false) modal.close();
     } catch (error) {
+      setSubmitStatus('');
       setToast(error.message);
+    } finally {
+      delete form.dataset.submitting;
+      previousControls.forEach(({ control, disabled, label }) => {
+        control.disabled = disabled;
+        if (label) setControlLabel(control, label);
+      });
+      if (modal.open) setSubmitStatus('');
     }
   };
   modal.showModal();
@@ -2799,6 +3152,7 @@ function openModal(title, body, onSubmit) {
 }
 
 modal?.addEventListener('close', () => {
+  cleanupLeafletMaps(modalBody);
   window.setTimeout(mountToastLayer, 0);
 });
 
@@ -4687,10 +5041,12 @@ function renderLogin() {
       });
       state.auth = payload.user;
       state.roles = payload.roles || [];
+      state.csrfToken = payload.csrfToken || state.csrfToken || '';
       clearRadiusOptionsCache();
       updateBranding(payload);
       takeLoginReturnView();
       state.view = canView('dashboard') ? 'dashboard' : firstAvailableView();
+      showLoginTransition('Menyiapkan dashboard...');
       configureShell();
       startNotificationsTimer();
       setToast('Login berhasil');
@@ -6017,6 +6373,16 @@ function statisticsAxisMarkup(range = {}, box = {}, formatter = displayNumber) {
   }).join('');
 }
 
+function statisticsRightAxisMarkup(range = {}, box = {}, formatter = displayNumber) {
+  const right = box.right || 12;
+  const width = box.width || 420;
+  const x = width - right + 28;
+  return (range.ticks || []).map((value) => {
+    const y = statisticsChartPoint(value, range, box);
+    return `<g class="statistics-axis secondary"><line x1="${width - right}" y1="${y.toFixed(2)}" x2="${width - right + 5}" y2="${y.toFixed(2)}"></line><text x="${x}" y="${(y + 4).toFixed(2)}">${escapeHtml(formatter(value))}</text></g>`;
+  }).join('');
+}
+
 function statisticsMonthAxisMarkup(rows = [], box = {}) {
   const left = box.left || 44;
   const width = box.width || 420;
@@ -6033,36 +6399,52 @@ function statisticsMonthAxisMarkup(rows = [], box = {}) {
 
 function statisticsGrowthLineChart(rows = []) {
   const chartRows = Array.isArray(rows) ? rows : [];
-  const box = { width: 420, height: 204, left: 44, right: 12, top: 18, plotHeight: 132 };
-  const range = statisticsChartRange(chartRows.map((row) => row.activeCustomerCount), { zeroBase: false, minPadding: 10, stepBase: 10 });
+  const box = { width: 460, height: 220, left: 44, right: 46, top: 18, plotHeight: 134 };
+  const activeRange = statisticsChartRange(chartRows.map((row) => row.activeCustomerCount), { zeroBase: false, minPadding: 10, stepBase: 10 });
+  const flowRange = statisticsChartRange(chartRows.flatMap((row) => [row.newInstallCount, row.removedCount]), { zeroBase: true, minPadding: 2, stepBase: 1 });
   const plotWidth = box.width - box.left - box.right;
   const step = chartRows.length > 1 ? plotWidth / (chartRows.length - 1) : plotWidth;
-  const points = chartRows.map((row, index) => ({
+  const pointsFor = (key, range) => chartRows.map((row, index) => ({
     x: box.left + (step * index),
-    y: statisticsChartPoint(row.activeCustomerCount, range, box),
+    y: statisticsChartPoint(row[key], range, box),
+    value: Number(row[key] || 0),
     row
   }));
+  const activePoints = pointsFor('activeCustomerCount', activeRange);
+  const installPoints = pointsFor('newInstallCount', flowRange);
+  const removedPoints = pointsFor('removedCount', flowRange);
   return `
     <div class="statistics-chart-card statistics-growth-chart">
       <div class="statistics-chart-head">
         <div>
           <h3>Pertumbuhan Pelanggan Bulanan</h3>
-          <span>Perubahan jumlah pelanggan aktif dari bulan ke bulan.</span>
+          <span>Perbandingan pelanggan aktif, pelanggan baru, dan pelanggan berhenti.</span>
         </div>
         <div class="statistics-legend compact">
-          <span class="active-total">Total pelanggan aktif</span>
+          <span class="active-total">Pelanggan aktif</span>
+          <span class="install">Pelanggan baru</span>
+          <span class="removed">Pelanggan keluar</span>
         </div>
       </div>
       <div class="statistics-svg-wrap">
         <svg viewBox="0 0 ${box.width} ${box.height}" role="img" aria-label="Pertumbuhan pelanggan bulanan">
-          ${statisticsAxisMarkup(range, box, displayNumber)}
-          <path class="statistics-line active-total" d="${statisticsLinePath(points)}"></path>
-          ${points.map((point) => {
-            const row = point.row || {};
+          ${statisticsAxisMarkup(activeRange, box, displayNumber)}
+          ${statisticsRightAxisMarkup(flowRange, box, displayNumber)}
+          <path class="statistics-line active-total" d="${statisticsLinePath(activePoints)}"></path>
+          <path class="statistics-line install" d="${statisticsLinePath(installPoints)}"></path>
+          <path class="statistics-line removed" d="${statisticsLinePath(removedPoints)}"></path>
+          ${chartRows.map((row, index) => {
             const tooltip = `${periodLabel(row.period)}\nTotal pelanggan aktif: ${displayNumber(row.activeCustomerCount || 0)}\nPelanggan baru: ${displayNumber(row.newInstallCount || 0)}\nSenilai: ${rupiah(row.newInstallAmount || 0)}\nPelanggan berhenti: ${displayNumber(row.removedCount || 0)}\nSenilai cabut: ${rupiah(row.removedAmount || 0)}\nPertumbuhan bersih: ${statisticsNetText(row.netGrowth || 0)}`;
+            const active = activePoints[index] || {};
+            const install = installPoints[index] || {};
+            const removed = removedPoints[index] || {};
             return `
-              <circle class="statistics-dot active-total" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.5" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
-              <circle class="statistics-hit-circle" fill="transparent" pointer-events="all" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="13" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
+              <circle class="statistics-dot active-total" cx="${active.x.toFixed(2)}" cy="${active.y.toFixed(2)}" r="3.3" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
+              <circle class="statistics-dot install" cx="${install.x.toFixed(2)}" cy="${install.y.toFixed(2)}" r="3.3" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
+              <circle class="statistics-dot removed" cx="${removed.x.toFixed(2)}" cy="${removed.y.toFixed(2)}" r="3.3" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
+              <circle class="statistics-hit-circle" cx="${active.x.toFixed(2)}" cy="${active.y.toFixed(2)}" r="9" fill="transparent" stroke="none" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
+              <circle class="statistics-hit-circle" cx="${install.x.toFixed(2)}" cy="${install.y.toFixed(2)}" r="9" fill="transparent" stroke="none" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
+              <circle class="statistics-hit-circle" cx="${removed.x.toFixed(2)}" cy="${removed.y.toFixed(2)}" r="9" fill="transparent" stroke="none" ${chartTooltipAttr(tooltip)}><title>${escapeHtml(tooltip)}</title></circle>
             `;
           }).join('')}
           ${statisticsMonthAxisMarkup(chartRows, box)}
@@ -9362,6 +9744,7 @@ const USER_POSITION_OPTIONS = Object.freeze({
   technician: ['Kepala Teknisi dan Perlengkapan', 'Staf Teknisi dan Perlengkapan'],
   noc: ['Kepala Teknisi dan Perlengkapan', 'Staf Teknisi dan Perlengkapan'],
   collector: ['Staf Penagihan'],
+  partner: ['Mitra'],
   reseller_voucher: ['Reseller Voucher'],
   viewer: ['Staf']
 });
@@ -10124,9 +10507,21 @@ function nasTargetChoiceMarkup(options = [], selected = []) {
 function clearRadiusOptionsCache(section = '') {
   if (!section) {
     radiusOptionsCache.clear();
+    radiusUsernameCheckCache.clear();
     return;
   }
   radiusOptionsCache.delete(section);
+}
+
+function pruneRadiusUsernameCheckCache(now = Date.now()) {
+  for (const [key, entry] of radiusUsernameCheckCache.entries()) {
+    if (!entry || now - Number(entry.time || 0) >= RADIUS_OPTIONS_CACHE_TTL_MS) {
+      radiusUsernameCheckCache.delete(key);
+    }
+  }
+  while (radiusUsernameCheckCache.size > RADIUS_USERNAME_CHECK_CACHE_MAX_ENTRIES) {
+    radiusUsernameCheckCache.delete(radiusUsernameCheckCache.keys().next().value);
+  }
 }
 
 async function loadRadiusOptions(section = 'ppp', options = {}) {
@@ -10152,6 +10547,7 @@ async function loadRadiusOptions(section = 'ppp', options = {}) {
 async function checkRadiusPppUsernameDuplicate(username = '', excludeId = '') {
   const normalized = String(username || '').trim().toLowerCase();
   if (!normalized) return { exists: false, user: null };
+  pruneRadiusUsernameCheckCache();
   const cacheKey = `${normalized}|${String(excludeId || '')}`;
   const cached = radiusUsernameCheckCache.get(cacheKey);
   if (cached && (Date.now() - cached.time) < RADIUS_OPTIONS_CACHE_TTL_MS) {
@@ -10166,6 +10562,7 @@ async function checkRadiusPppUsernameDuplicate(username = '', excludeId = '') {
     user: payload.user || null
   };
   radiusUsernameCheckCache.set(cacheKey, { time: Date.now(), value });
+  pruneRadiusUsernameCheckCache();
   return value;
 }
 
@@ -12750,7 +13147,8 @@ async function openRadiusPppUserModal(user = null) {
     api('/api/billing/settings').catch(() => ({ settings: {} }))
   ]);
   options.billing = billingPayload.settings || {};
-  openModal(user ? 'Edit User PPP-DHCP' : 'Tambah User PPP-DHCP', radiusPppUserFormBody(user, options), async (payload, form) => {
+  openModal(user ? 'Edit User PPP-DHCP' : 'Tambah User PPP-DHCP', radiusPppUserFormBody(user, options), async (payload, form, setProgress = () => {}) => {
+    setProgress('Validasi data pelanggan...');
     const type = String(payload.type || '').toLowerCase();
     if (!user && payload.addToMember && typeof form?._radiusPppWizardFinalize === 'function') {
       if (!form._radiusPppWizardFinalize()) {
@@ -12782,6 +13180,7 @@ async function openRadiusPppUserModal(user = null) {
     }
     const checkedUsername = String(payload.username || '').trim();
     if (checkedUsername) {
+      setProgress('Mengecek username PPP-DHCP...');
       const duplicate = await checkRadiusPppUsernameDuplicate(checkedUsername, user?.id || '');
       if (duplicate.exists) {
         throw new Error(radiusUsernameDuplicateMessage(checkedUsername, duplicate));
@@ -12795,6 +13194,7 @@ async function openRadiusPppUserModal(user = null) {
     }
     const ktpPhotoFile = form.querySelector('input[name="memberKtpPhotoUpload"]')?.files?.[0];
     if (ktpPhotoFile && !String(payload.memberKtpPhoto || '').trim()) {
+      setProgress('Upload dan OCR Foto KTP...');
       const ktpUpload = await uploadMemberKtpFile(ktpPhotoFile, { label: 'Foto KTP' });
       payload.memberKtpPhoto = JSON.stringify(ktpUpload?.storedPhoto || ktpUpload?.photo || {});
       if (ktpUpload?.ktp) {
@@ -12814,9 +13214,11 @@ async function openRadiusPppUserModal(user = null) {
     delete payload.memberKtpPhotoUpload;
     const housePhotoFile = form.querySelector('input[name="memberHousePhoto"]')?.files?.[0];
     if (housePhotoFile) {
+      setProgress('Upload Foto Rumah...');
       payload.memberHousePhotoUrl = await uploadImageFile(housePhotoFile, 'member-house', { label: 'Foto rumah' });
     }
     delete payload.memberHousePhoto;
+    setProgress('Menyimpan user PPP-DHCP dan member...');
     const result = await api(user ? `/api/radius/ppp-dhcp/users/${encodeURIComponent(user.id)}` : '/api/radius/ppp-dhcp/users', {
       method: user ? 'PUT' : 'POST',
       body: JSON.stringify(payload)
@@ -12827,6 +13229,7 @@ async function openRadiusPppUserModal(user = null) {
         ? `User PPP-DHCP diperbarui. Member ikut sinkron ke ${result.memberProfileSync.nextPackageName || 'profil baru'}`
         : 'User PPP-DHCP diperbarui')
       : (payload.addToMember && memberCode ? `User PPP-DHCP ditambahkan. ID Member ${memberCode}` : 'User PPP-DHCP ditambahkan'));
+    setProgress('Menyegarkan daftar PPP-DHCP...');
     renderRadiusPppDhcp({ refresh: true });
   });
   bindRequiredRadiusProfileWarning('#radiusPppProfile', 'PPP-DHCP');
@@ -13138,20 +13541,49 @@ function bindRadiusPppTypeFields() {
   sync();
 }
 
-function browserLocationErrorMessage(error = {}) {
-  if (Number(error.code) === 1) return 'Izin lokasi ditolak. Aktifkan izin lokasi browser lalu coba lagi.';
+function browserLocationErrorMessage(error = {}, permissionState = '') {
+  if (Number(error.code) === 1) {
+    if (permissionState === 'granted') {
+      return 'Izin situs sudah Allow, tetapi lokasi tetap ditolak oleh OS/browser. Aktifkan Location Services perangkat dan izin lokasi untuk Chrome/Edge, lalu tekan GPS Perangkat.';
+    }
+    if (permissionState === 'prompt') {
+      return 'Browser belum menerima izin lokasi. Pilih Allow saat popup izin muncul, lalu tekan GPS Perangkat.';
+    }
+    return 'Izin lokasi browser ditolak. Peta tetap bisa digunakan; aktifkan izin lokasi dari ikon gembok/Setelan situs lalu tekan GPS Perangkat.';
+  }
   if (Number(error.code) === 2) return 'Lokasi perangkat belum dapat ditemukan.';
   if (Number(error.code) === 3) return 'Pengambilan lokasi melewati batas waktu. Coba lagi di area dengan sinyal GPS lebih baik.';
   return error.message || 'Lokasi browser tidak dapat diambil.';
 }
 
-function currentBrowserPosition() {
+function browserLocationError(error = {}, permissionState = '') {
+  const next = new Error(browserLocationErrorMessage(error, permissionState));
+  next.code = Number(error.code) || 0;
+  next.permissionState = permissionState || '';
+  return next;
+}
+
+async function browserGeolocationPermissionState() {
+  try {
+    if (!navigator.permissions?.query) return '';
+    const result = await navigator.permissions.query({ name: 'geolocation' });
+    return String(result?.state || '');
+  } catch (_) {
+    return '';
+  }
+}
+
+async function currentBrowserPosition() {
   if (!navigator.geolocation) {
     return Promise.reject(new Error('Browser tidak mendukung geolocation.'));
   }
+  const permissionState = await browserGeolocationPermissionState();
+  if (permissionState === 'denied') {
+    throw browserLocationError({ code: 1 }, permissionState);
+  }
   return new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(resolve, (error) => {
-      reject(new Error(browserLocationErrorMessage(error)));
+      reject(browserLocationError(error, permissionState));
     }, {
       enableHighAccuracy: true,
       timeout: 15000,
@@ -13222,6 +13654,19 @@ function showBrowserPositionOnMap(map, position = {}, options = {}) {
     map.setView(point, zoom);
   }
   return point;
+}
+
+function scheduleLeafletMapInvalidate(map) {
+  if (!map || typeof map.invalidateSize !== 'function') return;
+  const invalidate = () => {
+    try {
+      map.invalidateSize();
+    } catch {
+      // Ignore map instances that were already removed.
+    }
+  };
+  window.requestAnimationFrame?.(invalidate);
+  [80, 260, 700].forEach((delay) => window.setTimeout(invalidate, delay));
 }
 
 async function requestGpsForLeafletMap(map, options = {}) {
@@ -13320,7 +13765,7 @@ function bindRadiusMemberFields(options = {}) {
     const hasLocation = latitude && longitude;
     if (locationLink) {
       locationLink.hidden = !hasLocation;
-      locationLink.href = hasLocation ? `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}` : '#';
+      locationLink.href = hasLocation ? googleMapsDirectionsUrl(latitude, longitude) : '#';
     }
     if (locationStatus && hasLocation) {
       const accuracy = accuracyInput?.value.trim();
@@ -14249,7 +14694,8 @@ async function renderRadiusPppDhcp(options = {}) {
     status: state.radiusPppTab === 'users' ? state.radiusPppStatus : '',
     profile: state.radiusPppTab === 'users' ? state.radiusPppProfile : '',
     internet: state.radiusPppTab === 'users' ? state.radiusPppInternet : '',
-    refresh: options.refresh ? '1' : ''
+    refresh: options.refresh ? '1' : '',
+    ...partnerScopeQueryParams()
   });
   const payload = await api(`/api/radius/ppp-dhcp?${params}`);
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
@@ -14275,6 +14721,7 @@ async function renderRadiusPppDhcp(options = {}) {
 
   app.innerHTML = `
     <div class="stack">
+      ${partnerContextNotice(payload)}
       ${radiusSummary(payload, {
         total: 'PPP-DHCP',
         totalSub: 'Total user/profile',
@@ -14511,6 +14958,7 @@ async function renderRadiusHotspot(options = {}) {
     try {
       const authPayload = await api('/api/auth/me');
       state.auth = authPayload.user || state.auth;
+      state.csrfToken = authPayload.csrfToken || state.csrfToken || '';
       clearRadiusOptionsCache('hotspot');
       resellerVoucherRole = state.auth?.role === 'reseller_voucher';
     } catch {
@@ -15449,21 +15897,53 @@ function monitoringCoordinate(row = {}) {
   return [latitude, longitude];
 }
 
-function monitoringCoordinateOutsideEastKalimantan(row = {}) {
+function monitoringCoordinateDistanceKm(first = null, second = null) {
+  if (!Array.isArray(first) || !Array.isArray(second)) return 0;
+  const [firstLat, firstLon] = first.map(Number);
+  const [secondLat, secondLon] = second.map(Number);
+  if (![firstLat, firstLon, secondLat, secondLon].every(Number.isFinite)) return 0;
+  const toRadians = (value) => value * Math.PI / 180;
+  const earthRadiusKm = 6371;
+  const latitudeDelta = toRadians(secondLat - firstLat);
+  const longitudeDelta = toRadians(secondLon - firstLon);
+  const area = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(toRadians(firstLat)) * Math.cos(toRadians(secondLat)) * Math.sin(longitudeDelta / 2) ** 2;
+  return 2 * earthRadiusKm * Math.asin(Math.sqrt(area));
+}
+
+function monitoringCoordinateOutsideServiceArea(row = {}, center = MONITORING_MAP_DEFAULT_CENTER) {
   const coordinate = monitoringCoordinate(row);
   if (!coordinate) return false;
-  const [latitude, longitude] = coordinate;
-  return latitude < -2.9 || latitude > 2.8 || longitude < 113.4 || longitude > 119.6;
+  return monitoringCoordinateDistanceKm(center, coordinate) > MONITORING_MAP_SERVICE_RADIUS_KM;
+}
+
+function monitoringCoordinateReviewText(row = {}, center = MONITORING_MAP_DEFAULT_CENTER) {
+  const coordinate = monitoringCoordinate(row);
+  if (!coordinate) return '';
+  const distanceKm = monitoringCoordinateDistanceKm(center, coordinate);
+  if (distanceKm > MONITORING_MAP_SERVICE_RADIUS_KM) return `di luar area layanan ±${Math.round(distanceKm)} km`;
+  return '';
+}
+
+function monitoringCoordinateInsideServiceArea(row = {}, center = MONITORING_MAP_DEFAULT_CENTER) {
+  const coordinate = monitoringCoordinate(row);
+  if (!coordinate || monitoringCoordinateOutsideServiceArea(row, center)) return null;
+  return coordinate;
 }
 
 function monitoringCoordinateText(row = {}) {
   const coordinate = monitoringCoordinate(row);
   if (!coordinate) return 'Koordinat belum ada';
-  return `${coordinate[0].toFixed(6)}, ${coordinate[1].toFixed(6)}${monitoringCoordinateOutsideEastKalimantan(row) ? ' · di luar Kaltim' : ''}`;
+  const reviewText = monitoringCoordinateReviewText(row);
+  return `${coordinate[0].toFixed(6)}, ${coordinate[1].toFixed(6)}${reviewText ? ` · ${reviewText}` : ''}`;
+}
+
+function googleMapsDirectionsUrl(latitude, longitude) {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${latitude},${longitude}`)}&travelmode=driving`;
 }
 
 function monitoringMapGoogleMapsUrl(latitude, longitude) {
-  return `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}`;
+  return googleMapsDirectionsUrl(latitude, longitude);
 }
 
 function monitoringCustomerStatusBadge(status = '') {
@@ -15525,6 +16005,7 @@ function monitoringCustomerMapTone(row = {}) {
 
 function monitoringCustomerMapCircleStyle(row = {}, renderer = null) {
   const tone = monitoringCustomerMapTone(row);
+  const mobileMap = monitoringMapMobileScrollGuardEnabled();
   const colors = {
     active: '#22c55e',
     isolated: '#f59e0b',
@@ -15533,19 +16014,22 @@ function monitoringCustomerMapCircleStyle(row = {}, renderer = null) {
   };
   return {
     renderer: renderer || undefined,
-    radius: tone === 'active' ? 6 : 5,
+    radius: mobileMap ? 10 : (tone === 'active' ? 6 : 5),
     stroke: true,
     color: '#ffffff',
-    weight: 1.5,
+    weight: mobileMap ? 2 : 1.5,
     opacity: 0.92,
     fill: true,
     fillColor: colors[tone] || colors.active,
-    fillOpacity: tone === 'inactive' ? 0.68 : 0.9
+    fillOpacity: tone === 'inactive' ? 0.68 : 0.9,
+    interactive: true,
+    bubblingMouseEvents: false
   };
 }
 
 function monitoringFiberMapCircleStyle(row = {}, kind = 'odp', renderer = null) {
   const tone = String(row.tone || row.status || 'active').toLowerCase();
+  const mobileMap = monitoringMapMobileScrollGuardEnabled();
   const palette = {
     noc: '#0f766e',
     odc: '#2563eb',
@@ -15558,19 +16042,80 @@ function monitoringFiberMapCircleStyle(row = {}, kind = 'odp', renderer = null) 
     : (palette[kind] || palette.odp);
   return {
     renderer: renderer || undefined,
-    radius: kind === 'odc' ? 7 : 5,
+    radius: mobileMap ? (kind === 'odc' ? 11 : 9) : (kind === 'odc' ? 7 : 5),
     stroke: true,
     color: '#ffffff',
-    weight: 1.4,
+    weight: mobileMap ? 2 : 1.4,
     opacity: 0.9,
     fill: true,
     fillColor,
-    fillOpacity: 0.88
+    fillOpacity: 0.88,
+    interactive: true,
+    bubblingMouseEvents: false
   };
 }
 
 function monitoringMapUseLightweightMode(totalRows = 0) {
   return monitoringMapMobileScrollGuardEnabled() || Number(totalRows || 0) >= MONITORING_MAP_CANVAS_THRESHOLD;
+}
+
+function monitoringMapTileMode() {
+  return storageValue(MONITORING_MAP_TILE_STORAGE_KEY) === 'satellite' ? 'satellite' : 'standard';
+}
+
+function saveMonitoringMapTileMode(mode = 'standard') {
+  try {
+    window.localStorage.setItem(MONITORING_MAP_TILE_STORAGE_KEY, mode === 'satellite' ? 'satellite' : 'standard');
+  } catch (_) {
+    // Browser storage is optional.
+  }
+}
+
+function monitoringMapTileLayerOptions(options = {}) {
+  return {
+    updateWhenIdle: options.updateWhenIdle,
+    updateWhenZooming: options.updateWhenZooming,
+    keepBuffer: options.keepBuffer
+  };
+}
+
+function monitoringMapBaseLayers(options = {}) {
+  if (!window.L) return {};
+  const shared = monitoringMapTileLayerOptions(options);
+  return {
+    standard: window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      ...shared,
+      maxZoom: 20,
+      attribution: '&copy; OpenStreetMap'
+    }),
+    satellite: window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      ...shared,
+      maxZoom: 19,
+      attribution: 'Tiles &copy; Esri'
+    })
+  };
+}
+
+function addMonitoringMapBaseLayerControl(map, options = {}) {
+  if (!map || !window.L) return null;
+  const layers = monitoringMapBaseLayers(options);
+  const selectedMode = monitoringMapTileMode();
+  const activeLayer = layers[selectedMode] || layers.standard;
+  activeLayer?.addTo?.(map);
+  if (window.L.control?.layers) {
+    window.L.control.layers({
+      Standar: layers.standard,
+      Satelit: layers.satellite
+    }, null, {
+      collapsed: true,
+      position: 'topright'
+    }).addTo(map);
+    map.on?.('baselayerchange', (event) => {
+      const name = String(event?.name || '').toLowerCase();
+      saveMonitoringMapTileMode(name.includes('satelit') ? 'satellite' : 'standard');
+    });
+  }
+  return layers;
 }
 
 function monitoringMapYield() {
@@ -15600,7 +16145,7 @@ function monitoringCustomerPopupAccountText(row = {}) {
 
 function monitoringCustomerPopup(row = {}) {
   const coordinate = monitoringCoordinate(row);
-  const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Buka Google Maps</a>` : '';
+  const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Rute Google Maps</a>` : '';
   const canEditCoordinate = row.id && canAny(['customers:manage', 'members:contact:write']);
   const canEditWifi = row.id && row.username && can('genieacs:write');
   const accountText = monitoringCustomerPopupAccountText(row);
@@ -15610,7 +16155,7 @@ function monitoringCustomerPopup(row = {}) {
       ${accountText ? `<span>${escapeHtml(accountText)}</span>` : ''}
       <span>${escapeHtml(row.currentPlan || '-')}</span>
       <span>${monitoringCustomerStatusBadge(row.status)}</span>
-      <span class="${monitoringCoordinateOutsideEastKalimantan(row) ? 'warning-text' : ''}">${escapeHtml(monitoringCoordinateText(row))}</span>
+      <span class="${monitoringCoordinateOutsideServiceArea(row) ? 'warning-text' : ''}">${escapeHtml(monitoringCoordinateText(row))}</span>
       ${row.phone ? `<span>WA: ${escapeHtml(row.phone)}</span>` : ''}
       ${row.address ? `<span>${escapeHtml(row.address)}</span>` : ''}
       ${coordinateLink}
@@ -15622,7 +16167,7 @@ function monitoringCustomerPopup(row = {}) {
 
 function monitoringFiberPopup(row = {}) {
   const coordinate = monitoringCoordinate(row);
-  const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Buka Google Maps</a>` : '';
+  const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Rute Google Maps</a>` : '';
   const typeLabel = row.type === 'noc' ? 'Site' : row.type === 'odc' ? 'ODC' : 'ODP';
   return `
     <div class="monitoring-map-popup">
@@ -15638,8 +16183,36 @@ function monitoringFiberPopup(row = {}) {
   `;
 }
 
+function bindMonitoringMapPopup(layer, popupHtml) {
+  if (!layer || typeof layer.bindPopup !== 'function') return layer;
+  const lazyPopup = typeof popupHtml === 'function';
+  layer.bindPopup(lazyPopup ? '<div class="monitoring-map-popup"><span>Memuat detail...</span></div>' : popupHtml, {
+    autoPan: true,
+    closeButton: true,
+    closeOnClick: true,
+    autoClose: true
+  });
+  if (typeof layer.on === 'function' && typeof layer.openPopup === 'function') {
+    layer.on('click', (event) => {
+      event?.originalEvent?.stopPropagation?.();
+      if (lazyPopup) {
+        const content = popupHtml();
+        const popup = typeof layer.getPopup === 'function' ? layer.getPopup() : null;
+        if (popup && typeof popup.setContent === 'function') popup.setContent(content);
+        else if (typeof layer.setPopupContent === 'function') layer.setPopupContent(content);
+      }
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => layer.openPopup());
+      } else {
+        layer.openPopup();
+      }
+    });
+  }
+  return layer;
+}
+
 function monitoringMapMobileScrollGuardEnabled() {
-  return window.matchMedia?.('(max-width: 760px)')?.matches === true;
+  return window.matchMedia?.('(max-width: 760px), (hover: none) and (pointer: coarse)')?.matches === true;
 }
 
 function setLeafletMapInteraction(map, enabled = true) {
@@ -15650,7 +16223,9 @@ function setLeafletMapInteraction(map, enabled = true) {
   map?.scrollWheelZoom?.[method]?.();
   map?.boxZoom?.[method]?.();
   map?.keyboard?.[method]?.();
-  map?.tap?.[method]?.();
+  // Jangan matikan tap/click marker. Scroll guard hanya mengunci drag/zoom,
+  // sementara popup titik pelanggan/ODP/ODC tetap harus bisa dibuka.
+  map?.tap?.enable?.();
 }
 
 function bindMonitoringMapMobileScrollGuard(map, mapEl, options = {}) {
@@ -15691,19 +16266,27 @@ function bindMonitoringMapMobileScrollGuard(map, mapEl, options = {}) {
     interactive = false;
     sync();
   };
-  toggle?.addEventListener('click', () => {
+  const toggleInteraction = () => {
     interactive = !interactive;
     sync();
-  });
-  mapEl.addEventListener('mouseleave', lockMap);
-  document.addEventListener('click', (event) => {
+  };
+  const handleDocumentClick = (event) => {
     if (!interactive) return;
     const target = event.target;
     if (!target?.closest) return;
     if (target.closest('.monitoring-map-canvas-wrap')) return;
     if (target.closest('.bottom-nav, .sidebar, .topbar, .menu-backdrop, [data-view], [data-open-nav-group]')) lockMap();
-  }, true);
+  };
+  toggle?.addEventListener('click', toggleInteraction);
+  mapEl.addEventListener('mouseleave', lockMap);
+  document.addEventListener('click', handleDocumentClick, true);
   window.addEventListener('pagehide', lockMap);
+  mapEl._monitoringMapGuardCleanup = () => {
+    toggle?.removeEventListener('click', toggleInteraction);
+    mapEl.removeEventListener('mouseleave', lockMap);
+    document.removeEventListener('click', handleDocumentClick, true);
+    window.removeEventListener('pagehide', lockMap);
+  };
   sync();
 }
 
@@ -15719,16 +16302,20 @@ async function mountMonitoringCustomerMap(payload = {}) {
   mapEl.addEventListener('click', handleMonitoringCustomerMapEditClick);
   const infrastructureNodes = Array.isArray(payload.infrastructureNodes) ? payload.infrastructureNodes : [];
   const customerMarkers = Array.isArray(payload.markers) ? payload.markers : [];
+  const primaryNodeCoordinate = monitoringCoordinate(infrastructureNodes.find((node) => node?.type === 'noc' && node?.isPrimary) || {});
+  const serviceCenter = primaryNodeCoordinate || MONITORING_MAP_DEFAULT_CENTER;
   const mobileLightweightMap = monitoringMapMobileScrollGuardEnabled();
   const lightweightMap = monitoringMapUseLightweightMode(infrastructureNodes.length + customerMarkers.length);
-  const customerRenderer = lightweightMap && window.L.canvas ? window.L.canvas({ padding: 0.35 }) : null;
+  const customerRenderer = lightweightMap && window.L.canvas
+    ? window.L.canvas({ padding: mobileLightweightMap ? 0.18 : 0.3 })
+    : null;
   const map = window.L.map(mapEl, {
     scrollWheelZoom: true,
     preferCanvas: lightweightMap,
     zoomAnimation: !lightweightMap,
     fadeAnimation: !lightweightMap,
     markerZoomAnimation: !lightweightMap,
-    tap: !mobileLightweightMap
+    tap: true
   }).setView([-0.5022, 117.1537], 12);
   mapEl.dataset.mapMode = lightweightMap ? 'compact' : 'detailed';
   enableLeafletMapWheelZoom(map, mapEl);
@@ -15737,13 +16324,11 @@ async function mountMonitoringCustomerMap(payload = {}) {
     toggleId: 'customerMapInteractionToggle',
     hintId: 'customerMapTouchHint'
   });
-  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 20,
+  addMonitoringMapBaseLayerControl(map, {
     updateWhenIdle: lightweightMap,
     updateWhenZooming: !lightweightMap,
-    keepBuffer: lightweightMap ? 1 : 2,
-    attribution: '&copy; OpenStreetMap'
-  }).addTo(map);
+    keepBuffer: lightweightMap ? 1 : 2
+  });
   const bounds = [];
   const isCancelled = () => state.view !== 'monitoringCustomerMap' || !document.body.contains(mapEl);
   await addLeafletRowsInChunks(infrastructureNodes, (node) => {
@@ -15751,37 +16336,34 @@ async function mountMonitoringCustomerMap(payload = {}) {
     if (!coordinate) return;
     bounds.push(coordinate);
     const nodeKind = ['noc', 'odc', 'odp'].includes(node.type) ? node.type : 'odp';
-    window.L.marker(coordinate, {
+    bindMonitoringMapPopup(window.L.marker(coordinate, {
       icon: monitoringMapMarkerIcon(nodeKind, node.tone || node.status || 'active'),
       zIndexOffset: monitoringMapMarkerZIndex(nodeKind)
-    }).addTo(map).bindPopup(monitoringFiberPopup(node));
-  }, { isCancelled, chunkSize: 80 });
+    }).addTo(map), () => monitoringFiberPopup(node));
+  }, { isCancelled, chunkSize: mobileLightweightMap ? 30 : 80 });
   if (isCancelled()) return;
   await addLeafletRowsInChunks(customerMarkers, (row) => {
-    const coordinate = monitoringCoordinate(row);
+    const coordinate = monitoringCoordinateInsideServiceArea(row, serviceCenter);
     if (!coordinate) return;
     bounds.push(coordinate);
-    if (lightweightMap && window.L.circleMarker) {
-      window.L.circleMarker(coordinate, monitoringCustomerMapCircleStyle(row, customerRenderer))
-        .addTo(map)
-        .bindPopup(monitoringCustomerPopup(row));
-      return;
-    }
-    window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon('customer', monitoringCustomerMapTone(row)),
-      zIndexOffset: monitoringMapMarkerZIndex('customer')
-    }).addTo(map).bindPopup(monitoringCustomerPopup(row));
-  }, { isCancelled });
+    const layer = lightweightMap && window.L.circleMarker
+      ? window.L.circleMarker(coordinate, monitoringCustomerMapCircleStyle(row, customerRenderer))
+      : window.L.marker(coordinate, {
+        icon: monitoringMapMarkerIcon('customer', monitoringCustomerMapTone(row)),
+        zIndexOffset: monitoringMapMarkerZIndex('customer')
+      });
+    bindMonitoringMapPopup(layer.addTo(map), () => monitoringCustomerPopup(row));
+  }, { isCancelled, chunkSize: mobileLightweightMap ? 40 : MONITORING_MAP_CHUNK_SIZE });
   if (isCancelled()) return;
   if (bounds.length) {
     map.fitBounds(window.L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
   }
-  requestGpsForLeafletMap(map, {
-    statusEl: document.getElementById('customerMapGpsStatus'),
-    center: !bounds.length,
-    zoom: 16
-  }).catch(() => {});
-  window.setTimeout(() => map.invalidateSize(), 150);
+  setGpsStatus(
+    document.getElementById('customerMapGpsStatus'),
+    'Peta siap. Tekan GPS Perangkat jika ingin memusatkan ke lokasi perangkat.',
+    bounds.length ? '' : 'ok'
+  );
+  scheduleLeafletMapInvalidate(map);
 }
 
 function monitoringCustomerMapRows(payload = window.__lastCustomerMapPayload || {}) {
@@ -15937,7 +16519,6 @@ function bindMonitoringCustomerMapFilters() {
   }
   [
     ['customerMapStatus', 'monitoringCustomerMapStatus'],
-    ['customerMapAccess', 'monitoringCustomerMapAccess'],
     ['customerMapPlan', 'monitoringCustomerMapPlan'],
     ['customerMapLocation', 'monitoringCustomerMapLocation']
   ].forEach(([id, stateKey]) => {
@@ -15953,7 +16534,8 @@ function bindMonitoringCustomerMapFilters() {
     requestGpsForLeafletMap(map, {
       statusEl: document.getElementById('customerMapGpsStatus'),
       center: true,
-      zoom: 17
+      zoom: 17,
+      showLayer: false
     }).catch(() => {});
   });
   app.querySelectorAll('[data-customer-map-row-id]').forEach((button) => {
@@ -15963,10 +16545,11 @@ function bindMonitoringCustomerMapFilters() {
 
 async function renderMonitoringCustomerMap(options = {}) {
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat peta pelanggan...</div>';
+  state.monitoringCustomerMapAccess = 'all';
   const params = queryString({
     search: state.monitoringCustomerMapSearch,
     status: state.monitoringCustomerMapStatus,
-    accessState: state.monitoringCustomerMapAccess,
+    accessState: 'all',
     plan: state.monitoringCustomerMapPlan,
     location: state.monitoringCustomerMapLocation
   });
@@ -15975,7 +16558,9 @@ async function renderMonitoringCustomerMap(options = {}) {
   window.__lastCustomerMapPayload = payload;
   const summary = payload.summary || {};
   const customerRows = monitoringCustomerMapRows(payload);
-  const listedCustomerRows = customerRows.slice(0, 80);
+  const compactMapList = monitoringMapMobileScrollGuardEnabled();
+  const listedCustomerLimit = compactMapList ? 24 : 80;
+  const listedCustomerRows = customerRows.slice(0, listedCustomerLimit);
   app.innerHTML = `
     <div class="stack monitoring-map-page">
       <section class="metrics">
@@ -15994,12 +16579,6 @@ async function renderMonitoringCustomerMap(options = {}) {
             <option value="active" ${state.monitoringCustomerMapStatus === 'active' ? 'selected' : ''}>Aktif</option>
             <option value="isolated" ${state.monitoringCustomerMapStatus === 'isolated' ? 'selected' : ''}>Isolir</option>
             <option value="inactive" ${state.monitoringCustomerMapStatus === 'inactive' ? 'selected' : ''}>Nonaktif</option>
-          </select>
-          <select class="control" id="customerMapAccess">
-            <option value="all" ${state.monitoringCustomerMapAccess === 'all' ? 'selected' : ''}>Semua akses</option>
-            <option value="normal" ${state.monitoringCustomerMapAccess === 'normal' ? 'selected' : ''}>Normal</option>
-            <option value="isolated" ${state.monitoringCustomerMapAccess === 'isolated' ? 'selected' : ''}>Isolir</option>
-            <option value="inactive" ${state.monitoringCustomerMapAccess === 'inactive' ? 'selected' : ''}>Nonaktif</option>
           </select>
           <select class="control" id="customerMapPlan">
             <option value="all" ${state.monitoringCustomerMapPlan === 'all' ? 'selected' : ''}>Semua paket</option>
@@ -16047,13 +16626,13 @@ async function renderMonitoringCustomerMap(options = {}) {
           <div class="panel-head compact">
             <div>
               <h3>Daftar Pelanggan</h3>
-              <p class="muted">Ditampilkan maksimal 80 pelanggan sesuai filter. Klik edit untuk koreksi titik.</p>
+              <p class="muted">Ditampilkan maksimal ${listedCustomerLimit} pelanggan sesuai filter. Klik edit untuk koreksi titik.</p>
             </div>
           </div>
           <div class="monitoring-map-missing-list">
             ${listedCustomerRows.length ? listedCustomerRows.map((row) => {
               const coordinate = monitoringCoordinate(row);
-              const outside = monitoringCoordinateOutsideEastKalimantan(row);
+              const outside = monitoringCoordinateOutsideServiceArea(row);
               return `
               <article class="monitoring-map-missing-card">
                 <div>
@@ -16095,7 +16674,7 @@ async function mountMonitoringFiberMap(payload = {}) {
     zoomAnimation: !lightweightMap,
     fadeAnimation: !lightweightMap,
     markerZoomAnimation: !lightweightMap,
-    tap: !monitoringMapMobileScrollGuardEnabled()
+    tap: true
   }).setView([-0.5022, 117.1537], 12);
   mapEl.dataset.mapMode = lightweightMap ? 'compact' : 'detailed';
   enableLeafletMapWheelZoom(map, mapEl);
@@ -16104,13 +16683,11 @@ async function mountMonitoringFiberMap(payload = {}) {
     toggleId: 'fiberNetworkInteractionToggle',
     hintId: 'fiberNetworkTouchHint'
   });
-  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 20,
+  addMonitoringMapBaseLayerControl(map, {
     updateWhenIdle: lightweightMap,
     updateWhenZooming: !lightweightMap,
-    keepBuffer: lightweightMap ? 1 : 2,
-    attribution: '&copy; OpenStreetMap'
-  }).addTo(map);
+    keepBuffer: lightweightMap ? 1 : 2
+  });
   const bounds = [];
   const isCancelled = () => state.view !== 'monitoringFiberNetwork' || !document.body.contains(mapEl);
   const centerById = new Map(centers.map((center) => [String(center.id || ''), center]));
@@ -16120,10 +16697,10 @@ async function mountMonitoringFiberMap(payload = {}) {
     const coordinate = monitoringCoordinate(noc);
     if (!coordinate) return;
     bounds.push(coordinate);
-    window.L.marker(coordinate, {
+    bindMonitoringMapPopup(window.L.marker(coordinate, {
       icon: monitoringMapMarkerIcon('noc', noc.tone || noc.status || 'active'),
       zIndexOffset: monitoringMapMarkerZIndex('noc')
-    }).addTo(map).bindPopup(monitoringFiberPopup(noc));
+    }).addTo(map), monitoringFiberPopup(noc));
   }, { isCancelled, chunkSize: 60 });
   if (isCancelled()) return;
   await addLeafletRowsInChunks(centers, (center) => {
@@ -16136,7 +16713,7 @@ async function mountMonitoringFiberMap(payload = {}) {
         icon: monitoringMapMarkerIcon('odc', center.tone || center.status || 'active'),
         zIndexOffset: monitoringMapMarkerZIndex('odc')
       });
-    layer.addTo(map).bindPopup(monitoringFiberPopup(center));
+    bindMonitoringMapPopup(layer.addTo(map), monitoringFiberPopup(center));
     if (primarySiteCoordinate) {
       window.L.polyline([primarySiteCoordinate, coordinate], {
         renderer: fiberRenderer || undefined,
@@ -16158,7 +16735,7 @@ async function mountMonitoringFiberMap(payload = {}) {
         icon: monitoringMapMarkerIcon('odp', point.tone || point.status || 'active'),
         zIndexOffset: monitoringMapMarkerZIndex('odp')
       });
-    marker.addTo(map).bindPopup(monitoringFiberPopup(point));
+    bindMonitoringMapPopup(marker.addTo(map), monitoringFiberPopup(point));
     const center = centerById.get(String(point.centerId || ''));
     const centerCoordinate = monitoringCoordinate(center || {});
     if (centerCoordinate) {
@@ -16175,11 +16752,11 @@ async function mountMonitoringFiberMap(payload = {}) {
   if (bounds.length) {
     map.fitBounds(window.L.latLngBounds(bounds), { padding: [28, 28], maxZoom: 17 });
   }
-  requestGpsForLeafletMap(map, {
-    statusEl: document.getElementById('fiberNetworkGpsStatus'),
-    center: true,
-    zoom: 18
-  }).catch(() => {});
+  setGpsStatus(
+    document.getElementById('fiberNetworkGpsStatus'),
+    'Peta siap. Tekan GPS Perangkat jika ingin memusatkan ke lokasi perangkat.',
+    bounds.length ? '' : 'ok'
+  );
   if (can('monitoring:write')) {
     map.doubleClickZoom.disable();
     map.on('dblclick', (event) => {
@@ -16213,7 +16790,7 @@ async function mountMonitoringFiberMap(payload = {}) {
       else if (kind === 'odp') openFiberOdpModal(draft, payload);
     });
   }
-  window.setTimeout(() => map.invalidateSize(), 150);
+  scheduleLeafletMapInvalidate(map);
 }
 
 function monitoringFiberAreaOptions(payload = {}) {
@@ -16249,7 +16826,7 @@ function monitoringFiberFormBody(type = 'odc', row = {}, payload = {}) {
       </label>
       <label class="field">
         <span>Area</span>
-        <input name="area" value="${escapeHtml(row.area || '')}" placeholder="Contoh: CEMPAKA">
+        <input name="area" value="${escapeHtml(row.area || '')}" placeholder="Contoh: Wilayah A">
       </label>
       <label class="field">
         <span>Status</span>
@@ -16360,7 +16937,7 @@ async function mountFiberNodeCoordinatePicker(row = {}) {
   window.setTimeout(() => {
     useGps(false).catch(() => {});
   }, 250);
-  window.setTimeout(() => map.invalidateSize(), 180);
+  scheduleLeafletMapInvalidate(map);
 }
 
 function openFiberOdcModal(row = null, payload = {}) {
@@ -16412,7 +16989,8 @@ function bindMonitoringFiberNetwork(payload = {}) {
     requestGpsForLeafletMap(map, {
       statusEl: document.getElementById('fiberNetworkGpsStatus'),
       center: true,
-      zoom: 18
+      zoom: 18,
+      showLayer: false
     }).catch(() => {});
   });
   document.getElementById('addFiberOdc')?.addEventListener('click', () => openFiberOdcModal(null, payload));
@@ -16872,6 +17450,11 @@ function genieClientCounts(row = {}) {
   const countLan = Math.max(Number(row.lanClients || 0), genieClientCountByType(rows, 'LAN'));
   const total = Math.max(Number(row.clientsTotal || row.wifiClientsTotal || 0), rows.length, count24 + count5 + countLan);
   return { count24, count5, countLan, total };
+}
+
+function genieClientBreakdown(row = {}) {
+  const counts = genieClientCounts(row);
+  return `2.4G ${displayNumber(counts.count24)} / 5G ${displayNumber(counts.count5)} / LAN ${displayNumber(counts.countLan)}`;
 }
 
 async function openGenieClientsModal(row = {}) {
@@ -17913,6 +18496,7 @@ async function renderGenieAcs(options = {}) {
                     <button class="genieacs-client-button" type="button" data-genie-clients="${index}" title="Lihat client terkoneksi">
                       ${displayNumber(clientsTotal)}
                     </button>
+                    <small>${escapeHtml(genieClientBreakdown(row))}</small>
                   </div>
                   <div class="genieacs-card-item wide">
                     <span>Terakhir Aktif</span>
@@ -17992,6 +18576,7 @@ async function renderGenieAcs(options = {}) {
                     <button class="genieacs-client-button" type="button" data-genie-clients="${index}" title="Lihat client terkoneksi">
                       ${displayNumber(row.wifiClientsTotal || row.clientsTotal || 0)}
                     </button>
+                    <small class="genieacs-client-breakdown">${escapeHtml(genieClientBreakdown(row))}</small>
                   </td>
                   <td class="genieacs-nowrap" title="${escapeHtml(lastActive)}">${escapeHtml(lastActive)}</td>
                   <td>
@@ -18321,6 +18906,7 @@ async function renderMonitoringCustomers(options = {}) {
     ? await api(endpoint)
     : state.monitoringCustomersPayload;
   state.monitoringCustomersPayload = payload;
+  state.monitoringCustomersRequestKey = requestKey;
   const summary = payload.summary || {};
   const sites = Array.isArray(payload.sites) ? payload.sites : [];
   const selectedSite = sites.some((site) => String(site.id) === String(state.monitoringCustomerSite))
@@ -18557,7 +19143,23 @@ function billingReceiptAllowed(invoice = {}) {
 
 function billingActionButtons(invoice = {}, index = 0, standaloneBilling = true, paymentGatewayEnabled = true) {
   const invoiceLabel = billingInvoiceNo(invoice) || '-';
+  const mapUrl = memberLocationUrl(invoice);
   const buttons = [];
+  if (mapUrl) {
+    buttons.push(`
+      <a class="billing-action-button route" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener" title="Buka rute pelanggan" aria-label="Buka rute pelanggan invoice ${escapeHtml(invoiceLabel)}">
+        <span class="billing-action-icon route" aria-hidden="true"></span>
+        <span>Rute</span>
+      </a>
+    `);
+  } else {
+    buttons.push(`
+      <button class="billing-action-button route is-locked" type="button" disabled title="Koordinat pelanggan belum tersedia" aria-label="Rute pelanggan invoice ${escapeHtml(invoiceLabel)} belum tersedia">
+        <span class="billing-action-icon route" aria-hidden="true"></span>
+        <span>Rute</span>
+      </button>
+    `);
+  }
   if (billingReminderAllowed(invoice)) {
     buttons.push(`
       <button class="billing-action-button whatsapp" type="button" data-billing-reminder="${index}" title="Kirim reminder WA" aria-label="Kirim reminder WhatsApp invoice ${escapeHtml(invoiceLabel)}">
@@ -19597,8 +20199,7 @@ function memberCreatorText(member = {}) {
 function memberLocationUrl(member = {}) {
   const latitude = String(member.latitude || member.memberLatitude || '').trim();
   const longitude = String(member.longitude || member.memberLongitude || '').trim();
-  if (member.locationUrl) return member.locationUrl;
-  return latitude && longitude ? `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}` : '';
+  return latitude && longitude ? googleMapsDirectionsUrl(latitude, longitude) : '';
 }
 
 function memberHousePhotoUrl(member = {}) {
@@ -19752,7 +20353,7 @@ function customerLocationModalBody(record = {}) {
         <div class="member-map-preview">
           <div class="member-map-preview-head">
             <strong>Lokasi Pelanggan</strong>
-            ${mapUrl ? `<a class="ghost-button compact button-link" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener">Google Maps</a>` : ''}
+            ${mapUrl ? `<a class="ghost-button compact button-link" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener">Rute Maps</a>` : ''}
           </div>
           <span>Alamat</span>
           <p>${escapeHtml(address)}</p>
@@ -19794,7 +20395,7 @@ function initCustomerLocationMap(record = {}) {
     attribution: '&copy; OpenStreetMap'
   }).addTo(map);
   window.L.marker([latitude, longitude]).addTo(map);
-  window.setTimeout(() => map.invalidateSize(), 80);
+  scheduleLeafletMapInvalidate(map);
 }
 
 function openCustomerLocationModal(record = {}) {
@@ -20680,7 +21281,7 @@ function initMemberContactMap() {
       if (lat && lng) setPoint(lat, lng);
     });
   });
-  window.setTimeout(() => map.invalidateSize(), 80);
+  scheduleLeafletMapInvalidate(map);
 }
 
 async function openMemberPaymentModal(member = {}) {
@@ -21382,7 +21983,6 @@ async function renderMonitoringMembers(options = {}) {
           <div class="cell-stack">
             <strong class="cell-title" title="${escapeHtml(contactText)}">${escapeHtml(contactText)}</strong>
             ${member.address ? `<span class="cell-subline clamp-2" title="${escapeHtml(member.address)}">${escapeHtml(member.address)}</span>` : '<span class="cell-subline">-</span>'}
-            <a class="cell-subline cell-map-link" href="${escapeHtml(mapUrl || '#')}" data-member-location="${index}">Lihat Peta</a>
           </div>
         </td>
         <td>
@@ -21403,6 +22003,9 @@ async function renderMonitoringMembers(options = {}) {
         <td>${dateLines.length ? dateLines.map((line) => `<div class="nowrap">${escapeHtml(line)}</div>`).join('') : '<span class="muted">-</span>'}</td>
         <td>
           <div class="row-actions compact-actions">
+            ${mapUrl
+              ? `<a class="ghost-button compact member-route-button" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener">Rute Peta</a>`
+              : '<button class="ghost-button compact member-route-button" type="button" disabled>Rute Peta</button>'}
             <button class="ghost-button compact" type="button" data-member-contact="${index}" ${id ? '' : 'disabled'}>${contactEditable ? 'Edit Contact' : 'Contact'}</button>
             <button class="ghost-button compact" type="button" data-member-payment="${index}" ${id ? '' : 'disabled'}>${paymentEditable ? 'Edit Payment' : 'Payment'}</button>
           </div>
@@ -21560,6 +22163,23 @@ async function renderMonitoringMembers(options = {}) {
     state[tabStateKeys.page] = 1;
     return renderMonitoringMembers(renderOptions);
   });
+  const memberMobileSearch = document.getElementById('memberMobileSearchInput');
+  if (memberMobileSearch) {
+    bindLiveTextSearch(memberMobileSearch, {
+      getValue: () => state.search,
+      setValue: (value) => { state.search = value; },
+      handler: (renderOptions = {}) => {
+        state[tabStateKeys.page] = 1;
+        return renderMonitoringMembers(renderOptions);
+      },
+      refocusSelector: '#memberMobileSearchInput'
+    });
+    bindSearchClearButton(memberMobileSearch, () => {
+      state.search = '';
+      state[tabStateKeys.page] = 1;
+      renderMonitoringMembers({ silent: true, liveSearch: true });
+    });
+  }
   app.querySelectorAll('[data-member-page]').forEach((button) => {
     button.addEventListener('click', () => {
       state[tabStateKeys.page] = Math.max(1, Number(button.dataset.memberPage || 1));
@@ -21571,13 +22191,6 @@ async function renderMonitoringMembers(options = {}) {
   }, (page) => {
     state[tabStateKeys.page] = page;
   }, renderMonitoringMembers, 10);
-  app.querySelectorAll('[data-member-location]').forEach((link) => {
-    link.addEventListener('click', (event) => {
-      event.preventDefault();
-      const member = members[Number(link.dataset.memberLocation || -1)];
-      if (member) openCustomerLocationModal(member);
-    });
-  });
   app.querySelectorAll('[data-member-validation]').forEach((button) => {
     button.addEventListener('click', () => {
       const member = members[Number(button.dataset.memberValidation || -1)];
@@ -21645,6 +22258,14 @@ async function renderMonitoringBilling(options = {}) {
     ? String(state.monitoringBillingScope || '').toLowerCase()
     : 'collectible';
   state.monitoringBillingScope = billingScope;
+  const partnerTagihanView = state.view === 'partnerInvoices';
+  const partnerPaymentView = state.view === 'partnerPayments';
+  if (partnerTagihanView) {
+    state.monitoringBillingStatus = 'all';
+  }
+  if (partnerPaymentView) {
+    state.monitoringBillingStatus = 'paid';
+  }
   const params = queryString({
     status: state.monitoringBillingStatus,
     customerStatus: state.monitoringBillingCustomerStatus,
@@ -21654,7 +22275,8 @@ async function renderMonitoringBilling(options = {}) {
     search: state.search,
     page: state.monitoringBillingPage,
     limit: state.monitoringBillingLimit,
-    refresh: options.refresh ? 1 : 0
+    refresh: options.refresh ? 1 : 0,
+    ...(partnerTagihanView || partnerPaymentView ? partnerScopeQueryParams() : {})
   });
   const payload = await api(`/api/monitoring/billing-unpaid?${params}`);
   monitoringBillingRevision = String(payload.revision || monitoringBillingRevision || '');
@@ -21684,9 +22306,9 @@ async function renderMonitoringBilling(options = {}) {
   const filterLabel = selectedSite
     ? `${selectedSite.name}${state.monitoringBillingCustomerStatus !== 'all' ? ` - ${customerStatusLabels[state.monitoringBillingCustomerStatus] || state.monitoringBillingCustomerStatus}` : ''}`
     : (customerStatusLabels[state.monitoringBillingCustomerStatus] || 'Tagihan sesuai filter');
-  const batchReminderAllowed = can('billing-monitor:read');
-  const batchPayAllowed = can('invoices:manage');
-  const batchCancelAllowed = can('invoices:manage') && ['admin', 'owner', 'finance'].includes(String(state.auth?.role || '').toLowerCase());
+  const batchReminderAllowed = !partnerPaymentView && can('billing-monitor:read');
+  const batchPayAllowed = !partnerPaymentView && can('invoices:manage');
+  const batchCancelAllowed = !partnerPaymentView && can('invoices:manage') && ['admin', 'owner', 'finance'].includes(String(state.auth?.role || '').toLowerCase());
 
   const rows = invoices.length ? invoices.map((invoice, index) => {
     const customerName = invoice.customerName || invoice.accountId || invoice.username || '-';
@@ -21721,7 +22343,7 @@ async function renderMonitoringBilling(options = {}) {
           <div class="cell-stack">
             <strong class="cell-title" title="${escapeHtml(invoice.phone || '-')}">${escapeHtml(invoice.phone || '-')}</strong>
             ${address ? `<span class="cell-subline clamp-2" title="${escapeHtml(address)}">${escapeHtml(address)}</span>` : '<span class="cell-subline">-</span>'}
-            <a class="cell-subline cell-map-link" href="${escapeHtml(mapUrl || '#')}" data-billing-location="${index}">Lihat Peta</a>
+            ${mapUrl ? `<a class="cell-subline cell-map-link" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener">Rute Peta</a>` : ''}
           </div>
         </td>
         <td>
@@ -21731,7 +22353,7 @@ async function renderMonitoringBilling(options = {}) {
             ${invoiceItem ? `<span class="cell-subline clamp-2" title="${escapeHtml(invoiceItem)}">${escapeHtml(invoiceItem)}</span>` : '<span class="cell-subline">-</span>'}
           </div>
         </td>
-        <td class="nowrap">${dateText(invoice.dueDate || invoice.invoiceDate)}</td>
+        <td class="nowrap">${escapeHtml(rowDateLabel)}</td>
         <td class="nowrap">${invoice.lastActiveAt ? escapeHtml(billingLastActiveText(invoice)) : '<span class="muted">-</span>'}</td>
         <td class="amount nowrap">${rupiah(invoice.amount)}</td>
         <td class="billing-status-cell"><span class="badge ${displayedStatusBadge}">${escapeHtml(displayedStatus)}</span></td>
@@ -21740,7 +22362,7 @@ async function renderMonitoringBilling(options = {}) {
         </td>
       </tr>
     `;
-  }).join('') : '<tr><td colspan="10">Tidak ada tagihan sesuai filter.</td></tr>';
+  }).join('') : `<tr><td colspan="10">${partnerPaymentView ? 'Tidak ada pembayaran lunas sesuai filter.' : 'Tidak ada tagihan sesuai filter.'}</td></tr>`;
 
   app.innerHTML = `
     <div class="stack monitoring-billing-view">
@@ -21753,12 +22375,21 @@ async function renderMonitoringBilling(options = {}) {
 
       <section class="billing-mobile-primary" aria-label="Pencarian dan status tagihan">
         <input class="control" id="billingMobileSearchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, invoice, UID, WA" autocomplete="off">
-        <div class="billing-mobile-status-tabs" role="group" aria-label="Status tagihan cepat">
-          <button class="${['collectible', 'unpaid'].includes(state.monitoringBillingStatus) ? 'is-active' : ''}" type="button" data-billing-mobile-status="collectible">Terbuka</button>
-          <button class="${state.monitoringBillingStatus === 'overdue' ? 'is-active' : ''}" type="button" data-billing-mobile-status="overdue">Terlambat</button>
-          <button class="${state.monitoringBillingStatus === 'paid' ? 'is-active' : ''}" type="button" data-billing-mobile-status="paid">Lunas</button>
-        </div>
+        ${partnerPaymentView ? '<div class="notice small positive"><strong>Pembayaran</strong><span>Menampilkan invoice mitra yang sudah lunas saja.</span></div>' : `
+          <div class="billing-mobile-status-tabs" role="group" aria-label="Status tagihan cepat">
+            <button class="${['collectible', 'unpaid'].includes(state.monitoringBillingStatus) ? 'is-active' : ''}" type="button" data-billing-mobile-status="collectible">Terbuka</button>
+            <button class="${state.monitoringBillingStatus === 'overdue' ? 'is-active' : ''}" type="button" data-billing-mobile-status="overdue">Terlambat</button>
+            <button class="${state.monitoringBillingStatus === 'paid' ? 'is-active' : ''}" type="button" data-billing-mobile-status="paid">Lunas</button>
+          </div>
+        `}
       </section>
+
+      ${partnerTagihanView || partnerPaymentView ? `
+        <section class="notice ${partnerPaymentView ? 'positive' : ''}">
+          <strong>${partnerPaymentView ? 'Pembayaran Mitra' : 'Tagihan Mitra'}</strong>
+          <span>${partnerPaymentView ? 'Halaman ini dikunci ke status lunas dan dipakai sebagai daftar uang masuk pelanggan mitra.' : 'Halaman ini menampilkan semua tagihan pelanggan mitra sesuai periode.'}</span>
+        </section>
+      ` : ''}
 
       ${collectorBillingView ? `
         ${collectorScope?.targetReady ? '' : `
@@ -21802,13 +22433,15 @@ async function renderMonitoringBilling(options = {}) {
             <option value="isolated" ${state.monitoringBillingCustomerStatus === 'isolated' ? 'selected' : ''}>Isolir</option>
             <option value="terminate" ${state.monitoringBillingCustomerStatus === 'terminate' ? 'selected' : ''}>Terminated</option>
           </select>
-          <select class="control" id="billingStatusFilter" aria-label="Filter status tagihan">
-            <option value="collectible" ${state.monitoringBillingStatus === 'collectible' ? 'selected' : ''}>Perlu ditagih</option>
-            <option value="all" ${state.monitoringBillingStatus === 'all' ? 'selected' : ''}>Semua tagihan</option>
-            <option value="unpaid" ${state.monitoringBillingStatus === 'unpaid' ? 'selected' : ''}>Belum bayar</option>
-            <option value="overdue" ${state.monitoringBillingStatus === 'overdue' ? 'selected' : ''}>Lewat tempo</option>
-            <option value="paid" ${state.monitoringBillingStatus === 'paid' ? 'selected' : ''}>Lunas</option>
-          </select>
+          ${partnerPaymentView ? '' : `
+            <select class="control" id="billingStatusFilter" aria-label="Filter status tagihan">
+              <option value="collectible" ${state.monitoringBillingStatus === 'collectible' ? 'selected' : ''}>Perlu ditagih</option>
+              <option value="all" ${state.monitoringBillingStatus === 'all' ? 'selected' : ''}>Semua tagihan</option>
+              <option value="unpaid" ${state.monitoringBillingStatus === 'unpaid' ? 'selected' : ''}>Belum bayar</option>
+              <option value="overdue" ${state.monitoringBillingStatus === 'overdue' ? 'selected' : ''}>Lewat tempo</option>
+              <option value="paid" ${state.monitoringBillingStatus === 'paid' ? 'selected' : ''}>Lunas</option>
+            </select>
+          `}
           <input class="control billing-desktop-search" id="searchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, invoice, UID, WA" autocomplete="off">
         </div>
         <div class="row-actions">
@@ -21850,8 +22483,8 @@ async function renderMonitoringBilling(options = {}) {
               <th>Pelanggan</th>
               <th>NAS</th>
               <th>Kontak</th>
-              <th>Invoice</th>
-              <th>Jatuh Tempo</th>
+              <th>${partnerPaymentView ? 'Pembayaran' : 'Tagihan'}</th>
+              <th>${partnerPaymentView ? 'Tanggal Bayar' : 'Jatuh Tempo'}</th>
               <th>Terakhir Aktif</th>
               <th class="amount">Nominal</th>
               <th>Status</th>
@@ -22784,7 +23417,7 @@ async function renderUsers(options = {}) {
 }
 
 function userLockedNasDisplay(user = {}) {
-  if (!['reseller_voucher', 'collector', 'technician'].includes(user.role)) return '<span class="muted">-</span>';
+  if (!['partner', 'reseller_voucher', 'collector', 'technician'].includes(user.role)) return '<span class="muted">-</span>';
   const ids = Array.isArray(user.lockedNasIds) ? user.lockedNasIds : [];
   const label = user.lockedNasNames
     || user.lockedNasName
@@ -22814,16 +23447,24 @@ function userFormBody(user = {}, options = {}) {
   const selectedNasIds = Array.isArray(user.lockedNasIds) && user.lockedNasIds.length
     ? user.lockedNasIds
     : [user.lockedNasId || user.resellerNasId || ''].filter(Boolean);
-  const nasLockedRole = ['reseller_voucher', 'collector', 'technician'].includes(user.role || 'viewer');
+  const nasLockedRole = ['partner', 'reseller_voucher', 'collector', 'technician'].includes(user.role || 'viewer');
   const collectorRole = (user.role || 'viewer') === 'collector';
   const technicianRole = (user.role || 'viewer') === 'technician';
-  const nasLockLabel = collectorRole
-    ? 'NAS Target Collector'
-    : technicianRole
-      ? 'NAS Area Teknisi'
-      : 'NAS Target Reseller Hotspot';
+  const partnerRole = (user.role || 'viewer') === 'partner';
+  const nasLockLabel = partnerRole
+    ? 'NAS Target Mitra'
+    : collectorRole
+      ? 'NAS Target Collector'
+      : technicianRole
+        ? 'NAS Area Teknisi'
+        : 'NAS Target Reseller Hotspot';
   const roleText = user.roleLabel || roleLabel(user.role || 'viewer');
   const roleHelp = roleDescription(user.role || 'viewer');
+  const partnerSuffixValue = Array.isArray(user.partnerUsernameSuffixes) && user.partnerUsernameSuffixes.length
+    ? user.partnerUsernameSuffixes.join(', ')
+    : (user.partnerUsernameSuffix || user.usernameSuffix || user.partnerDomain || '');
+  const partnerIspShareValue = Number(user.partnerIspSharePercent ?? user.ispSharePercent ?? 40) || 40;
+  const partnerShareValue = Number(user.partnerSharePercent ?? user.resellerSharePercent ?? (100 - partnerIspShareValue)) || (100 - partnerIspShareValue);
   const photoUrl = safeProfilePhotoUrl(user.photoUrl || user.avatarUrl);
   const previewUrl = profilePhotoDisplayUrl(user);
   return `
@@ -22860,10 +23501,23 @@ function userFormBody(user = {}, options = {}) {
           ${roleOptions(user.role || 'viewer')}
         </select>
       </label>
+      <label class="field full user-partner-suffix-field" data-partner-suffix-field ${partnerRole ? '' : 'hidden'}>
+        <span>Suffix Mitra (wajib)</span>
+        <input name="partnerUsernameSuffix" value="${escapeHtml(partnerSuffixValue)}" placeholder="@gio.net" autocomplete="off" ${partnerRole ? 'required' : ''}>
+        <small class="muted">Isi domain username pelanggan mitra, contoh <code>@gio.net</code>. Data mitra hanya membaca username dengan akhiran ini.</small>
+      </label>
+      <label class="field user-partner-share-field" data-partner-share-field ${partnerRole ? '' : 'hidden'}>
+        <span>Porsi ISP (%)</span>
+        <input name="partnerIspSharePercent" type="number" min="0" max="100" step="0.01" value="${escapeHtml(partnerIspShareValue)}" ${partnerRole ? 'required' : ''}>
+      </label>
+      <label class="field user-partner-share-field" data-partner-share-field ${partnerRole ? '' : 'hidden'}>
+        <span>Porsi Mitra (%)</span>
+        <input name="partnerSharePercent" type="number" min="0" max="100" step="0.01" value="${escapeHtml(partnerShareValue)}" ${partnerRole ? 'required' : ''}>
+      </label>
       <div class="field full user-nas-target-field" data-reseller-nas-lock ${nasLockedRole ? '' : 'hidden'}>
         <span data-nas-lock-label>${escapeHtml(nasLockLabel)}</span>
         ${nasTargetChoiceMarkup(nasOptions, selectedNasIds)}
-        <small data-nas-lock-help>${collectorRole ? 'Pilih satu atau beberapa NAS penagihan. Gunakan Semua NAS untuk seluruh target.' : technicianRole ? 'Opsional: pilih satu atau beberapa NAS sebagai area penugasan teknisi.' : 'Pilih satu atau beberapa NAS yang boleh dikelola reseller hotspot.'}</small>
+        <small data-nas-lock-help>${partnerRole ? 'Pilih NAS operasional mitra. Data pelanggan tetap dibatasi oleh suffix username mitra.' : collectorRole ? 'Pilih satu atau beberapa NAS penagihan. Gunakan Semua NAS untuk seluruh target.' : technicianRole ? 'Opsional: pilih satu atau beberapa NAS sebagai area penugasan teknisi.' : 'Pilih satu atau beberapa NAS yang boleh dikelola reseller hotspot.'}</small>
       </div>
       <div class="user-role-description field full" data-user-role-description>
         <strong>${escapeHtml(roleText)}</strong>
@@ -22927,6 +23581,10 @@ function bindUserRoleNasLock() {
   const lockCount = modalBody.querySelector('[data-nas-target-count]');
   const lockLabel = modalBody.querySelector('[data-nas-lock-label]');
   const lockHelp = modalBody.querySelector('[data-nas-lock-help]');
+  const partnerSuffixField = modalBody.querySelector('[data-partner-suffix-field]');
+  const partnerSuffixInput = modalBody.querySelector('input[name="partnerUsernameSuffix"]');
+  const partnerShareFields = [...modalBody.querySelectorAll('[data-partner-share-field]')];
+  const partnerShareInputs = [...modalBody.querySelectorAll('input[name="partnerIspSharePercent"], input[name="partnerSharePercent"]')];
   const unitInput = modalBody.querySelector('[data-user-role-unit]');
   const positionSelect = modalBody.querySelector('select[name="position"]');
   const roleHelp = modalBody.querySelector('[data-user-role-description]');
@@ -22949,28 +23607,37 @@ function bindUserRoleNasLock() {
   };
   const sync = () => {
     const selectedRole = roleSelect?.value || 'viewer';
-    const nasLockedRole = ['reseller_voucher', 'collector', 'technician'].includes(selectedRole);
+    const nasLockedRole = ['partner', 'reseller_voucher', 'collector', 'technician'].includes(selectedRole);
     if (lockField) lockField.hidden = !nasLockedRole;
     if (lockPicker) lockPicker.hidden = !nasLockedRole;
     if (lockLabel) {
-      lockLabel.textContent = selectedRole === 'collector'
-        ? 'NAS Target Collector'
-        : selectedRole === 'technician'
-          ? 'NAS Area Teknisi'
-          : 'NAS Target Reseller Hotspot';
+      lockLabel.textContent = selectedRole === 'partner'
+        ? 'NAS Target Mitra'
+        : selectedRole === 'collector'
+          ? 'NAS Target Collector'
+          : selectedRole === 'technician'
+            ? 'NAS Area Teknisi'
+            : 'NAS Target Reseller Hotspot';
     }
+    const partner = selectedRole === 'partner';
     const collector = selectedRole === 'collector';
     const technician = selectedRole === 'technician';
+    if (partnerSuffixField) partnerSuffixField.hidden = !partner;
+    if (partnerSuffixInput) partnerSuffixInput.required = partner;
+    partnerShareFields.forEach((field) => { field.hidden = !partner; });
+    partnerShareInputs.forEach((input) => { input.required = partner; });
     const allowAllNas = collector || technician;
     if (allChoice) allChoice.hidden = !allowAllNas;
     if (!allowAllNas && allInput) allInput.checked = false;
     if (!nasLockedRole) lockInputs.forEach((input) => { input.checked = false; });
     if (lockHelp) {
-      lockHelp.textContent = collector
-        ? 'Pilih satu atau beberapa NAS penagihan. Gunakan Semua NAS untuk seluruh target.'
-        : technician
-          ? 'Opsional: pilih satu atau beberapa NAS sebagai area penugasan teknisi. Akses teknis belum dibatasi oleh pilihan ini.'
-          : 'Pilih satu atau beberapa NAS yang boleh dikelola reseller hotspot.';
+      lockHelp.textContent = partner
+        ? 'Pilih NAS operasional mitra. Data pelanggan tetap dibatasi oleh suffix username mitra.'
+        : collector
+          ? 'Pilih satu atau beberapa NAS penagihan. Gunakan Semua NAS untuk seluruh target.'
+          : technician
+            ? 'Opsional: pilih satu atau beberapa NAS sebagai area penugasan teknisi. Akses teknis belum dibatasi oleh pilihan ini.'
+            : 'Pilih satu atau beberapa NAS yang boleh dikelola reseller hotspot.';
     }
     syncCount();
     if (unitInput) {
@@ -23173,6 +23840,7 @@ async function logoutCurrentUser() {
   setMenuOpen(false);
   setAccountMenuOpen(false);
   state.auth = null;
+  state.csrfToken = '';
   state.userRows = null;
   clearRadiusOptionsCache();
   abortPageRequests();
@@ -23194,8 +23862,18 @@ async function openUserModal(user = null) {
     const selectedNasTargets = Array.isArray(payload.lockedNasIds)
       ? payload.lockedNasIds.filter(Boolean)
       : [payload.lockedNasIds].filter(Boolean);
-    if (['collector', 'reseller_voucher'].includes(targetRole) && !selectedNasTargets.length) {
-      throw new Error(targetRole === 'collector' ? 'Pilih minimal satu NAS target collector' : 'Pilih minimal satu NAS target reseller hotspot');
+    if (['partner', 'collector', 'reseller_voucher'].includes(targetRole) && !selectedNasTargets.length) {
+      throw new Error(targetRole === 'partner' ? 'Pilih minimal satu NAS target mitra' : targetRole === 'collector' ? 'Pilih minimal satu NAS target collector' : 'Pilih minimal satu NAS target reseller hotspot');
+    }
+    if (targetRole === 'partner' && !String(payload.partnerUsernameSuffix || '').trim()) {
+      throw new Error('Suffix username mitra wajib diisi, contoh @gio.net');
+    }
+    if (targetRole === 'partner') {
+      const ispShare = Number(payload.partnerIspSharePercent || 0);
+      const partnerShare = Number(payload.partnerSharePercent || 0);
+      if (Math.round((ispShare + partnerShare) * 100) / 100 !== 100) {
+        throw new Error('Total porsi ISP dan mitra harus 100%');
+      }
     }
     const photoFile = form.querySelector('#accountPhotoInput')?.files?.[0];
     const body = {
@@ -25286,6 +25964,294 @@ async function renderSettings(options = {}) {
 
 }
 
+
+async function fetchPartnerReportSummary(options = {}) {
+  const params = queryString({
+    period: state.monitoringBillingPeriod || todayInput().slice(0, 7),
+    partnerId: state.auth?.role === 'partner' ? '' : (state.partnerSettlementPartnerId || 'all'),
+    refresh: options.refresh ? 1 : 0,
+    partnerScope: '1'
+  });
+  return api(`/api/partners/report-summary?${params}`);
+}
+
+async function fetchPartnerBillingRows(status = 'all') {
+  const params = queryString({
+    period: state.monitoringBillingPeriod || todayInput().slice(0, 7),
+    scope: 'month',
+    status,
+    customerStatus: 'all',
+    site: 'all',
+    page: 1,
+    limit: 100,
+    search: '',
+    refresh: '1',
+    ...partnerScopeQueryParams()
+  });
+  return api(`/api/monitoring/billing-unpaid?${params}`);
+}
+
+
+async function fetchPartnerSettlement() {
+  const selectedPartnerId = state.auth?.role === 'partner'
+    ? ''
+    : (state.partnerSettlementPartnerId && state.partnerSettlementPartnerId !== 'all' ? state.partnerSettlementPartnerId : '');
+  const params = queryString({
+    period: state.monitoringBillingPeriod || todayInput().slice(0, 7),
+    partnerId: selectedPartnerId
+  });
+  return api(`/api/partners/settlement?${params}`);
+}
+
+function partnerSettlementPartnerSelect(payload = {}) {
+  const partners = Array.isArray(payload.partners) ? payload.partners : [];
+  if (state.auth?.role === 'partner' || partners.length <= 1) return '';
+  const selectedId = payload.partner?.id || state.partnerSettlementPartnerId || '';
+  return `
+    <label class="field compact-field">
+      <span>Mitra</span>
+      <select id="partnerSettlementPartner">
+        ${partners.map((partner) => `<option value="${escapeHtml(partner.id || '')}" ${String(partner.id || '') === String(selectedId || '') ? 'selected' : ''}>${escapeHtml(partner.name || partner.code || partner.usernameSuffix || 'Mitra')}</option>`).join('')}
+      </select>
+    </label>
+  `;
+}
+
+function renderPartnerSettlementTable(rows = []) {
+  if (!rows.length) return '<div class="empty small">Belum ada invoice lunas pada periode ini.</div>';
+  return `
+    <div class="table-wrap no-top-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Invoice</th>
+            <th>Username</th>
+            <th>Nama</th>
+            <th>Paket</th>
+            <th>Bayar</th>
+            <th>Nominal</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.slice(0, 100).map((row) => `
+            <tr>
+              <td>${escapeHtml(row.invoiceNo || '-')}</td>
+              <td>${escapeHtml(row.username || '-')}</td>
+              <td>${escapeHtml(row.customerName || '-')}</td>
+              <td>${escapeHtml(row.packageName || '-')}</td>
+              <td>${escapeHtml(row.paymentMethod || '-')}<br><small>${escapeHtml(row.paidDate || row.paidAt || '-')}</small></td>
+              <td>${escapeHtml(row.amountText || rupiah(row.amount || 0))}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${rows.length > 100 ? `<p class="muted">Menampilkan 100 dari ${displayNumber(rows.length)} invoice. Gunakan Export CSV untuk data lengkap.</p>` : ''}
+  `;
+}
+
+function renderPartnerSettlementRecords(rows = []) {
+  if (!rows.length) return '<div class="empty small">Belum ada setoran settlement tercatat.</div>';
+  return `
+    <div class="table-wrap no-top-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Tanggal</th>
+            <th>Nominal</th>
+            <th>Metode</th>
+            <th>Catatan</th>
+            <th>Input</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${escapeHtml(row.date || '-')}</td>
+              <td>${escapeHtml(row.amountText || rupiah(row.amount || 0))}</td>
+              <td>${escapeHtml(row.method || '-')}</td>
+              <td>${escapeHtml(row.notes || '-')}</td>
+              <td>${escapeHtml(row.createdByName || '-')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function renderPartnerSettlement() {
+  clearRealtimeTimers();
+  app.innerHTML = '<div class="empty">Memuat settlement mitra...</div>';
+  const payload = await fetchPartnerSettlement();
+  const partner = payload.partner || {};
+  if (partner.id && !state.partnerSettlementPartnerId && state.auth?.role !== 'partner') {
+    state.partnerSettlementPartnerId = partner.id;
+  }
+  const summary = payload.summary || {};
+  const share = payload.share || {};
+  const period = payload.period || state.monitoringBillingPeriod || todayInput().slice(0, 7);
+  app.innerHTML = `
+    <div class="stack partner-settlement-view">
+      ${partnerContextNotice(payload)}
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>Settlement Mitra</h2>
+            <span>${escapeHtml(partner.name || partner.usernameSuffix || 'Pilih mitra')} · Periode ${escapeHtml(periodLabel(period))}</span>
+          </div>
+          <div class="row-actions">
+            <button class="ghost-button compact" id="partnerSettlementRefresh" type="button">Refresh</button>
+            <button class="ghost-button compact" id="partnerSettlementExport" type="button">Export CSV</button>
+            <button class="ghost-button compact" id="partnerSettlementPrint" type="button">Print</button>
+            <button class="button compact" id="partnerSettlementAdd" type="button" ${partner.id && can('invoices:manage') ? '' : 'disabled'}>Catat Setoran</button>
+          </div>
+        </div>
+        <div class="filters-row">
+          <label class="field compact-field">
+            <span>Periode</span>
+            <input id="partnerSettlementPeriod" type="month" value="${escapeHtml(period)}">
+          </label>
+          ${partnerSettlementPartnerSelect(payload)}
+        </div>
+        <div class="metrics">
+          ${metric('Invoice Lunas', displayNumber(summary.paidInvoiceCount || 0), rupiah(summary.grossAmount || 0), 'positive')}
+          ${metric(`Hak ISP ${share.ispPercent ?? 40}%`, rupiah(summary.ispShareAmount || 0), 'Yang harus disetor mitra', 'warning-card')}
+          ${metric(`Hak Mitra ${share.partnerPercent ?? 60}%`, rupiah(summary.partnerShareAmount || 0), 'Bagian mitra', 'positive')}
+          ${metric('Sisa Setor', rupiah(summary.outstandingAmount || 0), `Sudah setor ${rupiah(summary.settledAmount || 0)}`, Number(summary.outstandingAmount || 0) > 0 ? 'warning-card' : 'positive')}
+        </div>
+        <div class="metrics compact-metrics">
+          ${metric('Tunai', rupiah(summary.cashAmount || 0), 'Invoice lunas')}
+          ${metric('Transfer', rupiah(summary.transferAmount || 0), 'Invoice lunas')}
+          ${metric('Online', rupiah(summary.onlineAmount || 0), 'Invoice lunas')}
+        </div>
+      </section>
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h3>Setoran Mitra ke ISP</h3>
+            <span>Catatan ini tidak mengubah invoice/payment, hanya rekonsiliasi settlement.</span>
+          </div>
+        </div>
+        ${renderPartnerSettlementRecords(payload.settlements || [])}
+      </section>
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h3>Dasar Hitungan Invoice Lunas</h3>
+            <span>Invoice yang dihitung adalah invoice lunas sesuai suffix mitra pada periode terpilih.</span>
+          </div>
+        </div>
+        ${renderPartnerSettlementTable(payload.invoices || [])}
+      </section>
+    </div>
+  `;
+  document.getElementById('partnerSettlementRefresh')?.addEventListener('click', () => renderPartnerSettlement());
+  document.getElementById('partnerSettlementPrint')?.addEventListener('click', () => window.print());
+  document.getElementById('partnerSettlementExport')?.addEventListener('click', async () => {
+    const params = queryString({ period, partnerId: partner.id || state.partnerSettlementPartnerId || '' });
+    await downloadFile(`/api/partners/settlement/export.csv?${params}`, `settlement-${partner.code || partner.name || 'mitra'}-${period}.csv`);
+  });
+  document.getElementById('partnerSettlementPeriod')?.addEventListener('change', (event) => {
+    state.monitoringBillingPeriod = event.target.value || todayInput().slice(0, 7);
+    localStorage.setItem(MONITORING_BILLING_PERIOD_STORAGE_KEY, state.monitoringBillingPeriod);
+    renderPartnerSettlement();
+  });
+  document.getElementById('partnerSettlementPartner')?.addEventListener('change', (event) => {
+    state.partnerSettlementPartnerId = event.target.value || '';
+    renderPartnerSettlement();
+  });
+  document.getElementById('partnerSettlementAdd')?.addEventListener('click', () => {
+    openModal('Catat Setoran Settlement', `
+      <div class="form-grid">
+        <label class="field">
+          <span>Tanggal Setor</span>
+          <input name="date" type="date" value="${escapeHtml(todayInput())}" required>
+        </label>
+        <label class="field">
+          <span>Nominal Setor ke ISP</span>
+          <input name="amount" type="number" min="1" step="1" value="${escapeHtml(summary.outstandingAmount || summary.ispShareAmount || 0)}" required>
+        </label>
+        <label class="field">
+          <span>Metode</span>
+          <select name="method">
+            <option value="Transfer">Transfer</option>
+            <option value="Tunai">Tunai</option>
+            <option value="QRIS">QRIS</option>
+          </select>
+        </label>
+        <label class="field full">
+          <span>Catatan</span>
+          <textarea name="notes" placeholder="Contoh: Setoran settlement ${escapeHtml(partner.name || '')} ${escapeHtml(periodLabel(period))}"></textarea>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-button" value="cancel" type="submit">Batal</button>
+        <button class="button" type="submit">Simpan Setoran</button>
+      </div>
+    `, async (formPayload) => {
+      await api('/api/partners/settlement', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...formPayload,
+          period,
+          partnerId: partner.id || state.partnerSettlementPartnerId || ''
+        })
+      });
+      setToast('Setoran settlement tersimpan');
+      await renderPartnerSettlement();
+    });
+  });
+}
+
+async function renderPartnerReport(kind = 'report', options = {}) {
+  if (kind === 'settlement') {
+    await renderPartnerSettlement();
+    return;
+  }
+  clearRealtimeTimers();
+  app.innerHTML = '<div class="empty">Memuat laporan mitra...</div>';
+  const payload = await fetchPartnerReportSummary({ refresh: options.refresh === true });
+  const summary = payload.summary || {};
+  const membersTotal = Number(payload.members?.total || 0);
+  const totalInvoiceCount = Number(summary.total || summary.filteredCount || 0);
+  const totalInvoiceAmount = Number(summary.totalAmount || summary.filteredAmount || 0);
+  const paidInvoiceCount = Number(summary.periodPaidCount || summary.paid || 0);
+  const paidInvoiceAmount = Number(summary.periodPaidAmount || summary.paidAmount || 0);
+  const unpaidInvoiceCount = Number(summary.unpaid || 0) + Number(summary.overdue || 0);
+  const unpaidInvoiceAmount = Number(summary.unpaidAmount || 0) + Number(summary.overdueAmount || 0);
+  const partnerReportMoneyMetric = (count, amount) => `${displayNumber(count)} / ${rupiah(amount)}`;
+  const partnerReportName = payload.partner?.name || state.auth?.partnerName || partnerScopeLabel();
+  const title = 'Laporan Mitra';
+  app.innerHTML = `
+    <div class="stack partner-report-view">
+      ${partnerContextNotice(payload)}
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2>${escapeHtml(title)}</h2>
+            <span>${escapeHtml(partnerReportName || 'Mitra')} · Periode ${escapeHtml(periodLabel(payload.period || state.monitoringBillingPeriod || todayInput().slice(0, 7)))}</span>
+          </div>
+          <div class="row-actions">
+            <button class="ghost-button compact" id="partnerReportRefresh" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="metrics partner-report-metrics">
+          ${metric('Total Pelanggan', displayNumber(membersTotal), 'Scope mitra')}
+          ${metric('Total Invoice', partnerReportMoneyMetric(totalInvoiceCount, totalInvoiceAmount), 'Jumlah invoice / nominal')}
+          ${metric('Sudah Bayar', partnerReportMoneyMetric(paidInvoiceCount, paidInvoiceAmount), 'Invoice lunas / nominal', 'positive')}
+          ${metric('Belum Bayar', partnerReportMoneyMetric(unpaidInvoiceCount, unpaidInvoiceAmount), 'Invoice belum bayar / nominal', 'warning-card')}
+        </div>
+        <div class="notice">
+          <strong>Laporan read-only</strong>
+          <span>Data summary mitra dihitung server-side dalam 1 request ringan dan tidak mengubah invoice/pembayaran.</span>
+        </div>
+      </section>
+    </div>
+  `;
+  document.getElementById('partnerReportRefresh')?.addEventListener('click', () => renderPartnerReport(kind, { refresh: true }));
+}
+
 async function render(options = {}) {
   if (!state.auth) {
     renderLogin();
@@ -25371,10 +26337,15 @@ async function render(options = {}) {
     else if (state.view === 'users') await renderUsers();
     else if (state.view === 'settings') await renderSettings();
     else if (!renderIsStale(renderToken)) app.innerHTML = empty('Halaman tidak tersedia');
-    if (!renderIsStale(renderToken)) scheduleTableTopScrollbars(app);
+    if (!renderIsStale(renderToken)) {
+      bindPartnerCompactNav();
+      scheduleTableTopScrollbars(app);
+    }
   } catch (error) {
     if (renderIsStale(renderToken) || error.name === 'AbortError') return;
     app.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  } finally {
+    hideLoginTransition();
   }
 }
 
@@ -25818,10 +26789,12 @@ async function init() {
       : await api('/api/auth/me', { skipAuthRedirect: true });
     state.auth = payload.user;
     state.roles = payload.roles || [];
+    state.csrfToken = payload.csrfToken || state.csrfToken || '';
     clearRadiusOptionsCache();
     updateBranding(payload);
     const lastView = takeLoginReturnView();
     state.view = canView(lastView) ? lastView : firstAvailableView();
+    showLoginTransition(preloadedPayload?.user ? 'Menyiapkan dashboard...' : 'Memuat dashboard...');
     configureShell();
     startNotificationsTimer();
     setView(state.view, { replace: true });

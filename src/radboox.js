@@ -23,6 +23,86 @@ const RADBOOX_SOURCE_TIMEZONE_OFFSET = '+07:00';
 const memoryCache = new Map();
 const inFlightCache = new Map();
 const webSessionCache = new Map();
+const RADBOOX_MEMORY_CACHE_MAX_ENTRIES = Math.max(16, Number(process.env.RADBOOX_MEMORY_CACHE_MAX_ENTRIES || 200) || 200);
+const RADBOOX_MEMORY_CACHE_MAX_BYTES = Math.max(
+  1024 * 1024,
+  Number(process.env.RADBOOX_MEMORY_CACHE_MAX_BYTES || 24 * 1024 * 1024) || 24 * 1024 * 1024
+);
+const RADBOOX_MEMORY_CACHE_MAX_ENTRY_BYTES = Math.min(
+  RADBOOX_MEMORY_CACHE_MAX_BYTES,
+  Math.max(256 * 1024, Number(process.env.RADBOOX_MEMORY_CACHE_MAX_ENTRY_BYTES || 3 * 1024 * 1024) || 3 * 1024 * 1024)
+);
+const RADBOOX_MEMORY_CACHE_CLEANUP_MS = Math.max(
+  10_000,
+  Number(process.env.RADBOOX_MEMORY_CACHE_CLEANUP_MS || 60_000) || 60_000
+);
+const RADBOOX_WEB_SESSION_CACHE_MAX_ENTRIES = Math.max(2, Number(process.env.RADBOOX_WEB_SESSION_CACHE_MAX_ENTRIES || 24) || 24);
+let memoryCacheBytes = 0;
+
+function cacheEntryBytes(entry = {}) {
+  if (Number.isFinite(Number(entry.bytes)) && Number(entry.bytes) >= 0) return Number(entry.bytes);
+  try {
+    return Buffer.byteLength(JSON.stringify(entry.value ?? null));
+  } catch {
+    return 0;
+  }
+}
+
+function deleteMemoryCacheKey(key = '') {
+  const existing = memoryCache.get(key);
+  if (!existing) return false;
+  memoryCacheBytes = Math.max(0, memoryCacheBytes - cacheEntryBytes(existing));
+  return memoryCache.delete(key);
+}
+
+function pruneMemoryCache(now = Date.now()) {
+  for (const [key, entry] of memoryCache.entries()) {
+    if (!entry || !entry.staleExpiresAt || Number(entry.staleExpiresAt || 0) <= now) {
+      deleteMemoryCacheKey(key);
+    }
+  }
+  while (memoryCache.size > RADBOOX_MEMORY_CACHE_MAX_ENTRIES || memoryCacheBytes > RADBOOX_MEMORY_CACHE_MAX_BYTES) {
+    const oldestKey = memoryCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    deleteMemoryCacheKey(oldestKey);
+  }
+}
+
+function setMemoryCache(key = '', entry = {}) {
+  if (!key || !entry || typeof entry !== 'object') return false;
+  let bytes = 0;
+  try {
+    bytes = Buffer.byteLength(JSON.stringify(entry.value ?? null));
+  } catch {
+    return false;
+  }
+  deleteMemoryCacheKey(key);
+  if (bytes > RADBOOX_MEMORY_CACHE_MAX_ENTRY_BYTES) return false;
+  memoryCache.set(key, {
+    ...entry,
+    bytes
+  });
+  memoryCacheBytes += bytes;
+  pruneMemoryCache();
+  return true;
+}
+
+function pruneWebSessionCache(now = Date.now()) {
+  for (const [key, entry] of webSessionCache.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now) {
+      webSessionCache.delete(key);
+    }
+  }
+  while (webSessionCache.size > RADBOOX_WEB_SESSION_CACHE_MAX_ENTRIES) {
+    webSessionCache.delete(webSessionCache.keys().next().value);
+  }
+}
+
+const radbooxMemoryCacheCleanupTimer = setInterval(() => {
+  pruneMemoryCache();
+  pruneWebSessionCache();
+}, RADBOOX_MEMORY_CACHE_CLEANUP_MS);
+radbooxMemoryCacheCleanupTimer.unref?.();
 
 function cleanText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -99,7 +179,7 @@ async function readCache(key, runtime = {}) {
     return cachePayload(cached.value, { cache: 'memory' });
   }
   if (cached && (!cached.staleExpiresAt || cached.staleExpiresAt <= now)) {
-    memoryCache.delete(key);
+    deleteMemoryCacheKey(key);
   }
   if (!redisCache.enabled()) {
     return null;
@@ -108,7 +188,7 @@ async function readCache(key, runtime = {}) {
     const raw = await redisCache.get(key);
     if (!raw) return null;
     const value = JSON.parse(raw);
-    memoryCache.set(key, {
+    setMemoryCache(key, {
       value,
       expiresAt: now + cacheTtlSeconds(runtime) * 1000,
       staleExpiresAt: now + staleCacheTtlSeconds(runtime) * 1000
@@ -133,6 +213,9 @@ async function readStaleCache(key, runtime = {}, error = null) {
       cacheError: errorMessage
     });
   }
+  if (cached && (!cached.staleExpiresAt || cached.staleExpiresAt <= now)) {
+    deleteMemoryCacheKey(key);
+  }
   if (!redisCache.enabled()) {
     return null;
   }
@@ -140,7 +223,7 @@ async function readStaleCache(key, runtime = {}, error = null) {
     const raw = await redisCache.get(`${key}:stale`);
     if (!raw) return null;
     const value = JSON.parse(raw);
-    memoryCache.set(key, {
+    setMemoryCache(key, {
       value,
       expiresAt: 0,
       staleExpiresAt: now + staleCacheTtlSeconds(runtime) * 1000
@@ -162,7 +245,7 @@ async function writeCache(key, value, runtime = {}) {
   const ttl = cacheTtlSeconds(runtime);
   const staleTtl = staleCacheTtlSeconds(runtime);
   const copy = clonePayload(value);
-  memoryCache.set(key, {
+  setMemoryCache(key, {
     value: copy,
     expiresAt: Date.now() + ttl * 1000,
     staleExpiresAt: Date.now() + staleTtl * 1000
@@ -1647,8 +1730,25 @@ function withTimeout(options = {}) {
   };
 }
 
+async function fetchRadbooxWithTimeout(url, options = {}) {
+  const nextOptions = withTimeout(options);
+  if (nextOptions.signal || options.signal || !Number.isFinite(DEFAULT_FETCH_TIMEOUT_MS) || DEFAULT_FETCH_TIMEOUT_MS <= 0) {
+    return fetch(url, nextOptions);
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEFAULT_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchJson(url, options) {
-  const response = await fetch(url, withTimeout(options));
+  const response = await fetchRadbooxWithTimeout(url, options);
   const contentType = response.headers.get('content-type') || '';
   const text = await response.text();
   if (!response.ok) {
@@ -1740,14 +1840,14 @@ async function webLogin(config) {
     [config.loginPasswordField]: config.password
   };
 
-  const loginResponse = await fetch(resolveUrl(base, config.loginPath), withTimeout({
+  const loginResponse = await fetchRadbooxWithTimeout(resolveUrl(base, config.loginPath), {
     method: 'POST',
     headers: {
       Accept: 'application/json,text/html',
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(loginPayload)
-  }));
+  });
   const cookies = cookieHeader(loginResponse.headers);
   const contentType = loginResponse.headers.get('content-type') || '';
   const loginText = await loginResponse.text();
@@ -1782,6 +1882,7 @@ function sessionCacheKey(config) {
 
 async function webSession(config, runtime = {}) {
   const key = sessionCacheKey(config);
+  pruneWebSessionCache();
   const cached = webSessionCache.get(key);
   if (!runtime.forceSession && cached && cached.expiresAt > Date.now()) {
     return cached.session;
@@ -1791,6 +1892,7 @@ async function webSession(config, runtime = {}) {
     session,
     expiresAt: Date.now() + (Number.isFinite(DEFAULT_SESSION_TTL_MS) ? DEFAULT_SESSION_TTL_MS : 8 * 60 * 1000)
   });
+  pruneWebSessionCache();
   return session;
 }
 
