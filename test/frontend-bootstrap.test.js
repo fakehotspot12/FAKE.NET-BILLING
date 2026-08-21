@@ -19,8 +19,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=ui-safe-20260822"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=ui-safe-20260822"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=mobile-sheet-20260822"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=mobile-sheet-20260822"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
@@ -90,6 +90,10 @@ test('opens mobile navigation as a bottom sheet instead of a side drawer', () =>
   assert.match(styles, /body\.is-authenticated \.sidebar[\s\S]*?transform:\s*translateY\(calc\(100% \+ 110px\)\)/);
   assert.match(styles, /grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(styles, /body\.is-authenticated\.is-menu-open \.sidebar[\s\S]*?transform:\s*translateY\(0\)/);
+  assert.match(styles, /body\.is-authenticated \.menu-backdrop[\s\S]*?inset:\s*0/);
+  assert.match(styles, /body\.is-authenticated\.is-menu-open \.topbar,[\s\S]*?body\.is-authenticated\.is-menu-open \.content[\s\S]*?transform:\s*none/);
+  assert.match(styles, /body\.is-authenticated \.sidebar \.nav-submenu[\s\S]*?display:\s*grid[\s\S]*?max-height:\s*none/);
+  assert.match(styles, /body\.is-authenticated \.sidebar[\s\S]*?overflow-x:\s*hidden/);
   assert.match(styles, /body\.is-authenticated\.is-menu-full \.sidebar \.nav-section\[data-nav-group="admin"\]/);
   assert.match(styles, /\.bottom-item\.is-open::after/);
   assert.doesNotMatch(styles, /body\.is-authenticated \.sidebar[\s\S]*?translate3d\(calc\(-100%/);
