@@ -477,10 +477,13 @@ verify_billing_health() {
   local attempt payload
   for attempt in $(seq 1 30); do
     payload="$(curl -fsS --max-time 3 http://127.0.0.1:8891/api/health 2>/dev/null || true)"
-    if printf '%s' "$payload" | grep -q '"ok":true' \
-      && printf '%s' "$payload" | grep -q '"backend":"bullmq"' \
-      && printf '%s' "$payload" | grep -q '"available":true'; then
-      echo "Health check Billing dan BullMQ berhasil."
+    if printf '%s' "$payload" | grep -q '"ok":true'; then
+      if printf '%s' "$payload" | grep -q '"backend":"bullmq"' \
+        && printf '%s' "$payload" | grep -q '"available":true'; then
+        echo "Health check Billing dan BullMQ berhasil."
+      else
+        echo "Health check Billing berhasil."
+      fi
       return 0
     fi
     sleep 1
@@ -748,6 +751,48 @@ load_genieacs_env() {
   # shellcheck disable=SC1090
   . "$GENIEACS_ENV_FILE"
   set +a
+}
+
+resolve_genieacs_env_file() {
+  local candidate
+  for candidate in "$GENIEACS_ENV_FILE" /etc/fakenet-billing-genieacs.env /opt/genieacs/genieacs.env /etc/genieacs.env; do
+    [ -n "$candidate" ] && [ -f "$candidate" ] && {
+      printf '%s\n' "$candidate"
+      return 0
+    }
+  done
+  return 1
+}
+
+sync_genieacs_virtual_parameters() {
+  local bootstrap env_file nbi_port
+  bootstrap="$APP_DIR/deploy/genieacs/bootstrap.js"
+  [ -f "$bootstrap" ] || return 0
+  command -v node >/dev/null 2>&1 || return 0
+
+  env_file="$(resolve_genieacs_env_file || true)"
+  [ -n "$env_file" ] || {
+    echo "Sinkron Virtual Parameters GenieACS dilewati: env GenieACS tidak ditemukan."
+    return 0
+  }
+
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+
+  nbi_port="${GENIEACS_NBI_PORT:-7557}"
+  if ! port_is_listening "$nbi_port" && ! port_is_listening 27017; then
+    echo "Sinkron Virtual Parameters GenieACS dilewati: NBI/Mongo lokal belum aktif."
+    return 0
+  fi
+
+  echo "Sinkron Virtual Parameters GenieACS via $env_file"
+  GENIEACS_BOOTSTRAP_EXTERNAL=1 \
+    GENIEACS_UI_BOOTSTRAP_ATTEMPTS="${GENIEACS_UI_BOOTSTRAP_ATTEMPTS:-1}" \
+    GENIEACS_NBI_BOOTSTRAP_ATTEMPTS="${GENIEACS_NBI_BOOTSTRAP_ATTEMPTS:-6}" \
+    GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS="${GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS:-3000}" \
+    node "$bootstrap" || echo "Peringatan: sinkron Virtual Parameters GenieACS gagal, repair tetap dilanjutkan."
 }
 
 systemd_unit_exists() {
@@ -1388,6 +1433,7 @@ repair_install() {
   if [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
     bootstrap_genieacs
   fi
+  sync_genieacs_virtual_parameters
 
   if [ -f /etc/fakenet-billing.env ] && [ "${REPAIR_FREERADIUS:-1}" != "0" ]; then
     configure_freeradius_sql

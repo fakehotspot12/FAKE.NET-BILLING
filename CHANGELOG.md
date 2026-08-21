@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.26] - 2026-08-21
+
+### Fixed
+
+- Menjalankan sinkron Virtual Parameters GenieACS dari `install.sh repair`, sehingga server yang masih memakai updater lama tetap mendapat bootstrap virtual parameter pada update pertama.
+
 ## [4.2.25] - 2026-08-21
 
 ### Fixed
