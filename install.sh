@@ -42,20 +42,30 @@ need_root() {
 
 detect_pm() {
   if command -v apt-get >/dev/null 2>&1; then echo apt; return; fi
-  if command -v dnf >/dev/null 2>&1; then echo dnf; return; fi
-  if command -v yum >/dev/null 2>&1; then echo yum; return; fi
-  if command -v apk >/dev/null 2>&1; then echo apk; return; fi
   echo unknown
 }
 
-detect_os_id() {
+require_debian_ubuntu_systemd() {
+  local os_id os_like
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "Installer ini hanya mendukung Debian/Ubuntu berbasis apt." >&2
+    exit 1
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "Installer ini membutuhkan systemd. CT/LXC tanpa systemd tidak direkomendasikan." >&2
+    exit 1
+  fi
   if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
-    printf '%s\n' "${ID:-unknown}"
-    return
+    os_id="${ID:-}"
+    os_like="${ID_LIKE:-}"
+    case " $os_id $os_like " in
+      *" debian "*|*" ubuntu "*) return 0 ;;
+    esac
   fi
-  echo unknown
+  echo "OS tidak dikenali sebagai Debian/Ubuntu. Support installer difokuskan ke Debian/Ubuntu saja." >&2
+  exit 1
 }
 
 node_major() {
@@ -71,53 +81,22 @@ random_hex() {
   openssl rand -hex "$bytes" 2>/dev/null || date +%s%N
 }
 
-configure_rhel_repositories() {
-  local pm="$1"
-  "$pm" install -y ca-certificates curl >/dev/null 2>&1 || true
-  case "$pm" in
-    dnf)
-      "$pm" install -y dnf-plugins-core epel-release >/dev/null 2>&1 || true
-      dnf config-manager --set-enabled crb >/dev/null 2>&1 || dnf config-manager --set-enabled powertools >/dev/null 2>&1 || true
-      ;;
-    yum)
-      "$pm" install -y yum-utils epel-release >/dev/null 2>&1 || true
-      yum-config-manager --enable crb >/dev/null 2>&1 || yum-config-manager --enable powertools >/dev/null 2>&1 || true
-      ;;
-  esac
-}
-
-install_rhel_packages() {
-  local pm="$1"
-  configure_rhel_repositories "$pm"
-  "$pm" install -y ca-certificates curl git rsync tar gzip openssl procps-ng iproute postgresql-server postgresql redis freeradius freeradius-postgresql tesseract
-  "$pm" install -y freeradius-utils >/dev/null 2>&1 || true
-  "$pm" install -y net-snmp-utils >/dev/null 2>&1 || true
-  if ! command -v docker >/dev/null 2>&1; then
-    "$pm" install -y docker || "$pm" install -y moby-engine || "$pm" install -y docker-ce || true
-  fi
-}
-
 install_packages() {
   local pm
   pm="$(detect_pm)"
   case "$pm" in
     apt)
       apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git rsync tar gzip gnupg openssl procps iproute2 postgresql postgresql-client redis-server freeradius freeradius-postgresql freeradius-utils snmp docker.io tesseract-ocr
-      ;;
-    dnf)
-      install_rhel_packages dnf
-      ;;
-    yum)
-      install_rhel_packages yum
-      ;;
-    apk)
-      apk add --no-cache bash ca-certificates curl git rsync tar gzip openssl procps iproute2 nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker openrc su-exec tesseract-ocr
-      apk add --no-cache freeradius-utils >/dev/null 2>&1 || true
-      apk add --no-cache net-snmp-tools >/dev/null 2>&1 || apk add --no-cache net-snmp >/dev/null 2>&1 || true
+      DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        ca-certificates curl git rsync tar gzip gnupg openssl procps iproute2 \
+        postgresql postgresql-client redis-server \
+        freeradius freeradius-postgresql freeradius-utils \
+        snmp docker.io tesseract-ocr \
+        build-essential python3 make g++ netcat-openbsd
       ;;
     *)
-      echo "Package manager tidak dikenali. Install manual: nodejs npm git rsync postgresql redis freeradius freeradius-utils net-snmp-tools/snmp docker tesseract-ocr." >&2
+      echo "Installer ini hanya mendukung Debian/Ubuntu berbasis apt." >&2
+      exit 1
       ;;
   esac
 }
@@ -132,15 +111,8 @@ install_ocr_runtime() {
       apt-get update
       DEBIAN_FRONTEND=noninteractive apt-get install -y tesseract-ocr
       ;;
-    dnf|yum)
-      configure_rhel_repositories "$pm"
-      "$pm" install -y tesseract
-      ;;
-    apk)
-      apk add --no-cache tesseract-ocr
-      ;;
     *)
-      echo "Tesseract OCR belum tersedia. Install manual paket tesseract-ocr/tesseract lalu ulangi." >&2
+      echo "Tesseract OCR belum tersedia. Jalankan di Debian/Ubuntu lalu ulangi install.sh." >&2
       return 1
       ;;
   esac
@@ -221,25 +193,12 @@ external_genieacs_detected() {
 }
 
 cleanup_fakenet_genieacs_services() {
-  local service
   if command -v systemctl >/dev/null 2>&1; then
     systemctl stop "${GENIEACS_UNITS[@]}" >/dev/null 2>&1 || true
     systemctl disable "${GENIEACS_UNITS[@]}" >/dev/null 2>&1 || true
     rm -f /etc/systemd/system/fakenet-billing-genieacs-*.service
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl reset-failed >/dev/null 2>&1 || true
-  fi
-  if command -v rc-service >/dev/null 2>&1; then
-    for service in \
-      fakenet-billing-genieacs-mongodb \
-      fakenet-billing-genieacs-cwmp \
-      fakenet-billing-genieacs-nbi \
-      fakenet-billing-genieacs-fs \
-      fakenet-billing-genieacs-ui; do
-      rc-service "$service" stop >/dev/null 2>&1 || true
-      rc-update del "$service" default >/dev/null 2>&1 || true
-      rm -f "/etc/init.d/$service"
-    done
   fi
   if command -v docker >/dev/null 2>&1; then
     docker rm -f fakenet-billing-genieacs-mongodb >/dev/null 2>&1 || true
@@ -271,20 +230,9 @@ install_node_runtime() {
       bash "$setup"
       DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
       ;;
-    dnf)
-      curl -fsSL "https://rpm.nodesource.com/setup_${NODE_SETUP_MAJOR}.x" -o "$setup"
-      bash "$setup"
-      dnf install -y nodejs
-      ;;
-    yum)
-      curl -fsSL "https://rpm.nodesource.com/setup_${NODE_SETUP_MAJOR}.x" -o "$setup"
-      bash "$setup"
-      yum install -y nodejs
-      ;;
-    apk)
-      apk add --no-cache nodejs npm
-      ;;
     *)
+      echo "Node.js otomatis hanya didukung pada Debian/Ubuntu." >&2
+      exit 1
       ;;
   esac
 }
@@ -351,6 +299,11 @@ verify_repository_payload() {
     deploy/bin/fakenet-billing-stack
     deploy/bin/fakenet-billing-update
     deploy/systemd/fakenet-billing.service
+    deploy/systemd/fakenet-billing-isolir.service
+    deploy/systemd/fakenet-billing-voucher.service
+    deploy/systemd/fakenet-billing-wifiku.service
+    deploy/systemd/fakenet-billing-radius-connector.service
+    deploy/systemd/fakenet-billing-waha.service
     deploy/systemd/fakenet-billing-stack.target
     deploy/systemd/fakenet-billing-genieacs-mongodb.service
     deploy/systemd/fakenet-billing-genieacs-cwmp.service
@@ -834,12 +787,6 @@ cleanup_obsolete_worker_runtime() {
     fi
   fi
 
-  if command -v rc-service >/dev/null 2>&1 && [ -e /etc/init.d/fakenet-billing-worker ]; then
-    rc-service fakenet-billing-worker stop >/dev/null 2>&1 || true
-    rc-update del fakenet-billing-worker default >/dev/null 2>&1 || true
-    rm -f /etc/init.d/fakenet-billing-worker
-    echo "Runtime worker Whatsapp lama OpenRC dinonaktifkan; queue berjalan di service utama."
-  fi
 }
 
 resolve_systemd_group() {
@@ -901,12 +848,7 @@ prepare_genieacs_runtime() {
   [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   if ! id genieacs >/dev/null 2>&1; then
-    if command -v useradd >/dev/null 2>&1; then
-      useradd --system --no-create-home --user-group genieacs
-    else
-      addgroup -S genieacs >/dev/null 2>&1 || true
-      adduser -S -D -H -G genieacs genieacs >/dev/null 2>&1 || true
-    fi
+    useradd --system --no-create-home --user-group genieacs
   fi
   mkdir -p /opt/fakenet-billing-genieacs/ext /opt/fakenet-billing-genieacs/mongodb /var/log/fakenet-billing
   chown -R genieacs:genieacs /opt/fakenet-billing-genieacs/ext /var/log/fakenet-billing
@@ -981,19 +923,12 @@ validate_freeradius_config() {
 }
 
 init_postgres_cluster() {
-  if command -v postgresql-setup >/dev/null 2>&1; then
-    postgresql-setup --initdb >/dev/null 2>&1 || true
-  fi
-  if command -v rc-service >/dev/null 2>&1 && [ -x /etc/init.d/postgresql ]; then
-    rc-service postgresql setup >/dev/null 2>&1 || true
-  fi
+  return 0
 }
 
 psql_superuser() {
   if command -v runuser >/dev/null 2>&1; then
     runuser -u postgres -- psql "$@"
-  elif command -v su-exec >/dev/null 2>&1; then
-    su-exec postgres psql "$@"
   else
     su postgres -c "psql $*"
   fi
@@ -1167,10 +1102,7 @@ configure_freeradius_sql() {
   for candidate in \
     /etc/freeradius/3.0/mods-available/sql \
     /etc/freeradius/3.0/mods-enabled/sql \
-    /etc/freeradius/3.0/mods-config/sql/main/postgresql/queries.conf \
-    /etc/raddb/mods-available/sql \
-    /etc/raddb/mods-enabled/sql \
-    /etc/raddb/mods-config/sql/main/postgresql/queries.conf; do
+    /etc/freeradius/3.0/mods-config/sql/main/postgresql/queries.conf; do
     if [ -f "$candidate" ]; then
       configure_freeradius_sql_file "$candidate" "$radius_db_conn"
       configured=1
@@ -1178,7 +1110,7 @@ configure_freeradius_sql() {
   done
   [ "$configured" -eq 1 ] || return 0
 
-  for mods_base in /etc/freeradius/3.0 /etc/raddb; do
+  for mods_base in /etc/freeradius/3.0; do
     mods_enabled="$mods_base/mods-enabled"
     if [ -d "$mods_enabled" ]; then
       ln -sf ../mods-available/sql "$mods_enabled/sql" || true
@@ -1186,14 +1118,14 @@ configure_freeradius_sql() {
     fi
   done
 
-  for candidate in /etc/freeradius/3.0/mods-enabled/sql /etc/raddb/mods-enabled/sql; do
+  for candidate in /etc/freeradius/3.0/mods-enabled/sql; do
     [ -f "$candidate" ] && configure_freeradius_sql_file "$candidate" "$radius_db_conn"
   done
 
-  for sites_default in /etc/freeradius/3.0/sites-enabled/default /etc/raddb/sites-enabled/default; do
+  for sites_default in /etc/freeradius/3.0/sites-enabled/default; do
     configure_freeradius_site_file "$sites_default"
   done
-  for sites_inner in /etc/freeradius/3.0/sites-enabled/inner-tunnel /etc/raddb/sites-enabled/inner-tunnel; do
+  for sites_inner in /etc/freeradius/3.0/sites-enabled/inner-tunnel; do
     configure_freeradius_site_file "$sites_inner"
   done
 }
@@ -1224,166 +1156,6 @@ install_systemd() {
   bootstrap_genieacs
 }
 
-write_openrc_service() {
-  local service_name="$1" command_args="$2" subweb_kind="${3:-}"
-  cat > "/etc/init.d/$service_name" <<EOF
-#!/sbin/openrc-run
-name="$service_name"
-description="$service_name"
-supervisor=supervise-daemon
-directory="$APP_DIR"
-command="/usr/bin/node"
-command_args="$command_args"
-command_user="root"
-pidfile="/run/$service_name.pid"
-output_log="/var/log/$service_name.log"
-error_log="/var/log/$service_name.err"
-set -a
-[ -f /etc/fakenet-billing.env ] && . /etc/fakenet-billing.env
-set +a
-export NODE_ENV="\${NODE_ENV:-production}"
-if [ -n "$subweb_kind" ]; then
-  export SUBWEB_KIND="$subweb_kind"
-fi
-depend() {
-  need net
-}
-EOF
-  chmod +x "/etc/init.d/$service_name"
-  rc-update add "$service_name" default >/dev/null 2>&1 || true
-  rc-service "$service_name" restart || rc-service "$service_name" start || true
-}
-
-write_openrc_waha_service() {
-  cat > /etc/init.d/fakenet-billing-waha <<EOF
-#!/sbin/openrc-run
-name="fakenet-billing-waha"
-description="WAHA Local WhatsApp Gateway for FAKE.NET Billing"
-supervisor=supervise-daemon
-command="/usr/bin/docker"
-[ -f /etc/fakenet-billing-waha.env ] && . /etc/fakenet-billing-waha.env
-WAHA_PORT="\${WAHA_PORT:-8895}"
-command_args="run --name fakenet-billing-waha --rm --shm-size=1g --add-host=host.docker.internal:host-gateway --env-file /etc/fakenet-billing-waha.env -p 127.0.0.1:\${WAHA_PORT}:3000 -v /opt/fakenet-billing-waha/sessions:/app/.sessions devlikeapro/waha"
-pidfile="/run/fakenet-billing-waha.pid"
-output_log="/var/log/fakenet-billing-waha.log"
-error_log="/var/log/fakenet-billing-waha.err"
-start_pre() {
-  mkdir -p /opt/fakenet-billing-waha/sessions
-  /usr/bin/docker rm -f fakenet-billing-waha >/dev/null 2>&1 || true
-}
-stop_post() {
-  /usr/bin/docker stop fakenet-billing-waha >/dev/null 2>&1 || true
-}
-depend() {
-  need docker net
-}
-EOF
-  chmod +x /etc/init.d/fakenet-billing-waha
-  rc-update add fakenet-billing-waha default >/dev/null 2>&1 || true
-  rc-service fakenet-billing-waha restart || rc-service fakenet-billing-waha start || true
-}
-
-write_openrc_genieacs_mongodb_service() {
-  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
-  [ -f "$GENIEACS_ENV_FILE" ] || return 0
-  cat > /etc/init.d/fakenet-billing-genieacs-mongodb <<'EOF'
-#!/sbin/openrc-run
-name="fakenet-billing-genieacs-mongodb"
-description="MongoDB for FAKE.NET Billing GenieACS"
-supervisor=supervise-daemon
-command="/usr/bin/docker"
-[ -f /etc/fakenet-billing-genieacs.env ] && . /etc/fakenet-billing-genieacs.env
-command_args="run --name fakenet-billing-genieacs-mongodb --rm -p 127.0.0.1:27017:27017 -v /opt/fakenet-billing-genieacs/mongodb:/data/db ${GENIEACS_MONGODB_IMAGE:-docker.io/library/mongo:7}"
-pidfile="/run/fakenet-billing-genieacs-mongodb.pid"
-output_log="/var/log/fakenet-billing/genieacs-mongodb.log"
-error_log="/var/log/fakenet-billing/genieacs-mongodb.err"
-start_pre() {
-  mkdir -p /opt/fakenet-billing-genieacs/mongodb
-  /usr/bin/docker rm -f fakenet-billing-genieacs-mongodb >/dev/null 2>&1 || true
-}
-stop_post() {
-  /usr/bin/docker stop fakenet-billing-genieacs-mongodb >/dev/null 2>&1 || true
-}
-depend() {
-  need docker net
-}
-EOF
-  chmod +x /etc/init.d/fakenet-billing-genieacs-mongodb
-  rc-update add fakenet-billing-genieacs-mongodb default >/dev/null 2>&1 || true
-  rc-service fakenet-billing-genieacs-mongodb restart || rc-service fakenet-billing-genieacs-mongodb start
-}
-
-write_openrc_genieacs_service() {
-  local service_name="$1" command_name="$2" command_path
-  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
-  [ -f "$GENIEACS_ENV_FILE" ] || return 0
-  command_path="$(command -v "$command_name")"
-  cat > "/etc/init.d/$service_name" <<EOF
-#!/sbin/openrc-run
-name="$service_name"
-description="$service_name"
-supervisor=supervise-daemon
-command="$command_path"
-command_user="genieacs"
-pidfile="/run/$service_name.pid"
-output_log="/var/log/fakenet-billing/$service_name.log"
-error_log="/var/log/fakenet-billing/$service_name.err"
-if [ -f "$GENIEACS_ENV_FILE" ]; then
-  set -a
-  . "$GENIEACS_ENV_FILE"
-  set +a
-fi
-depend() {
-  need fakenet-billing-genieacs-mongodb net
-}
-EOF
-  chmod +x "/etc/init.d/$service_name"
-  rc-update add "$service_name" default >/dev/null 2>&1 || true
-  rc-service "$service_name" restart || rc-service "$service_name" start
-}
-
-install_openrc_genieacs() {
-  local run_bootstrap="${1:-1}"
-  [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 0
-  [ -f "$GENIEACS_ENV_FILE" ] || return 0
-  prepare_genieacs_runtime
-  ensure_genieacs_mongodb_image
-  write_openrc_genieacs_mongodb_service
-  write_openrc_genieacs_service fakenet-billing-genieacs-cwmp genieacs-cwmp
-  write_openrc_genieacs_service fakenet-billing-genieacs-nbi genieacs-nbi
-  write_openrc_genieacs_service fakenet-billing-genieacs-fs genieacs-fs
-  write_openrc_genieacs_service fakenet-billing-genieacs-ui genieacs-ui
-  verify_genieacs_health
-  if [ "$run_bootstrap" = "1" ]; then
-    bootstrap_genieacs
-  fi
-}
-
-install_openrc() {
-  install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack
-  install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update
-  mkdir -p /var/log/fakenet-billing
-  init_postgres_cluster
-  rc-update add redis default >/dev/null 2>&1 || true
-  rc-update add postgresql default >/dev/null 2>&1 || true
-  rc-update add freeradius default >/dev/null 2>&1 || rc-update add radiusd default >/dev/null 2>&1 || true
-  rc-update add docker default >/dev/null 2>&1 || true
-  rc-service redis start >/dev/null 2>&1 || true
-  rc-service postgresql start >/dev/null 2>&1 || true
-  rc-service freeradius start >/dev/null 2>&1 || rc-service radiusd start >/dev/null 2>&1 || true
-  rc-service docker start >/dev/null 2>&1 || true
-  init_postgres_databases
-  configure_freeradius_sql
-  rc-service freeradius restart >/dev/null 2>&1 || rc-service radiusd restart >/dev/null 2>&1 || true
-  write_openrc_service fakenet-billing "src/server.js"
-  write_openrc_service fakenet-billing-isolir "src/subweb-server.js" "isolir"
-  write_openrc_service fakenet-billing-voucher "src/subweb-server.js" "voucher"
-  write_openrc_service fakenet-billing-wifiku "src/subweb-server.js" "wifiku"
-  write_openrc_service fakenet-billing-radius-connector "src/radius-connector-service.js"
-  write_openrc_waha_service
-  install_openrc_genieacs
-}
-
 repair_install() {
   mkdir -p /var/log/fakenet-billing
   if [ "${INSTALL_GENIEACS:-1}" = "0" ] && { external_genieacs_unit_exists || external_genieacs_process_exists || port_is_listening "${GENIEACS_NBI_PORT:-7557}"; }; then
@@ -1401,7 +1173,7 @@ repair_install() {
     install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update
   fi
 
-  if command -v systemctl >/dev/null 2>&1 && [ -d "$APP_DIR/deploy/systemd" ]; then
+  if [ -d "$APP_DIR/deploy/systemd" ]; then
     local unit
     for unit in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
       install_systemd_unit_file "$unit"
@@ -1420,14 +1192,6 @@ repair_install() {
       verify_genieacs_health
       bootstrap_genieacs
     fi
-  elif command -v rc-service >/dev/null 2>&1; then
-    write_openrc_service fakenet-billing "src/server.js"
-    write_openrc_service fakenet-billing-isolir "src/subweb-server.js" "isolir"
-    write_openrc_service fakenet-billing-voucher "src/subweb-server.js" "voucher"
-    write_openrc_service fakenet-billing-wifiku "src/subweb-server.js" "wifiku"
-    write_openrc_service fakenet-billing-radius-connector "src/radius-connector-service.js"
-    write_openrc_waha_service
-    install_openrc_genieacs 0
   fi
 
   if [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
@@ -1442,10 +1206,8 @@ repair_install() {
 
   if [ "${REPAIR_FREERADIUS:-1}" = "0" ]; then
     :
-  elif command -v systemctl >/dev/null 2>&1; then
+  else
     restart_systemd_unit_group "freeradius.service radiusd.service"
-  elif command -v rc-service >/dev/null 2>&1; then
-    rc-service freeradius restart >/dev/null 2>&1 || rc-service radiusd restart >/dev/null 2>&1 || true
   fi
 
   echo "Repair selesai."
@@ -1527,18 +1289,8 @@ purge_dependency_packages() {
         >/dev/null 2>&1 || true
       DEBIAN_FRONTEND=noninteractive apt-get autoremove -y >/dev/null 2>&1 || true
       ;;
-    dnf|yum)
-      "$pm" remove -y \
-        postgresql-server postgresql redis freeradius freeradius-postgresql freeradius-utils net-snmp-utils docker moby-engine docker-ce tesseract nodejs npm \
-        >/dev/null 2>&1 || true
-      ;;
-    apk)
-      apk del \
-        nodejs npm postgresql postgresql-client redis freeradius freeradius-postgresql docker tesseract-ocr freeradius-utils net-snmp-tools net-snmp \
-        >/dev/null 2>&1 || true
-      ;;
     *)
-      echo "Package manager tidak dikenali; paket OS pendukung tidak dicabut otomatis." >&2
+      echo "Purge dependency otomatis hanya tersedia untuk Debian/Ubuntu apt." >&2
       ;;
   esac
 }
@@ -1555,28 +1307,16 @@ uninstall_total() {
   radius_db="${RADIUS_DATABASE_NAME:-radius}"
   radius_user="${RADIUS_DATABASE_USER:-radius}"
 
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl stop fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
-    systemctl disable fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
-    radius_unit="$(resolve_systemd_group freeradius.service radiusd.service || true)"
-    if [ -n "$radius_unit" ]; then
-      systemctl stop "$radius_unit" >/dev/null 2>&1 || true
-      systemctl disable "$radius_unit" >/dev/null 2>&1 || true
-    fi
-    rm -f /etc/systemd/system/fakenet-billing*.service /etc/systemd/system/fakenet-billing-stack.target
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl reset-failed >/dev/null 2>&1 || true
+  systemctl stop fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
+  systemctl disable fakenet-billing-stack.target "${APP_UNITS[@]}" >/dev/null 2>&1 || true
+  radius_unit="$(resolve_systemd_group freeradius.service radiusd.service || true)"
+  if [ -n "$radius_unit" ]; then
+    systemctl stop "$radius_unit" >/dev/null 2>&1 || true
+    systemctl disable "$radius_unit" >/dev/null 2>&1 || true
   fi
-
-  if command -v rc-service >/dev/null 2>&1; then
-    for service in fakenet-billing fakenet-billing-isolir fakenet-billing-voucher fakenet-billing-wifiku fakenet-billing-radius-connector fakenet-billing-waha fakenet-billing-genieacs-cwmp fakenet-billing-genieacs-nbi fakenet-billing-genieacs-fs fakenet-billing-genieacs-ui fakenet-billing-genieacs-mongodb; do
-      rc-service "$service" stop >/dev/null 2>&1 || true
-      rc-update del "$service" default >/dev/null 2>&1 || true
-      rm -f "/etc/init.d/$service"
-    done
-    rc-service freeradius stop >/dev/null 2>&1 || rc-service radiusd stop >/dev/null 2>&1 || true
-    rc-update del freeradius default >/dev/null 2>&1 || rc-update del radiusd default >/dev/null 2>&1 || true
-  fi
+  rm -f /etc/systemd/system/fakenet-billing*.service /etc/systemd/system/fakenet-billing-stack.target
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl reset-failed >/dev/null 2>&1 || true
 
   if command -v docker >/dev/null 2>&1; then
     docker rm -f fakenet-billing-waha >/dev/null 2>&1 || true
@@ -1610,6 +1350,7 @@ uninstall_total() {
 
 main() {
   need_root
+  require_debian_ubuntu_systemd
   case "${1:-install}" in
     uninstall|--uninstall)
       shift || true
@@ -1645,13 +1386,7 @@ main() {
   fi
   install_env
   mkdir -p /opt/fakenet-billing-waha/sessions
-  if command -v systemctl >/dev/null 2>&1; then
-    install_systemd
-  elif command -v rc-service >/dev/null 2>&1; then
-    install_openrc
-  else
-    echo "Service manager tidak dikenali. Source sudah dipasang di $APP_DIR." >&2
-  fi
+  install_systemd
   verify_billing_health
   echo "Install selesai."
   echo "Billing: http://SERVER-IP:8891"

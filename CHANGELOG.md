@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.27] - 2026-08-21
+
+### Changed
+
+- Memfokuskan `install.sh`, updater, dan stack command hanya untuk Debian/Ubuntu berbasis `apt` dan systemd agar jalur dependency/service lebih konsisten.
+- Membersihkan dokumentasi instalasi dari instruksi distro di luar Debian/Ubuntu.
+
+### Fixed
+
+- Memperketat validasi payload install/update agar file service subweb, WA, Radius Connector, GenieACS bootstrap, SQL FreeRADIUS, dan seluruh Virtual Parameters wajib tersedia sebelum proses lanjut.
+- Menghapus jalur OpenRC/RHEL/Alpine lama dari installer/updater supaya update tidak melewati sinkron service atau parameter penting.
+
 ## [4.2.26] - 2026-08-21
 
 ### Fixed

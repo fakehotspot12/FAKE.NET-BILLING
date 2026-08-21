@@ -6,7 +6,7 @@ Data runtime tidak disertakan ke repository. Folder `data/` diabaikan oleh Git k
 
 ## Quick Install
 
-Gunakan VM/VPS Linux baru. Minimal yang disarankan adalah Ubuntu 22.04 atau distro setara. Jalankan semua perintah sebagai `root`.
+Gunakan VM/VPS Debian/Ubuntu baru berbasis systemd. Minimal yang disarankan adalah Ubuntu 22.04 LTS atau Debian 12. Jalankan semua perintah sebagai `root`.
 
 ### Ubuntu/Debian
 
@@ -23,28 +23,6 @@ Untuk VM kecil atau jika sudah memakai GenieACS existing, jalankan instalasi rin
 
 ```bash
 INSTALL_GENIEACS=0 bash install.sh
-```
-
-### CentOS/Rocky/Alma/Fedora
-
-```bash
-dnf install -y git curl
-# Jika distro masih memakai yum:
-# yum install -y git curl
-cd /root
-git clone https://github.com/fakehotspot12/FAKE.NET-BILLING.git
-cd FAKE.NET-BILLING
-bash install.sh
-```
-
-### Alpine Linux
-
-```bash
-apk add --no-cache git curl bash
-cd /root
-git clone https://github.com/fakehotspot12/FAKE.NET-BILLING.git
-cd FAKE.NET-BILLING
-bash install.sh
 ```
 
 Setelah installer selesai, buka:
@@ -121,7 +99,7 @@ Hal yang perlu diatur setelah install:
 - Aktifkan dan scan Whatsapp Gateway dari menu aplikasi jika ingin memakai pengiriman WA. Pada instalasi baru, gateway WA sengaja default `disable` sampai owner mengaktifkannya.
 - Buat rule MikroTik untuk Radius, isolir, dan redirect web isolir sesuai kebutuhan jaringan.
 
-Installer juga menyiapkan Tesseract OCR untuk pembacaan Nomor KTP dari foto pelanggan. Jika repository OS tidak menyediakan paket OCR, install paket `tesseract-ocr` atau `tesseract` sesuai distro lalu jalankan `sudo bash install.sh repair`.
+Installer juga menyiapkan Tesseract OCR untuk pembacaan Nomor KTP dari foto pelanggan. Jika paket OCR belum tersedia, pastikan repository Ubuntu/Debian aktif lalu jalankan `sudo bash install.sh repair`.
 
 ## Fitur Utama
 
@@ -349,13 +327,7 @@ sudo INSTALL_GENIEACS=0 bash install.sh
 
 Untuk instalasi penuh dengan GenieACS lokal, gunakan VM biasa. Rekomendasi minimalnya 2 vCPU dan 4 GB RAM, lebih aman 4 vCPU dan 8 GB RAM jika jumlah ONU/CPE besar.
 
-`install.sh` mendukung keluarga:
-
-- Debian/Ubuntu dengan `apt`
-- CentOS/RHEL/Rocky/Alma/Fedora dengan `dnf`/`yum`
-- Alpine Linux dengan `apk` dan OpenRC
-
-Pada RHEL-family, installer akan mencoba mengaktifkan repository pendukung seperti EPEL dan CRB/PowerTools agar paket FreeRADIUS PostgreSQL tersedia. Installer juga menyesuaikan nama service otomatis, misalnya `redis-server`/`redis` dan `freeradius`/`radiusd`, sehingga stack tetap bisa start di distro yang berbeda.
+`install.sh` hanya mendukung Debian/Ubuntu dengan `apt` dan systemd agar jalur dependency, service, updater, FreeRADIUS, dan GenieACS tetap konsisten.
 
 ## Install
 
@@ -374,7 +346,7 @@ Default install ke:
 Yang dikerjakan otomatis oleh `install.sh`:
 
 - Install paket OS yang dibutuhkan: Node.js 18+, npm, PostgreSQL, Redis, FreeRADIUS, FreeRADIUS utilities, SNMP tools, Docker, Git, curl, rsync, tar, gzip, procps, iproute, dan Tesseract OCR.
-- Jika Node.js bawaan distro terlalu lama, installer mencoba memasang Node.js 20 dari repository NodeSource.
+- Jika Node.js bawaan sistem terlalu lama, installer mencoba memasang Node.js 20 dari repository NodeSource.
 - Copy source aplikasi ke `/opt/fakenet-billing` tanpa membawa data runtime.
 - Install dependency Node dari `package-lock.json`.
 - Memasang dan memverifikasi BullMQ; antrean WhatsApp memakai Redis yang sama tanpa field konfigurasi tambahan di UI.
@@ -390,7 +362,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Memasang GenieACS CWMP/NBI/FS/UI, MongoDB persisten, akun awal, autentikasi Inform, serta Virtual Parameters redaman dan suhu jika belum ada GenieACS existing yang terdeteksi. Pada Ubuntu/Debian, installer mencoba paket apt `genieacs` lebih dulu jika tersedia, lalu fallback ke npm jika tidak tersedia.
 - Mengunci GenieACS NBI dan MongoDB ke localhost agar API/database tidak terbuka ke jaringan.
 - Memasang command stack `fakenet-billing-stack`.
-- Menyesuaikan unit systemd atau OpenRC sesuai distro yang dipakai.
+- Menyesuaikan unit systemd Debian/Ubuntu yang dipakai.
 - Menjalankan health check aplikasi dan worker BullMQ sebelum instalasi dinyatakan selesai.
 - Menjalankan health check GenieACS UI/NBI pada instalasi GenieACS bawaan billing, serta bootstrap Virtual Parameters pada GenieACS existing jika NBI localhost tersedia.
 
@@ -415,7 +387,7 @@ Env utama:
 
 Instalasi baru pada mesin kosong memasang GenieACS lokal secara default. MongoDB dijalankan dalam container dengan data persisten di `/opt/fakenet-billing-genieacs/mongodb`; proses CWMP, NBI, FS, dan UI berjalan sebagai user sistem `genieacs`.
 
-Jika installer menemukan GenieACS existing dari service, proses, atau port default `7547/7557/7567/7568`, instalasi GenieACS bawaan billing akan dilewati otomatis supaya tidak konflik dengan ACS yang sudah berjalan. Unit service bawaan billing yang sempat tertinggal akan di-stop, di-disable, dan dibersihkan dari systemd/OpenRC, tanpa menghapus data ACS existing. Aplikasi billing tetap diinstall normal. Jika service `genieacs-nbi` tersedia, installer mencoba mengunci NBI existing ke `127.0.0.1:7557`; billing akan memakai URL tersebut sebagai default. Jika topologi ACS berbeda, isi URL NBI dari menu `GenieACS > Pengaturan`.
+Jika installer menemukan GenieACS existing dari service, proses, atau port default `7547/7557/7567/7568`, instalasi GenieACS bawaan billing akan dilewati otomatis supaya tidak konflik dengan ACS yang sudah berjalan. Unit service bawaan billing yang sempat tertinggal akan di-stop, di-disable, dan dibersihkan dari systemd, tanpa menghapus data ACS existing. Aplikasi billing tetap diinstall normal. Jika service `genieacs-nbi` tersedia, installer mencoba mengunci NBI existing ke `127.0.0.1:7557`; billing akan memakai URL tersebut sebagai default. Jika topologi ACS berbeda, isi URL NBI dari menu `GenieACS > Pengaturan`.
 
 Installer menulis marker `GENIEACS_SOURCE` dan `FAKENET_BUNDLED_GENIEACS` di `/etc/fakenet-billing.env`. Helper `fakenet-billing-stack` hanya akan start/restart service GenieACS bawaan jika marker tersebut menunjukkan instalasi `bundled`, sehingga update web tidak memaksa ACS bawaan pada mesin yang sudah punya GenieACS sendiri.
 
@@ -495,7 +467,9 @@ Updater akan:
 6. Memverifikasi modul BullMQ dan Web Push sebelum service direstart.
 7. Restart service aplikasi tanpa me-restart Redis, PostgreSQL, Docker, atau FreeRADIUS.
 8. Menjalankan repair ringan untuk menyelaraskan helper command, systemd unit, dan konfigurasi FreeRADIUS tanpa menghapus data.
-9. Memastikan health check aplikasi dan worker BullMQ berhasil sebelum update dinyatakan selesai.
+9. Memvalidasi payload repository lengkap, termasuk helper update, SQL FreeRADIUS, service systemd, bootstrap GenieACS, dan seluruh file Virtual Parameters.
+10. Menyinkronkan Virtual Parameters GenieACS ke ACS bawaan maupun GenieACS existing jika NBI/Mongo lokal tersedia, sehingga update parameter modem tidak tertinggal.
+11. Memastikan health check aplikasi dan worker BullMQ berhasil sebelum update dinyatakan selesai.
 
 Updater memakai aksi internal `restart-app`, sehingga Redis, PostgreSQL, Docker, dan FreeRADIUS tidak direstart saat pembaruan source. Perintah `restart` tetap tersedia untuk restart penuh ketika memang diperlukan oleh administrator.
 

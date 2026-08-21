@@ -21,23 +21,6 @@ GENIEACS_UNITS=(
   fakenet-billing-genieacs-ui.service
 )
 
-BILLING_SERVICES=(
-  fakenet-billing
-  fakenet-billing-isolir
-  fakenet-billing-voucher
-  fakenet-billing-wifiku
-  fakenet-billing-radius-connector
-  fakenet-billing-waha
-)
-
-GENIEACS_SERVICES=(
-  fakenet-billing-genieacs-mongodb
-  fakenet-billing-genieacs-cwmp
-  fakenet-billing-genieacs-nbi
-  fakenet-billing-genieacs-fs
-  fakenet-billing-genieacs-ui
-)
-
 SYSTEMD_BASE_GROUPS=(
   "redis-server.service redis.service"
   "postgresql.service postgresql@15-main.service postgresql@14-main.service postgresql@13-main.service"
@@ -45,7 +28,6 @@ SYSTEMD_BASE_GROUPS=(
   "docker.service"
 )
 
-OPENRC_BASE_SERVICES=(redis postgresql freeradius radiusd docker)
 UPDATE_LOCK_FILE="${FAKENET_UPDATE_LOCK:-/tmp/fakenet-billing-update.lock}"
 
 clear_stale_update_lock() {
@@ -132,34 +114,6 @@ restart_unit() {
   systemctl is-active --quiet "$unit"
 }
 
-openrc_service_exists() {
-  [ -x "/etc/init.d/$1" ]
-}
-
-openrc_services() {
-  local service
-  for service in "${OPENRC_BASE_SERVICES[@]}" "${BILLING_SERVICES[@]}"; do
-    openrc_service_exists "$service" && printf '%s\n' "$service"
-  done
-  if bundled_genieacs_enabled; then
-    for service in "${GENIEACS_SERVICES[@]}"; do
-      openrc_service_exists "$service" && printf '%s\n' "$service"
-    done
-  fi
-}
-
-openrc_app_services() {
-  local service
-  for service in "${BILLING_SERVICES[@]}"; do
-    openrc_service_exists "$service" && printf '%s\n' "$service"
-  done
-  if bundled_genieacs_enabled; then
-    for service in "${GENIEACS_SERVICES[@]}"; do
-      openrc_service_exists "$service" && printf '%s\n' "$service"
-    done
-  fi
-}
-
 run_systemd() {
   mapfile -t units < <(systemd_units)
   case "$ACTION" in
@@ -203,52 +157,9 @@ run_systemd() {
   esac
 }
 
-run_openrc() {
-  mapfile -t services < <(openrc_services)
-  case "$ACTION" in
-    start)
-      for service in "${services[@]}"; do rc-service "$service" start || true; done
-      ;;
-    restart)
-      failed=0
-      for service in "${services[@]}"; do
-        rc-service "$service" restart || rc-service "$service" start || failed=1
-      done
-      return "$failed"
-      ;;
-    restart-app)
-      failed=0
-      mapfile -t services < <(openrc_app_services)
-      for service in "${services[@]}"; do
-        rc-service "$service" restart || rc-service "$service" start || failed=1
-      done
-      return "$failed"
-      ;;
-    stop)
-      mapfile -t services < <(openrc_app_services)
-      for service in "${services[@]}"; do rc-service "$service" stop || true; done
-      ;;
-    status)
-      for service in "${services[@]}"; do rc-service "$service" status || true; done
-      ;;
-    update)
-      /usr/local/bin/fakenet-billing-update
-      ;;
-    clear-update-lock)
-      clear_stale_update_lock
-      ;;
-    *)
-      echo "Usage: fakenet-billing-stack {start|restart|restart-app|stop|status|update|clear-update-lock}" >&2
-      exit 2
-      ;;
-  esac
-}
-
 if command -v systemctl >/dev/null 2>&1; then
   run_systemd
-elif command -v rc-service >/dev/null 2>&1; then
-  run_openrc
 else
-  echo "Service manager tidak dikenali." >&2
+  echo "fakenet-billing-stack membutuhkan systemd pada Debian/Ubuntu." >&2
   exit 1
 fi

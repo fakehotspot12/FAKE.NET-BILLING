@@ -199,11 +199,74 @@ cleanup_obsolete_worker_runtime() {
     fi
   fi
 
-  if command -v rc-service >/dev/null 2>&1 && [ -e /etc/init.d/fakenet-billing-worker ]; then
-    rc-service fakenet-billing-worker stop >/dev/null 2>&1 || true
-    rc-update del fakenet-billing-worker default >/dev/null 2>&1 || true
-    rm -f /etc/init.d/fakenet-billing-worker
-    echo "Runtime worker Whatsapp lama OpenRC dinonaktifkan; queue berjalan di service utama."
+}
+
+verify_update_payload() {
+  local missing=() file
+  local required_files=(
+    package.json
+    package-lock.json
+    src/server.js
+    src/subweb-server.js
+    src/radius-connector-service.js
+    src/whatsapp-queue.js
+    public/index.html
+    public/app.js
+    public/styles.css
+    public/service-worker.js
+    public/manifest.webmanifest
+    deploy/fakenet-billing.env
+    deploy/fakenet-billing-waha.env
+    deploy/fakenet-billing-genieacs.env
+    deploy/genieacs/bootstrap.js
+    deploy/genieacs/virtual-parameters/IPTR069.js
+    deploy/genieacs/virtual-parameters/LANActiveClients.js
+    deploy/genieacs/virtual-parameters/LANClients.js
+    deploy/genieacs/virtual-parameters/PonMac.js
+    deploy/genieacs/virtual-parameters/RXPower.js
+    deploy/genieacs/virtual-parameters/WlanPassword.js
+    deploy/genieacs/virtual-parameters/activedevices.js
+    deploy/genieacs/virtual-parameters/getSerialNumber.js
+    deploy/genieacs/virtual-parameters/getdeviceuptime.js
+    deploy/genieacs/virtual-parameters/getponmode.js
+    deploy/genieacs/virtual-parameters/getpppuptime.js
+    deploy/genieacs/virtual-parameters/gettemp.js
+    deploy/genieacs/virtual-parameters/ip.js
+    deploy/genieacs/virtual-parameters/pppoe.js
+    deploy/genieacs/virtual-parameters/pppoeIP.js
+    deploy/genieacs/virtual-parameters/pppoeMac.js
+    deploy/genieacs/virtual-parameters/pppoePassword.js
+    deploy/genieacs/virtual-parameters/pppoeUsername.js
+    deploy/genieacs/virtual-parameters/pppoeUsername2.js
+    deploy/genieacs/virtual-parameters/superAdmin.js
+    deploy/genieacs/virtual-parameters/superPassword.js
+    deploy/genieacs/virtual-parameters/userAdmin.js
+    deploy/genieacs/virtual-parameters/userPassword.js
+    deploy/genieacs/virtual-parameters/wanVlan.js
+    deploy/genieacs/virtual-parameters/wifiSsid24.js
+    deploy/genieacs/virtual-parameters/wifiSsid5.js
+    deploy/sql/freeradius-postgresql.sql
+    deploy/bin/fakenet-billing-stack
+    deploy/bin/fakenet-billing-update
+    deploy/systemd/fakenet-billing.service
+    deploy/systemd/fakenet-billing-isolir.service
+    deploy/systemd/fakenet-billing-voucher.service
+    deploy/systemd/fakenet-billing-wifiku.service
+    deploy/systemd/fakenet-billing-radius-connector.service
+    deploy/systemd/fakenet-billing-waha.service
+    deploy/systemd/fakenet-billing-stack.target
+    deploy/systemd/fakenet-billing-genieacs-mongodb.service
+    deploy/systemd/fakenet-billing-genieacs-cwmp.service
+    deploy/systemd/fakenet-billing-genieacs-nbi.service
+    deploy/systemd/fakenet-billing-genieacs-fs.service
+    deploy/systemd/fakenet-billing-genieacs-ui.service
+  )
+  for file in "${required_files[@]}"; do
+    [ -f "$APP_DIR/$file" ] || missing+=("$file")
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Update dibatalkan: repository tidak lengkap. File berikut tidak ditemukan: ${missing[*]}" >&2
+    exit 1
   fi
 }
 
@@ -419,12 +482,7 @@ else
 fi
 
 cd "$APP_DIR"
-for required_file in package.json package-lock.json src/server.js public/app.js public/service-worker.js public/manifest.webmanifest; do
-  if [ ! -f "$APP_DIR/$required_file" ]; then
-    echo "Update dibatalkan: file repository tidak lengkap ($required_file)." >&2
-    exit 1
-  fi
-done
+verify_update_payload
 if command -v npm >/dev/null 2>&1; then
   install_node_dependencies
 fi
@@ -456,17 +514,9 @@ if command -v systemctl >/dev/null 2>&1; then
   else
     systemctl restart fakenet-billing.service
   fi
-elif command -v rc-service >/dev/null 2>&1; then
-  if [ -x "$STACK_CMD" ]; then
-    "$STACK_CMD" restart-app
-  else
-    rc-service fakenet-billing restart || true
-    rc-service fakenet-billing-isolir restart || true
-    rc-service fakenet-billing-voucher restart || true
-    rc-service fakenet-billing-wifiku restart || true
-    rc-service fakenet-billing-radius-connector restart || true
-    rc-service fakenet-billing-waha restart || true
-  fi
+else
+  echo "Update membutuhkan systemd pada Debian/Ubuntu." >&2
+  exit 1
 fi
 
 health_ok=0
