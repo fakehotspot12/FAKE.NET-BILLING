@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.2.25] - 2026-08-21
+
+### Fixed
+
+- Memastikan updater selalu menyinkronkan Virtual Parameters GenieACS setelah update, termasuk pada server yang memakai instalasi GenieACS existing di luar installer billing.
+- Menambahkan fallback deteksi env GenieACS existing (`/opt/genieacs/genieacs.env`) agar bootstrap virtual parameter tetap berjalan tanpa memasang ulang service GenieACS.
+
 ## [4.2.24] - 2026-08-16
 
 ### Fixed

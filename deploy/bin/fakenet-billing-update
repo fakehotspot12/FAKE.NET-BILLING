@@ -109,6 +109,57 @@ load_env_file() {
   fi
 }
 
+port_is_listening() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "(:|\\])${port}$"
+    return $?
+  fi
+  command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 "$port" >/dev/null 2>&1
+}
+
+resolve_genieacs_env_file() {
+  local candidate
+  for candidate in "$GENIEACS_ENV_FILE" /etc/fakenet-billing-genieacs.env /opt/genieacs/genieacs.env /etc/genieacs.env; do
+    [ -n "$candidate" ] && [ -f "$candidate" ] && {
+      printf '%s\n' "$candidate"
+      return 0
+    }
+  done
+  return 1
+}
+
+sync_genieacs_virtual_parameters() {
+  local bootstrap env_file nbi_port
+  bootstrap="$APP_DIR/deploy/genieacs/bootstrap.js"
+  [ -f "$bootstrap" ] || return 0
+  command -v node >/dev/null 2>&1 || return 0
+
+  env_file="$(resolve_genieacs_env_file || true)"
+  [ -n "$env_file" ] || {
+    echo "Sinkron Virtual Parameters GenieACS dilewati: env GenieACS tidak ditemukan."
+    return 0
+  }
+
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+
+  nbi_port="${GENIEACS_NBI_PORT:-7557}"
+  if ! port_is_listening "$nbi_port" && ! port_is_listening 27017; then
+    echo "Sinkron Virtual Parameters GenieACS dilewati: NBI/Mongo lokal belum aktif."
+    return 0
+  fi
+
+  echo "Sinkron Virtual Parameters GenieACS via $env_file"
+  GENIEACS_BOOTSTRAP_EXTERNAL=1 \
+    GENIEACS_UI_BOOTSTRAP_ATTEMPTS="${GENIEACS_UI_BOOTSTRAP_ATTEMPTS:-1}" \
+    GENIEACS_NBI_BOOTSTRAP_ATTEMPTS="${GENIEACS_NBI_BOOTSTRAP_ATTEMPTS:-6}" \
+    GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS="${GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS:-3000}" \
+    node "$bootstrap" || echo "Peringatan: sinkron Virtual Parameters GenieACS gagal, update billing tetap dilanjutkan."
+}
+
 systemd_unit_exists() {
   systemctl list-unit-files "$1" --no-legend >/dev/null 2>&1
 }
@@ -393,6 +444,8 @@ if [ -f "$APP_DIR/install.sh" ]; then
   fi
   APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 GENIEACS_BOOTSTRAP_EXTERNAL=1 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair || true
 fi
+
+sync_genieacs_virtual_parameters
 
 cleanup_obsolete_worker_runtime
 
