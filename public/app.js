@@ -18897,11 +18897,30 @@ function filteredMonitoringCustomers(rows = []) {
 
 async function renderMonitoringCustomers(options = {}) {
   clearRealtimeTimers();
-  const shouldFetch = options.refresh || (!options.liveSearch && options.silent) || !state.monitoringCustomersPayload;
+  const customerType = state.monitoringCustomerType === 'hotspot' ? 'hotspot' : 'pppoe';
+  if (state.monitoringCustomerType !== customerType) {
+    state.monitoringCustomerType = customerType;
+  }
+  const customerTypeLabel = customerType === 'hotspot' ? 'Hotspot' : 'PPPoE';
+  const customerLimit = pagerLimitValue(state.monitoringCustomerLimit || CUSTOMER_PAGE_SIZE, CUSTOMER_PAGE_SIZE);
+  const requestParams = {
+    type: customerType,
+    site: state.monitoringCustomerSite || 'all',
+    search: state.search || '',
+    page: state.monitoringCustomerPage || 1,
+    limit: customerLimit
+  };
+  if (options.refresh) requestParams.refresh = '1';
+  const requestKey = JSON.stringify(requestParams);
+  const shouldFetch = options.refresh
+    || options.liveSearch
+    || (!options.liveSearch && options.silent)
+    || !state.monitoringCustomersPayload
+    || state.monitoringCustomersRequestKey !== requestKey;
   if (shouldFetch && shouldShowPageLoading(options)) {
     app.innerHTML = '<div class="empty">Memuat pelanggan online...</div>';
   }
-  const endpoint = options.refresh ? '/api/monitoring/customers?refresh=1' : '/api/monitoring/customers';
+  const endpoint = `/api/monitoring/customers?${queryString(requestParams)}`;
   const payload = shouldFetch
     ? await api(endpoint)
     : state.monitoringCustomersPayload;
@@ -18915,29 +18934,27 @@ async function renderMonitoringCustomers(options = {}) {
   if (state.monitoringCustomerSite !== selectedSite) {
     state.monitoringCustomerSite = selectedSite;
   }
-  const customerType = state.monitoringCustomerType === 'hotspot' ? 'hotspot' : 'pppoe';
-  if (state.monitoringCustomerType !== customerType) {
-    state.monitoringCustomerType = customerType;
-  }
-  const customerTypeLabel = customerType === 'hotspot' ? 'Hotspot' : 'PPPoE';
-  const allCustomerUsers = monitoringCustomerRows(sites, customerType);
-  const filteredCustomerUsers = filteredMonitoringCustomers(allCustomerUsers);
-  const total = filteredCustomerUsers.length;
-  const customerLimit = pagerLimitValue(state.monitoringCustomerLimit || CUSTOMER_PAGE_SIZE, CUSTOMER_PAGE_SIZE);
-  const effectiveLimit = effectivePagerLimit(customerLimit, total, CUSTOMER_PAGE_SIZE);
-  const totalPages = Math.max(1, Math.ceil(total / effectiveLimit));
-  const currentPage = Math.min(Math.max(1, Number(state.monitoringCustomerPage || 1)), totalPages);
-  state.monitoringCustomerPage = currentPage;
-  const offset = (currentPage - 1) * effectiveLimit;
-  const pageUsers = filteredCustomerUsers.slice(offset, offset + effectiveLimit);
-  const pagination = {
-    page: currentPage,
+  const serverPagination = payload.pagination && typeof payload.pagination === 'object' ? payload.pagination : null;
+  const serverRows = Array.isArray(payload.rows) ? payload.rows : null;
+  const fallbackRows = serverRows ? [] : filteredMonitoringCustomers(monitoringCustomerRows(sites, customerType));
+  const fallbackTotal = fallbackRows.length;
+  const fallbackEffectiveLimit = effectivePagerLimit(customerLimit, fallbackTotal, CUSTOMER_PAGE_SIZE);
+  const fallbackTotalPages = Math.max(1, Math.ceil(fallbackTotal / fallbackEffectiveLimit));
+  const fallbackCurrentPage = Math.min(Math.max(1, Number(state.monitoringCustomerPage || 1)), fallbackTotalPages);
+  const pagination = serverPagination || {
+    page: fallbackCurrentPage,
     limit: customerLimit,
-    total,
-    totalPages,
-    hasPrev: currentPage > 1,
-    hasNext: currentPage < totalPages
+    total: fallbackTotal,
+    totalPages: fallbackTotalPages,
+    hasPrev: fallbackCurrentPage > 1,
+    hasNext: fallbackCurrentPage < fallbackTotalPages
   };
+  const currentPage = Math.min(Math.max(1, Number(pagination.page || 1)), Math.max(1, Number(pagination.totalPages || 1)));
+  state.monitoringCustomerPage = currentPage;
+  const offset = serverRows
+    ? ((currentPage - 1) * Number(pagination.limit || customerLimit || CUSTOMER_PAGE_SIZE))
+    : ((fallbackCurrentPage - 1) * fallbackEffectiveLimit);
+  const pageUsers = serverRows || fallbackRows.slice(offset, offset + fallbackEffectiveLimit);
 
   app.innerHTML = `
     <div class="stack">
@@ -26265,6 +26282,7 @@ async function render(options = {}) {
     if (!['monitoringCustomers', 'monitoringServices'].includes(state.view)) {
       clearRealtimeTimers();
     }
+    cleanupLeafletMaps(app);
     const normalizedRenderView = normalizeFinanceCashView(normalizeView(state.view));
     if (normalizedRenderView !== state.view) {
       state.view = normalizedRenderView;
@@ -26300,6 +26318,34 @@ async function render(options = {}) {
     else if (state.view === 'monitoringCustomers') await renderMonitoringCustomers(renderOptions);
     else if (state.view === 'monitoringBilling') await renderMonitoringBilling();
     else if (state.view === 'monitoringServices') await renderMonitoringServices();
+    else if (state.view === 'partnerCustomers') {
+      state.monitoringMemberTab = 'all';
+      await renderMonitoringMembers(renderOptions);
+    }
+    else if (state.view === 'partnerPackages') {
+      state.radiusPppTab = 'profiles';
+      await renderRadiusPppDhcp(renderOptions);
+    }
+    else if (state.view === 'partnerInvoices') {
+      state.monitoringBillingStatus = 'all';
+      state.monitoringBillingScope = 'month';
+      await renderMonitoringBilling(renderOptions);
+    }
+    else if (state.view === 'partnerPayments') {
+      state.monitoringBillingStatus = 'paid';
+      state.monitoringBillingScope = 'month';
+      await renderMonitoringBilling(renderOptions);
+    }
+    else if (state.view === 'partnerPppoe') {
+      state.radiusPppTab = 'users';
+      await renderRadiusPppDhcp(renderOptions);
+    }
+    else if (state.view === 'partnerRadius') {
+      state.radiusPppTab = 'sessions';
+      await renderRadiusPppDhcp(renderOptions);
+    }
+    else if (state.view === 'partnerReports') await renderPartnerReport('report');
+    else if (state.view === 'partnerSettlement') await renderPartnerReport('settlement');
     else if (state.view === 'financeCash') await renderFinanceCash(renderOptions);
     else if (state.view === 'externalIncomes') {
       state.financeCashTab = 'incomes';

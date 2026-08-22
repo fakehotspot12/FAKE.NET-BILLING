@@ -27,6 +27,10 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 - Mencegah panel submenu tombol bawah mendorong halaman ke samping pada mode mobile; submenu sekarang konsisten naik vertikal dari bawah seperti bottom sheet.
 - Melengkapi ikon seluruh menu dan submenu, termasuk navigasi Mitra, Peta Pelanggan, serta ODP/ODC, dengan pemeriksaan otomatis agar menu baru tidak tampil tanpa ikon.
 - Merapikan aturan CSS responsif, judul tampilan Mitra, cache username Radius, dan duplikasi rule statistik agar tampilan serta interaksi tetap konsisten.
+- Menahan seluruh kartu dashboard di dalam viewport tablet tanpa mengubah tablet menjadi mode navigasi mobile.
+- Menyambungkan seluruh menu Mitra ke halaman operasionalnya dan membersihkan instance Leaflet saat berpindah halaman.
+- Memperbaiki error `requestKey is not defined` pada Sesi Online sekaligus mengaktifkan pagination server-side yang lebih ringan.
+- Mencegah toolbar ODP/ODC dan tombol template Whatsapp Gateway memperlebar halaman pada ponsel.
 
 ## [4.2.27] - 2026-08-21
 

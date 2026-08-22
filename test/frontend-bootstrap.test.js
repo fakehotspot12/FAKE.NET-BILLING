@@ -19,8 +19,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=menu-icons-20260822"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=menu-icons-20260822"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=browser-audit4-20260822"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=browser-audit4-20260822"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
@@ -100,6 +100,9 @@ test('opens mobile navigation as a bottom sheet instead of a side drawer', () =>
   assert.match(styles, /Mobile compact summary blocks across pages - start/);
   assert.match(styles, /Inventory and network asset compact mobile cards - start/);
   assert.match(styles, /Global refresh action positioning - start/);
+  assert.match(styles, /Tablet dashboard containment - start/);
+  assert.match(styles, /Browser audit mobile containment - start/);
+  assert.match(styles, /@media \(min-width: 761px\) and \(max-width: 900px\)[\s\S]*?\.dashboard-status-row,[\s\S]*?\.dashboard-radbill-lower-grid[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)/);
 });
 
 test('keeps monitoring maps mobile-safe and lightweight for large datasets', () => {
@@ -142,6 +145,27 @@ test('assigns icons to every sidebar view and all partner navigation actions', (
     assert.match(styles, new RegExp(`\\[data-partner-view=["']${view}["']\\][^{]*\\{[^}]*--menu-icon`), `missing partner icon for ${view}`);
   }
   assert.match(styles, /\.partner-compact-nav \[data-partner-view\]::before[\s\S]*?mask:\s*var\(--menu-icon\)/);
+});
+
+test('routes every partner menu and disposes old map instances during navigation', () => {
+  const appSource = publicSource('app.js');
+
+  assert.match(appSource, /cleanupLeafletMaps\(app\);[\s\S]*?const normalizedRenderView/);
+  for (const view of ['partnerCustomers', 'partnerPackages', 'partnerInvoices', 'partnerPayments', 'partnerPppoe', 'partnerRadius']) {
+    assert.match(appSource, new RegExp(`state\\.view === '${view}'`), `missing render route for ${view}`);
+  }
+  assert.match(appSource, /state\.view === 'partnerReports'\) await renderPartnerReport\('report'\)/);
+  assert.match(appSource, /state\.view === 'partnerSettlement'\) await renderPartnerReport\('settlement'\)/);
+});
+
+test('uses a declared request key and server paging for online customer monitoring', () => {
+  const appSource = publicSource('app.js');
+
+  assert.match(appSource, /async function renderMonitoringCustomers[\s\S]*?const requestKey = JSON\.stringify\(requestParams\)/);
+  assert.match(appSource, /monitoringCustomersRequestKey !== requestKey/);
+  assert.match(appSource, /const endpoint = `\/api\/monitoring\/customers\?\$\{queryString\(requestParams\)\}`/);
+  assert.match(appSource, /const serverPagination = payload\.pagination/);
+  assert.match(appSource, /const serverRows = Array\.isArray\(payload\.rows\)/);
 });
 
 test('keeps public security responses minimal and protected', () => {

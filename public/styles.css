@@ -21453,3 +21453,97 @@ body.is-authenticated .content :is(.toolbar, .row-actions, .toolbar-actions, .ra
   }
 }
 /* Global refresh action positioning - end */
+
+/* Tablet dashboard containment - start */
+@media (min-width: 761px) and (max-width: 1180px) {
+  .dashboard-status-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-status-row #dashboardRouterNas {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 900px) {
+  .dashboard-status-row,
+  .dashboard-radbill-lower-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-status-row #dashboardRouterNas {
+    grid-column: auto;
+  }
+
+  .dashboard-radbill-list-panel,
+  .dashboard-radbill-list,
+  .dashboard-radbill-list-item,
+  .dashboard-radbill-list-main {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+/* Tablet dashboard containment - end */
+
+/* Browser audit mobile containment - start */
+@media (max-width: 760px) {
+  .monitoring-map-page,
+  .monitoring-map-page > *,
+  .monitoring-map-toolbar,
+  .monitoring-map-toolbar > *,
+  .monitoring-map-toolbar .filters,
+  .monitoring-map-toolbar .row-actions {
+    box-sizing: border-box;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  .monitoring-map-page > .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+    width: 100%;
+  }
+
+  .monitoring-map-toolbar .row-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .monitoring-map-toolbar .row-actions > * {
+    flex: none !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  #waGatewayForm .field.full,
+  #waGatewayForm .field.full > .row-actions {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  #waGatewayForm .field.full > .row-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  #waGatewayForm .field.full > .row-actions > button {
+    min-width: 0;
+    width: 100%;
+  }
+
+  #waGatewayForm #openWaBroadcast {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 360px) {
+  .monitoring-map-page > .metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Browser audit mobile containment - end */
