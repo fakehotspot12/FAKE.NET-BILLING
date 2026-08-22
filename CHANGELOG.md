@@ -2,6 +2,25 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.1] - 2026-08-22
+
+### Security
+
+- Mengikat rate limit login dan endpoint publik ke IP asli pelanggan di balik Cloudflare tanpa mempercayai header proxy dari koneksi langsung.
+- Menambahkan pembatasan pembuatan order voucher publik serta token akses acak untuk status, checkout, dan kredensial voucher baru; link order lama tetap kompatibel.
+- Mengunci env, data runtime, log updater, dan arsip backup ke akses root-only serta memastikan file store JSON selalu ditulis dengan mode `0600`.
+- Membuat password admin awal secara acak pada instalasi baru dan menampilkannya hanya pada output akhir installer.
+
+### Performance
+
+- Menjaga rate-limit publik dalam cache memori berbatas dengan pembersihan periodik, tanpa menambah query database pada alur normal.
+
+### Fixed
+
+- Mencegah seluruh pengguna Cloudflare berbagi satu bucket rate-limit localhost yang dapat menyebabkan login saling terkunci.
+- Memperbaiki validasi origin aplikasi di balik Cloudflare agar pembayaran manual, termasuk Tunai - Loket, tidak ditolak sebagai origin yang tidak sesuai.
+- Mencegah referensi voucher berurutan digunakan untuk membaca kredensial voucher baru tanpa token status yang sah.
+
 ## [4.3.0] - 2026-08-21
 
 ### Added

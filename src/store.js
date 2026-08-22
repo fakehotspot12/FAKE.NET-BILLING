@@ -1028,7 +1028,7 @@ async function persistStore(data, options = {}) {
   next.updatedAt = new Date().toISOString();
   await fs.mkdir(DATA_DIR, { recursive: true });
   const tempPath = `${STORE_PATH}.tmp`;
-  await fs.writeFile(tempPath, `${JSON.stringify(next, null, 2)}\n`);
+  await fs.writeFile(tempPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   await fs.rename(tempPath, STORE_PATH);
   memoryStore = next;
   await cacheStore(next);

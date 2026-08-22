@@ -189,6 +189,9 @@ const WIFIKU_OTP_COOLDOWN_MS = Math.max(15_000, Number(process.env.WIFIKU_OTP_CO
 const WIFIKU_OTP_RATE_WINDOW_MS = Math.max(5 * 60_000, Number(process.env.WIFIKU_OTP_RATE_WINDOW_SECONDS || 3600) * 1000 || 3600_000);
 const WIFIKU_OTP_MAX_PER_WINDOW = Math.max(3, Number(process.env.WIFIKU_OTP_MAX_PER_WINDOW || 8) || 8);
 const PUBLIC_INVOICE_LOOKUP_WINDOW_MS = Math.max(60_000, Number(process.env.PUBLIC_INVOICE_LOOKUP_WINDOW_SECONDS || 300) * 1000 || 300_000);
+const PUBLIC_VOUCHER_ORDER_WINDOW_MS = Math.max(60_000, Number(process.env.PUBLIC_VOUCHER_ORDER_WINDOW_SECONDS || 600) * 1000 || 600_000);
+const PUBLIC_VOUCHER_ORDER_MAX_PER_IP = Math.max(10, Number(process.env.PUBLIC_VOUCHER_ORDER_MAX_PER_IP || 60) || 60);
+const PUBLIC_VOUCHER_ORDER_MAX_PER_PHONE = Math.max(2, Number(process.env.PUBLIC_VOUCHER_ORDER_MAX_PER_PHONE || 6) || 6);
 const RATE_LIMIT_BUCKET_MAX_KEYS = Math.max(500, Number(process.env.RATE_LIMIT_BUCKET_MAX_KEYS || 2000) || 2000);
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = Math.max(60_000, Number(process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
 const PUBLIC_INVOICE_LOOKUP_MAX_PER_WINDOW = Math.max(10, Number(process.env.PUBLIC_INVOICE_LOOKUP_MAX_PER_WINDOW || 80) || 80);
@@ -210,6 +213,7 @@ const wifiKuOtpChallenges = new Map();
 const wifiKuOtpRateLimits = new Map();
 const wifiKuSessions = new Map();
 const publicInvoiceLookupRateLimits = new Map();
+const publicVoucherOrderRateLimits = new Map();
 const loginRateLimits = new Map();
 let wahaApiKeyCache;
 
@@ -300,14 +304,17 @@ function escapeHtmlAttribute(value = '') {
 
 function requestOrigin(req = {}) {
   const headerValue = (name) => String(req.headers?.[name] || '').split(',')[0].trim();
-  const host = headerValue('x-forwarded-host') || headerValue('host');
+  const forwarded = forwardingHeadersAllowed(req);
+  const host = (forwarded ? headerValue('x-forwarded-host') : '') || headerValue('host');
   if (!host) return '';
-  const proto = headerValue('x-forwarded-proto') || (req.socket?.encrypted ? 'https' : 'http');
+  const proto = (forwarded ? headerValue('x-forwarded-proto') : '') || (req.socket?.encrypted ? 'https' : 'http');
   return `${proto}://${host}`;
 }
 
 function requestIsHttps(req = {}) {
-  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const forwardedProto = forwardingHeadersAllowed(req)
+    ? String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase()
+    : '';
   return forwardedProto === 'https' || req.socket?.encrypted === true;
 }
 
@@ -420,11 +427,31 @@ function trustedForwardingPeer(ip = '') {
   return private172 ? Number(private172[1]) >= 16 && Number(private172[1]) <= 31 : false;
 }
 
+function forwardingHeadersAllowed(req = {}) {
+  const directIp = normalizeRequestIp(req.socket?.remoteAddress || '');
+  if (directIp === '127.0.0.1') return true;
+  const cloudflareRay = String(req.headers?.['cf-ray'] || '').trim();
+  const cloudflareIp = validForwardedIp(req.headers?.['cf-connecting-ip'] || '');
+  if (cloudflareRay && cloudflareIp && trustedForwardingPeer(directIp)) return true;
+  const forwardedBy = String(req.headers?.['x-forwarded-by'] || '').trim().toLowerCase();
+  return forwardedBy.startsWith('fakenet-billing-') && trustedForwardingPeer(directIp);
+}
+
+function validForwardedIp(value = '') {
+  const candidate = normalizeRequestIp(value);
+  return net.isIP(candidate) ? candidate : '';
+}
+
 function requestClientIp(req = {}) {
   const forwardedBy = String(req.headers?.['x-forwarded-by'] || '').toLowerCase();
   const directIp = normalizeRequestIp(req.socket?.remoteAddress || '');
+  const cloudflareRay = String(req.headers?.['cf-ray'] || '').trim();
+  if (trustedForwardingPeer(directIp) && cloudflareRay) {
+    const cloudflareIp = validForwardedIp(req.headers?.['cf-connecting-ip'] || '');
+    if (cloudflareIp) return cloudflareIp;
+  }
   if (forwardedBy.startsWith('fakenet-billing-') && trustedForwardingPeer(directIp)) {
-    return normalizeRequestIp(req.headers?.['x-forwarded-for'] || '') || directIp;
+    return validForwardedIp(req.headers?.['x-forwarded-for'] || '') || directIp;
   }
   return directIp;
 }
@@ -474,6 +501,7 @@ function pruneRateLimitMap(map = new Map(), windowMs = 60_000, now = Date.now())
 function pruneVolatileRateLimitMaps(now = Date.now()) {
   pruneRateLimitMap(wifiKuOtpRateLimits, WIFIKU_OTP_RATE_WINDOW_MS, now);
   pruneRateLimitMap(publicInvoiceLookupRateLimits, PUBLIC_INVOICE_LOOKUP_WINDOW_MS, now);
+  pruneRateLimitMap(publicVoucherOrderRateLimits, PUBLIC_VOUCHER_ORDER_WINDOW_MS, now);
   pruneRateLimitMap(loginRateLimits, LOGIN_RATE_LIMIT_WINDOW_MS, now);
 }
 
@@ -521,6 +549,41 @@ function enforcePublicInvoiceLookupRateLimit(req = {}, res = {}) {
   sendJson(res, 429, {
     ok: false,
     error: `Terlalu banyak percobaan. Coba lagi dalam ${result.waitSeconds} detik.`
+  });
+  return false;
+}
+
+function publicVoucherOrderRateLimit(req = {}, phone = '') {
+  const ip = requestClientIp(req) || 'unknown';
+  const keys = [
+    { key: `voucher-order:ip:${ip}`, max: PUBLIC_VOUCHER_ORDER_MAX_PER_IP }
+  ];
+  const phoneKey = normalizeIndonesianPhone(phone);
+  if (phoneKey) keys.push({ key: `voucher-order:phone:${phoneKey}`, max: PUBLIC_VOUCHER_ORDER_MAX_PER_PHONE });
+  for (const item of keys) {
+    const result = rateLimitBucket(publicVoucherOrderRateLimits, item.key, {
+      windowMs: PUBLIC_VOUCHER_ORDER_WINDOW_MS,
+      max: item.max,
+      record: false
+    });
+    if (!result.allowed) return result;
+  }
+  for (const item of keys) {
+    rateLimitBucket(publicVoucherOrderRateLimits, item.key, {
+      windowMs: PUBLIC_VOUCHER_ORDER_WINDOW_MS,
+      max: item.max,
+      record: true
+    });
+  }
+  return { allowed: true, waitSeconds: 0 };
+}
+
+function enforcePublicVoucherOrderRateLimit(req = {}, res = {}, phone = '') {
+  const result = publicVoucherOrderRateLimit(req, phone);
+  if (result.allowed) return true;
+  sendJson(res, 429, {
+    ok: false,
+    error: `Terlalu banyak permintaan voucher. Coba lagi dalam ${result.waitSeconds} detik.`
   });
   return false;
 }
@@ -11508,11 +11571,12 @@ function hotspotLoginUrlForNas(data = {}, value = '') {
 
 function hotspotVoucherPublicStatusUrl(data = {}, order = {}, options = {}) {
   const origin = paymentGatewayOrigin(data.settings || {});
-  const reference = String(order.reference || order.id || '').trim();
-  if (!origin || !reference) return '';
+  const publicId = String(order.id || order.reference || '').trim();
+  if (!origin || !publicId) return '';
   try {
     const url = new URL('/status-order.html', origin);
-    url.searchParams.set('id', reference);
+    url.searchParams.set('id', publicId);
+    if (order.publicAccessToken) url.searchParams.set('access_token', order.publicAccessToken);
     if (order.nasId || order.nasName) url.searchParams.set('nas', order.nasId || order.nasName);
     if (options.status) url.searchParams.set('status', options.status);
     if (options.auto) url.searchParams.set('auto', '1');
@@ -12557,6 +12621,7 @@ function createHotspotVoucherOrder(data = {}, payload = {}) {
   const provider = paymentSettings.provider || 'tripay';
   const order = {
     id: createId('hvo'),
+    publicAccessToken: crypto.randomBytes(24).toString('base64url'),
     reference,
     profileId: profile.id,
     profileName: profile.name,
@@ -12585,6 +12650,17 @@ function createHotspotVoucherOrder(data = {}, payload = {}) {
   data.hotspotVoucherOrders.unshift(order);
   data.hotspotVoucherOrders = data.hotspotVoucherOrders.slice(0, 1000);
   return order;
+}
+
+function hotspotVoucherOrderPublicAccessAllowed(order = {}, url = {}) {
+  const expected = String(order.publicAccessToken || '').trim();
+  if (!expected) return true;
+  const incoming = String(
+    url.searchParams?.get('access_token')
+      || url.searchParams?.get('token')
+      || ''
+  ).trim();
+  return safeStringEqual(incoming, expected);
 }
 
 function removeUnpaidHotspotVoucherPaymentGatewayTransaction(data = {}, order = {}) {
@@ -20445,6 +20521,7 @@ async function handleApi(req, res, url) {
 
   if (method === 'POST' && pathname === '/api/public/hotspot-voucher-orders') {
     const payload = await readBody(req);
+    if (!enforcePublicVoucherOrderRateLimit(req, res, payload.whatsapp || payload.phone || '')) return;
     try {
       const { data, result } = await mutate((store) => {
         const order = createHotspotVoucherOrder(store, payload);
@@ -20460,6 +20537,7 @@ async function handleApi(req, res, url) {
         ok: true,
         order: {
           id: order.id,
+          accessToken: order.publicAccessToken,
           reference: order.reference,
           status: order.status,
           packageLabel: order.packageLabel,
@@ -20510,6 +20588,10 @@ async function handleApi(req, res, url) {
       sendJson(res, 404, { ok: false, error: 'Order voucher tidak ditemukan' });
       return;
     }
+    if (!hotspotVoucherOrderPublicAccessAllowed(order, url)) {
+      sendJson(res, 403, { ok: false, error: 'Link status voucher tidak valid atau sudah tidak lengkap' });
+      return;
+    }
     const publicVouchers = order.status === 'paid' ? hotspotVoucherRowsForOrder(data, order) : [];
     const expired = hotspotVoucherOrderExpired(data, order);
     sendJson(res, 200, {
@@ -20553,6 +20635,10 @@ async function handleApi(req, res, url) {
       sendJson(res, 404, { ok: false, error: 'Order voucher tidak ditemukan' });
       return;
     }
+    if (!hotspotVoucherOrderPublicAccessAllowed(order, url)) {
+      sendJson(res, 403, { ok: false, error: 'Link pembayaran voucher tidak valid atau sudah tidak lengkap' });
+      return;
+    }
     if (String(order.status || '').toLowerCase() === 'paid') {
       sendJson(res, 200, { ok: true, paid: true, order });
       return;
@@ -20572,7 +20658,7 @@ async function handleApi(req, res, url) {
         itemName: `Voucher Hotspot ${order.packageLabel || order.profileName || ''}`.trim(),
         returnUrl: paymentGatewayReturnUrl(
           data,
-          `/status-order.html?id=${encodeURIComponent(order.reference || order.id || '')}&nas=${encodeURIComponent(order.nasId || '')}`
+          `/status-order.html?id=${encodeURIComponent(order.id || order.reference || '')}&nas=${encodeURIComponent(order.nasId || '')}${order.publicAccessToken ? `&access_token=${encodeURIComponent(order.publicAccessToken)}` : ''}`
         )
       });
       sendJson(res, 200, {
@@ -26842,6 +26928,7 @@ module.exports = {
     createTripayCheckout,
     createLocalManualInvoice,
     createHotspotVoucherOrder,
+    hotspotVoucherOrderPublicAccessAllowed,
     dashboardBillingSummary,
     dashboardRadiusServiceSummary,
     dashboardVoucherIncomeSummary,
@@ -26935,6 +27022,10 @@ module.exports = {
     tripayTimestampIso,
     prunePaymentGatewayHistoryBefore,
     prepareManagedUserPayload,
+    publicVoucherOrderRateLimit,
+    requestClientIp,
+    requestIsHttps,
+    requestOrigin,
     tripayTransactionHistory,
     applyTripayTransactionHistory,
     syncTripayTransactionHistory,

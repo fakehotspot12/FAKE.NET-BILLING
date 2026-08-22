@@ -35,10 +35,10 @@ Login awal:
 
 ```text
 username: admin
-password: billing123
+password: lihat output akhir installer
 ```
 
-Segera ubah password admin setelah berhasil login.
+Installer membuat password admin acak pada instalasi baru dan menyimpannya di `/etc/fakenet-billing.env` dengan izin root-only. Segera ubah password admin setelah berhasil login.
 
 Port bawaan:
 

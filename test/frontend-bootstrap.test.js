@@ -197,6 +197,88 @@ test('keeps public security responses minimal and protected', () => {
   assert.match(subwebSource, /sendJson\(res, 500, \{ ok: false, error: 'Subweb error' \}\)/);
 });
 
+test('trusts forwarding headers only from local or marked internal proxies', () => {
+  const {
+    requestClientIp,
+    requestIsHttps,
+    requestOrigin
+  } = require('../src/server').__test;
+  const cloudflareRequest = {
+    headers: {
+      host: '127.0.0.1:8891',
+      'x-forwarded-host': 'billing.example.net',
+      'x-forwarded-proto': 'https',
+      'cf-ray': 'test-ray',
+      'cf-connecting-ip': '203.0.113.20'
+    },
+    socket: { remoteAddress: '127.0.0.1', encrypted: false }
+  };
+  assert.equal(requestClientIp(cloudflareRequest), '203.0.113.20');
+  assert.equal(requestIsHttps(cloudflareRequest), true);
+  assert.equal(requestOrigin(cloudflareRequest), 'https://billing.example.net');
+
+  const privateCloudflareRequest = {
+    ...cloudflareRequest,
+    socket: { remoteAddress: '172.18.0.4', encrypted: false }
+  };
+  assert.equal(requestClientIp(privateCloudflareRequest), '203.0.113.20');
+  assert.equal(requestIsHttps(privateCloudflareRequest), true);
+  assert.equal(requestOrigin(privateCloudflareRequest), 'https://billing.example.net');
+
+  const spoofedDirectRequest = {
+    headers: {
+      host: 'billing.example.net',
+      'x-forwarded-host': 'attacker.example',
+      'x-forwarded-proto': 'https',
+      'cf-ray': 'spoofed-ray',
+      'cf-connecting-ip': '198.51.100.9'
+    },
+    socket: { remoteAddress: '198.51.100.40', encrypted: false }
+  };
+  assert.equal(requestClientIp(spoofedDirectRequest), '198.51.100.40');
+  assert.equal(requestIsHttps(spoofedDirectRequest), false);
+  assert.equal(requestOrigin(spoofedDirectRequest), 'http://billing.example.net');
+});
+
+test('limits repeated public voucher orders by phone', () => {
+  const { publicVoucherOrderRateLimit } = require('../src/server').__test;
+  const request = { headers: {}, socket: { remoteAddress: '198.51.100.41' } };
+  for (let index = 0; index < 6; index += 1) {
+    assert.equal(publicVoucherOrderRateLimit(request, '081234567890').allowed, true);
+  }
+  assert.equal(publicVoucherOrderRateLimit(request, '081234567890').allowed, false);
+});
+
+test('protects new public voucher status links with an access token', () => {
+  const { hotspotVoucherOrderPublicAccessAllowed } = require('../src/server').__test;
+  assert.equal(hotspotVoucherOrderPublicAccessAllowed({ reference: 'legacy-order' }, new URL('https://billing.example/status')), true);
+  assert.equal(hotspotVoucherOrderPublicAccessAllowed(
+    { publicAccessToken: 'valid-token' },
+    new URL('https://billing.example/status?access_token=valid-token')
+  ), true);
+  assert.equal(hotspotVoucherOrderPublicAccessAllowed(
+    { publicAccessToken: 'valid-token' },
+    new URL('https://billing.example/status?access_token=invalid-token')
+  ), false);
+
+  const voucherSource = publicSource('hotspot-voucher.js');
+  assert.match(voucherSource, /result\.order\?\.id \|\| result\.order\?\.reference/);
+  assert.match(voucherSource, /access_token:\s*voucherOrderAccessToken/);
+  assert.match(voucherSource, /\?access_token=\$\{encodeURIComponent\(voucherOrderAccessToken\)\}/);
+});
+
+test('keeps runtime secrets and updater backups root-only', () => {
+  const installer = sourceFile('install.sh');
+  const updater = sourceFile('deploy', 'bin', 'fakenet-billing-update');
+  const storeSource = sourceFile('src', 'store.js');
+
+  assert.match(installer, /chmod 600 \"\$file\"/);
+  assert.match(installer, /APP_ADMIN_PASSWORD \"\$app_admin_password\"/);
+  assert.match(updater, /umask 077/);
+  assert.match(updater, /chmod 600 \"\$backup_file\"/);
+  assert.match(storeSource, /writeFile\(tempPath,[\s\S]*?\{ mode: 0o600 \}\)/);
+});
+
 test('keeps safe performance contracts for dashboard and hot queries', () => {
   const appSource = publicSource('app.js');
   const serverSource = sourceFile('src', 'server.js');

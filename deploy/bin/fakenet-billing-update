@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 APP_DIR="${APP_DIR:-/opt/fakenet-billing}"
 BACKUP_DIR="${FAKENET_BACKUP_DIR:-/var/backups/fakenet-billing}"
@@ -20,6 +21,9 @@ WAHA_ENV_FILE="${FAKENET_WAHA_ENV_FILE:-/etc/fakenet-billing-waha.env}"
 GENIEACS_ENV_FILE="${FAKENET_GENIEACS_ENV_FILE:-/etc/fakenet-billing-genieacs.env}"
 
 mkdir -p "$BACKUP_DIR" "$LOG_DIR"
+chmod 700 "$BACKUP_DIR" "$LOG_DIR" 2>/dev/null || true
+touch "$LOG_FILE"
+chmod 600 "$LOG_FILE" 2>/dev/null || true
 exec > >(
   awk '{
     print "[" strftime("%Y-%m-%d %H:%M:%S %z") "] " $0;
@@ -107,6 +111,18 @@ load_env_file() {
     . "$ENV_FILE"
     set +a
   fi
+}
+
+harden_sensitive_permissions() {
+  local file
+  for file in "$ENV_FILE" "$WAHA_ENV_FILE" "$GENIEACS_ENV_FILE"; do
+    [ ! -f "$file" ] || chmod 600 "$file"
+  done
+  if [ -d "$APP_DIR/data" ]; then
+    find "$APP_DIR/data" -type d -exec chmod 700 {} + 2>/dev/null || true
+    find "$APP_DIR/data" -type f -exec chmod 600 {} + 2>/dev/null || true
+  fi
+  find "$BACKUP_DIR" -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
 }
 
 port_is_listening() {
@@ -351,11 +367,13 @@ create_pre_update_backup() {
   dump_database radius "$radius_db_url" "$tmp_backup_dir/db/radius.dump"
 
   tar -czf "$backup_file" -C "$tmp_backup_dir" .
+  chmod 600 "$backup_file"
   rm -rf "$tmp_backup_dir"
   tmp_backup_dir=""
   echo "Backup pre-update selesai: $backup_file"
 }
 
+harden_sensitive_permissions
 create_pre_update_backup
 
 # Refresh update source after backup because /etc/fakenet-billing.env is loaded

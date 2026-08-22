@@ -524,6 +524,24 @@ ensure_update_env_defaults() {
   append_env_if_missing "$file" FAKENET_UPDATE_RAW_BASE_URL https://raw.githubusercontent.com/fakehotspot12/FAKE.NET-BILLING/main
 }
 
+harden_runtime_permissions() {
+  local file directory
+  for file in /etc/fakenet-billing.env /etc/fakenet-billing-waha.env "$GENIEACS_ENV_FILE"; do
+    [ ! -f "$file" ] || chmod 600 "$file"
+  done
+  if [ -d "$APP_DIR/data" ]; then
+    find "$APP_DIR/data" -type d -exec chmod 700 {} + 2>/dev/null || true
+    find "$APP_DIR/data" -type f -exec chmod 600 {} + 2>/dev/null || true
+  fi
+  for directory in /var/backups/fakenet-billing /var/log/fakenet-billing; do
+    [ ! -d "$directory" ] || chmod 700 "$directory"
+  done
+  if [ -d /var/backups/fakenet-billing ]; then
+    find /var/backups/fakenet-billing -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true
+  fi
+  [ ! -f /var/log/fakenet-billing/update.log ] || chmod 600 /var/log/fakenet-billing/update.log
+}
+
 prepare_genieacs_env_file() {
   local source_mode="${1:-bundled}" genieacs_jwt_secret
   if [ ! -f "$GENIEACS_ENV_FILE" ]; then
@@ -610,7 +628,7 @@ EOF
 }
 
 install_env() {
-  local app_db_password radius_db_password waha_api_key waha_password waha_webhook_secret
+  local app_db_password radius_db_password app_admin_password waha_api_key waha_password waha_webhook_secret
   if [ ! -f /etc/fakenet-billing.env ]; then
     cp "$APP_DIR/deploy/fakenet-billing.env" /etc/fakenet-billing.env
   fi
@@ -625,6 +643,10 @@ install_env() {
     sed -i "s/CHANGE_ME_RADIUS_DB_PASSWORD/$radius_db_password/g" /etc/fakenet-billing.env
     replace_or_append_env /etc/fakenet-billing.env RADIUS_DATABASE_PASSWORD "$radius_db_password"
   fi
+  app_admin_password="$(random_hex 12)"
+  append_env_if_missing /etc/fakenet-billing.env APP_ADMIN_USERNAME admin
+  append_env_if_missing /etc/fakenet-billing.env APP_ADMIN_NAME "Admin Billing"
+  append_env_if_missing /etc/fakenet-billing.env APP_ADMIN_PASSWORD "$app_admin_password"
   ensure_wa_gateway_env_defaults
   ensure_update_env_defaults
 
@@ -676,6 +698,7 @@ install_env() {
     replace_or_append_env /etc/fakenet-billing.env FAKENET_BUNDLED_GENIEACS 0
     replace_or_append_env /etc/fakenet-billing.env GENIEACS_SOURCE disabled
   fi
+  harden_runtime_permissions
 }
 
 managed_app_units() {
@@ -1396,6 +1419,7 @@ main() {
   echo "Isolir: http://SERVER-IP:8892/isolir"
   echo "Voucher: http://SERVER-IP:8893/voucher"
   echo "WifiKu: http://SERVER-IP:8894/wifiku"
+  echo "Login Billing awal: $(read_env_value_raw /etc/fakenet-billing.env APP_ADMIN_USERNAME || echo admin) / $(read_env_value_raw /etc/fakenet-billing.env APP_ADMIN_PASSWORD || true)"
   if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
     load_genieacs_env
     echo "GenieACS CWMP: http://SERVER-IP:${GENIEACS_CWMP_PORT:-7547}"

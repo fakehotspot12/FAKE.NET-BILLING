@@ -3,6 +3,7 @@
 const ORDER_PAGE = 'order-voucher.html';
 const BUY_PAGE = 'buy.html';
 const STATUS_PAGE = 'status-order.html';
+let voucherOrderAccessToken = new URLSearchParams(window.location.search).get('access_token') || '';
 
 let storefront = null;
 let pollTimer = null;
@@ -403,9 +404,14 @@ async function initBuyPage() {
             quantity: 1
           })
         });
-        const orderNo = result.order?.reference || result.order?.id || '';
+        const orderNo = result.order?.id || result.order?.reference || '';
+        voucherOrderAccessToken = result.order?.accessToken || '';
         markVoucherAutoLogin(orderNo);
-        window.location.href = pageUrl(STATUS_PAGE, { id: orderNo, auto: '1' });
+        window.location.href = pageUrl(STATUS_PAGE, {
+          id: orderNo,
+          auto: '1',
+          ...(voucherOrderAccessToken ? { access_token: voucherOrderAccessToken } : {})
+        });
       } catch (error) {
         setResponse(error.message, 'error');
       } finally {
@@ -506,7 +512,8 @@ async function voucherCheckout(order = {}, force = false) {
   const cached = cachedVoucherCheckout(reference);
   if (cached) return cached;
   if (voucherCheckoutRequests.has(reference)) return voucherCheckoutRequests.get(reference);
-  const request = api(`/api/public/hotspot-voucher-orders/${encodeURIComponent(reference)}/checkout`, {
+  const accessQuery = voucherOrderAccessToken ? `?access_token=${encodeURIComponent(voucherOrderAccessToken)}` : '';
+  const request = api(`/api/public/hotspot-voucher-orders/${encodeURIComponent(reference)}/checkout${accessQuery}`, {
     method: 'POST',
     body: JSON.stringify({})
   }).then((payload) => {
@@ -648,7 +655,8 @@ async function loadOrderStatus(orderNo, silent = false) {
     return;
   }
   try {
-    const result = await api(`/api/public/hotspot-voucher-orders/${encodeURIComponent(orderNo)}`);
+    const accessQuery = voucherOrderAccessToken ? `?access_token=${encodeURIComponent(voucherOrderAccessToken)}` : '';
+    const result = await api(`/api/public/hotspot-voucher-orders/${encodeURIComponent(orderNo)}${accessQuery}`);
     setResponse('');
     renderOrderStatus(result.order);
     if (voucherOrderIsPayable(result.order)) {

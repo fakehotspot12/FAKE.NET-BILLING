@@ -6941,13 +6941,20 @@ test('voucher status and direct login resolve from the order site', () => {
     hotspot: { loginUrl: 'http://login.kampung.test/login' },
     radius: { enabled: true, name: 'KAMPUNG.NET', address: '10.0.0.2', secret: 'test-secret' }
   });
-  const order = { id: 'order-1', reference: 'VO-20260719-001', nasId: 'site-kampung', nasName: 'KAMPUNG.NET' };
+  const order = {
+    id: 'order-1',
+    reference: 'VO-20260719-001',
+    publicAccessToken: 'public-order-token',
+    nasId: 'site-kampung',
+    nasName: 'KAMPUNG.NET'
+  };
 
   assert.equal(serverInternals.hotspotLoginUrlForNas(data, order.nasId), 'http://login.kampung.test/login');
   const statusUrl = new URL(serverInternals.hotspotVoucherPublicStatusUrl(data, order));
   assert.equal(statusUrl.origin, 'https://billing.example.net');
   assert.equal(statusUrl.pathname, '/status-order.html');
-  assert.equal(statusUrl.searchParams.get('id'), order.reference);
+  assert.equal(statusUrl.searchParams.get('id'), order.id);
+  assert.equal(statusUrl.searchParams.get('access_token'), order.publicAccessToken);
   assert.equal(statusUrl.searchParams.get('nas'), order.nasId);
 });
 
