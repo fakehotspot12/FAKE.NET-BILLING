@@ -12,6 +12,7 @@ const cwmpUsername = String(process.env.GENIEACS_CWMP_AUTH_USERNAME || 'admin');
 const cwmpPassword = String(process.env.GENIEACS_CWMP_AUTH_PASSWORD || '1sampai10');
 const mongoUrl = String(process.env.GENIEACS_MONGODB_CONNECTION_URL || 'mongodb://127.0.0.1:27017/genieacs');
 const assetsDir = path.join(__dirname, 'virtual-parameters');
+const externalBootstrap = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BOOTSTRAP_EXTERNAL || '').toLowerCase());
 const autoProvisionEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_AUTO_VP_PROVISION || '').toLowerCase());
 const requestTimeoutMs = Math.max(1000, Number(process.env.GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS || 2500) || 2500);
 const autoProvisionVirtualParameters = new Set([
@@ -170,6 +171,35 @@ function installVirtualParametersViaMongo(rows = []) {
   if (result.stdout) process.stdout.write(result.stdout);
 }
 
+function removeLegacyVirtualParametersViaMongo() {
+  const command = ['mongosh', 'mongo'].find((candidate) => {
+    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
+    return result.status === 0;
+  });
+  if (!command) return;
+
+  const names = [
+    'RXPower.backup.2026-07-15T17-46-33-756Z',
+    'RXmentah',
+    'gettemp.backup.2026-07-15T18-07-55-447Z',
+    'pppoe-pass'
+  ];
+  const script = [
+    'const names = ' + JSON.stringify(names) + ';',
+    'const removed = db.getCollection("virtualParameters").deleteMany({ _id: { $in: names } }).deletedCount;',
+    'const unset = {};',
+    'for (const name of names) unset["VirtualParameters." + name] = "";',
+    'db.getCollection("devices").updateMany({}, { $unset: unset });',
+    'print("Virtual Parameters legacy dibersihkan: " + removed);'
+  ].join('\n');
+  const result = spawnSync(command, ['--quiet', mongoUrl, '--eval', script], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stderr.write(`Peringatan: pembersihan Virtual Parameters legacy gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
+    return;
+  }
+  if (result.stdout) process.stdout.write(result.stdout);
+}
+
 function sanitizeLegacyProvisionsViaMongo() {
   const command = ['mongosh', 'mongo'].find((candidate) => {
     const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
@@ -236,6 +266,23 @@ function backfillVirtualParameterValuesViaMongo() {
     '  const number = Number(text.replace(",", ".").replace(/[^\\d.-]/g, ""));',
     '  if (!Number.isFinite(number) || [0,-255,255,65535,32767].includes(number)) return "";',
     '  return String(Math.round(number * 100) / 100);',
+    '}',
+    'function rxPowerText(value, path) {',
+    '  let number = Number(clean(value).replace(",", ".").replace(/[^\\d.-]/g, ""));',
+    '  if (!Number.isFinite(number) || [0, -255, 255, 65535, 32767].includes(number)) return "";',
+    '  if (/ZTE/i.test(path) && number > 0 && number < 1000) number = -number / 10;',
+    '  else if (number > 0 && /(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical)/i.test(path)) number = 30 + (Math.log10(number * Math.pow(10, -7)) * 10);',
+    '  else if (number < -100 || number > 100) number /= 100;',
+    '  if (!Number.isFinite(number) || number < -60 || number > 10) return "";',
+    '  return String(Math.round(number * 100) / 100);',
+    '}',
+    'function invalidRxPower(value) {',
+    '  const number = Number(clean(value).replace(",", ".").replace(/[^\\d.-]/g, ""));',
+    '  return !Number.isFinite(number) || number >= 0 || number < -60 || [-255, 255, 65535, 32767].includes(number);',
+    '}',
+    'function invalidTemperature(value) {',
+    '  const number = Number(clean(value).replace(",", ".").replace(/[^\\d.-]/g, ""));',
+    '  return !Number.isFinite(number) || number < 5 || number > 120 || [-255, 255, 65535, 32767].includes(number);',
     '}',
     'function tempConvertRaw(value) {',
     '  const samples = [[11509,45],[11876,46],[10866,42],[10592,41],[11142,43],[11968,46]];',
@@ -337,12 +384,16 @@ function backfillVirtualParameterValuesViaMongo() {
     'let updated = 0;',
     'db.getCollection("devices").find({}).forEach((doc) => {',
     '  const set = {};',
-    '  const rx = numberText(first(doc, rxPaths).value);',
+    '  const unset = {};',
+    '  const rxSource = first(doc, rxPaths);',
+    '  const rx = rxPowerText(rxSource.value, rxSource.path);',
     '  const temp = tempText(first(doc, tempPaths).value);',
     '  const pppUser = first(doc, pppUserPaths).value;',
     '  const pppBase = first(doc, pppUserPaths).path.replace(/\\.Username$/, "");',
     '  setVp(set, "RXPower", rx);',
     '  setVp(set, "gettemp", temp);',
+    '  if (!rx && invalidRxPower(leaf(doc, "VirtualParameters.RXPower"))) unset["VirtualParameters.RXPower"] = "";',
+    '  if (!temp && invalidTemperature(leaf(doc, "VirtualParameters.gettemp"))) unset["VirtualParameters.gettemp"] = "";',
     '  setVp(set, "getSerialNumber", clean(doc._deviceId && doc._deviceId._SerialNumber));',
     '  setVp(set, "PonMac", first(doc, ponMacPaths).value);',
     '  setVp(set, "getponmode", first(doc, ["InternetGatewayDevice.DeviceInfo.XponInterface.PonMode","InternetGatewayDevice.DeviceInfo.XponInterface.Mode","InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.WANAccessType"]).value);',
@@ -363,8 +414,11 @@ function backfillVirtualParameterValuesViaMongo() {
     '  const lanActive = hostPrefixes(doc).filter((prefix) => hostActive(doc, prefix) && !hostWifi(doc, prefix)).length;',
     '  setVp(set, "LANActiveClients", lanActive, "xsd:unsignedInt");',
     '  setVp(set, "LANClients", lanActive, "xsd:unsignedInt");',
-    '  if (Object.keys(set).length) {',
-    '    db.getCollection("devices").updateOne({ _id: doc._id }, { $set: set });',
+    '  if (Object.keys(set).length || Object.keys(unset).length) {',
+    '    const update = {};',
+    '    if (Object.keys(set).length) update.$set = set;',
+    '    if (Object.keys(unset).length) update.$unset = unset;',
+    '    db.getCollection("devices").updateOne({ _id: doc._id }, update);',
     '    updated += 1;',
     '  }',
     '});',
@@ -395,6 +449,7 @@ async function installVirtualParameters(token) {
   if (!installed) {
     installVirtualParametersViaMongo(rows);
   }
+  removeLegacyVirtualParametersViaMongo();
 
   const declarations = rows
     .filter((row) => autoProvisionVirtualParameters.has(row.name))
@@ -424,14 +479,18 @@ async function installVirtualParameters(token) {
 async function main() {
   await waitForNbi();
   let token = '';
-  try {
-    await waitForUi();
-    token = await bootstrapUser();
-    await uiPut(token, 'config/cwmp.auth', {
-      value: `AUTH(${JSON.stringify(cwmpUsername)}, ${JSON.stringify(cwmpPassword)})`
-    });
-  } catch (error) {
-    process.stderr.write(`Peringatan: bootstrap UI GenieACS dilewati: ${error.message || error}\n`);
+  if (externalBootstrap) {
+    process.stdout.write('GenieACS existing terdeteksi: akun dan konfigurasi UI dipertahankan.\n');
+  } else {
+    try {
+      await waitForUi();
+      token = await bootstrapUser();
+      await uiPut(token, 'config/cwmp.auth', {
+        value: `AUTH(${JSON.stringify(cwmpUsername)}, ${JSON.stringify(cwmpPassword)})`
+      });
+    } catch (error) {
+      process.stderr.write(`Peringatan: bootstrap UI GenieACS dilewati: ${error.message || error}\n`);
+    }
   }
   await installVirtualParameters(token);
   process.stdout.write('Bootstrap GenieACS selesai: akun UI, autentikasi Inform, dan Virtual Parameters aktif.\n');

@@ -615,6 +615,7 @@ function rxPowerNumber(value = '', parameter = '') {
   const number = Number(text.replace(',', '.').replace(/[^\d.-]/g, ''));
   if (!Number.isFinite(number)) return null;
   if ([0, -255, 255, 65535, 32767].includes(number)) return null;
+  if (number > 0 && /^VirtualParameters\.RXPower(?:\.|$)/i.test(cleanText(parameter))) return null;
   if (/ZTE/i.test(parameter) && number > 0) return -number / 10;
   if (number > 0 && isRawPositiveRxParameter(parameter)) {
     const normalized = 30 + (Math.log10(number * Math.pow(10, -7)) * 10);
@@ -1502,10 +1503,13 @@ function needsVirtualParameterRefresh(row = {}) {
     || row.temperatureValue === undefined
     || row.temperatureValue === ''
     || !Number.isFinite(Number(row.temperatureValue));
+  const rxPowerValue = Number(row.rxPowerValue);
   const missingRxPower = row.rxPowerValue === null
     || row.rxPowerValue === undefined
     || row.rxPowerValue === ''
-    || !Number.isFinite(Number(row.rxPowerValue));
+    || !Number.isFinite(rxPowerValue)
+    || rxPowerValue >= 0
+    || rxPowerValue < -60;
   return missingTemperature || missingRxPower;
 }
 

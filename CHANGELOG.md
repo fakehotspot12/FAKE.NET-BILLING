@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.3] - 2026-08-22
+
+### Fixed
+
+- Menormalkan RX power mentah berdasarkan parameter vendor saat bootstrap GenieACS agar nilai redaman positif tidak tersimpan sebagai dBm valid.
+- Mengabaikan Virtual Parameter RX power positif yang lama dan memakai sumber optik perangkat sampai nilai virtual diperbarui.
+- Membersihkan empat Virtual Parameters legacy/backup yang tidak digunakan agar daftar parameter GenieACS tetap konsisten.
+- Mempertahankan akun dan konfigurasi UI pada GenieACS existing; updater hanya menyinkronkan Virtual Parameters melalui NBI/Mongo.
+
 ## [4.3.2] - 2026-08-22
 
 ### Fixed

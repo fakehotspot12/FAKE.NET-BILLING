@@ -115,6 +115,27 @@ test('falls back to raw FL327D GPON RX power when virtual value is zero', () => 
   assert.equal(device.rxPowerParameter, 'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower');
 });
 
+test('ignores stale positive virtual RX power and normalizes the raw optical source', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'positive-rx-backfill',
+    VirtualParameters: {
+      RXPower: { _value: '45' }
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          'X_CT-COM_GponInterfaceConfig': {
+            RXPower: { _value: '45' }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.ok(device.rxPowerValue < 0);
+  assert.equal(device.rxPowerParameter, 'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower');
+});
+
 test('does not classify FL327D 802.11 host history as active LAN clients', () => {
   const device = genieAcs.normalizeDevice({
     _id: 'fl327d-host-history',
@@ -432,6 +453,11 @@ test('detects recent GenieACS rows that need Virtual Parameter refresh', () => {
     temperatureValue: 45,
     rxPowerValue: -21
   }), false);
+  assert.equal(genieAcs._internal.needsVirtualParameterRefresh({
+    id: 'device-positive-rx',
+    temperatureValue: 45,
+    rxPowerValue: 45
+  }), true);
 });
 
 test('normalizes connected WiFi and LAN clients from GenieACS parameters', () => {
