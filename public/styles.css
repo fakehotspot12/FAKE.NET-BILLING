@@ -5907,44 +5907,48 @@ body.is-loading-auth .content::before {
   table-layout: fixed;
 }
 
+.monitoring-billing-view .billing-table {
+  min-width: 1080px;
+}
+
 .billing-col-check {
-  width: 48px;
+  width: 38px;
 }
 
 .billing-col-customer {
-  width: 190px;
+  width: 142px;
 }
 
 .billing-col-site {
-  width: 126px;
+  width: 90px;
 }
 
 .billing-col-contact {
-  width: 185px;
+  width: 142px;
 }
 
 .billing-col-invoice {
-  width: 230px;
+  width: 155px;
 }
 
 .billing-col-date {
-  width: 118px;
+  width: 92px;
 }
 
 .billing-col-last-active {
-  width: 158px;
+  width: 108px;
 }
 
 .billing-col-amount {
-  width: 132px;
+  width: 104px;
 }
 
 .billing-col-status {
-  width: 105px;
+  width: 86px;
 }
 
 .billing-col-action {
-  width: 190px;
+  width: 123px;
 }
 
 .billing-row td {
@@ -5995,6 +5999,36 @@ body.is-loading-auth .content::before {
   min-width: 76px;
   padding: 0 9px;
   transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s ease;
+}
+
+@media (min-width: 761px) {
+  .monitoring-billing-view .billing-action-stack {
+    gap: 4px;
+  }
+
+  .monitoring-billing-view .billing-action-button {
+    flex: 0 0 30px;
+    gap: 0;
+    min-height: 30px;
+    min-width: 30px;
+    padding: 0;
+    width: 30px;
+  }
+
+  .monitoring-billing-view .billing-action-button > span:not(.billing-action-icon) {
+    display: none;
+  }
+
+  .monitoring-billing-view .billing-action-button:not(:has(.billing-action-icon))::before {
+    content: "↻";
+    font-size: 16px;
+    font-weight: 950;
+    line-height: 1;
+  }
+
+  .monitoring-billing-view .billing-row td {
+    padding: 9px 8px;
+  }
 }
 
 .billing-action-button.whatsapp {
@@ -17679,6 +17713,21 @@ body.is-authenticated .content button[id$="Refresh"].compact {
   .report-combined-tabs {
     align-items: stretch;
     flex-direction: column;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .report-combined-tabs > div:first-child {
+    overflow: visible;
+    width: 100%;
+  }
+
+  .report-combined-tabs > div:first-child strong,
+  .report-combined-tabs > div:first-child span {
+    display: block;
+    max-width: 100%;
+    overflow-wrap: normal;
+    white-space: normal;
   }
 
   .report-combined-tabs .tab-switcher {

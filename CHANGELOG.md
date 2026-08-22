@@ -31,6 +31,9 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 - Menyambungkan seluruh menu Mitra ke halaman operasionalnya dan membersihkan instance Leaflet saat berpindah halaman.
 - Memperbaiki error `requestKey is not defined` pada Sesi Online sekaligus mengaktifkan pagination server-side yang lebih ringan.
 - Mencegah toolbar ODP/ODC dan tombol template Whatsapp Gateway memperlebar halaman pada ponsel.
+- Memperbaiki error `rowDateLabel is not defined` saat Tagihan Pelanggan merender invoice dan membedakan tanggal jatuh tempo dari tanggal pembayaran Mitra.
+- Memadatkan tabel Tagihan Pelanggan desktop agar Nominal, Status, dan seluruh aksi terlihat tanpa baris tinggi atau scroll horizontal yang tidak perlu.
+- Menjaga judul serta tab Laporan Tagihan/Voucher tidak menyusut atau memotong teks pada layar mobile.
 
 ## [4.2.27] - 2026-08-21
 

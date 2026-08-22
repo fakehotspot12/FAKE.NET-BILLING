@@ -22343,6 +22343,9 @@ async function renderMonitoringBilling(options = {}) {
     const invoiceItem = invoice.item || invoice.subscribe || '';
     const invoiceLabel = billingInvoiceNo(invoice) || '-';
     const dueDateLabel = dateText(invoice.dueDate || invoice.invoiceDate) || '-';
+    const rowDateLabel = partnerPaymentView
+      ? (invoice.paidAt ? dateTimeText(invoice.paidAt) : '-')
+      : dueDateLabel;
     const mobileRowNumber = ((Number(pagination.page || 1) - 1) * Number(pagination.limit || state.monitoringBillingLimit || invoices.length || 0)) + index + 1;
     return `
       <tr class="billing-row">

@@ -19,8 +19,8 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const bootStyleSource = publicSource('boot.css');
   const appSource = publicSource('app.js');
 
-  assert.match(indexSource, /href="\/boot\.css\?ui=browser-audit4-20260822"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=browser-audit4-20260822"/);
+  assert.match(indexSource, /href="\/boot\.css\?ui=billing-view-audit-20260822"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?ui=billing-view-audit-20260822"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
@@ -166,6 +166,17 @@ test('uses a declared request key and server paging for online customer monitori
   assert.match(appSource, /const endpoint = `\/api\/monitoring\/customers\?\$\{queryString\(requestParams\)\}`/);
   assert.match(appSource, /const serverPagination = payload\.pagination/);
   assert.match(appSource, /const serverRows = Array\.isArray\(payload\.rows\)/);
+});
+
+test('declares the billing row date before rendering customer invoices', () => {
+  const appSource = publicSource('app.js');
+  const styles = publicSource('styles.css');
+
+  assert.match(appSource, /const dueDateLabel = dateText\(invoice\.dueDate \|\| invoice\.invoiceDate\) \|\| '-';[\s\S]*?const rowDateLabel = partnerPaymentView[\s\S]*?invoice\.paidAt \? dateTimeText\(invoice\.paidAt\) : '-'[\s\S]*?: dueDateLabel;/);
+  assert.match(appSource, /<td class="nowrap">\$\{escapeHtml\(rowDateLabel\)\}<\/td>/);
+  assert.match(styles, /\.monitoring-billing-view \.billing-table\s*\{\s*min-width:\s*1080px/);
+  assert.match(styles, /@media \(min-width: 761px\)[\s\S]*?\.monitoring-billing-view \.billing-action-button[\s\S]*?width:\s*30px/);
+  assert.match(styles, /\.report-combined-tabs > div:first-child[\s\S]*?overflow:\s*visible[\s\S]*?width:\s*100%/);
 });
 
 test('keeps public security responses minimal and protected', () => {
