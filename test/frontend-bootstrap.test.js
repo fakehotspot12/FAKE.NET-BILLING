@@ -289,6 +289,17 @@ test('keeps runtime secrets and updater backups root-only', () => {
   assert.match(storeSource, /writeFile\(tempPath,[\s\S]*?\{ mode: 0o600 \}\)/);
 });
 
+test('does not report an update as successful when GenieACS parameter sync fails', () => {
+  const installer = sourceFile('install.sh');
+  const updater = sourceFile('deploy', 'bin', 'fakenet-billing-update');
+
+  for (const source of [installer, updater]) {
+    assert.match(source, /for attempt in 1 2 3/);
+    assert.match(source, /sinkron Virtual Parameters GenieACS gagal setelah 3 percobaan/);
+    assert.doesNotMatch(source, /node "\$bootstrap" \|\| echo "Peringatan: sinkron Virtual Parameters/);
+  }
+});
+
 test('keeps safe performance contracts for dashboard and hot queries', () => {
   const appSource = publicSource('app.js');
   const serverSource = sourceFile('src', 'server.js');

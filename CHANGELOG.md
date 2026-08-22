@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.4] - 2026-08-22
+
+### Fixed
+
+- Menampilkan nama perangkat aktif dari tabel host GenieACS ketika ONT tidak menyediakan daftar `AssociatedDevice`, termasuk fallback `VendorClassID` tanpa menghitung host lama sebagai klien aktif tambahan.
+- Membedakan klien WiFi 2,4 GHz/5 GHz dari referensi interface host dan tetap mempertahankan LAN sebagai kelompok terpisah.
+- Mencoba sinkronisasi Virtual Parameters GenieACS hingga tiga kali saat install/update dan menghentikan proses dengan pesan yang jelas bila tetap gagal, sehingga update tidak lagi terlihat berhasil saat parameter tertinggal.
+
 ## [4.3.3] - 2026-08-22
 
 ### Fixed

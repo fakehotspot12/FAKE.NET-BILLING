@@ -741,7 +741,7 @@ resolve_genieacs_env_file() {
 }
 
 sync_genieacs_virtual_parameters() {
-  local bootstrap env_file nbi_port
+  local attempt bootstrap env_file nbi_port
   bootstrap="$APP_DIR/deploy/genieacs/bootstrap.js"
   [ -f "$bootstrap" ] || return 0
   command -v node >/dev/null 2>&1 || return 0
@@ -763,12 +763,21 @@ sync_genieacs_virtual_parameters() {
     return 0
   fi
 
-  echo "Sinkron Virtual Parameters GenieACS via $env_file"
-  GENIEACS_BOOTSTRAP_EXTERNAL=1 \
-    GENIEACS_UI_BOOTSTRAP_ATTEMPTS="${GENIEACS_UI_BOOTSTRAP_ATTEMPTS:-1}" \
-    GENIEACS_NBI_BOOTSTRAP_ATTEMPTS="${GENIEACS_NBI_BOOTSTRAP_ATTEMPTS:-6}" \
-    GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS="${GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS:-3000}" \
-    node "$bootstrap" || echo "Peringatan: sinkron Virtual Parameters GenieACS gagal, repair tetap dilanjutkan."
+  for attempt in 1 2 3; do
+    echo "Sinkron Virtual Parameters GenieACS via $env_file (percobaan $attempt/3)"
+    if GENIEACS_BOOTSTRAP_EXTERNAL=1 \
+      GENIEACS_UI_BOOTSTRAP_ATTEMPTS="${GENIEACS_UI_BOOTSTRAP_ATTEMPTS:-1}" \
+      GENIEACS_NBI_BOOTSTRAP_ATTEMPTS="${GENIEACS_NBI_BOOTSTRAP_ATTEMPTS:-6}" \
+      GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS="${GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS:-3000}" \
+      node "$bootstrap"; then
+      echo "Sinkron Virtual Parameters GenieACS berhasil."
+      return 0
+    fi
+    [ "$attempt" -ge 3 ] || sleep 2
+  done
+
+  echo "ERROR: sinkron Virtual Parameters GenieACS gagal setelah 3 percobaan; repair dihentikan agar parameter tidak tertinggal." >&2
+  return 1
 }
 
 systemd_unit_exists() {

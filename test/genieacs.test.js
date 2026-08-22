@@ -560,6 +560,75 @@ test('fills connected WiFi client names from host table by MAC address', () => {
   assert.equal(device.connectedClients[0].name, 'iPhone Kinoy');
 });
 
+test('uses active WiFi host rows when the associated-device table is absent', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'client-host-only-wifi',
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'Rumah-2G' },
+              TotalAssociations: { _value: '1' }
+            }
+          },
+          Hosts: {
+            Host: {
+              1: {
+                Active: { _value: '1' },
+                IPAddress: { _value: '192.168.1.31' },
+                MACAddress: { _value: 'AA:BB:CC:00:00:31' },
+                HostName: { _value: 'OPPO-A12' },
+                Layer1Interface: { _value: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1' }
+              },
+              2: {
+                Active: { _value: '0' },
+                IPAddress: { _value: '192.168.1.32' },
+                MACAddress: { _value: 'AA:BB:CC:00:00:32' },
+                HostName: { _value: 'Perangkat Lama' },
+                Layer1Interface: { _value: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.connectedClients.length, 1);
+  assert.equal(device.connectedClients[0].type, '2.4G');
+  assert.equal(device.connectedClients[0].name, 'OPPO-A12');
+  assert.equal(device.connectedClients[0].ipAddress, '192.168.1.31');
+});
+
+test('uses vendor class as the active device name when host name is empty', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'client-vendor-class-name',
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          Hosts: {
+            Host: {
+              1: {
+                Active: { _value: '1' },
+                IPAddress: { _value: '192.168.1.40' },
+                MACAddress: { _value: 'AA:BB:CC:00:00:40' },
+                HostName: { _value: 'unknown' },
+                VendorClassID: { _value: 'android-dhcp-13' },
+                Layer1Interface: { _value: 'Ethernet' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.connectedClients.length, 1);
+  assert.equal(device.connectedClients[0].type, 'LAN');
+  assert.equal(device.connectedClients[0].name, 'android-dhcp-13');
+});
+
 test('does not inflate active client total from stale host table entries', () => {
   const hosts = {};
   for (let index = 1; index <= 30; index += 1) {

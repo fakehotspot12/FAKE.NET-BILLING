@@ -1058,6 +1058,18 @@ function normalizeClientField(value = '') {
   return text && text !== '-' ? text : '';
 }
 
+function normalizeClientName(value = '') {
+  const text = normalizeClientField(value);
+  if (!text || /^(unknown|n\/?a|null|undefined|none|unnamed)$/i.test(text)) return '';
+  return text;
+}
+
+function clientNameValue(device = {}, prefix = '', primarySuffixes = [], fallbackSuffixes = []) {
+  const primary = normalizeClientName(parameterValue(device, prefix, primarySuffixes));
+  if (primary) return primary;
+  return normalizeClientName(parameterValue(device, prefix, fallbackSuffixes));
+}
+
 function normalizeClientMac(value = '') {
   const text = normalizeClientField(value);
   if (!text) return '';
@@ -1095,7 +1107,7 @@ function wifiClientRows(device = {}, network = {}) {
         'IPAddress',
         'IPv4Address'
       ]);
-      const name = parameterValue(device, prefix, [
+      const name = clientNameValue(device, prefix, [
         'HostName',
         'Name',
         'AssociatedDeviceHostName',
@@ -1104,6 +1116,10 @@ function wifiClientRows(device = {}, network = {}) {
         'DeviceName',
         'X_HW_HostName',
         'X_ZTE-COM_HostName'
+      ], [
+        'VendorClassID',
+        'ClientID',
+        'UserFriendlyName'
       ]);
       if (!macAddress && !ipAddress && !name) return null;
       if (!clientLooksActive(device, prefix, true)) return null;
@@ -1128,7 +1144,7 @@ function hostClientRows(device = {}) {
       if (!hostLooksActive(device, prefix)) return null;
       const macAddress = parameterValue(device, prefix, ['MACAddress', 'PhysAddress', 'Layer2Address']);
       const ipAddress = parameterValue(device, prefix, ['IPAddress', 'IPv4Address']);
-      const name = parameterValue(device, prefix, [
+      const name = clientNameValue(device, prefix, [
         'HostName',
         'Name',
         'Alias',
@@ -1136,6 +1152,10 @@ function hostClientRows(device = {}) {
         'ClientHostName',
         'X_HW_HostName',
         'X_ZTE-COM_HostName'
+      ], [
+        'VendorClassID',
+        'ClientID',
+        'UserFriendlyName'
       ]);
       if (!macAddress && !ipAddress && !name) return null;
       return {
@@ -1158,10 +1178,30 @@ function mergeClientRowFromHosts(row = {}, hostRows = []) {
   if (!host) return row;
   return {
     ...row,
-    name: normalizeClientField(row.name) || normalizeClientField(host.name) || '-',
+    name: normalizeClientName(row.name) || normalizeClientName(host.name) || '-',
     ipAddress: normalizeClientField(row.ipAddress) || normalizeClientField(host.ipAddress) || '-',
     macAddress: normalizeClientField(row.macAddress) || normalizeClientField(host.macAddress) || '-'
   };
+}
+
+function hostWifiBand(row = {}, device = {}) {
+  const text = cleanText(row.interfaceText).toLowerCase();
+  if (/(^|[^0-9])5\s*g(?:hz)?([^0-9]|$)|5\s*ghz/.test(text)) return '5G';
+  if (/2[.,]4\s*g(?:hz)?|2[.,]4\s*ghz/.test(text)) return '2.4G';
+  const indexMatch = text.match(/(?:wlanconfiguration|accesspoint|ssid)[.\s/_-]*(\d+)/i);
+  return wifiBandForIndex(indexMatch ? Number(indexMatch[1]) : 1, '', device);
+}
+
+function hostWifiClientRows(device = {}, hostRows = []) {
+  return hostRows
+    .filter((row) => /wifi|wi-fi|wlan|ssid|radio|wireless|802\.11/i.test(row.interfaceText || ''))
+    .map((row) => ({
+      type: hostWifiBand(row, device),
+      name: normalizeClientName(row.name) || '-',
+      ipAddress: normalizeClientField(row.ipAddress) || '-',
+      macAddress: normalizeClientField(row.macAddress) || '-',
+      source: 'host-wifi'
+    }));
 }
 
 function lanClientRows(device = {}, wifiRows = [], hostRows = hostClientRows(device)) {
@@ -1195,9 +1235,13 @@ function uniqueClientRows(rows = []) {
 function connectedClientSummary(device = {}, wifiNetworks = [], counts = {}) {
   const activeNetworks = wifiNetworks.filter((network) => network.enabled !== false);
   const hostRows = hostClientRows(device);
-  const wifiRows = uniqueClientRows(activeNetworks
+  const associatedWifiRows = uniqueClientRows(activeNetworks
     .flatMap((network) => wifiClientRows(device, network))
     .map((row) => mergeClientRowFromHosts(row, hostRows)));
+  const associatedBands = new Set(associatedWifiRows.map((row) => row.type));
+  const hostWifiRows = hostWifiClientRows(device, hostRows)
+    .filter((row) => !associatedBands.has(row.type));
+  const wifiRows = uniqueClientRows([...associatedWifiRows, ...hostWifiRows]);
   const lanRows = uniqueClientRows(lanClientRows(device, wifiRows, hostRows));
   const rows24 = wifiRows.filter((row) => row.type === '2.4G');
   const rows5 = wifiRows.filter((row) => row.type === '5G');
