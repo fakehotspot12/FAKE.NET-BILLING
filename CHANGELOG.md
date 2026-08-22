@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.2] - 2026-08-22
+
+### Fixed
+
+- Memisahkan pembatasan OTP WifiKu per nomor dan per IP agar pelanggan yang berbagi NAT, jaringan seluler, atau proxy Cloudflare tidak saling mengunci saat login.
+- Membersihkan pembatasan OTP nomor pelanggan setelah verifikasi berhasil tanpa mengurangi perlindungan percobaan kode yang salah.
+
 ## [4.3.1] - 2026-08-22
 
 ### Security

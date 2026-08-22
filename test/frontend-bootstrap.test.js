@@ -249,6 +249,16 @@ test('limits repeated public voucher orders by phone', () => {
   assert.equal(publicVoucherOrderRateLimit(request, '081234567890').allowed, false);
 });
 
+test('does not share WifiKu OTP cooldown between customers behind one IP', () => {
+  const { wifiKuOtpRateLimit } = require('../src/server').__test;
+  const request = { headers: {}, socket: { remoteAddress: '198.51.100.88' } };
+  assert.equal(wifiKuOtpRateLimit(request, '081200000001').allowed, true);
+  assert.equal(wifiKuOtpRateLimit(request, '081200000002').allowed, true);
+  const repeatedPhone = wifiKuOtpRateLimit(request, '081200000001');
+  assert.equal(repeatedPhone.allowed, false);
+  assert.ok(repeatedPhone.waitSeconds > 0);
+});
+
 test('protects new public voucher status links with an access token', () => {
   const { hotspotVoucherOrderPublicAccessAllowed } = require('../src/server').__test;
   assert.equal(hotspotVoucherOrderPublicAccessAllowed({ reference: 'legacy-order' }, new URL('https://billing.example/status')), true);

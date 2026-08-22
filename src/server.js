@@ -187,7 +187,8 @@ const LOGIN_RATE_LIMIT_MAX_PER_WINDOW = Math.max(3, Number(process.env.LOGIN_RAT
 const WIFIKU_OTP_MAX_ATTEMPTS = Math.max(1, Number(process.env.WIFIKU_OTP_MAX_ATTEMPTS || 5) || 5);
 const WIFIKU_OTP_COOLDOWN_MS = Math.max(15_000, Number(process.env.WIFIKU_OTP_COOLDOWN_SECONDS || 60) * 1000 || 60_000);
 const WIFIKU_OTP_RATE_WINDOW_MS = Math.max(5 * 60_000, Number(process.env.WIFIKU_OTP_RATE_WINDOW_SECONDS || 3600) * 1000 || 3600_000);
-const WIFIKU_OTP_MAX_PER_WINDOW = Math.max(3, Number(process.env.WIFIKU_OTP_MAX_PER_WINDOW || 8) || 8);
+const WIFIKU_OTP_MAX_PER_PHONE = Math.max(3, Number(process.env.WIFIKU_OTP_MAX_PER_PHONE || process.env.WIFIKU_OTP_MAX_PER_WINDOW || 8) || 8);
+const WIFIKU_OTP_MAX_PER_IP = Math.max(20, Number(process.env.WIFIKU_OTP_MAX_PER_IP || 120) || 120);
 const PUBLIC_INVOICE_LOOKUP_WINDOW_MS = Math.max(60_000, Number(process.env.PUBLIC_INVOICE_LOOKUP_WINDOW_SECONDS || 300) * 1000 || 300_000);
 const PUBLIC_VOUCHER_ORDER_WINDOW_MS = Math.max(60_000, Number(process.env.PUBLIC_VOUCHER_ORDER_WINDOW_SECONDS || 600) * 1000 || 600_000);
 const PUBLIC_VOUCHER_ORDER_MAX_PER_IP = Math.max(10, Number(process.env.PUBLIC_VOUCHER_ORDER_MAX_PER_IP || 60) || 60);
@@ -510,27 +511,38 @@ rateLimitCleanupTimer.unref?.();
 
 function wifiKuOtpRateLimit(req = {}, phone = '') {
   const ip = requestClientIp(req) || 'unknown';
-  const keys = [`ip:${ip}`];
+  const limits = [{ key: `ip:${ip}`, max: WIFIKU_OTP_MAX_PER_IP, cooldownMs: 0 }];
   const phoneKey = normalizeIndonesianPhone(phone);
-  if (phoneKey) keys.push(`phone:${phoneKey}`);
-  for (const key of keys) {
-    const result = rateLimitBucket(wifiKuOtpRateLimits, key, {
+  if (phoneKey) {
+    limits.push({
+      key: `phone:${phoneKey}`,
+      max: WIFIKU_OTP_MAX_PER_PHONE,
+      cooldownMs: WIFIKU_OTP_COOLDOWN_MS
+    });
+  }
+  for (const limit of limits) {
+    const result = rateLimitBucket(wifiKuOtpRateLimits, limit.key, {
       windowMs: WIFIKU_OTP_RATE_WINDOW_MS,
-      cooldownMs: WIFIKU_OTP_COOLDOWN_MS,
-      max: WIFIKU_OTP_MAX_PER_WINDOW,
+      cooldownMs: limit.cooldownMs,
+      max: limit.max,
       record: false
     });
     if (!result.allowed) return result;
   }
-  for (const key of keys) {
-    rateLimitBucket(wifiKuOtpRateLimits, key, {
+  for (const limit of limits) {
+    rateLimitBucket(wifiKuOtpRateLimits, limit.key, {
       windowMs: WIFIKU_OTP_RATE_WINDOW_MS,
       cooldownMs: 0,
-      max: WIFIKU_OTP_MAX_PER_WINDOW,
+      max: limit.max,
       record: true
     });
   }
   return { allowed: true, waitSeconds: 0 };
+}
+
+function clearWifiKuOtpPhoneRateLimit(phone = '') {
+  const phoneKey = normalizeIndonesianPhone(phone);
+  if (phoneKey) wifiKuOtpRateLimits.delete(`phone:${phoneKey}`);
 }
 
 function publicInvoiceLookupRateLimit(req = {}) {
@@ -20986,6 +20998,7 @@ async function handleApi(req, res, url) {
         return;
       }
       wifiKuOtpChallenges.delete(String(payload.challengeId || ''));
+      clearWifiKuOtpPhoneRateLimit(phone);
     }
     const token = createWifiKuSession(data, customer);
     sendJson(res, 200, {
@@ -27015,6 +27028,7 @@ module.exports = {
     tripayCheckoutAmountBreakdown,
     tripayCheckoutTtlMinutes,
     updateInvoiceManualDiscount,
+    wifiKuOtpRateLimit,
     reusablePaymentCheckout,
     storePaymentCheckout,
     tripayHistoryStatus,
