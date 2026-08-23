@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.5] - 2026-08-23
+
+### Fixed
+
+- Memisahkan alur login WifiKu OTP dan non-OTP sehingga login langsung tidak lagi terkena cooldown atau batas percobaan OTP.
+- Membersihkan challenge dan pembatas OTP lama saat mode login diubah, serta menampilkan pesan yang tepat untuk nomor pelanggan yang belum terdaftar.
+- Menyembunyikan ringkasan dan daftar klien 5 GHz pada WifiKu jika modem tidak memiliki radio atau SSID 5 GHz yang valid.
+- Menyegarkan state pengaturan WifiKu dan cache aset portal segera setelah konfigurasi disimpan.
+
 ## [4.3.4] - 2026-08-22
 
 ### Fixed

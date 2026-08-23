@@ -259,6 +259,28 @@ test('does not share WifiKu OTP cooldown between customers behind one IP', () =>
   assert.ok(repeatedPhone.waitSeconds > 0);
 });
 
+test('keeps WifiKu OTP optional and bypasses its limiter for direct login mode', () => {
+  const { sanitizeWifiKuSettings, wifiKuSettings } = require('../src/server').__test;
+  const disabled = sanitizeWifiKuSettings({ requireOtp: false }, { requireOtp: true });
+  const enabled = sanitizeWifiKuSettings({ requireOtp: true }, disabled);
+  assert.equal(wifiKuSettings({ settings: { wifiKu: disabled } }).requireOtp, false);
+  assert.equal(wifiKuSettings({ settings: { wifiKu: enabled } }).requireOtp, true);
+
+  const serverSource = sourceFile('src', 'server.js');
+  const routeStart = serverSource.indexOf("pathname === '/api/public/wifiku/request-otp'");
+  const routeEnd = serverSource.indexOf("pathname === '/api/public/wifiku/login'", routeStart);
+  const requestRoute = serverSource.slice(routeStart, routeEnd);
+  assert.ok(requestRoute.indexOf('if (!settings.requireOtp)') >= 0);
+  assert.ok(requestRoute.indexOf('if (!settings.requireOtp)') < requestRoute.indexOf('wifiKuOtpRateLimit(req, phone)'));
+});
+
+test('hides WifiKu 5 GHz client details when the modem has no 5 GHz network', () => {
+  const wifiKuSource = publicSource('wifiku.js');
+  assert.match(wifiKuSource, /if \(wifiNetworkAvailable\(device, '5g'\)\) return rows/);
+  assert.match(wifiKuSource, /counts\.hasWifi5 \? `<span>5G/);
+  assert.match(wifiKuSource, /hasWifi5\s*\? `2\.4G \$\{clients\.count24\} \/ 5G/);
+});
+
 test('protects new public voucher status links with an access token', () => {
   const { hotspotVoucherOrderPublicAccessAllowed } = require('../src/server').__test;
   assert.equal(hotspotVoucherOrderPublicAccessAllowed({ reference: 'legacy-order' }, new URL('https://billing.example/status')), true);

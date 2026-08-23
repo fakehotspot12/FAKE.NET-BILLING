@@ -545,6 +545,22 @@ function clearWifiKuOtpPhoneRateLimit(phone = '') {
   if (phoneKey) wifiKuOtpRateLimits.delete(`phone:${phoneKey}`);
 }
 
+function clearWifiKuOtpChallenges(customerId = '', phone = '') {
+  const normalizedPhone = normalizeIndonesianPhone(phone);
+  for (const [id, challenge] of wifiKuOtpChallenges.entries()) {
+    if (!challenge) continue;
+    if ((customerId && challenge.customerId === customerId)
+      || (normalizedPhone && challenge.phone === normalizedPhone)) {
+      wifiKuOtpChallenges.delete(id);
+    }
+  }
+}
+
+function resetWifiKuOtpState() {
+  wifiKuOtpChallenges.clear();
+  wifiKuOtpRateLimits.clear();
+}
+
 function publicInvoiceLookupRateLimit(req = {}) {
   const ip = requestClientIp(req) || 'unknown';
   return rateLimitBucket(publicInvoiceLookupRateLimits, `invoice:${ip}`, {
@@ -20905,25 +20921,14 @@ async function handleApi(req, res, url) {
       sendJson(res, 400, { ok: false, error: 'Nomor WhatsApp wajib diisi' });
       return;
     }
-    const rateLimit = wifiKuOtpRateLimit(req, phone);
-    if (!rateLimit.allowed) {
-      sendJson(res, 429, {
-        ok: false,
-        error: `Terlalu sering meminta OTP. Coba lagi dalam ${rateLimit.waitSeconds} detik.`
-      });
-      return;
-    }
     const customer = findCustomerByPhone(data, phone);
-    if (!customer) {
-      sendJson(res, 200, {
-        ok: true,
-        requireOtp: true,
-        challengeId: '',
-        message: 'Jika nomor WhatsApp terdaftar, kode OTP akan dikirim.'
-      });
-      return;
-    }
     if (!settings.requireOtp) {
+      if (!customer) {
+        sendJson(res, 404, { ok: false, error: 'Nomor WhatsApp belum terdaftar sebagai pelanggan' });
+        return;
+      }
+      clearWifiKuOtpChallenges(customer.id, phone);
+      clearWifiKuOtpPhoneRateLimit(phone);
       const token = createWifiKuSession(data, customer);
       sendJson(res, 200, {
         ok: true,
@@ -20938,7 +20943,25 @@ async function handleApi(req, res, url) {
       sendJson(res, 400, { ok: false, error: 'Whatsapp Gateway belum aktif untuk mengirim OTP' });
       return;
     }
+    const rateLimit = wifiKuOtpRateLimit(req, phone);
+    if (!rateLimit.allowed) {
+      sendJson(res, 429, {
+        ok: false,
+        error: `Terlalu sering meminta OTP. Coba lagi dalam ${rateLimit.waitSeconds} detik.`
+      });
+      return;
+    }
+    if (!customer) {
+      sendJson(res, 200, {
+        ok: true,
+        requireOtp: true,
+        challengeId: '',
+        message: 'Jika nomor WhatsApp terdaftar, kode OTP akan dikirim.'
+      });
+      return;
+    }
     cleanupWifiKuAuth();
+    clearWifiKuOtpChallenges(customer.id, phone);
     const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
     const id = createId('wifiku_otp');
     wifiKuOtpChallenges.set(id, {
@@ -22388,6 +22411,7 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'settings:write');
     if (!authContext) return;
     const payload = await readBody(req);
+    const previousWifiKuRequireOtp = wifiKuSettings(authContext.data).requireOtp;
     try {
       const { data } = await mutate((store) => {
         store.settings = store.settings || {};
@@ -22400,6 +22424,9 @@ async function handleApi(req, res, url) {
           baseUrl: store.settings.genieAcs.baseUrl || ''
         });
       });
+      if (previousWifiKuRequireOtp !== wifiKuSettings(data).requireOtp) {
+        resetWifiKuOtpState();
+      }
       sendJson(res, 200, {
         ok: true,
         settings: publicGenieAcsSettings(data.settings || {})
@@ -26529,6 +26556,7 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'settings:write');
     if (!authContext) return;
     const payload = await readBody(req);
+    const previousWifiKuRequireOtp = wifiKuSettings(authContext.data).requireOtp;
     let uploadedLogoUrl = '';
     if (typeof payload.logoUrl === 'string' && /^data:image\//i.test(payload.logoUrl.trim())) {
       try {
@@ -26622,6 +26650,9 @@ async function handleApi(req, res, url) {
         store.settings.radius = sanitizeRadiusSettings(payload.radius, store.settings.radius || {});
       }
     });
+    if (previousWifiKuRequireOtp !== wifiKuSettings(data).requireOtp) {
+      resetWifiKuOtpState();
+    }
     sendJson(res, 200, { settings: publicAppSettings(data.settings) });
     return;
   }
@@ -27020,6 +27051,7 @@ module.exports = {
     requireResellerHotspotProfileAccess,
     sanitizeBillingSettings,
     sanitizeHotspotVoucherOnlineSettings,
+    sanitizeWifiKuSettings,
     stampHotspotVoucherValidityFromFirstOnline,
     syncRadiusMemberProfile,
     syncRadiusMembersForProfile,
@@ -27028,6 +27060,7 @@ module.exports = {
     tripayCheckoutAmountBreakdown,
     tripayCheckoutTtlMinutes,
     updateInvoiceManualDiscount,
+    wifiKuSettings,
     wifiKuOtpRateLimit,
     reusablePaymentCheckout,
     storePaymentCheckout,

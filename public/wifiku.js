@@ -269,7 +269,9 @@ function numberValue(value) {
 }
 
 function clientRows(device = {}) {
-  return Array.isArray(device.connectedClients) ? device.connectedClients : [];
+  const rows = Array.isArray(device.connectedClients) ? device.connectedClients : [];
+  if (wifiNetworkAvailable(device, '5g')) return rows;
+  return rows.filter((row) => clientTypeKey(row.type) !== '5G');
 }
 
 function clientTypeKey(value = '') {
@@ -286,11 +288,14 @@ function clientCountByType(rows = [], type = '') {
 
 function clientSummaryCounts(device = {}) {
   const rows = clientRows(device);
+  const hasWifi5 = wifiNetworkAvailable(device, '5g');
   const count24 = Math.max(numberValue(device.wifiClients24), clientCountByType(rows, '2.4G'));
-  const count5 = Math.max(numberValue(device.wifiClients5), clientCountByType(rows, '5G'));
+  const count5 = hasWifi5
+    ? Math.max(numberValue(device.wifiClients5), clientCountByType(rows, '5G'))
+    : 0;
   const countLan = Math.max(numberValue(device.lanClients), clientCountByType(rows, 'LAN'));
   const total = Math.max(numberValue(device.clientsTotal || device.wifiClientsTotal), rows.length, count24 + count5 + countLan);
-  return { count24, count5, countLan, total };
+  return { count24, count5, countLan, total, hasWifi5 };
 }
 
 function clientBadgeClass(type = '') {
@@ -378,7 +383,7 @@ function openClientDialog(options = {}) {
   const summary = `
     <div class="client-summary-strip">
       <span>2.4G ${counts.count24}</span>
-      <span>5G ${counts.count5}</span>
+      ${counts.hasWifi5 ? `<span>5G ${counts.count5}</span>` : ''}
       <span>LAN ${counts.countLan}</span>
     </div>
   `;
@@ -625,7 +630,9 @@ function renderPortal(payload) {
   const hasWifi24 = wifiNetworkAvailable(device, '2.4g');
   const hasWifi5 = wifiNetworkAvailable(device, '5g');
   setText('wifiTotal', `${clients.total} user`);
-  setText('wifiDetail', `2.4G ${clients.count24} / 5G ${clients.count5} / LAN ${clients.countLan}`);
+  setText('wifiDetail', hasWifi5
+    ? `2.4G ${clients.count24} / 5G ${clients.count5} / LAN ${clients.countLan}`
+    : `2.4G ${clients.count24} / LAN ${clients.countLan}`);
   setText('homeModemClients', `${clients.total} user`);
   const clientButton = byId('clientSummaryButton');
   if (clientButton) {
@@ -724,7 +731,7 @@ byId('phoneForm').addEventListener('submit', async (event) => {
     }
     if (payload.requireOtp === false || !otpRequired()) {
       syncOtpFormVisibility(false);
-      throw new Error('OTP sedang nonaktif, silakan ulangi login');
+      throw new Error(payload.error || 'Nomor WhatsApp belum terdaftar sebagai pelanggan');
     }
     state.challengeId = payload.challengeId || '';
     syncOtpFormVisibility(Boolean(state.challengeId));

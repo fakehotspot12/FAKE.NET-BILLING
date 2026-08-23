@@ -18223,9 +18223,11 @@ async function openGenieAcsSettingsModal() {
         }
       })
     });
+    const savedSettings = result.settings || {};
     state.settings = {
       ...state.settings,
-      genieAcs: result.settings || state.settings.genieAcs
+      genieAcs: savedSettings,
+      wifiKu: savedSettings.wifiKu || state.settings.wifiKu
     };
     setToast('Setting GenieACS tersimpan');
     renderGenieAcs({ refresh: true });
