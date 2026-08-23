@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
-const { messageJobId, redisConnectionOptions } = require('../src/whatsapp-queue');
+const { messageJobId, messagePriority, redisConnectionOptions } = require('../src/whatsapp-queue');
 const { createDefaultStore } = require('../src/store');
 const { __test: serverInternals } = require('../src/server');
 
@@ -39,6 +39,12 @@ test('BullMQ connection follows REDIS_URL including database and TLS', () => {
   const secure = redisConnectionOptions('rediss://redis.example.test/2');
   assert.deepEqual(secure.tls, {});
   assert.equal(secure.db, 2);
+});
+
+test('WifiKu OTP has the highest Whatsapp queue priority', () => {
+  assert.equal(messagePriority('wifiku-otp'), 1);
+  assert.ok(messagePriority('wifiku-otp') < messagePriority('paymentPaid'));
+  assert.ok(messagePriority('paymentPaid') < messagePriority('broadcast'));
 });
 
 test('Whatsapp outbox never drops queued messages above history limit', () => {
@@ -123,6 +129,37 @@ test('transactional Whatsapp messages stay fast even when batch flag is sent', (
   assert.equal(message.throttleDelaySeconds, 6);
 });
 
+test('WifiKu OTP stays transactional and retains its delivery expiry', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  const expiresAt = '2026-08-23T12:05:00.000Z';
+  const message = serverInternals.queueWaGatewayMessage(data, {
+    type: 'wifiku-otp',
+    phone: '081234567894',
+    text: 'Kode OTP WifiKu',
+    expiresAt,
+    bulk: true
+  });
+
+  assert.equal(message.deliveryMode, 'transactional');
+  assert.equal(message.expiresAt, expiresAt);
+});
+
+test('new WifiKu OTP supersedes an older queued code for the same phone', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  const first = serverInternals.queueWaGatewayMessage(data, {
+    type: 'wifiku-otp',
+    phone: '081234567895',
+    text: 'Kode lama'
+  });
+
+  assert.equal(serverInternals.supersedeQueuedWifiKuOtp(data, '6281234567895'), 1);
+  assert.equal(first.status, 'failed');
+  assert.equal(first.text.includes('Kode lama'), false);
+  assert.equal(first.queueRevision, 1);
+});
+
 test('WAHA provider response ID is normalized and ACK advances to read', () => {
   const data = createDefaultStore();
   data.settings.waGateway.sender = 'default';
@@ -202,6 +239,12 @@ test('temporary Whatsapp Gateway session errors are treated as retryable', () =>
     status: 400,
     message: 'Nomor WhatsApp kosong'
   }), false);
+  assert.equal(serverInternals.isTransientWaGatewayError({
+    status: 500,
+    message: 'No LID for user'
+  }), false);
+  assert.equal(serverInternals.waGatewayDeliveryMaxAttempts({ type: 'wifiku-otp' }), 3);
+  assert.ok(serverInternals.waGatewayDeliveryMaxAttempts({ type: 'paymentReminder' }) > 3);
 });
 
 test('WAJS/WebJS connection states are recognized as online or QR-required', () => {

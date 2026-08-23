@@ -164,7 +164,9 @@ const WA_GATEWAY_BULK_PROFILES = Object.freeze({
   billingCycle: Object.freeze({ delaySeconds: 24, maxPerBatch: 120, batchPauseSeconds: 10 * 60, jitterSeconds: 10 }),
   bulk: Object.freeze({ delaySeconds: 28, maxPerBatch: 100, batchPauseSeconds: 10 * 60, jitterSeconds: 10 })
 });
-const WA_GATEWAY_TRANSACTIONAL_TYPES = new Set(['paymentPaid', 'accountActive', 'voucherIssued']);
+const WA_GATEWAY_TRANSACTIONAL_TYPES = new Set(['paymentPaid', 'accountActive', 'voucherIssued', 'wifiku-otp']);
+const WA_GATEWAY_TRANSIENT_MAX_ATTEMPTS = Math.max(3, Number(process.env.WA_GATEWAY_TRANSIENT_MAX_ATTEMPTS || 10) || 10);
+const WIFIKU_OTP_DELIVERY_MAX_ATTEMPTS = Math.max(1, Number(process.env.WIFIKU_OTP_DELIVERY_MAX_ATTEMPTS || 3) || 3);
 const WAHA_ENV_FILE = process.env.WAHA_ENV_FILE || '/etc/fakenet-billing-waha.env';
 const APP_UPDATE_COMMAND = process.env.FAKENET_UPDATE_COMMAND || '/usr/local/bin/fakenet-billing-update';
 const APP_UPDATE_LOG = process.env.FAKENET_UPDATE_LOG || '/var/log/fakenet-billing/update.log';
@@ -15965,6 +15967,7 @@ function queueWaGatewayMessage(data = {}, payload = {}, runtime = {}) {
     throttleBatchPauseSeconds: bulk ? throttle.batchPauseSeconds : 0,
     status: settings.enabled ? 'queued' : 'draft',
     scheduledAt: payload.scheduledAt || new Date(now + scheduleMs).toISOString(),
+    expiresAt: payload.expiresAt || '',
     attempts: 0,
     queueRevision: 0,
     queueJobId: '',
@@ -15977,6 +15980,26 @@ function queueWaGatewayMessage(data = {}, payload = {}, runtime = {}) {
   if (bulk && Number.isFinite(runtime.bulkQueuedCount)) runtime.bulkQueuedCount = queuedCount + 1;
   if (!runtime.deferPrune) pruneWaGatewayMessageHistory(data);
   return message;
+}
+
+function supersedeQueuedWifiKuOtp(data = {}, phone = '') {
+  const target = normalizeLocalPhone(phone);
+  if (!target) return 0;
+  const now = new Date().toISOString();
+  let superseded = 0;
+  for (const message of data.waMessages || []) {
+    if (String(message.type || '') !== 'wifiku-otp'
+      || String(message.status || '') !== 'queued'
+      || normalizeLocalPhone(message.phone) !== target) continue;
+    message.status = 'failed';
+    message.text = 'Kode OTP WifiKu sebelumnya telah digantikan.';
+    message.lastError = 'OTP digantikan oleh permintaan terbaru';
+    message.queueRevision = Math.max(0, Number(message.queueRevision) || 0) + 1;
+    message.queueJobId = '';
+    message.updatedAt = now;
+    superseded += 1;
+  }
+  return superseded;
 }
 
 function customerForInvoice(data = {}, invoice = {}) {
@@ -16374,14 +16397,23 @@ function transientWaGatewayError(message = 'Whatsapp Gateway belum siap', detail
 
 function isTransientWaGatewayError(error = {}) {
   if (error.transientWaGateway === true) return true;
-  const status = Number(error.status || error.code || 0);
-  if ([408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
   const text = [
     error.message,
     error.payload && JSON.stringify(error.payload),
     error.cause && (error.cause.message || error.cause.code)
   ].filter(Boolean).join(' ');
+  if (/no lid for user|not registered|invalid (?:wid|recipient|chat|phone)|number (?:does not exist|is not registered)|nomor whatsapp (?:kosong|tidak valid|tidak terdaftar)/i.test(text)) {
+    return false;
+  }
+  const status = Number(error.status || error.code || 0);
+  if ([408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
   return /session status is not as expected|try again later|restart the session|scan_qr_code|starting|stopped|disconnected|offline|timeout|abort|econnrefused|fetch failed|socket hang up|temporar/i.test(text);
+}
+
+function waGatewayDeliveryMaxAttempts(message = {}) {
+  return String(message.type || '') === 'wifiku-otp'
+    ? WIFIKU_OTP_DELIVERY_MAX_ATTEMPTS
+    : WA_GATEWAY_TRANSIENT_MAX_ATTEMPTS;
 }
 
 async function ensureWahaSessionReady(settings = {}) {
@@ -16571,7 +16603,11 @@ async function deliverWaMessage(settings = {}, message = {}) {
     throw new Error(`Provider ${provider} belum memakai worker lokal. Pilih Whatsapp Gateway untuk pengiriman otomatis.`);
   }
   const phone = normalizeWaPhone(message.phone);
-  if (!phone) throw new Error('Nomor WhatsApp kosong');
+  if (!phone || !isValidIndonesianWaPhone(phone)) {
+    const error = new Error('Nomor WhatsApp tidak valid');
+    error.status = 400;
+    throw error;
+  }
   await ensureWahaSessionReady(settings);
   const payload = await wahaJson(settings, '/api/sendText', {
     method: 'POST',
@@ -16613,10 +16649,23 @@ async function processWaGatewayQueueJob(job) {
   if (message.status !== 'queued') {
     return { skipped: true, reason: `message-${message.status || 'unknown'}` };
   }
+  if (message.expiresAt && new Date(message.expiresAt).getTime() <= Date.now()) {
+    const expiredAt = new Date().toISOString();
+    await mutate((store) => {
+      const current = (store.waMessages || []).find((item) => item.id === messageId);
+      if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision || current.status !== 'queued') return;
+      current.status = 'failed';
+      current.text = 'Kode OTP WifiKu sudah kedaluwarsa.';
+      current.lastError = 'Kode OTP sudah kedaluwarsa sebelum terkirim';
+      current.updatedAt = expiredAt;
+    }, { collections: ['waMessages'], includeCore: false });
+    return { skipped: true, reason: 'message-expired' };
+  }
 
   const settings = data.settings?.waGateway || {};
   const provider = normalizeWaProvider(settings.provider || 'waha');
-  if (!settings.enabled || provider !== 'waha' || !withinWaSendWindow(settings, new Date())) {
+  const bypassSendWindow = String(message.type || '') === 'wifiku-otp';
+  if (!settings.enabled || provider !== 'waha' || (!bypassSendWindow && !withinWaSendWindow(settings, new Date()))) {
     await mutate((store) => {
       const current = (store.waMessages || []).find((item) => item.id === messageId);
       if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision || current.status !== 'queued') return;
@@ -16646,6 +16695,9 @@ async function processWaGatewayQueueJob(job) {
         updatedAt: sentAt,
         lastError: ''
       });
+      if (String(current.type || '') === 'wifiku-otp') {
+        current.text = 'Kode OTP WifiKu telah dikirim.';
+      }
       addActivity(store, 'settings', `Whatsapp Gateway BullMQ: ${current.subject || current.invoiceNo || current.id} terkirim`, {
         action: 'wa-gateway-send',
         messageId: current.id,
@@ -16661,6 +16713,8 @@ async function processWaGatewayQueueJob(job) {
     const attemptNumber = Math.max(1, Number(job.attemptsMade || 0) + 1);
     const maximumAttempts = Math.max(1, Number(job.opts?.attempts || 1));
     const finalAttempt = attemptNumber >= maximumAttempts;
+    const totalAttempts = Math.max(0, Number(message.attempts) || 0) + 1;
+    const retryLater = transient && totalAttempts < waGatewayDeliveryMaxAttempts(message);
     const retryDelaySeconds = Math.max(
       transient ? 60 : 15,
       Number(waGatewayMessageDelaySeconds(settings, message) || WA_GATEWAY_TRANSACTIONAL_DELAY_SECONDS)
@@ -16669,18 +16723,21 @@ async function processWaGatewayQueueJob(job) {
       const current = (store.waMessages || []).find((item) => item.id === messageId);
       if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision) return;
       current.provider = provider;
-      current.status = transient ? 'queued' : (finalAttempt ? 'failed' : 'queued');
+      current.status = retryLater ? 'queued' : (transient || finalAttempt ? 'failed' : 'queued');
       current.attempts = Math.max(0, Number(current.attempts) || 0) + 1;
       current.scheduledAt = new Date(Date.now() + retryDelaySeconds * 1000).toISOString();
       current.lastError = wahaFriendlyMessage(error.message || 'Whatsapp Gateway gagal mengirim');
       current.updatedAt = new Date().toISOString();
-      if (transient) {
+      if (!retryLater && String(current.type || '') === 'wifiku-otp') {
+        current.text = 'Kode OTP WifiKu gagal dikirim.';
+      }
+      if (retryLater) {
         current.queueRevision = Math.max(0, Number(current.queueRevision) || 0) + 1;
         current.queueJobId = '';
         current.enqueuedAt = '';
       }
     }, { collections: ['waMessages'], includeCore: false });
-    if (transient) {
+    if (retryLater) {
       return {
         retryLater: true,
         reason: wahaFriendlyMessage(error.message || 'Whatsapp Gateway belum siap'),
@@ -20971,15 +21028,38 @@ async function handleApi(req, res, url) {
       attempts: 0,
       expiresAt: Date.now() + settings.otpTtlMinutes * 60 * 1000
     });
-    await mutate((store) => queueWaGatewayMessage(store, {
-      phone,
-      recipientName: customer.name || customer.username || 'Pelanggan',
-      subject: 'WifiKu OTP',
-      text: `Kode OTP WifiKu anda: *${otp}*\nBerlaku ${settings.otpTtlMinutes} menit.\n\nJangan bagikan kode ini kepada siapa pun.`,
-      status: 'queued',
-      type: 'wifiku-otp',
-      actorName: 'WifiKu'
-    }), { collections: ['waMessages'], includeCore: false });
+    const expiresAt = new Date(Date.now() + settings.otpTtlMinutes * 60 * 1000).toISOString();
+    const { result: queuedMessage } = await mutate((store) => {
+      supersedeQueuedWifiKuOtp(store, phone);
+      return queueWaGatewayMessage(store, {
+        phone,
+        recipientName: customer.name || customer.username || 'Pelanggan',
+        subject: 'WifiKu OTP',
+        text: `Kode OTP WifiKu anda: *${otp}*\nBerlaku ${settings.otpTtlMinutes} menit.\n\nJangan bagikan kode ini kepada siapa pun.`,
+        status: 'queued',
+        type: 'wifiku-otp',
+        actorName: 'WifiKu',
+        expiresAt
+      });
+    }, { collections: ['waMessages'], includeCore: false });
+    if (queuedMessage) {
+      const dispatch = await runWaGatewaySender('wifiku-otp', {
+        ignoreWindow: true,
+        messageId: queuedMessage.id
+      }).catch((error) => {
+        console.warn(`OTP WifiKu ${queuedMessage.id} belum masuk worker: ${error.message || error}`);
+        return null;
+      });
+      if (!dispatch) {
+        const retryTimer = setTimeout(() => {
+          runWaGatewaySender('wifiku-otp-retry', {
+            ignoreWindow: true,
+            messageId: queuedMessage.id
+          }).catch(() => null);
+        }, 500);
+        retryTimer.unref?.();
+      }
+    }
     sendJson(res, 200, {
       ok: true,
       requireOtp: true,
@@ -27016,6 +27096,7 @@ module.exports = {
     paymentGatewayPayloadMerchantReference,
     paymentGatewayReportPayload,
     queueWaGatewayMessage,
+    supersedeQueuedWifiKuOtp,
     recoverRelevantWaGatewayDrafts,
     reactivateCustomerAfterPaidInvoice,
     finalizePaidInvoiceRadiusActivation,
@@ -27039,6 +27120,7 @@ module.exports = {
     verifyPaymentGatewayCallback,
     verifyWahaWebhookSignature,
     isTransientWaGatewayError,
+    waGatewayDeliveryMaxAttempts,
     wahaStatusText,
     wahaIsConnected,
     wahaNeedsQr,

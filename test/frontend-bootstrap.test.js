@@ -260,7 +260,9 @@ test('does not share WifiKu OTP cooldown between customers behind one IP', () =>
 });
 
 test('keeps WifiKu OTP optional and bypasses its limiter for direct login mode', () => {
+  const { createDefaultStore } = require('../src/store');
   const { sanitizeWifiKuSettings, wifiKuSettings } = require('../src/server').__test;
+  assert.equal(createDefaultStore().settings.wifiKu.requireOtp, false);
   const disabled = sanitizeWifiKuSettings({ requireOtp: false }, { requireOtp: true });
   const enabled = sanitizeWifiKuSettings({ requireOtp: true }, disabled);
   assert.equal(wifiKuSettings({ settings: { wifiKu: disabled } }).requireOtp, false);

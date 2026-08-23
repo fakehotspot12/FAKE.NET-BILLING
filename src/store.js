@@ -122,7 +122,7 @@ function createDefaultStore() {
       wifiKu: {
         enabled: true,
         publicPath: '/wifiku',
-        requireOtp: true,
+        requireOtp: false,
         otpTtlMinutes: 5,
         sessionTtlHours: 12
       },

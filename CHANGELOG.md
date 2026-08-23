@@ -2,6 +2,15 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.6] - 2026-08-23
+
+### Fixed
+
+- Mengirim OTP WifiKu langsung melalui antrean prioritas tertinggi, termasuk di luar jadwal pengiriman invoice dan reminder.
+- Menghentikan retry tanpa batas untuk penerima Whatsapp invalid, membatasi retry gangguan sementara, dan tidak mengirim OTP yang sudah kedaluwarsa.
+- Menggantikan OTP lama ketika pelanggan meminta kode baru serta menyamarkan isi kode dari riwayat database setelah pengiriman selesai.
+- Menetapkan OTP WifiKu nonaktif sebagai default instalasi baru tanpa mengubah pilihan yang sudah tersimpan pada mesin lama.
+
 ## [4.3.5] - 2026-08-23
 
 ### Fixed

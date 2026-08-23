@@ -32,6 +32,20 @@ function messageJobId(messageId = '', revision = 0) {
   return `wa-${digest}-${Math.max(0, Number(revision) || 0)}`;
 }
 
+function messagePriority(type = '') {
+  const priorityByType = {
+    'wifiku-otp': 1,
+    paymentPaid: 2,
+    accountActive: 3,
+    voucherIssued: 3,
+    paymentReminder: 4,
+    invoiceIssued: 5,
+    accountSuspend: 6,
+    broadcast: 10
+  };
+  return priorityByType[String(type || '')] || 8;
+}
+
 class WhatsAppQueue {
   constructor(options = {}) {
     this.queueName = options.queueName || process.env.WA_BULLMQ_QUEUE_NAME || DEFAULT_QUEUE_NAME;
@@ -73,15 +87,7 @@ class WhatsAppQueue {
     const attemptsMade = Math.max(0, Number(message.attempts) || 0);
     const attempts = Math.max(1, 3 - Math.min(attemptsMade, 2));
     const backoffDelay = Math.max(15, Number(message.throttleDelaySeconds || settings.minDelaySeconds) || 45) * 1000;
-    const priorityByType = {
-      paymentPaid: 1,
-      accountActive: 2,
-      paymentReminder: 3,
-      invoiceIssued: 5,
-      accountSuspend: 6,
-      broadcast: 10
-    };
-    const priority = Math.max(1, Number(message.priority || priorityByType[message.type] || 8) || 8);
+    const priority = Math.max(1, Number(message.priority || messagePriority(message.type)) || 8);
     const job = await this.queue.add('send-whatsapp', {
       messageId: message.id,
       revision
@@ -135,5 +141,6 @@ class WhatsAppQueue {
 module.exports = {
   WhatsAppQueue,
   messageJobId,
+  messagePriority,
   redisConnectionOptions
 };
