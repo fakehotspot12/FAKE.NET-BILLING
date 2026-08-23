@@ -17943,7 +17943,7 @@ async function openGenieWanModal(row = {}) {
   const wanRows = Array.isArray(payload.rows) ? payload.rows : [];
   const bindings = Array.isArray(payload.bindings) ? payload.bindings : [];
   const sortedWanRows = [...wanRows].sort((left, right) => Number(right.protected === true) - Number(left.protected === true));
-  const editableRows = wanRows.filter((item) => item.editable);
+  const editableRows = wanRows.filter((item) => item.editable || item.bindingEditable);
   const primary = payload.primary || editableRows.find((item) => item.mode === 'pppoe') || null;
   const initialWan = editableRows.find((item) => item.id === payload.defaultTargetId)
     || primary
@@ -17956,6 +17956,9 @@ async function openGenieWanModal(row = {}) {
       || 'new',
     bridge: payload.defaultTargetIds?.bridge
       || editableRows.find((item) => item.mode === 'bridge')?.id
+      || 'new',
+    ip: payload.defaultTargetIds?.ip
+      || editableRows.find((item) => item.mode === 'ip')?.id
       || 'new'
   };
   const occupied = new Map();
@@ -18004,13 +18007,14 @@ async function openGenieWanModal(row = {}) {
     <label class="field full">
       <span>Target WAN</span>
       <select name="targetWan" id="genieWanTarget">
-        ${editableRows.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === initialTarget ? 'selected' : ''}>Edit WAN ${escapeHtml(item.label)}${item.username ? ` - ${escapeHtml(item.username)}` : ''}</option>`).join('')}
+        ${editableRows.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === initialTarget ? 'selected' : ''}>Edit WAN ${escapeHtml(item.label)}${item.username ? ` - ${escapeHtml(item.username)}` : ''}${item.editable ? '' : ' - binding saja'}</option>`).join('')}
         <option value="new" ${initialTarget === 'new' ? 'selected' : ''}>Tambah WAN baru</option>
       </select>
     </label>
     <div class="genie-wan-mode field full" role="group" aria-label="Mode WAN">
-      <label><input name="mode" type="radio" value="pppoe" ${initialWan?.mode !== 'bridge' ? 'checked' : ''}><span>PPPoE Routed</span></label>
+      <label><input name="mode" type="radio" value="pppoe" ${!initialWan || initialWan.mode === 'pppoe' ? 'checked' : ''}><span>PPPoE Routed</span></label>
       <label class="${bridgeDisabled ? 'is-disabled' : ''}"><input name="mode" type="radio" value="bridge" ${initialWan?.mode === 'bridge' ? 'checked' : ''} ${bridgeDisabled}><span>Bridge</span></label>
+      ${editableRows.some((item) => item.mode === 'ip') ? `<label><input name="mode" type="radio" value="ip" ${initialWan?.mode === 'ip' ? 'checked' : ''}><span>IP Routed existing</span></label>` : ''}
     </div>
     <label class="field">
       <span>VLAN ID</span>
@@ -18050,7 +18054,7 @@ async function openGenieWanModal(row = {}) {
     <div class="modal-actions field full">
       <button class="ghost-button" type="button" data-close-modal>Tutup</button>
       <button class="ghost-button" id="genieWanBindingOnly" type="button">Simpan Binding</button>
-      <button class="button" type="submit">Kirim Konfigurasi</button>
+      <button class="button" id="genieWanSubmit" type="submit">Kirim Konfigurasi</button>
     </div>
     </div>
   `, async (formPayload, form) => {
@@ -18061,6 +18065,10 @@ async function openGenieWanModal(row = {}) {
     const mode = String(formPayload.mode || 'pppoe').trim().toLowerCase();
     if (bindingOnly && String(formPayload.targetWan || '') === 'new') {
       setGenieModalStatus(statusElement, 'error', 'Binding belum dapat disimpan', 'Pilih WAN yang sudah ada.');
+      return false;
+    }
+    if (!bindingOnly && mode === 'ip') {
+      setGenieModalStatus(statusElement, 'error', 'WAN IP existing dilindungi', 'Gunakan Simpan Binding agar VLAN dan koneksi lama tidak tertimpa.');
       return false;
     }
     if (mode === 'pppoe' && !String(formPayload.username || '').trim()) {
@@ -18114,6 +18122,7 @@ async function openGenieWanModal(row = {}) {
   const username = document.getElementById('genieWanUsername');
   const password = document.getElementById('genieWanPassword');
   const bindingOnlyButton = document.getElementById('genieWanBindingOnly');
+  const submitButton = document.getElementById('genieWanSubmit');
   const formTitle = document.getElementById('genieWanFormTitle');
   const modeInputs = [...modalBody.querySelectorAll('input[name="mode"]')];
   const bindingInputs = [...modalBody.querySelectorAll('input[name="bindings"]')];
@@ -18133,12 +18142,22 @@ async function openGenieWanModal(row = {}) {
       if (username && !username.value) username.value = row.username || '';
       if (password) password.value = '';
       bindingInputs.forEach((input) => { input.checked = false; });
+      const currentMode = modeInputs.find((input) => input.checked)?.value;
+      if (currentMode === 'ip') {
+        const pppoeMode = modeInputs.find((input) => input.value === 'pppoe');
+        if (pppoeMode) pppoeMode.checked = true;
+      }
     }
     const mode = modeInputs.find((input) => input.checked)?.value || 'pppoe';
     modalBody.querySelectorAll('[data-genie-wan-pppoe]').forEach((field) => { field.hidden = mode !== 'pppoe'; });
+    if (vlan) vlan.readOnly = selected?.mode === 'ip';
     if (username) username.required = mode === 'pppoe';
     if (password) password.required = mode === 'pppoe' && !selected;
-    if (bindingOnlyButton) bindingOnlyButton.disabled = !selected || payload.vendor?.wanWriteSupported === false;
+    if (bindingOnlyButton) bindingOnlyButton.disabled = !selected?.bindingEditable || payload.vendor?.wanWriteSupported === false;
+    if (submitButton) {
+      submitButton.disabled = Boolean(selected && !selected.editable) || payload.vendor?.wanWriteSupported === false;
+      submitButton.title = selected?.mode === 'ip' ? 'WAN IP existing hanya dapat diperbarui binding-nya' : '';
+    }
   };
   target?.addEventListener('change', syncWanForm);
   modeInputs.forEach((input) => input.addEventListener('change', () => {

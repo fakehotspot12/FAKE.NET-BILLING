@@ -4,6 +4,27 @@ const PROTECTED_WAN_VLANS = new Set([100, 1111]);
 const LAN_KEYS = Array.from({ length: 4 }, (_, index) => `LAN${index + 1}`);
 const SSID_KEYS = Array.from({ length: 8 }, (_, index) => `SSID${index + 1}`);
 const BINDING_KEYS = [...LAN_KEYS, ...SSID_KEYS];
+const WAN_VLAN_PATHS = [
+  'X_HW_VLAN',
+  'VLANID',
+  'VLANIDMark',
+  'X_FH_VLANID',
+  'X_ZTE-COM_VLANID',
+  'X_CT-COM_VLANID',
+  'X_CT-COM_VLANIDMark',
+  'X_CMCC_VLANIDMark',
+  'X_CMCC_VLANID',
+  'X_GC_VLANIDMark',
+  'X_GC_VLANID'
+];
+const PATH_BINDING_PARAMETERS = [
+  'X_FH_LanInterface',
+  'X_ZTE-COM_LanInterface',
+  'X_CT-COM_LanInterface',
+  'X_CMCC_LanInterface',
+  'X_GC_LanInterface',
+  'X_CU_LanInterface'
+];
 
 function cleanText(value = '') {
   return String(value ?? '').trim();
@@ -67,6 +88,28 @@ function hasXponWanPath(device = {}) {
     .some(([, connectionDevice]) => Boolean(connectionDevice['X_CT-COM_WANEponLinkConfig'])));
 }
 
+function wanFamilyHints(device = {}) {
+  const hints = new Set();
+  const wanRoot = device?.InternetGatewayDevice?.WANDevice;
+  for (const [, wanDevice] of numericEntries(wanRoot)) {
+    for (const [, connectionDevice] of numericEntries(wanDevice.WANConnectionDevice)) {
+      if (connectionDevice['X_CT-COM_WANEponLinkConfig'] || connectionDevice['X_CT-COM_WANGponLinkConfig']) hints.add('ctcom');
+      for (const objectType of ['WANPPPConnection', 'WANIPConnection']) {
+        for (const [, connection] of numericEntries(connectionDevice[objectType])) {
+          const keys = Object.keys(connection || {}).join(' ');
+          if (/X_HW_/i.test(keys)) hints.add('huawei');
+          if (/X_FH_/i.test(keys)) hints.add('fiberhome');
+          if (/X_CMCC_/i.test(keys)) hints.add('cmcc');
+          if (/X_GC_/i.test(keys)) hints.add('gc');
+          if (/X_CT-COM_/i.test(keys)) hints.add('ctcom');
+          if (/X_ZTE-COM_/i.test(keys)) hints.add('zte');
+        }
+      }
+    }
+  }
+  return hints;
+}
+
 function detectWanVendor(device = {}) {
   const text = deviceIdentityText(device);
   if (text.includes('fiberhome') || text.includes('fiber home') || text.includes('fhtt') || text.includes('000ac2')) {
@@ -90,16 +133,21 @@ function detectWanVendor(device = {}) {
   if (text.includes('huawei') || text.includes('00259e') || /\b(?:hg|eg|hs)\d+/i.test(text)) {
     return { id: 'huawei', label: 'Huawei', bridgeSupported: true, wanWriteSupported: true };
   }
+  const hints = wanFamilyHints(device);
+  if (hints.has('huawei')) return { id: 'huawei', label: 'Huawei compatible', bridgeSupported: true, wanWriteSupported: true };
+  if (hints.has('fiberhome')) return { id: 'fiberhome', label: 'FiberHome compatible', bridgeSupported: true, wanWriteSupported: true };
+  if (hints.has('ctcom')) return { id: 'zte-xpon', label: 'XPON CT-COM', bridgeSupported: false, wanWriteSupported: true };
+  if (hints.has('cmcc') || hints.has('gc') || hints.has('zte')) {
+    return { id: 'zte', label: 'XPON compatible', bridgeSupported: true, wanWriteSupported: true };
+  }
   return { id: 'unknown', label: 'Belum dikenali', bridgeSupported: false, wanWriteSupported: false };
 }
 
 function wanVlan(connection = {}, connectionDevice = {}, vendor = {}) {
-  const paths = vendor.id === 'huawei'
-    ? ['X_HW_VLAN', 'VLANID', 'X_ZTE-COM_VLANID']
-    : (vendor.id === 'fiberhome'
-      ? ['VLANID', 'X_FH_VLANID', 'X_ZTE-COM_VLANID']
-      : ['X_GC_VLANIDMark', 'X_GC_VLANID', 'X_CMCC_VLANIDMark', 'X_CMCC_VLANID', 'X_ZTE-COM_VLANID', 'VLANID', 'X_HW_VLAN']);
-  const direct = firstValue(connection, paths);
+  const preferred = vendor.id === 'huawei'
+    ? ['X_HW_VLAN']
+    : (vendor.id === 'fiberhome' ? ['VLANID', 'X_FH_VLANID'] : []);
+  const direct = firstValue(connection, [...preferred, ...WAN_VLAN_PATHS]);
   const xpon = firstValue(connectionDevice, [
     'X_CT-COM_WANEponLinkConfig.VLANIDMark',
     'X_CT-COM_WANGponLinkConfig.VLANIDMark'
@@ -133,13 +181,7 @@ function parsePathBindings(value = '') {
 }
 
 function rawPathBindings(connection = {}) {
-  const text = cleanText(firstValue(connection, [
-    'X_FH_LanInterface',
-    'X_ZTE-COM_LanInterface',
-    'X_CT-COM_LanInterface',
-    'X_CMCC_LanInterface',
-    'X_GC_LanInterface'
-  ]));
+  const text = cleanText(firstValue(connection, PATH_BINDING_PARAMETERS));
   return text.split(',').map((item) => cleanText(item)).filter(Boolean);
 }
 
@@ -151,20 +193,14 @@ function extraPathBindings(connection = {}) {
 }
 
 function wanBindings(connection = {}, vendor = {}) {
-  if (vendor.id === 'huawei') {
+  if (connection.X_HW_LANBIND && typeof connection.X_HW_LANBIND === 'object') {
     const bind = connection.X_HW_LANBIND || {};
     return BINDING_KEYS.filter((key) => {
       const param = key.startsWith('LAN') ? `Lan${key.slice(3)}Enable` : `${key}Enable`;
       return truthy(rawValue(bind[param]));
     });
   }
-  return parsePathBindings(firstValue(connection, [
-    'X_FH_LanInterface',
-    'X_ZTE-COM_LanInterface',
-    'X_CT-COM_LanInterface',
-    'X_CMCC_LanInterface',
-    'X_GC_LanInterface'
-  ]));
+  return parsePathBindings(firstValue(connection, PATH_BINDING_PARAMETERS));
 }
 
 function protectedWan(vlan, serviceList = '', name = '') {
@@ -220,9 +256,9 @@ function wanDisplayLabel(row = {}) {
 }
 
 function wanParameterFamily(connection = {}, connectionDevice = {}, vendor = {}) {
-  if (vendor.id === 'huawei') return 'huawei';
-  if (vendor.id === 'fiberhome') return 'fiberhome';
-  if (vendor.id === 'zte-xpon') return 'ctcom';
+  if (firstValue(connection, ['X_HW_VLAN', 'X_HW_SERVICELIST', 'X_HW_ServiceList']) !== ''
+    || (connection.X_HW_LANBIND && typeof connection.X_HW_LANBIND === 'object')) return 'huawei';
+  if (firstValue(connection, ['X_FH_VLANID', 'X_FH_ServiceList', 'X_FH_LanInterface']) !== '') return 'fiberhome';
   if (firstValue(connection, ['X_CMCC_VLANIDMark', 'X_CMCC_VLANID', 'X_CMCC_ServiceList', 'X_CMCC_LanInterface']) !== '') {
     return 'cmcc';
   }
@@ -232,6 +268,11 @@ function wanParameterFamily(connection = {}, connectionDevice = {}, vendor = {})
   if (firstValue(connectionDevice, ['X_CT-COM_WANEponLinkConfig.VLANIDMark', 'X_CT-COM_WANGponLinkConfig.VLANIDMark']) !== '') {
     return 'ctcom';
   }
+  if (firstValue(connection, ['X_CT-COM_VLANID', 'X_CT-COM_VLANIDMark', 'X_CT-COM_ServiceList', 'X_CT-COM_LanInterface']) !== '') return 'ctcom';
+  if (firstValue(connection, ['X_ZTE-COM_VLANID', 'X_ZTE-COM_ServiceList', 'X_ZTE-COM_LanInterface']) !== '') return 'zte';
+  if (vendor.id === 'huawei') return 'huawei';
+  if (vendor.id === 'fiberhome') return 'fiberhome';
+  if (vendor.id === 'zte-xpon') return 'ctcom';
   return vendor.id || 'unknown';
 }
 
@@ -272,6 +313,11 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
           const status = connectionStatus(connection);
           const bindings = wanBindings(connection, vendor);
           const parameterFamily = wanParameterFamily(connection, connectionDevice, vendor);
+          const editable = !locked && ['pppoe', 'bridge'].includes(mode);
+          const bindingEditable = !locked
+            && ['pppoe', 'bridge', 'ip'].includes(mode)
+            && vlan !== null
+            && parameterFamily !== 'unknown';
           rows.push({
             id: basePath,
             basePath,
@@ -291,8 +337,11 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
             bindings,
             bindingExtraPaths: extraPathBindings(connection),
             parameterFamily,
+            natEnabled: truthy(firstValue(connection, ['NATEnabled'])),
+            addressingType: cleanText(firstValue(connection, ['AddressingType'])),
             protected: locked,
-            editable: !locked && ['pppoe', 'bridge'].includes(mode),
+            editable,
+            bindingEditable,
             lockReason: locked ? 'WAN provisioning GenieACS dilindungi' : '',
             vendor: vendor.label
           });
@@ -381,17 +430,20 @@ function bindingPathValue(keys = [], extraPaths = []) {
 
 function bindingParameterValues(basePath = '', vendor = {}, keys = [], extraPaths = []) {
   const selected = new Set(normalizeBindingKeys(keys));
-  if (vendor.id === 'huawei') {
+  const family = vendor.parameterFamily || vendor.id;
+  if (family === 'huawei') {
     return BINDING_KEYS.map((key) => {
       const param = key.startsWith('LAN') ? `Lan${key.slice(3)}Enable` : `${key}Enable`;
       return [`${basePath}.X_HW_LANBIND.${param}`, selected.has(key) ? 1 : 0, 'xsd:unsignedInt'];
     });
   }
-  const suffix = vendor.id === 'fiberhome'
+  const suffix = family === 'fiberhome'
     ? 'X_FH_LanInterface'
-    : (vendor.id === 'zte-xpon' || vendor.parameterFamily === 'ctcom'
+    : (family === 'zte-xpon' || family === 'ctcom'
       ? 'X_CT-COM_LanInterface'
-      : (vendor.parameterFamily === 'cmcc' ? 'X_CMCC_LanInterface' : 'X_ZTE-COM_LanInterface'));
+      : (family === 'cmcc'
+        ? 'X_CMCC_LanInterface'
+        : (family === 'gc' ? 'X_GC_LanInterface' : 'X_ZTE-COM_LanInterface')));
   return [[`${basePath}.${suffix}`, bindingPathValue([...selected], extraPaths), 'xsd:string']];
 }
 
@@ -406,7 +458,7 @@ function bindingEnableParameterValues(device = {}, vendor = {}, keys = []) {
       if (!lanRoot[index]) continue;
       const base = `InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.${index}`;
       values.push([`${base}.Enable`, true, 'xsd:boolean']);
-      if (vendor.id === 'huawei') values.push([`${base}.X_HW_L3Enable`, true, 'xsd:boolean']);
+      if ((vendor.parameterFamily || vendor.id) === 'huawei') values.push([`${base}.X_HW_L3Enable`, true, 'xsd:boolean']);
     } else {
       const index = key.slice(4);
       if (!wifiRoot[index]) continue;
@@ -417,7 +469,8 @@ function bindingEnableParameterValues(device = {}, vendor = {}, keys = []) {
 }
 
 function vendorParameterNames(vendor = {}, mode = 'pppoe') {
-  if (vendor.id === 'huawei') {
+  const family = vendor.parameterFamily || vendor.id;
+  if (family === 'huawei') {
     return {
       vlan: 'X_HW_VLAN',
       vlanEnable: '',
@@ -425,7 +478,7 @@ function vendorParameterNames(vendor = {}, mode = 'pppoe') {
       serviceValue: mode === 'bridge' ? 'OTHER' : 'INTERNET'
     };
   }
-  if (vendor.id === 'fiberhome') {
+  if (family === 'fiberhome') {
     return {
       vlan: 'VLANID',
       vlanEnable: 'VLANEnable',
@@ -433,7 +486,7 @@ function vendorParameterNames(vendor = {}, mode = 'pppoe') {
       serviceValue: mode === 'bridge' ? 'OTHER' : 'INTERNET'
     };
   }
-  if (vendor.parameterFamily === 'cmcc') {
+  if (family === 'cmcc') {
     return {
       vlan: 'X_CMCC_VLANIDMark',
       vlanEnable: '',
@@ -441,7 +494,7 @@ function vendorParameterNames(vendor = {}, mode = 'pppoe') {
       serviceValue: mode === 'bridge' ? 'OTHER' : 'INTERNET'
     };
   }
-  if (vendor.parameterFamily === 'gc') {
+  if (family === 'gc') {
     return {
       vlan: 'X_GC_VLANIDMark',
       vlanEnable: '',
@@ -449,7 +502,7 @@ function vendorParameterNames(vendor = {}, mode = 'pppoe') {
       serviceValue: mode === 'bridge' ? 'OTHER' : 'INTERNET'
     };
   }
-  if (vendor.id === 'zte-xpon') {
+  if (family === 'zte-xpon' || family === 'ctcom') {
     return {
       vlan: '',
       vlanEnable: '',
@@ -478,7 +531,7 @@ function connectionParameterValues(plan = {}) {
   ];
   if (params.vlan) values.push([`${basePath}.${params.vlan}`, vlan, 'xsd:unsignedInt']);
   if (params.vlanEnable) values.push([`${basePath}.${params.vlanEnable}`, true, 'xsd:boolean']);
-  if (vendor.id === 'zte-xpon') {
+  if ((vendor.parameterFamily || vendor.id) === 'zte-xpon' || (vendor.parameterFamily || vendor.id) === 'ctcom') {
     values.push([`${connectionBasePath}.X_CT-COM_WANEponLinkConfig.VLANIDMark`, vlan, 'xsd:unsignedInt']);
   }
   if (mode === 'pppoe') {
@@ -638,7 +691,7 @@ function prepareWanBinding(device = {}, payload = {}) {
   const targetWan = cleanText(payload.targetWan);
   const existing = summary.rows.find((row) => row.id === targetWan);
   if (!existing) throw new Error('Pilih WAN yang sudah ada untuk menyimpan binding');
-  if (existing.protected || !existing.editable) throw new Error('WAN provisioning GenieACS tidak boleh diubah');
+  if (existing.protected || !existing.bindingEditable) throw new Error('Binding WAN GenieACS tidak dapat diubah');
 
   const bindings = normalizeBindingKeys(payload.bindings);
   const available = new Set(availableWanBindings(device).map((item) => item.key));

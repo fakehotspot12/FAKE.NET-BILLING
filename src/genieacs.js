@@ -1770,7 +1770,8 @@ async function getWanConfiguration(settings = {}, deviceId = '', options = {}) {
     defaultTargetId: genieAcsWan.defaultWanTarget(summary)?.id || 'new',
     defaultTargetIds: {
       pppoe: genieAcsWan.defaultWanTarget(summary, 'pppoe')?.id || 'new',
-      bridge: genieAcsWan.defaultWanTarget(summary, 'bridge')?.id || 'new'
+      bridge: genieAcsWan.defaultWanTarget(summary, 'bridge')?.id || 'new',
+      ip: summary.rows.find((row) => row.mode === 'ip' && row.bindingEditable)?.id || 'new'
     },
     bindings: genieAcsWan.availableWanBindings(raw)
   };
@@ -1787,14 +1788,15 @@ async function getWifiConfiguration(settings = {}, deviceId = '', options = {}) 
     vendor: wanSummary.vendor,
     networks: normalized.wifiNetworks || [],
     addSsid: genieAcsWifi.addSsidOptions(raw),
-    wanOptions: wanSummary.rows.filter((row) => row.editable).map((row) => ({
+    wanOptions: wanSummary.rows.filter((row) => row.editable || row.bindingEditable).map((row) => ({
       id: row.id,
       label: row.label,
       mode: row.mode,
       vlan: row.vlan,
       username: row.username,
       bindings: row.bindings,
-      primary: row.primary === true
+      primary: row.primary === true,
+      bindingOnly: row.editable !== true && row.bindingEditable === true
     }))
   };
 }
@@ -2261,13 +2263,10 @@ async function addWifiSsid(settings = {}, deviceId = '', payload = {}) {
       } else {
         const summary = genieAcsWan.summarizeWanConnections(raw, payload.preferredUsername || '');
         const target = summary.rows.find((row) => row.id === targetWan);
-        if (!target || !target.editable || target.protected) throw new Error('Target WAN binding tidak tersedia atau dilindungi');
+        if (!target || !target.bindingEditable || target.protected) throw new Error('Target WAN binding tidak tersedia atau dilindungi');
         const bindings = [...new Set([...(target.bindings || []), `SSID${plan.index}`])];
-        const bindingPlan = genieAcsWan.prepareWanProvision(raw, {
+        const bindingPlan = genieAcsWan.prepareWanBinding(raw, {
           targetWan,
-          mode: target.mode,
-          vlan: target.vlan,
-          username: target.username,
           bindings,
           moveBindings: payload.moveBindings === true,
           preferredUsername: payload.preferredUsername || ''

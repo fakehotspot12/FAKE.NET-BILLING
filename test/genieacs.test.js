@@ -889,6 +889,79 @@ function huaweiMultiWanDevice() {
   };
 }
 
+function fiberhomeLegacyRoutedWanDevice() {
+  return {
+    _id: 'fiberhome-legacy-routed-wan',
+    _deviceId: {
+      _Manufacturer: 'FiberHome',
+      _ProductClass: 'HG6245N',
+      _SerialNumber: 'FH-LEGACY-1'
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          WANConnectionDevice: {
+            1: {
+              WANIPConnection: {
+                1: {
+                  Enable: { _value: true },
+                  ConnectionType: { _value: 'IP_Routed' },
+                  Name: { _value: '1_TR069_R_VID_100' },
+                  VLANID: { _value: 100 },
+                  X_FH_ServiceList: { _value: 'TR069' }
+                }
+              }
+            },
+            2: {
+              WANPPPConnection: {
+                1: {
+                  Enable: { _value: true },
+                  ConnectionStatus: { _value: 'Connected' },
+                  ConnectionType: { _value: 'IP_Routed' },
+                  Name: { _value: '2_INTERNET_R_VID_13' },
+                  Username: { _value: 'omidup@fake.net' },
+                  VLANID: { _value: 13 },
+                  X_FH_ServiceList: { _value: 'INTERNET' }
+                }
+              }
+            },
+            3: {
+              WANIPConnection: {
+                1: {
+                  Enable: { _value: true },
+                  ConnectionStatus: { _value: 'Connected' },
+                  ConnectionType: { _value: 'IP_Routed' },
+                  Name: { _value: '3_OTHER_R_VID_131' },
+                  NATEnabled: { _value: false },
+                  AddressingType: { _value: 'DHCP' },
+                  VLANID: { _value: 131 },
+                  X_FH_ServiceList: { _value: 'OTHER' },
+                  X_FH_LanInterface: {
+                    _value: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2,InternetGatewayDevice.LANDevice.1.WLANConfiguration.6'
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      LANDevice: {
+        1: {
+          LANEthernetInterfaceConfig: {
+            1: { Enable: { _value: true } },
+            2: { Enable: { _value: true } }
+          },
+          WLANConfiguration: {
+            1: { Enable: { _value: true }, SSID: { _value: 'Rumah' } },
+            2: { Enable: { _value: true }, SSID: { _value: 'Hotspot' } },
+            6: { Enable: { _value: true }, SSID: { _value: 'Hotspot 5G' } }
+          }
+        }
+      }
+    }
+  };
+}
+
 function zteCmccWanDevice() {
   return {
     _id: 'zte-cmcc-wan',
@@ -970,6 +1043,80 @@ test('summarizes multi-WAN and protects GenieACS management WAN', () => {
   assert.equal(management.protected, true);
   assert.equal(management.editable, false);
   assert.deepEqual(bridge.bindings.sort(), ['LAN4', 'SSID2']);
+});
+
+test('keeps legacy FiberHome IP-routed VLAN visible and limits edits to bindings', () => {
+  const device = fiberhomeLegacyRoutedWanDevice();
+  const summary = genieAcsWan.summarizeWanConnections(device, 'omidup@fake.net');
+  const legacy = summary.rows.find((row) => row.vlan === 131);
+
+  assert.equal(summary.vendor.id, 'fiberhome');
+  assert.equal(legacy.mode, 'ip');
+  assert.equal(legacy.label, 'WAN IP - VLAN 131');
+  assert.equal(legacy.editable, false);
+  assert.equal(legacy.bindingEditable, true);
+  assert.deepEqual(legacy.bindings.sort(), ['SSID2', 'SSID6']);
+
+  const plan = genieAcsWan.prepareWanBinding(device, {
+    targetWan: legacy.id,
+    bindings: ['SSID2'],
+    moveBindings: true
+  });
+  assert.equal(plan.mode, 'ip');
+  assert.equal(plan.vlan, 131);
+  assert.deepEqual(plan.parameterValues, []);
+  assert.equal(plan.bindingValues[0][0], `${legacy.basePath}.X_FH_LanInterface`);
+  assert.equal(plan.bindingValues[0][1], 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2');
+  assert.equal(plan.bindingValues.some(([path]) => /VLAN|ConnectionType/.test(path)), false);
+});
+
+test('detects WAN VLAN and bindings from parameter family on a new OEM model', () => {
+  const device = {
+    _id: 'new-oem-gc',
+    _deviceId: {
+      _Manufacturer: 'New OEM',
+      _ProductClass: 'XPON-NEW',
+      _SerialNumber: 'OEM-1'
+    },
+    InternetGatewayDevice: {
+      WANDevice: {
+        1: {
+          WANConnectionDevice: {
+            1: {
+              WANIPConnection: {
+                1: {
+                  Enable: { _value: true },
+                  ConnectionType: { _value: 'IP_Routed' },
+                  Name: { _value: '1_OTHER_R_VID_131' },
+                  X_GC_VLANIDMark: { _value: 'VID_131' },
+                  X_GC_ServiceList: { _value: 'OTHER' },
+                  X_GC_LanInterface: {
+                    _value: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2'
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            2: { Enable: { _value: true }, SSID: { _value: 'OEM Hotspot' } }
+          }
+        }
+      }
+    }
+  };
+
+  const summary = genieAcsWan.summarizeWanConnections(device);
+  const legacy = summary.rows.find((row) => row.vlan === 131);
+
+  assert.equal(summary.vendor.id, 'zte');
+  assert.equal(summary.vendor.label, 'XPON compatible');
+  assert.equal(legacy.parameterFamily, 'gc');
+  assert.equal(legacy.bindingEditable, true);
+  assert.deepEqual(legacy.bindings, ['SSID2']);
 });
 
 test('reads and writes ZTE CMCC WAN VLAN and binding parameters', () => {
