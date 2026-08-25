@@ -11,6 +11,7 @@ const state = {
   phone: '',
   token: localStorage.getItem(TOKEN_KEY) || '',
   portal: null,
+  clientDevice: null,
   activePanel: WIFIKU_PANELS.has(localStorage.getItem(PANEL_KEY)) ? localStorage.getItem(PANEL_KEY) : 'home',
   clientPage: 1
 };
@@ -368,13 +369,27 @@ function usageDailyBarChart(rows = []) {
   `;
 }
 
-function openClientDialog(options = {}) {
-  const device = state.portal?.device || {};
-  const rows = clientRows(device);
-  const counts = clientSummaryCounts(device);
+async function openClientDialog(options = {}) {
+  let device = state.clientDevice || state.portal?.device || {};
+  const dialog = byId('clientDialog');
   const body = byId('clientDialogBody');
   if (!body) return;
-  if (options.reset === true) state.clientPage = 1;
+  if (dialog && !dialog.open) dialog.showModal();
+  if (options.reset === true) {
+    state.clientPage = 1;
+    body.innerHTML = '<p class="empty-detail">Memperbarui daftar client dari modem...</p>';
+    try {
+      const payload = await api('/api/public/wifiku/clients?refresh=1');
+      if (payload.device) {
+        state.clientDevice = payload.device;
+        device = payload.device;
+      }
+    } catch (error) {
+      toast(error.message || 'Client perangkat belum bisa diperbarui');
+    }
+  }
+  const rows = clientRows(device);
+  const counts = clientSummaryCounts(device);
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   state.clientPage = Math.max(1, Math.min(totalPages, Number(state.clientPage || 1) || 1));
@@ -424,8 +439,6 @@ function openClientDialog(options = {}) {
         </div>
       </div>`;
   }
-  const dialog = byId('clientDialog');
-  if (dialog && !dialog.open) dialog.showModal();
 }
 
 function openUsageDialog() {
@@ -568,6 +581,7 @@ function renderPortal(payload) {
   const customer = payload.customer || {};
   const usage = payload.usage || {};
   const device = payload.device || {};
+  if (state.clientDevice?.id && state.clientDevice.id !== device.id) state.clientDevice = null;
   const memberName = customer.name || customer.username || '-';
   const serviceStatus = customer.status || payload.billing?.customerStatus || '';
   setText('memberId', customer.memberId || customer.id || '-');
@@ -885,48 +899,68 @@ function openAction(title, body, handler) {
 }
 
 document.querySelectorAll('[data-ssid-band]').forEach((button) => {
-  button.addEventListener('click', () => {
+  button.addEventListener('click', async () => {
     const band = button.dataset.ssidBand;
     const device = state.portal?.device || {};
-    const network = wifiNetworkForBand(device, band);
-    if (!device.id || !network.ssidParameter) {
+    if (!device.id) {
       toast('SSID belum ditemukan di GenieACS');
       return;
     }
-    const label = wifiBandLabel(band);
-    openAction(`Ubah SSID & Password ${label}`, `
-      <label>
-        <span>Nama WiFi ${label}</span>
-        <input name="ssid" maxlength="32" value="${escapeHtml(network.ssid || '')}" required>
-      </label>
-      <label>
-        <span>Password baru ${label}</span>
-        <input id="wifiPasswordInput" name="password" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Kosongkan jika tidak diubah">
-      </label>
-      <label class="check-row">
-        <input id="wifiShowPassword" type="checkbox">
-        <span>Lihat password</span>
-      </label>
-      <p class="muted">Password hanya diubah jika field password diisi.</p>
-    `, async (form) => {
-      const payload = {
-        band,
-        ssid: form.get('ssid'),
-        ssidParameter: network.ssidParameter,
-        passwordParameter: network.passwordParameter || ''
+    button.disabled = true;
+    try {
+      toast('Membaca pengaturan WiFi ONT...');
+      const wifiPayload = await api('/api/public/wifiku/wifi-options?refresh=1');
+      const credentialDevice = {
+        ...device,
+        wifiNetworks: Array.isArray(wifiPayload.networks) ? wifiPayload.networks : []
       };
-      const password = String(form.get('password') || '').trim();
-      if (password) payload.password = password;
-      await api('/api/public/wifiku/wifi', {
-        method: 'POST',
-        body: JSON.stringify(payload)
+      const network = wifiNetworkForBand(credentialDevice, band);
+      if (!network.ssidParameter) {
+        toast('SSID belum ditemukan di GenieACS');
+        return;
+      }
+      const label = wifiBandLabel(band);
+      const currentPassword = String(network.password || '');
+      openAction(`Ubah SSID & Password ${label}`, `
+        <label>
+          <span>Nama WiFi ${label}</span>
+          <input name="ssid" maxlength="32" value="${escapeHtml(network.ssid || '')}" required>
+        </label>
+        <label>
+          <span>Password WiFi ${label}</span>
+          <input id="wifiPasswordInput" name="password" type="password" minlength="8" maxlength="63" autocomplete="off" value="${escapeHtml(currentPassword)}" placeholder="Belum terbaca dari ONT">
+        </label>
+        <label class="check-row">
+          <input id="wifiShowPassword" type="checkbox">
+          <span>Lihat password</span>
+        </label>
+        <p class="muted">${currentPassword
+          ? 'Password aktif tersamarkan. Ubah field hanya jika password ingin diganti.'
+          : 'Password belum dilaporkan oleh ONT. Isi hanya jika password ingin diganti.'}</p>
+      `, async (form) => {
+        const payload = {
+          band,
+          ssid: form.get('ssid'),
+          ssidParameter: network.ssidParameter,
+          passwordParameter: network.passwordParameter || ''
+        };
+        const password = String(form.get('password') || '').trim();
+        if (password && password !== currentPassword) payload.password = password;
+        await api('/api/public/wifiku/wifi', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
       });
-    });
-    const passwordInput = byId('wifiPasswordInput');
-    const showPassword = byId('wifiShowPassword');
-    showPassword?.addEventListener('change', () => {
-      if (passwordInput) passwordInput.type = showPassword.checked ? 'text' : 'password';
-    });
+      const passwordInput = byId('wifiPasswordInput');
+      const showPassword = byId('wifiShowPassword');
+      showPassword?.addEventListener('change', () => {
+        if (passwordInput) passwordInput.type = showPassword.checked ? 'text' : 'password';
+      });
+    } catch (error) {
+      toast(error.message || 'Pengaturan WiFi ONT belum dapat dibaca');
+    } finally {
+      button.disabled = false;
+    }
   });
 });
 

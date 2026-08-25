@@ -276,11 +276,33 @@ test('keeps WifiKu OTP optional and bypasses its limiter for direct login mode',
   assert.ok(requestRoute.indexOf('if (!settings.requireOtp)') < requestRoute.indexOf('wifiKuOtpRateLimit(req, phone)'));
 });
 
+test('keeps ONT WiFi passwords out of the regular WifiKu portal payload', () => {
+  const { genieAcsDeviceWithoutWifiPasswords } = require('../src/server').__test;
+  const sanitized = genieAcsDeviceWithoutWifiPasswords({
+    id: 'onu-1',
+    wifiNetworks: [{ ssid: 'Rumah', password: 'sangat-rahasia', passwordParameter: 'wifi.password' }]
+  });
+
+  assert.equal(sanitized.wifiNetworks[0].password, undefined);
+  assert.equal(sanitized.wifiNetworks[0].ssid, 'Rumah');
+  assert.equal(sanitized.wifiNetworks[0].passwordParameter, 'wifi.password');
+});
+
 test('hides WifiKu 5 GHz client details when the modem has no 5 GHz network', () => {
   const wifiKuSource = publicSource('wifiku.js');
   assert.match(wifiKuSource, /if \(wifiNetworkAvailable\(device, '5g'\)\) return rows/);
   assert.match(wifiKuSource, /counts\.hasWifi5 \? `<span>5G/);
   assert.match(wifiKuSource, /hasWifi5\s*\? `2\.4G \$\{clients\.count24\} \/ 5G/);
+});
+
+test('keeps GenieACS list compact and loads recent activation data lazily', () => {
+  const appSource = publicSource('app.js');
+  assert.doesNotMatch(appSource, /genieClientBreakdown\(row\)/);
+  assert.match(appSource, /const recentRequest = \(options\.refresh/);
+  assert.match(appSource, /Memuat antrian aktivasi/);
+  assert.match(appSource, /\/api\/genieacs\/devices\/client-counts/);
+  assert.match(appSource, /data-genie-client-id/);
+  assert.match(appSource, /row\.clientCountAccurate === true/);
 });
 
 test('protects new public voucher status links with an access token', () => {

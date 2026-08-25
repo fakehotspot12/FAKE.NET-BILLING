@@ -3666,6 +3666,36 @@ async function radiusUsageIntervalHistoryForUsername(username = '', hours = 24, 
   };
 }
 
+function genieAcsDeviceWithoutWifiPasswords(device = null) {
+  if (!device || typeof device !== 'object') return device;
+  return {
+    ...device,
+    wifiNetworks: (Array.isArray(device.wifiNetworks) ? device.wifiNetworks : []).map((network) => {
+      const safeNetwork = { ...network };
+      delete safeNetwork.password;
+      return safeNetwork;
+    })
+  };
+}
+
+function wifiCredentialNetworkPayload(network = {}) {
+  return {
+    index: Number(network.index || 0),
+    band: String(network.band || ''),
+    label: String(network.label || ''),
+    ssid: String(network.ssid || ''),
+    ssidParameter: String(network.ssidParameter || ''),
+    enableParameter: String(network.enableParameter || ''),
+    password: String(network.password || ''),
+    passwordParameter: String(network.passwordParameter || ''),
+    passwordWritable: network.passwordWritable === true,
+    securityText: String(network.securityText || ''),
+    securityEnabled: network.securityEnabled === true,
+    status: String(network.status || ''),
+    enabled: network.enabled !== false
+  };
+}
+
 async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPeriod()) {
   const radiusUser = radiusUserForCustomer(data, customer) || {};
   const username = radiusUser.username || customer.username || '';
@@ -3710,7 +3740,7 @@ async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPer
     billing: wifiKuBillingSummary(data, customer, radiusUser, period),
     billingHistory: wifiKuBillingHistory(data, customer, radiusUser, 24),
     usage,
-    device,
+    device: genieAcsDeviceWithoutWifiPasswords(device),
     genieAcs: {
       enabled: genieAcs.normalizeSettings(data.settings || {}).enabled,
       configured: genieAcs.configured(data.settings || {}),
@@ -21119,6 +21149,26 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'GET' && pathname === '/api/public/wifiku/clients') {
+    const authContext = await requireWifiKuSession(req, res);
+    if (!authContext) return;
+    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    if (!portal.device?.id) {
+      sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
+      return;
+    }
+    try {
+      const device = await genieAcs.getClientDevice(authContext.data.settings || {}, portal.device.id, {
+        refresh: url.searchParams.get('refresh') === '1'
+      });
+      if (!device) throw new Error('Perangkat GenieACS pelanggan belum ditemukan');
+      sendJson(res, 200, { ok: true, device: genieAcsDeviceWithoutWifiPasswords(device) });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message || 'Client perangkat belum bisa dibaca' });
+    }
+    return;
+  }
+
   if (method === 'PATCH' && pathname === '/api/public/wifiku/profile') {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
@@ -21142,6 +21192,30 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, { ok: true, message: 'Perintah reboot dikirim ke perangkat' });
     } catch (error) {
       sendJson(res, 400, { ok: false, error: error.message || 'Reboot perangkat gagal' });
+    }
+    return;
+  }
+
+  if (method === 'GET' && pathname === '/api/public/wifiku/wifi-options') {
+    const authContext = await requireWifiKuSession(req, res);
+    if (!authContext) return;
+    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    if (!portal.device?.id) {
+      sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
+      return;
+    }
+    try {
+      const result = await genieAcs.getWifiConfiguration(authContext.data.settings || {}, portal.device.id, {
+        preferredUsername: portal.customer?.username || '',
+        refresh: url.searchParams.get('refresh') === '1'
+      });
+      sendJson(res, 200, {
+        ok: true,
+        deviceId: portal.device.id,
+        networks: (Array.isArray(result.networks) ? result.networks : []).map(wifiCredentialNetworkPayload)
+      });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message || 'Password WiFi ONT belum bisa dibaca' });
     }
     return;
   }
@@ -22427,7 +22501,8 @@ async function handleApi(req, res, url) {
             ? (payload.pagination || paginationPayload(page, limit, filteredRows.length))
             : paginationPayload(page, limit, filteredRows.length);
           const offset = sourcePagination ? 0 : (pagination.page - 1) * limit;
-          const rows = sourcePagination ? filteredRows : filteredRows.slice(offset, offset + limit);
+          const rows = (sourcePagination ? filteredRows : filteredRows.slice(offset, offset + limit))
+            .map(genieAcsDeviceWithoutWifiPasswords);
           const nasOptions = freeradius.radiusNasEntries(authContext.data, { includeUnconfigured: true })
             .filter((item) => item.active !== false)
             .map((item) => ({
@@ -22472,6 +22547,32 @@ async function handleApi(req, res, url) {
         pagination: paginationPayload(page, limit, 0),
         settings: publicGenieAcsSettings(authContext.data.settings || {}),
         error: error.message || 'GenieACS tidak bisa dibaca'
+      });
+    }
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/api/genieacs/devices/client-counts') {
+    const authContext = await requirePermission(req, res, 'genieacs:read');
+    if (!authContext) return;
+    const payload = await readBody(req);
+    const ids = Array.isArray(payload.ids)
+      ? [...new Set(payload.ids.map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 100)
+      : [];
+    if (!ids.length) {
+      sendJson(res, 200, { ok: true, counts: [] });
+      return;
+    }
+    try {
+      const counts = await genieAcs.getClientCounts(authContext.data.settings || {}, ids, {
+        refresh: payload.refresh === true
+      });
+      sendJson(res, 200, { ok: true, counts });
+    } catch (error) {
+      sendJson(res, 200, {
+        ok: false,
+        counts: [],
+        error: error.message || 'Jumlah client GenieACS belum bisa diperbarui'
       });
     }
     return;
@@ -22584,7 +22685,7 @@ async function handleApi(req, res, url) {
 
   const genieAcsWifiOptionsMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/wifi-options$/);
   if (method === 'GET' && genieAcsWifiOptionsMatch) {
-    const authContext = await requirePermission(req, res, 'genieacs:read');
+    const authContext = await requirePermission(req, res, 'genieacs:write');
     if (!authContext) return;
     const deviceId = decodeURIComponent(genieAcsWifiOptionsMatch[1]);
     try {
@@ -22605,12 +22706,12 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const deviceId = decodeURIComponent(genieAcsClientsMatch[1]);
     try {
-      const device = await genieAcs.getDevice(authContext.data.settings || {}, deviceId, {
+      const device = await genieAcs.getClientDevice(authContext.data.settings || {}, deviceId, {
         refresh: url.searchParams.get('refresh') === '1'
       });
       if (!device) throw new Error('Perangkat GenieACS tidak ditemukan');
       const [enriched] = await enrichGenieAcsRowsWithLocalData(authContext.data, [device], currentPeriod());
-      sendJson(res, 200, { ok: true, device: enriched || device });
+      sendJson(res, 200, { ok: true, device: genieAcsDeviceWithoutWifiPasswords(enriched || device) });
     } catch (error) {
       sendJson(res, 400, { ok: false, error: error.message || 'Client perangkat GenieACS tidak bisa dibaca' });
     }
@@ -27070,6 +27171,7 @@ module.exports = {
     hotspotVoucherPublicStatusUrl,
     hotspotFreeUserWritable,
     genieAcsRowLinkedToMember,
+    genieAcsDeviceWithoutWifiPasswords,
     genieAcsStaleReplacedCandidates,
     hasLegacyInlineImages,
     cleanupOrphanUploads,

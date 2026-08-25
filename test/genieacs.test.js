@@ -82,10 +82,48 @@ test('normalizes GenieACS device wifi and optical parameters', () => {
   assert.equal(device.lastInform, lastInform);
   assert.equal(device.wifiClients24, 3);
   assert.equal(device.wifiClients5, 2);
+  assert.equal(device.hasWifi24, true);
+  assert.equal(device.hasWifi5, true);
   assert.equal(device.wifiClientsTotal, 5);
   assert.equal(device.wifiNetworks.length, 2);
   assert.equal(device.wifiNetworks[0].ssidParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID');
   assert.equal(device.wifiNetworks[0].passwordParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase');
+});
+
+test('reads current ONT WiFi passwords from alternate vendor parameters', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'wifi-password-variants',
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'Rumah-2G' },
+              Enable: { _value: true },
+              PreSharedKey: {
+                1: {
+                  KeyPassphrase: { _value: '********', _writable: true },
+                  PreSharedKey: { _value: 'rahasia2g', _writable: true }
+                }
+              }
+            },
+            5: {
+              SSID: { _value: 'Rumah-5G' },
+              Enable: { _value: true },
+              X_HW_PreSharedKey: { _value: 'rahasia5g', _writable: true }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  const wifi24 = device.wifiNetworks.find((network) => network.band === '2.4G');
+  const wifi5 = device.wifiNetworks.find((network) => network.band === '5G');
+  assert.equal(wifi24.password, 'rahasia2g');
+  assert.equal(wifi24.passwordParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey');
+  assert.equal(wifi5.password, 'rahasia5g');
+  assert.equal(wifi5.passwordParameter, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.X_HW_PreSharedKey');
 });
 
 test('falls back to raw FL327D GPON RX power when virtual value is zero', () => {
@@ -203,6 +241,7 @@ test('keeps numeric zero as a valid active LAN counter', () => {
 });
 
 test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'genieacs.js'), 'utf8');
   const bootstrap = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'genieacs', 'bootstrap.js'), 'utf8');
   const lanActive = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'genieacs', 'virtual-parameters', 'LANActiveClients.js'), 'utf8');
   const lanClients = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'genieacs', 'virtual-parameters', 'LANClients.js'), 'utf8');
@@ -210,6 +249,16 @@ test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () =
   assert.match(bootstrap, /X_CT-COM_GponInterfaceConfig\.RXPower/);
   assert.match(bootstrap, /802\\\\\.11/);
   assert.match(bootstrap, /const text = clean\(value\)/);
+  assert.match(bootstrap, /function pppUsernamePaths\(\)/);
+  assert.match(bootstrap, /WANPPPConnection\." \+ ppp \+ "\.Username/);
+  assert.match(bootstrap, /const pppUserPaths = pppUsernamePaths\(\)/);
+  assert.match(bootstrap, /const comprehensiveButton = parameters\.some/);
+  assert.match(bootstrap, /X_ZTE-COM_WANPONInterfaceConfig\.\*/);
+  assert.match(bootstrap, /Device\.Optical\.Interface\.\*/);
+  assert.doesNotMatch(source, /name: 'refreshObject', objectName: ''/);
+  assert.match(source, /WANPPPConnection\.\*'/);
+  assert.match(source, /Promise\.all\(projectionChunks\(projection\)/);
+  assert.match(source, /Client details open from the last Inform snapshot immediately/);
   assert.doesNotMatch(lanActive, /Date\.now/);
   assert.match(lanActive, /LANEthernetInterfaceConfig\.\*\.AssociatedDeviceNumberOfEntries/);
   assert.doesNotMatch(lanActive, /Hosts\.Host/);
@@ -392,7 +441,115 @@ test('keeps Fazlink Realtek XPON single-band WiFi indexes out of 5G tab', () => 
   assert.equal(device.ssid24, 'AZAM');
   assert.equal(device.ssid5, '');
   assert.equal(device.wifiClients5, 0);
+  assert.equal(device.hasWifi5, false);
   assert.equal(device.wifiNetworks.every((item) => item.band === '2.4G'), true);
+});
+
+test('keeps ZTE F609 single-band even when a stale virtual 5G counter exists', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'ZTE-F609-single-band',
+    _deviceId: {
+      _Manufacturer: 'ZTE',
+      _ProductClass: 'F609',
+      _SerialNumber: 'ZTEF609001'
+    },
+    VirtualParameters: {
+      wifiSsid24: { _value: 'Rumah ZTE' },
+      wifiClients5: { _value: 9 }
+    },
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'Rumah ZTE' },
+              Enable: { _value: true },
+              TotalAssociations: { _value: 2 }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.hasWifi24, true);
+  assert.equal(device.hasWifi5, false);
+  assert.equal(device.wifiClients24, 2);
+  assert.equal(device.wifiClients5, 0);
+  assert.equal(device.connectedClients.some((row) => row.type === '5G'), false);
+});
+
+test('uses actual client rows and excludes hotspot SSIDs from the active total', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'customer-with-hotspot-ssid',
+    _deviceId: { _Manufacturer: 'FiberHome', _ProductClass: 'HG6245N' },
+    VirtualParameters: {
+      activedevices: { _value: 12 },
+      LANActiveClients: { _value: 4 }
+    },
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'Rumah Pelanggan' },
+              Enable: { _value: true },
+              TotalAssociations: { _value: 2 },
+              AssociatedDevice: {
+                1: { AssociatedDeviceMACAddress: { _value: 'AA:AA:AA:AA:AA:01' } },
+                2: { AssociatedDeviceMACAddress: { _value: 'AA:AA:AA:AA:AA:02' } }
+              }
+            },
+            2: {
+              SSID: { _value: 'WIFIMURAH_0800000000' },
+              Enable: { _value: true },
+              TotalAssociations: { _value: 2 },
+              AssociatedDevice: {
+                1: { AssociatedDeviceMACAddress: { _value: 'BB:BB:BB:BB:BB:01' } },
+                2: { AssociatedDeviceMACAddress: { _value: 'BB:BB:BB:BB:BB:02' } }
+              }
+            }
+          },
+          Hosts: {
+            Host: {
+              1: {
+                Active: { _value: true },
+                MACAddress: { _value: 'AA:AA:AA:AA:AA:01' },
+                Layer2Interface: { _value: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1' }
+              },
+              2: {
+                Active: { _value: true },
+                MACAddress: { _value: 'AA:AA:AA:AA:AA:02' },
+                Layer2Interface: { _value: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1' }
+              },
+              3: {
+                Active: { _value: true },
+                MACAddress: { _value: 'BB:BB:BB:BB:BB:01' },
+                Layer2Interface: { _value: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2' }
+              },
+              4: {
+                Active: { _value: true },
+                MACAddress: { _value: 'CC:CC:CC:CC:CC:01' },
+                Layer2Interface: { _value: 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+  const count = genieAcs._internal.clientCountPayload(device);
+
+  assert.equal(device.connectedClients.length, 3);
+  assert.equal(device.connectedClients.some((row) => row.macAddress === 'BB:BB:BB:BB:BB:01'), false);
+  assert.deepEqual(count, {
+    id: 'customer-with-hotspot-ssid',
+    total: 3,
+    wifi24: 2,
+    wifi5: 0,
+    lan: 1,
+    hasWifi5: false
+  });
 });
 
 test('normalizes GenieACS temperature from virtual and raw parameters', () => {
@@ -627,6 +784,69 @@ test('uses vendor class as the active device name when host name is empty', () =
   assert.equal(device.connectedClients.length, 1);
   assert.equal(device.connectedClients[0].type, 'LAN');
   assert.equal(device.connectedClients[0].name, 'android-dhcp-13');
+});
+
+test('classifies ZTE host rows from WLAN association instead of defaulting them to LAN', () => {
+  const device = genieAcs.normalizeDevice({
+    _id: 'zte-host-wlan-association',
+    _deviceId: {
+      _Manufacturer: 'ZTE',
+      _ProductClass: 'F609',
+      _SerialNumber: 'ZTEF609CLIENT'
+    },
+    InternetGatewayDevice: {
+      LANDevice: {
+        1: {
+          WLANConfiguration: {
+            1: {
+              SSID: { _value: 'Rumah-ZTE' },
+              TotalAssociations: { _value: '1' },
+              AssociatedDevice: {
+                1: {
+                  AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:11:22:33' },
+                  AssociatedDeviceIPAddress: { _value: '192.168.1.23' }
+                },
+                2: {
+                  AssociatedDeviceMACAddress: { _value: 'AA:BB:CC:11:22:99' },
+                  AssociatedDeviceIPAddress: { _value: '192.168.1.99' }
+                }
+              }
+            }
+          },
+          Hosts: {
+            Host: {
+              1: {
+                Active: { _value: '1' },
+                IPAddress: { _value: '192.168.1.23' },
+                MACAddress: { _value: 'AA:BB:CC:11:22:33' },
+                HostName: { _value: 'ZTE-WLAN-Phone' }
+              },
+              2: {
+                Active: { _value: '1' },
+                IPAddress: { _value: '192.168.1.24' },
+                MACAddress: { _value: 'AA:BB:CC:11:22:44' },
+                HostName: { _value: 'Belum terklasifikasi' }
+              },
+              3: {
+                Active: { _value: '1' },
+                IPAddress: { _value: '192.168.1.25' },
+                MACAddress: { _value: 'AA:BB:CC:11:22:55' },
+                HostName: { _value: 'STB' },
+                Layer2Interface: { _value: 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, {});
+
+  assert.equal(device.hasWifi5, false);
+  assert.equal(device.connectedClients.length, 2);
+  assert.deepEqual(device.connectedClients.map((row) => row.type), ['2.4G', 'LAN']);
+  assert.equal(device.connectedClients[0].name, 'ZTE-WLAN-Phone');
+  assert.equal(device.connectedClients.some((row) => row.name === 'Belum terklasifikasi'), false);
+  assert.equal(device.connectedClients.some((row) => row.ipAddress === '192.168.1.99'), false);
 });
 
 test('does not inflate active client total from stale host table entries', () => {
@@ -1224,6 +1444,7 @@ test('uses a compact registration and PPP projection for recent ONT detection', 
 
 test('splits the GenieACS list projection without requesting full device documents', () => {
   const projection = genieAcs._internal.deviceListProjection(genieAcs.normalizeSettings({}));
+  const clientProjection = genieAcs._internal.clientCountProjection();
   const chunks = genieAcs._internal.projectionChunks(projection, 3500);
 
   assert.equal(chunks.length > 1, true);
@@ -1231,6 +1452,11 @@ test('splits the GenieACS list projection without requesting full device documen
   assert.equal(chunks.every((chunk) => !/KeyPassphrase|WPAAuthenticationMode|AssociatedDevice\./.test(chunk)), true);
   assert.match(projection, /VirtualParameters\.RXPower/);
   assert.match(projection, /WANPPPConnection\.1\.Username/);
+  assert.match(projection, /WLANConfiguration\.1\.SSID/);
+  assert.match(projection, /WLANConfiguration\.5\.SSID/);
+  assert.match(clientProjection, /WLANConfiguration\.1\.AssociatedDevice/);
+  assert.match(clientProjection, /WLANConfiguration\.8\.AssociatedDevice/);
+  assert.match(clientProjection, /LANDevice\.1\.Hosts\.Host/);
 });
 
 test('searches GenieACS by SN, tag, SSID, and PPPoE while rejecting short scans', () => {
@@ -1690,6 +1916,8 @@ test('keeps GenieACS popup feedback mobile-safe without exposing WiFi passwords'
   assert.doesNotMatch(appSource, /network\.securityEnabled \|\| network\.password/);
   assert.doesNotMatch(appSource, /firstNetwork\.securityEnabled \|\| firstNetwork\.password/);
   assert.match(appSource, /id="genieWifiSecurity"/);
+  assert.match(appSource, /counts\.hasWifi5 \? `<span>5G/);
+  assert.match(appSource, /if \(genieHasWifi5\(row\)\) return rows/);
   assert.match(appSource, /submitButton\.textContent = 'Sudah dikirim'/);
   assert.match(appSource, /element\.scrollIntoView/);
   assert.match(appSource, /const layoutClasses = \['field', 'full'\]/);
@@ -1721,9 +1949,11 @@ test('keeps GenieACS popup feedback mobile-safe without exposing WiFi passwords'
   assert.match(appSource, /document\.hidden/);
   assert.match(wifiKuSource, /const pageSize = 10/);
   assert.match(wifiKuSource, /data-client-page/);
+  assert.match(wifiKuSource, /\/api\/public\/wifiku\/clients\?refresh=1/);
   assert.doesNotMatch(wifiKuClientSource, /<span>Total /);
   assert.match(wifiKuStyleSource, /\.client-detail-pager/);
   assert.match(serverSource, /\/api\/genieacs\/devices\/recent-pending/);
+  assert.match(serverSource, /pathname === '\/api\/public\/wifiku\/clients'/);
   assert.match(serverSource, /genieAcsClientsMatch/);
   assert.match(serverSource, /Konfigurasi WAN GenieACS gagal/);
   assert.match(styleSource, /\.genie-operation-status\[data-state="loading"\]/);

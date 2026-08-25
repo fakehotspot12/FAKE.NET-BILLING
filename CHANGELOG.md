@@ -2,10 +2,24 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
-## [4.3.6] - 2026-08-23
+## [4.3.6] - 2026-08-25
+
+### Changed
+
+- Menampilkan Total Active GenieACS dari snapshot client aktual secara batch dan lazy; rincian `2.4G / 5G / LAN` tidak lagi memenuhi tabel utama.
+- Menyegarkan daftar client WifiKu serta membaca SSID/password ONT hanya melalui endpoint terotorisasi tanpa membocorkan password pada payload portal umum.
+
+### Performance
+
+- Menjalankan chunk projection NBI secara paralel, memuat antrian aktivasi ONT tanpa memblokir tabel, dan menyimpan counter client aktual selama 15 detik.
+- Membuka detail client dari snapshot Inform terakhir secara langsung sementara refresh ACS diteruskan di background.
 
 ### Fixed
 
+- Menyamakan angka Total Active dan isi popup dari sumber client yang sama serta mengecualikan SSID hotspot publik seperti `WIFIMURAH` dari hitungan pelanggan.
+- Mencegah aksi Summon menghapus cabang WAN, optik, WiFi, dan host pada perangkat ZTE dengan mengganti refresh root menjadi pembacaan parameter operasional terarah.
+- Memperluas deteksi username PPPoE/VLAN, radio single-band ZTE, password WiFi vendor, nama client, dan klasifikasi WiFi/LAN pada Virtual Parameters GenieACS.
+- Membersihkan preset/provision legacy yang tidak digunakan dan memastikan bootstrap installer/update mempertahankan parameter mentah yang dibutuhkan billing.
 - Mengirim OTP WifiKu langsung melalui antrean prioritas tertinggi, termasuk di luar jadwal pengiriman invoice dan reminder.
 - Menghentikan retry tanpa batas untuk penerima Whatsapp invalid, membatasi retry gangguan sementara, dan tidak mengirim OTP yang sudah kedaluwarsa.
 - Menggantikan OTP lama ketika pelanggan meminta kode baru serta menyamarkan isi kode dari riwayat database setelah pengiriman selesai.

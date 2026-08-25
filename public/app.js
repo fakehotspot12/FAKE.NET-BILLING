@@ -401,6 +401,7 @@ let genieAcsRecentSignature = '';
 let genieAcsRecentIds = new Set();
 let genieAcsRecentPage = 1;
 let genieAcsRecentPayload = { devices: [] };
+let genieAcsRenderToken = 0;
 let voucherDataTimer = null;
 let voucherDataRevision = '';
 let dashboardRouterNasTimer = null;
@@ -17421,7 +17422,14 @@ function genieWifiOptionLabel(network = {}) {
 }
 
 function genieClientRows(row = {}) {
-  return Array.isArray(row.connectedClients) ? row.connectedClients : [];
+  const rows = Array.isArray(row.connectedClients) ? row.connectedClients : [];
+  if (genieHasWifi5(row)) return rows;
+  return rows.filter((item) => genieClientTypeKey(item.type) !== '5G');
+}
+
+function genieHasWifi5(row = {}) {
+  if (typeof row.hasWifi5 === 'boolean') return row.hasWifi5;
+  return genieWifiNetworks(row).some((network) => network.band === '5G' && network.ssid);
 }
 
 function genieClientTypeKey(value = '') {
@@ -17445,16 +17453,56 @@ function genieClientCountByType(rows = [], type = '') {
 
 function genieClientCounts(row = {}) {
   const rows = genieClientRows(row);
+  const hasWifi5 = genieHasWifi5(row);
+  if (row.clientCountAccurate === true) {
+    const count24 = genieClientCountByType(rows, '2.4G');
+    const count5 = hasWifi5 ? genieClientCountByType(rows, '5G') : 0;
+    const countLan = genieClientCountByType(rows, 'LAN');
+    return { count24, count5, countLan, total: rows.length, hasWifi5 };
+  }
   const count24 = Math.max(Number(row.wifiClients24 || 0), genieClientCountByType(rows, '2.4G'));
-  const count5 = Math.max(Number(row.wifiClients5 || 0), genieClientCountByType(rows, '5G'));
+  const count5 = hasWifi5
+    ? Math.max(Number(row.wifiClients5 || 0), genieClientCountByType(rows, '5G'))
+    : 0;
   const countLan = Math.max(Number(row.lanClients || 0), genieClientCountByType(rows, 'LAN'));
   const total = Math.max(Number(row.clientsTotal || row.wifiClientsTotal || 0), rows.length, count24 + count5 + countLan);
-  return { count24, count5, countLan, total };
+  return { count24, count5, countLan, total, hasWifi5 };
 }
 
-function genieClientBreakdown(row = {}) {
-  const counts = genieClientCounts(row);
-  return `2.4G ${displayNumber(counts.count24)} / 5G ${displayNumber(counts.count5)} / LAN ${displayNumber(counts.countLan)}`;
+function applyGenieClientCount(count = {}) {
+  const id = String(count.id || '');
+  if (!id) return;
+  app.querySelectorAll('[data-genie-client-id]').forEach((button) => {
+    if (button.dataset.genieClientId !== id) return;
+    button.textContent = displayNumber(count.total || 0);
+    button.removeAttribute('aria-busy');
+    button.title = 'Lihat client terkoneksi';
+  });
+}
+
+async function refreshVisibleGenieClientCounts(rows = [], renderToken = 0, refresh = false) {
+  const ids = [...new Set(rows.map((row) => String(row.id || '').trim()).filter(Boolean))];
+  if (!ids.length) return;
+  const payload = await api('/api/genieacs/devices/client-counts', {
+    method: 'POST',
+    body: JSON.stringify({ ids, refresh })
+  });
+  if (renderToken !== genieAcsRenderToken || state.view !== 'genieAcs') return;
+  const counts = Array.isArray(payload.counts) ? payload.counts : [];
+  const countMap = new Map(counts.map((count) => [String(count.id || ''), count]));
+  for (const row of rows) {
+    const count = countMap.get(String(row.id || ''));
+    if (!count) continue;
+    Object.assign(row, {
+      wifiClients24: Number(count.wifi24 || 0),
+      wifiClients5: Number(count.wifi5 || 0),
+      lanClients: Number(count.lan || 0),
+      clientsTotal: Number(count.total || 0),
+      wifiClientsTotal: Number(count.total || 0),
+      hasWifi5: count.hasWifi5 === true
+    });
+    applyGenieClientCount(count);
+  }
 }
 
 async function openGenieClientsModal(row = {}) {
@@ -17472,7 +17520,7 @@ async function openGenieClientsModal(row = {}) {
       </div>
       <div class="client-summary-strip">
         <span>2.4G ${displayNumber(counts.count24)}</span>
-        <span>5G ${displayNumber(counts.count5)}</span>
+        ${counts.hasWifi5 ? `<span>5G ${displayNumber(counts.count5)}</span>` : ''}
         <span>LAN ${displayNumber(counts.countLan)}</span>
       </div>
       <div id="genieClientPage"></div>
@@ -17530,6 +17578,7 @@ async function openGenieClientsModal(row = {}) {
     renderPage();
   });
   renderPage();
+  return row;
 }
 
 function genieAcsPaginationControls(pagination = {}) {
@@ -17594,7 +17643,7 @@ async function openGenieWifiModal(row = {}, options = {}) {
     username: row.username || '',
     refresh: '1'
   })}`);
-  const networks = Array.isArray(wifiPayload.networks) && wifiPayload.networks.length
+  let networks = Array.isArray(wifiPayload.networks) && wifiPayload.networks.length
     ? wifiPayload.networks
     : genieWifiNetworks(row);
   const addSsid = wifiPayload.addSsid || {};
@@ -17692,11 +17741,11 @@ async function openGenieWifiModal(row = {}, options = {}) {
       </label>
       <label class="field">
         <span>Password WiFi</span>
-        <input name="password" id="genieWifiPasswordInput" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Kosongkan jika tidak diganti">
+        <input name="password" id="genieWifiPasswordInput" type="password" minlength="8" maxlength="63" autocomplete="off" value="${escapeHtml(firstNetwork.password || '')}" placeholder="Belum terbaca dari ONT">
       </label>
       <label class="field checkbox-field" id="genieWifiShowPasswordField">
         <input id="genieWifiShowPassword" type="checkbox" value="true">
-        <span>Tampilkan password</span>
+        <span>Lihat password</span>
       </label>
       <div class="modal-actions field full">
         <button class="ghost-button" type="button" data-close-modal>Batal</button>
@@ -17725,7 +17774,9 @@ async function openGenieWifiModal(row = {}, options = {}) {
         body: JSON.stringify({
           ssid: payload.ssid,
           ssidParameter: payload.ssidParameter,
-          password: payload.password,
+          password: String(payload.password || '') === String(networks.find((item) => item.ssidParameter === payload.ssidParameter)?.password || '')
+            ? ''
+            : payload.password,
           passwordParameter: payload.passwordParameter,
           usePassword: security === 'pass',
           enabled
@@ -17776,7 +17827,8 @@ async function openGenieWifiModal(row = {}, options = {}) {
     const option = select?.selectedOptions?.[0];
     if (!option) return;
     if (ssidInput) ssidInput.value = option.dataset.ssid || '';
-    if (passwordInput) passwordInput.value = '';
+    const network = networks.find((item) => item.ssidParameter === option.value) || {};
+    if (passwordInput) passwordInput.value = network.password || '';
     if (passwordParameter) passwordParameter.value = option.dataset.passwordParameter || '';
     if (wifiSecurity) wifiSecurity.value = option.dataset.passwordEnabled === 'true' ? 'pass' : 'none';
     if (wifiEnabled) wifiEnabled.value = option.dataset.enabled === 'false' ? 'false' : 'true';
@@ -17795,6 +17847,7 @@ async function openGenieWifiModal(row = {}, options = {}) {
     })}`);
     const refreshedNetworks = Array.isArray(refreshed.networks) ? refreshed.networks : [];
     if (!select || !refreshedNetworks.length) return refreshed;
+    networks = refreshedNetworks;
     const selected = refreshedNetworks.find((item) => item.ssidParameter === selectedParameter)
       || refreshedNetworks.find((item) => item.enabled)
       || refreshedNetworks[0];
@@ -18261,6 +18314,9 @@ function genieAcsRecentPendingSignature(payload = {}) {
 
 function genieAcsRecentPendingMarkup(payload = {}, requestedPage = genieAcsRecentPage) {
   const devices = Array.isArray(payload.devices) ? payload.devices : [];
+  if (payload.loading === true) {
+    return '<div class="empty genieacs-recent-empty">Memuat antrian aktivasi...</div>';
+  }
   if (payload.ok === false) {
     return `<div class="notice warning">${escapeHtml(payload.error || 'ONT baru belum dapat dideteksi.')}</div>`;
   }
@@ -18382,22 +18438,27 @@ async function refreshGenieAcsRecentPending(options = {}) {
 }
 
 async function renderGenieAcs(options = {}) {
+  const renderToken = ++genieAcsRenderToken;
   window.clearTimeout(genieAcsRecentTimer);
   genieAcsRecentTimer = null;
   if (shouldShowPageLoading(options)) app.innerHTML = '<div class="empty">Memuat GenieACS...</div>';
-  const [payload, recentPending] = await Promise.all([
-    api(`/api/genieacs/devices?${queryString({
-      page: state.genieAcsPage,
-      limit: state.genieAcsLimit,
-      status: state.genieAcsStatus,
-      nas: state.genieAcsNas,
-      redaman: state.genieAcsRedaman,
-      search: state.search,
-      refresh: options.refresh ? '1' : ''
-    })}`),
-    api(`/api/genieacs/devices/recent-pending?hours=24&limit=100${options.refresh ? '&refresh=1' : ''}`)
-      .catch((error) => ({ ok: false, devices: [], error: error.message }))
-  ]);
+  const recentRequest = (options.refresh || !genieAcsRecentPayload?.checkedAt
+    ? api(`/api/genieacs/devices/recent-pending?hours=24&limit=100${options.refresh ? '&refresh=1' : ''}`)
+    : Promise.resolve(genieAcsRecentPayload))
+    .catch((error) => ({ ok: false, devices: [], error: error.message }));
+  const payload = await api(`/api/genieacs/devices?${queryString({
+    page: state.genieAcsPage,
+    limit: state.genieAcsLimit,
+    status: state.genieAcsStatus,
+    nas: state.genieAcsNas,
+    redaman: state.genieAcsRedaman,
+    search: state.search,
+    refresh: options.refresh ? '1' : ''
+  })}`);
+  if (renderToken !== genieAcsRenderToken || state.view !== 'genieAcs') return;
+  const recentPending = Array.isArray(genieAcsRecentPayload?.devices) && genieAcsRecentPayload.checkedAt
+    ? genieAcsRecentPayload
+    : { ok: true, devices: [], loading: true };
   const rows = payload.rows || [];
   const nasOptions = Array.isArray(payload.nasOptions) ? payload.nasOptions : [];
   const summary = payload.summary || {};
@@ -18480,7 +18541,6 @@ async function renderGenieAcs(options = {}) {
             const lastActive = dateTimeText(row.lastInform);
             const ipAddress = row.ipAddress || row.framedIpAddress || '-';
             const nasName = row.nasName || row.nasIpAddress || '-';
-            const clientsTotal = row.wifiClientsTotal || row.clientsTotal || 0;
             return `
               <article class="genieacs-device-card">
                 <div class="genieacs-card-head">
@@ -18514,10 +18574,9 @@ async function renderGenieAcs(options = {}) {
                   </div>
                   <div class="genieacs-card-item">
                     <span>Client</span>
-                    <button class="genieacs-client-button" type="button" data-genie-clients="${index}" title="Lihat client terkoneksi">
-                      ${displayNumber(clientsTotal)}
+                    <button class="genieacs-client-button" type="button" data-genie-clients="${index}" data-genie-client-id="${escapeHtml(row.id)}" title="Memuat jumlah client aktif" aria-busy="true">
+                      ...
                     </button>
-                    <small>${escapeHtml(genieClientBreakdown(row))}</small>
                   </div>
                   <div class="genieacs-card-item wide">
                     <span>Terakhir Aktif</span>
@@ -18594,10 +18653,9 @@ async function renderGenieAcs(options = {}) {
                   <td class="genieacs-nowrap"><strong>${escapeHtml(row.rxPowerText || '-')}</strong></td>
                   <td class="genieacs-nowrap">${escapeHtml(row.temperatureText || '-')}</td>
                   <td class="genieacs-number-cell">
-                    <button class="genieacs-client-button" type="button" data-genie-clients="${index}" title="Lihat client terkoneksi">
-                      ${displayNumber(row.wifiClientsTotal || row.clientsTotal || 0)}
+                    <button class="genieacs-client-button" type="button" data-genie-clients="${index}" data-genie-client-id="${escapeHtml(row.id)}" title="Memuat jumlah client aktif" aria-busy="true">
+                      ...
                     </button>
-                    <small class="genieacs-client-breakdown">${escapeHtml(genieClientBreakdown(row))}</small>
                   </td>
                   <td class="genieacs-nowrap" title="${escapeHtml(lastActive)}">${escapeHtml(lastActive)}</td>
                   <td>
@@ -18764,7 +18822,8 @@ async function renderGenieAcs(options = {}) {
       if (!row || button.disabled) return;
       button.disabled = true;
       try {
-        await openGenieClientsModal(row);
+        const detail = await openGenieClientsModal(row);
+        if (detail?.id) applyGenieClientCount({ id: detail.id, total: genieClientRows(detail).length });
       } catch (error) {
         setToast(error.message || 'Detail client belum dapat dibaca');
       } finally {
@@ -18793,8 +18852,21 @@ async function renderGenieAcs(options = {}) {
   });
   genieAcsRecentSignature = genieAcsRecentPendingSignature(recentPending);
   genieAcsRecentIds = new Set((recentPending.devices || []).map((device) => String(device.id || '')).filter(Boolean));
-  scheduleGenieAcsRecentDetection();
   updateGenieSelection();
+  void refreshVisibleGenieClientCounts(rows, renderToken, options.refresh === true).catch(() => {
+    if (renderToken !== genieAcsRenderToken || state.view !== 'genieAcs') return;
+    app.querySelectorAll('[data-genie-client-id]').forEach((button) => {
+      button.textContent = '-';
+      button.removeAttribute('aria-busy');
+      button.title = 'Jumlah client belum dapat dibaca';
+    });
+  });
+  void recentRequest.then((nextRecent) => {
+    if (renderToken !== genieAcsRenderToken || state.view !== 'genieAcs') return;
+    applyGenieAcsRecentPending(nextRecent);
+  }).finally(() => {
+    if (renderToken === genieAcsRenderToken && state.view === 'genieAcs') scheduleGenieAcsRecentDetection();
+  });
 }
 
 function scheduleMonitoringCustomerRefresh() {
