@@ -145,16 +145,38 @@ resolve_genieacs_env_file() {
   return 1
 }
 
+genieacs_sync_required() {
+  local env_file
+  [ "${SKIP_GENIEACS_SYNC:-0}" = "1" ] && return 1
+  if [ "${GENIEACS_SOURCE:-}" = "disabled" ] || [ "${GENIEACS_ENABLED:-1}" = "0" ]; then
+    return 1
+  fi
+  env_file="$(resolve_genieacs_env_file || true)"
+  [ -n "$env_file" ] && return 0
+  [ "${FAKENET_BUNDLED_GENIEACS:-0}" = "1" ] && return 0
+  port_is_listening "${GENIEACS_NBI_PORT:-7557}"
+}
+
 sync_genieacs_virtual_parameters() {
   local attempt bootstrap env_file nbi_port
+  if ! genieacs_sync_required; then
+    echo "Sinkron Virtual Parameters GenieACS dilewati: integrasi GenieACS tidak aktif."
+    return 0
+  fi
   bootstrap="$APP_DIR/deploy/genieacs/bootstrap.js"
-  [ -f "$bootstrap" ] || return 0
-  command -v node >/dev/null 2>&1 || return 0
+  [ -f "$bootstrap" ] || {
+    echo "ERROR: bootstrap GenieACS tidak ditemukan: $bootstrap" >&2
+    return 1
+  }
+  command -v node >/dev/null 2>&1 || {
+    echo "ERROR: Node.js tidak tersedia untuk sinkron Virtual Parameters GenieACS." >&2
+    return 1
+  }
 
   env_file="$(resolve_genieacs_env_file || true)"
   [ -n "$env_file" ] || {
-    echo "Sinkron Virtual Parameters GenieACS dilewati: env GenieACS tidak ditemukan."
-    return 0
+    echo "ERROR: integrasi GenieACS aktif tetapi env GenieACS tidak ditemukan." >&2
+    return 1
   }
 
   set -a
@@ -163,9 +185,9 @@ sync_genieacs_virtual_parameters() {
   set +a
 
   nbi_port="${GENIEACS_NBI_PORT:-7557}"
-  if ! port_is_listening "$nbi_port" && ! port_is_listening 27017; then
-    echo "Sinkron Virtual Parameters GenieACS dilewati: NBI/Mongo lokal belum aktif."
-    return 0
+  if ! port_is_listening "$nbi_port"; then
+    echo "ERROR: integrasi GenieACS aktif tetapi NBI lokal 127.0.0.1:${nbi_port} belum siap." >&2
+    return 1
   fi
 
   for attempt in 1 2 3; do
@@ -348,6 +370,44 @@ safe_copy_if_exists() {
   fi
 }
 
+snapshot_genieacs_configuration() {
+  local env_file nbi_port resource target
+  if ! genieacs_sync_required; then
+    echo "Lewati snapshot GenieACS: integrasi tidak aktif."
+    return 0
+  fi
+  env_file="$(resolve_genieacs_env_file || true)"
+  [ -n "$env_file" ] || {
+    echo "Backup dibatalkan: integrasi GenieACS aktif tetapi env GenieACS tidak ditemukan." >&2
+    return 1
+  }
+  set -a
+  # shellcheck disable=SC1090
+  . "$env_file"
+  set +a
+  nbi_port="${GENIEACS_NBI_PORT:-7557}"
+  if ! curl -fsS --max-time 5 "http://127.0.0.1:${nbi_port}/devices/?limit=1" >/dev/null; then
+    echo "Backup dibatalkan: GenieACS NBI 127.0.0.1:${nbi_port} tidak dapat dibaca." >&2
+    return 1
+  fi
+  mkdir -p "$tmp_backup_dir/genieacs"
+  for resource in virtualParameters presets provisions config; do
+    target="$tmp_backup_dir/genieacs/${resource}.json"
+    curl -fsS --max-time 20 "http://127.0.0.1:${nbi_port}/${resource}" -o "$target"
+    node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (!Array.isArray(value)) process.exit(1);' "$target" || {
+      echo "Backup dibatalkan: respons GenieACS ${resource} bukan JSON array yang valid." >&2
+      return 1
+    }
+  done
+  target="$tmp_backup_dir/genieacs/device-virtual-parameters.json"
+  curl -fsS --max-time 60 "http://127.0.0.1:${nbi_port}/devices/?projection=_id,VirtualParameters" -o "$target"
+  node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (!Array.isArray(value)) process.exit(1);' "$target" || {
+    echo "Backup dibatalkan: snapshot nilai Virtual Parameters perangkat tidak valid." >&2
+    return 1
+  }
+  echo "Snapshot GenieACS selesai: definisi, preset, provision, UI config, dan nilai Virtual Parameters perangkat."
+}
+
 create_pre_update_backup() {
   load_env_file
 
@@ -368,6 +428,7 @@ create_pre_update_backup() {
   safe_copy_if_exists "$ENV_FILE" "$tmp_backup_dir/etc"
   safe_copy_if_exists "$WAHA_ENV_FILE" "$tmp_backup_dir/etc"
   safe_copy_if_exists "$GENIEACS_ENV_FILE" "$tmp_backup_dir/etc"
+  snapshot_genieacs_configuration
   write_manifest "$tmp_backup_dir/manifest.txt"
 
   app_db_url="$(database_url_for_name "${DATABASE_URL:-${POSTGRES_URL:-}}" "${APP_DATABASE_NAME:-}" "${APP_DATABASE_USER:-}" "${APP_DATABASE_PASSWORD:-}")"
@@ -527,7 +588,10 @@ if [ -f "$APP_DIR/install.sh" ]; then
   if [ "${FAKENET_BUNDLED_GENIEACS:-0}" = "1" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
     INSTALL_GENIEACS_FOR_REPAIR=1
   fi
-  APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 GENIEACS_BOOTSTRAP_EXTERNAL=1 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair || true
+  if ! APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 SKIP_GENIEACS_SYNC=1 GENIEACS_BOOTSTRAP_EXTERNAL=1 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair; then
+    echo "Repair instalasi gagal; update dihentikan sebelum restart service." >&2
+    exit 1
+  fi
 fi
 
 sync_genieacs_virtual_parameters

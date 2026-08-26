@@ -185,6 +185,9 @@ external_genieacs_process_exists() {
 external_genieacs_detected() {
   [ "${INSTALL_GENIEACS:-1}" = "0" ] && return 1
   external_genieacs_unit_exists && return 0
+  # Port milik unit GenieACS bawaan billing bukan instalasi eksternal. Tanpa
+  # guard ini, install/repair ulang dapat mematikan service yang sedang dipakai.
+  fakenet_genieacs_unit_exists && return 1
   external_genieacs_process_exists && return 0
   for port in 7547 7557 7567 7568; do
     port_is_listening "$port" && return 0
@@ -740,16 +743,47 @@ resolve_genieacs_env_file() {
   return 1
 }
 
+genieacs_sync_required() {
+  local source_mode enabled env_file
+  [ "${SKIP_GENIEACS_SYNC:-0}" = "1" ] && return 1
+  if [ -f /etc/fakenet-billing.env ]; then
+    source_mode="$(read_env_value_raw /etc/fakenet-billing.env GENIEACS_SOURCE || true)"
+    enabled="$(read_env_value_raw /etc/fakenet-billing.env GENIEACS_ENABLED || true)"
+    if [ "$source_mode" = "disabled" ] || [ "$enabled" = "0" ]; then
+      return 1
+    fi
+  fi
+  env_file="$(resolve_genieacs_env_file || true)"
+  [ -n "$env_file" ] && return 0
+  [ "${INSTALL_GENIEACS:-1}" != "0" ] && return 0
+  [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] && return 0
+  port_is_listening "${GENIEACS_NBI_PORT:-7557}"
+}
+
 sync_genieacs_virtual_parameters() {
   local attempt bootstrap env_file nbi_port
+  if [ "${SKIP_GENIEACS_SYNC:-0}" = "1" ]; then
+    echo "Sinkron Virtual Parameters GenieACS dilewati oleh proses pemanggil."
+    return 0
+  fi
+  if ! genieacs_sync_required; then
+    echo "Sinkron Virtual Parameters GenieACS dilewati: integrasi GenieACS tidak aktif."
+    return 0
+  fi
   bootstrap="$APP_DIR/deploy/genieacs/bootstrap.js"
-  [ -f "$bootstrap" ] || return 0
-  command -v node >/dev/null 2>&1 || return 0
+  [ -f "$bootstrap" ] || {
+    echo "ERROR: bootstrap GenieACS tidak ditemukan: $bootstrap" >&2
+    return 1
+  }
+  command -v node >/dev/null 2>&1 || {
+    echo "ERROR: Node.js tidak tersedia untuk sinkron Virtual Parameters GenieACS." >&2
+    return 1
+  }
 
   env_file="$(resolve_genieacs_env_file || true)"
   [ -n "$env_file" ] || {
-    echo "Sinkron Virtual Parameters GenieACS dilewati: env GenieACS tidak ditemukan."
-    return 0
+    echo "ERROR: integrasi GenieACS aktif tetapi env GenieACS tidak ditemukan." >&2
+    return 1
   }
 
   set -a
@@ -758,9 +792,9 @@ sync_genieacs_virtual_parameters() {
   set +a
 
   nbi_port="${GENIEACS_NBI_PORT:-7557}"
-  if ! port_is_listening "$nbi_port" && ! port_is_listening 27017; then
-    echo "Sinkron Virtual Parameters GenieACS dilewati: NBI/Mongo lokal belum aktif."
-    return 0
+  if ! port_is_listening "$nbi_port"; then
+    echo "ERROR: integrasi GenieACS aktif tetapi NBI lokal 127.0.0.1:${nbi_port} belum siap." >&2
+    return 1
   fi
 
   for attempt in 1 2 3; do
@@ -898,10 +932,13 @@ genieacs_bootstrap_allowed() {
 bootstrap_genieacs() {
   genieacs_bootstrap_allowed || return 0
   load_genieacs_env
-  local attempt bootstrap_status
+  local attempt bootstrap_status bootstrap_external
+  bootstrap_external=0
+  [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] && bootstrap_external=1
   for attempt in $(seq 1 "${GENIEACS_BOOTSTRAP_ATTEMPTS:-3}"); do
     set +e
-    GENIEACS_NBI_BOOTSTRAP_ATTEMPTS="${GENIEACS_NBI_BOOTSTRAP_ATTEMPTS:-24}" \
+    GENIEACS_BOOTSTRAP_EXTERNAL="${GENIEACS_BOOTSTRAP_EXTERNAL:-$bootstrap_external}" \
+      GENIEACS_NBI_BOOTSTRAP_ATTEMPTS="${GENIEACS_NBI_BOOTSTRAP_ATTEMPTS:-24}" \
       GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS="${GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS:-3000}" \
       node "$APP_DIR/deploy/genieacs/bootstrap.js"
     bootstrap_status=$?
@@ -910,8 +947,8 @@ bootstrap_genieacs() {
     echo "Peringatan: bootstrap GenieACS belum berhasil (percobaan ${attempt})." >&2
     sleep 5
   done
-  echo "Peringatan: bootstrap GenieACS dilewati sementara. Billing tetap berjalan; ulangi repair/update setelah GenieACS UI/NBI siap jika Virtual Parameters belum masuk." >&2
-  return 0
+  echo "ERROR: bootstrap GenieACS gagal setelah ${GENIEACS_BOOTSTRAP_ATTEMPTS:-3} percobaan; instalasi dihentikan agar Virtual Parameters tidak tertinggal." >&2
+  return 1
 }
 
 verify_genieacs_health() {
@@ -1225,13 +1262,9 @@ repair_install() {
       systemctl enable "${GENIEACS_UNITS[@]}" >/dev/null 2>&1 || true
       systemctl restart "${GENIEACS_UNITS[@]}"
       verify_genieacs_health
-      bootstrap_genieacs
     fi
   fi
 
-  if [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
-    bootstrap_genieacs
-  fi
   sync_genieacs_virtual_parameters
 
   if [ -f /etc/fakenet-billing.env ] && [ "${REPAIR_FREERADIUS:-1}" != "0" ]; then

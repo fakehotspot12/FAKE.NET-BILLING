@@ -2,6 +2,19 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.8] - 2026-08-26
+
+### Fixed
+
+- Membuat bootstrap GenieACS set-only: hanya meng-upsert Virtual Parameters milik billing tanpa menghapus parameter, nilai perangkat, preset, provision, atau konfigurasi UI existing.
+- Mencegah installer/repair salah menganggap service GenieACS bawaan billing sebagai instalasi eksternal dan menghentikan service yang sedang dipakai.
+- Menghentikan install/update dengan error yang jelas jika integrasi GenieACS aktif tetapi NBI atau verifikasi parameter gagal; kegagalan repair tidak lagi disembunyikan.
+
+### Backup
+
+- Menambahkan snapshot definisi dan nilai Virtual Parameters perangkat, preset, provision, serta UI config GenieACS ke arsip pre-update.
+- Menambahkan mode audit read-only dan verifikasi pascasinkron untuk memastikan parameter billing lengkap serta parameter existing tetap utuh.
+
 ## [4.3.7] - 2026-08-26
 
 ### Fixed

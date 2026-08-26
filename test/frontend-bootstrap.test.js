@@ -367,6 +367,29 @@ test('does not report an update as successful when GenieACS parameter sync fails
     assert.match(source, /sinkron Virtual Parameters GenieACS gagal setelah 3 percobaan/);
     assert.doesNotMatch(source, /node "\$bootstrap" \|\| echo "Peringatan: sinkron Virtual Parameters/);
   }
+  assert.match(installer, /bootstrap GenieACS gagal setelah .* instalasi dihentikan/);
+  assert.match(updater, /SKIP_GENIEACS_SYNC=1/);
+  assert.doesNotMatch(updater, /bash "\$APP_DIR\/install\.sh" repair \|\| true/);
+});
+
+test('backs up and preserves existing GenieACS configuration during updates', () => {
+  const bootstrap = sourceFile('deploy', 'genieacs', 'bootstrap.js');
+  const updater = sourceFile('deploy', 'bin', 'fakenet-billing-update');
+
+  assert.match(updater, /for resource in virtualParameters presets provisions config/);
+  assert.match(updater, /device-virtual-parameters\.json/);
+  assert.match(updater, /devices\/\?projection=_id,VirtualParameters/);
+  assert.match(bootstrap, /unmanagedMissing/);
+  assert.match(bootstrap, /unmanagedChanged/);
+  assert.match(bootstrap, /installVirtualParametersViaNbi/);
+  assert.doesNotMatch(bootstrap, /GENIEACS_LEGACY_CLEANUP/);
+  const installer = sourceFile('install.sh');
+  const detection = installer.slice(
+    installer.indexOf('external_genieacs_detected()'),
+    installer.indexOf('cleanup_fakenet_genieacs_services()')
+  );
+  assert.match(detection, /external_genieacs_unit_exists && return 0/);
+  assert.match(detection, /fakenet_genieacs_unit_exists && return 1/);
 });
 
 test('keeps safe performance contracts for dashboard and hot queries', () => {

@@ -252,9 +252,18 @@ test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () =
   assert.match(bootstrap, /function pppUsernamePaths\(\)/);
   assert.match(bootstrap, /WANPPPConnection\." \+ ppp \+ "\.Username/);
   assert.match(bootstrap, /const pppUserPaths = pppUsernamePaths\(\)/);
-  assert.match(bootstrap, /const comprehensiveButton = parameters\.some/);
-  assert.match(bootstrap, /X_ZTE-COM_WANPONInterfaceConfig\.\*/);
-  assert.match(bootstrap, /Device\.Optical\.Interface\.\*/);
+  assert.match(bootstrap, /installVirtualParametersViaNbi/);
+  assert.match(bootstrap, /GENIEACS_BOOTSTRAP_DRY_RUN/);
+  assert.match(bootstrap, /verifyVirtualParameterDefinitions/);
+  assert.doesNotMatch(bootstrap, /deleteMany\(\{ _id: \{ \$in: names \} \}\)/);
+  const backfill = bootstrap.slice(
+    bootstrap.indexOf('function backfillVirtualParameterValuesViaMongo()'),
+    bootstrap.indexOf('async function installVirtualParameters(')
+  );
+  assert.doesNotMatch(backfill, /\$unset|const unset/);
+  assert.match(backfill, /\{ \$set: set \}/);
+  assert.match(bootstrap, /X_ZTE-COM_WANPONInterfaceConfig\.RXPower/);
+  assert.match(bootstrap, /Device\.Optical\.Interface\.1\.RXPower/);
   assert.doesNotMatch(source, /name: 'refreshObject', objectName: ''/);
   assert.match(source, /WANPPPConnection\.\*'/);
   assert.match(source, /Promise\.all\(projectionChunks\(projection\)/);

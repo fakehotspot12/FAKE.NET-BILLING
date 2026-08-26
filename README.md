@@ -402,6 +402,8 @@ Konfigurasi awal:
 
 Virtual Parameters `RXPower`, `gettemp`, `wanVlan`, `wifiSsid24`, dan `wifiSsid5` dipasang bersama provision harian agar aplikasi dapat membaca redaman, suhu, VLAN WAN, dan SSID dari beberapa keluarga ONU termasuk beberapa modem CDATA/CDTC FDxxx. Nilai tetap berasal dari parameter perangkat yang tersedia di GenieACS; perangkat yang tidak mengekspos parameter terkait akan tampil kosong.
 
+Bootstrap installer dan updater hanya melakukan upsert Virtual Parameters yang dimiliki billing. Virtual Parameters, preset, provision, dan konfigurasi UI existing yang tidak dimiliki billing tidak dihapus atau ditulis ulang. Sinkronisasi diverifikasi kembali melalui NBI sebelum proses dinyatakan berhasil.
+
 Jika ingin memaksa instalasi tanpa membuat ACS lokal, gunakan:
 
 ```bash
@@ -460,7 +462,7 @@ sudo fakenet-billing-stack update
 Updater akan:
 
 1. Membuat backup pre-update ke `/var/backups/fakenet-billing`.
-2. Backup mencakup `data/`, env aplikasi/WAHA/GenieACS, metadata source, serta dump PostgreSQL aplikasi dan Radius jika `pg_dump` tersedia.
+2. Backup mencakup `data/`, env aplikasi/WAHA/GenieACS, metadata source, dump PostgreSQL aplikasi dan Radius, serta snapshot definisi dan nilai Virtual Parameters, preset, provision, dan UI config GenieACS.
 3. Mengambil source terbaru via Git jika folder punya `.git`.
 4. Atau memakai `FAKENET_UPDATE_ARCHIVE_URL` jika install dari archive.
 5. Memasang dependency di staging directory dengan timeout, lalu mengaktifkannya secara atomik hanya setelah verifikasi berhasil.
@@ -468,8 +470,9 @@ Updater akan:
 7. Restart service aplikasi tanpa me-restart Redis, PostgreSQL, Docker, atau FreeRADIUS.
 8. Menjalankan repair ringan untuk menyelaraskan helper command, systemd unit, dan konfigurasi FreeRADIUS tanpa menghapus data.
 9. Memvalidasi payload repository lengkap, termasuk helper update, SQL FreeRADIUS, service systemd, bootstrap GenieACS, dan seluruh file Virtual Parameters.
-10. Menyinkronkan Virtual Parameters GenieACS ke ACS bawaan maupun GenieACS existing jika NBI/Mongo lokal tersedia, sehingga update parameter modem tidak tertinggal.
-11. Memastikan health check aplikasi dan worker BullMQ berhasil sebelum update dinyatakan selesai.
+10. Menyinkronkan Virtual Parameters GenieACS melalui NBI localhost pada ACS bawaan maupun GenieACS existing, lalu memverifikasi parameter billing lengkap tanpa mengubah parameter existing lainnya.
+11. Menghentikan update sebelum restart jika repair atau sinkronisasi GenieACS gagal, sehingga kegagalan tidak dilaporkan sebagai update sukses.
+12. Memastikan health check aplikasi dan worker BullMQ berhasil sebelum update dinyatakan selesai.
 
 Updater memakai aksi internal `restart-app`, sehingga Redis, PostgreSQL, Docker, dan FreeRADIUS tidak direstart saat pembaruan source. Perintah `restart` tetap tersedia untuk restart penuh ketika memang diperlukan oleh administrator.
 

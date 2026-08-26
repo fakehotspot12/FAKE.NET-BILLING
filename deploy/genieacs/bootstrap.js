@@ -14,6 +14,7 @@ const mongoUrl = String(process.env.GENIEACS_MONGODB_CONNECTION_URL || 'mongodb:
 const assetsDir = path.join(__dirname, 'virtual-parameters');
 const externalBootstrap = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BOOTSTRAP_EXTERNAL || '').toLowerCase());
 const autoProvisionEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_AUTO_VP_PROVISION || '').toLowerCase());
+const dryRun = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BOOTSTRAP_DRY_RUN || '').toLowerCase());
 const requestTimeoutMs = Math.max(1000, Number(process.env.GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS || 2500) || 2500);
 const autoProvisionVirtualParameters = new Set([
   'IPTR069',
@@ -140,6 +141,59 @@ function virtualParameterScripts() {
     }));
 }
 
+function virtualParameterName(row = {}) {
+  return String(row._id || row.name || '').trim();
+}
+
+function virtualParameterScript(row = {}) {
+  return String(row.script || '');
+}
+
+async function readVirtualParametersViaNbi() {
+  const rows = await request(`${nbiBase}/virtualParameters?projection=_id,script`);
+  if (!Array.isArray(rows)) throw new Error('Daftar Virtual Parameters NBI tidak valid');
+  return rows;
+}
+
+async function installVirtualParametersViaNbi(rows = []) {
+  for (const row of rows) {
+    await request(`${nbiBase}/virtualParameters/${encodeURIComponent(row.name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ script: row.script })
+    });
+  }
+}
+
+function auditVirtualParameterDefinitions(sourceRows = [], currentRows = [], baselineRows = []) {
+  const managedNames = new Set(sourceRows.map((row) => row.name));
+  const sourceByName = new Map(sourceRows.map((row) => [row.name, row.script]));
+  const currentByName = new Map(currentRows.map((row) => [virtualParameterName(row), virtualParameterScript(row)]));
+  const baselineUnmanaged = baselineRows.filter((row) => !managedNames.has(virtualParameterName(row)));
+  return {
+    missing: sourceRows.map((row) => row.name).filter((name) => !currentByName.has(name)),
+    changed: sourceRows.map((row) => row.name).filter((name) => currentByName.has(name) && currentByName.get(name) !== sourceByName.get(name)),
+    unmanagedMissing: baselineUnmanaged.map(virtualParameterName).filter((name) => !currentByName.has(name)),
+    unmanagedChanged: baselineUnmanaged.filter((row) => {
+      const name = virtualParameterName(row);
+      return currentByName.has(name) && currentByName.get(name) !== virtualParameterScript(row);
+    }).map(virtualParameterName),
+    managedCount: managedNames.size,
+    unmanagedCount: currentRows.filter((row) => !managedNames.has(virtualParameterName(row))).length
+  };
+}
+
+function verifyVirtualParameterDefinitions(sourceRows = [], currentRows = [], baselineRows = []) {
+  const audit = auditVirtualParameterDefinitions(sourceRows, currentRows, baselineRows);
+  const errors = [];
+  if (audit.missing.length) errors.push(`parameter billing hilang: ${audit.missing.join(', ')}`);
+  if (audit.changed.length) errors.push(`script parameter billing tidak sesuai: ${audit.changed.join(', ')}`);
+  if (audit.unmanagedMissing.length) errors.push(`parameter existing hilang: ${audit.unmanagedMissing.join(', ')}`);
+  if (audit.unmanagedChanged.length) errors.push(`parameter existing berubah: ${audit.unmanagedChanged.join(', ')}`);
+  if (errors.length) throw new Error(`Verifikasi Virtual Parameters gagal: ${errors.join('; ')}`);
+  process.stdout.write(`Verifikasi Virtual Parameters berhasil: managed=${audit.managedCount}, existing=${audit.unmanagedCount}.\n`);
+  return audit;
+}
+
 async function installVirtualParametersViaUi(token, rows = []) {
   if (!token) throw new Error('Token UI GenieACS tidak tersedia');
   for (const row of rows) {
@@ -167,106 +221,6 @@ function installVirtualParametersViaMongo(rows = []) {
   const result = spawnSync(command, args, { encoding: 'utf8' });
   if (result.status !== 0) {
     throw new Error((result.stderr || result.stdout || 'fallback MongoDB gagal').trim());
-  }
-  if (result.stdout) process.stdout.write(result.stdout);
-}
-
-function removeLegacyVirtualParametersViaMongo() {
-  const command = ['mongosh', 'mongo'].find((candidate) => {
-    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-    return result.status === 0;
-  });
-  if (!command) return;
-
-  const names = [
-    'RXPower.backup.2026-07-15T17-46-33-756Z',
-    'RXmentah',
-    'gettemp.backup.2026-07-15T18-07-55-447Z',
-    'pppoe-pass'
-  ];
-  const script = [
-    'const names = ' + JSON.stringify(names) + ';',
-    'const removed = db.getCollection("virtualParameters").deleteMany({ _id: { $in: names } }).deletedCount;',
-    'const unset = {};',
-    'for (const name of names) unset["VirtualParameters." + name] = "";',
-    'db.getCollection("devices").updateMany({}, { $unset: unset });',
-    'print("Virtual Parameters legacy dibersihkan: " + removed);'
-  ].join('\n');
-  const result = spawnSync(command, ['--quiet', mongoUrl, '--eval', script], { encoding: 'utf8' });
-  if (result.status !== 0) {
-    process.stderr.write(`Peringatan: pembersihan Virtual Parameters legacy gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
-    return;
-  }
-  if (result.stdout) process.stdout.write(result.stdout);
-}
-
-function sanitizeLegacyProvisionsViaMongo() {
-  const command = ['mongosh', 'mongo'].find((candidate) => {
-    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-    return result.status === 0;
-  });
-  if (!command) return;
-
-  const script = [
-    'const names = ["default"];',
-    'const obsoleteNames = ["radboox_primary", "radboox_secondary"];',
-    'const removedPresets = db.getCollection("presets").deleteMany({ _id: { $in: obsoleteNames } });',
-    'const removedProvisions = db.getCollection("provisions").deleteMany({ _id: { $in: obsoleteNames } });',
-    'const removedFaults = db.getCollection("faults").deleteMany({ channel: { $in: obsoleteNames } });',
-    'if (removedPresets.deletedCount || removedProvisions.deletedCount || removedFaults.deletedCount) {',
-    '  print("Artefak GenieACS legacy dibersihkan: presets=" + removedPresets.deletedCount + ", provisions=" + removedProvisions.deletedCount + ", faults=" + removedFaults.deletedCount);',
-    '}',
-    'const telemetryVirtualParameters = new Set(["VirtualParameters.IPTR069","VirtualParameters.LANActiveClients","VirtualParameters.LANClients","VirtualParameters.PonMac","VirtualParameters.RXPower","VirtualParameters.activedevices","VirtualParameters.getSerialNumber","VirtualParameters.getdeviceuptime","VirtualParameters.getponmode","VirtualParameters.getpppuptime","VirtualParameters.gettemp","VirtualParameters.ip","VirtualParameters.pppoe","VirtualParameters.pppoeIP","VirtualParameters.pppoeMac","VirtualParameters.pppoeUsername","VirtualParameters.pppoeUsername2","VirtualParameters.wanVlan","VirtualParameters.wifiSsid24","VirtualParameters.wifiSsid5"]);',
-    'const summonRefreshPaths = ["InternetGatewayDevice.DeviceInfo.UpTime","InternetGatewayDevice.DeviceInfo.HardwareVersion","InternetGatewayDevice.DeviceInfo.SoftwareVersion","InternetGatewayDevice.DeviceInfo.XponInterface.*","InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.Username","InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.ExternalIPAddress","InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.MACAddress","InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.Uptime","InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.ConnectionStatus","InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANIPConnection.*.ExternalIPAddress","InternetGatewayDevice.WANDevice.*.X_ZTE-COM_WANPONInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_FH_GponInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_FH_EponInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_GponInterafceConfig.*","InternetGatewayDevice.WANDevice.*.X_GC_GponInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_GC_EponInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_GC_WANPONInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_CT-COM_GponInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_CT-COM_EponInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_HW_GponInterfaceConfig.*","InternetGatewayDevice.WANDevice.*.X_HW_EponInterfaceConfig.*","InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.SSID","InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.TotalAssociations","InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.AssociatedDevice.*","InternetGatewayDevice.LANDevice.*.Hosts.Host.*","InternetGatewayDevice.X_HW_RMS.PonStatus.*","Device.DeviceInfo.*","Device.PPP.Interface.*","Device.WiFi.*","Device.Hosts.Host.*","Device.Optical.Interface.*"];',
-    'let summonVirtualRemoved = 0;',
-    'let summonRawAdded = 0;',
-    'for (const button of db.getCollection("config").find({ value: "\'summon-button\'" }).toArray()) {',
-    '  const prefix = button._id.replace(/\\.type$/, ".parameters.");',
-    '  const bounds = { $gte: prefix, $lt: prefix + "\\uffff" };',
-    '  const parameters = db.getCollection("config").find({ _id: bounds }).toArray();',
-    '  const hasTelemetryVirtual = parameters.some((row) => telemetryVirtualParameters.has(String(row.value || "")));',
-    '  const comprehensiveButton = parameters.some((row) => String(row.value || "") === "InternetGatewayDevice.DeviceInfo.UpTime") && parameters.some((row) => /WANPPPConnection|Device\\.PPP\\.Interface/.test(String(row.value || ""))) && parameters.some((row) => /WLANConfiguration|Device\\.WiFi/.test(String(row.value || "")));',
-    '  if (!hasTelemetryVirtual && !comprehensiveButton) continue;',
-    '  const virtualIds = parameters.filter((row) => telemetryVirtualParameters.has(String(row.value || ""))).map((row) => row._id);',
-    '  if (virtualIds.length) summonVirtualRemoved += db.getCollection("config").deleteMany({ _id: { $in: virtualIds } }).deletedCount;',
-    '  const existing = new Set(parameters.filter((row) => !virtualIds.includes(row._id)).map((row) => String(row.value || "")));',
-    '  let index = 1000;',
-    '  for (const path of summonRefreshPaths) {',
-    '    if (existing.has(path)) continue;',
-    '    while (db.getCollection("config").findOne({ _id: prefix + index })) index += 1;',
-    '    db.getCollection("config").updateOne({ _id: prefix + index }, { $set: { value: path } }, { upsert: true });',
-    '    existing.add(path);',
-    '    summonRawAdded += 1;',
-    '    index += 1;',
-    '  }',
-    '}',
-    'if (summonVirtualRemoved || summonRawAdded) print("Summon GenieACS diamankan: virtual_removed=" + summonVirtualRemoved + ", raw_added=" + summonRawAdded);',
-    'for (const name of names) {',
-    '  const row = db.getCollection("provisions").findOne({ _id: name });',
-    '  if (!row || typeof row.script !== "string") continue;',
-    '  const legacyHeavy = /Remot Wan|Update Parameter|X_FH_Remoteweblogin|X_HW_Security\\.AclServices|VirtualParameters\\./.test(row.script);',
-    '  let next = row.script',
-    '    .replace(/Date\\.now\\(86400000\\)/g, "Date.now() - 86400000")',
-    '    .replace(/Date\\.now\\(3590000\\)/g, "Date.now() - 3590000")',
-    '    .replace(/Date\\.now\\(60000\\)/g, "Date.now() - 60000");',
-    '  next = next.split("\\n").filter((line) => !/declare\\(["\\\']VirtualParameters\\./.test(line)).join("\\n");',
-    '  if (next !== row.script) {',
-    '    db.getCollection("provisions").updateOne({ _id: name }, { $set: { script: next, updatedBy: "fakenet-billing-bootstrap", updatedAt: new Date() } });',
-    '    print("Provision legacy dibersihkan: " + name);',
-    '  }',
-    '  if (legacyHeavy) {',
-    '    db.getCollection("presets").updateOne({ _id: name }, { $set: { precondition: JSON.stringify({ _id: "__disabled_by_fakenet_billing__" }), disabledBy: "fakenet-billing-bootstrap", disabledAt: new Date() } });',
-    '    print("Preset legacy dinonaktifkan: " + name);',
-    '  }',
-    '}'
-  ].join('\n');
-  const args = command === 'mongosh'
-    ? ['--quiet', mongoUrl, '--eval', script]
-    : ['--quiet', mongoUrl, '--eval', script];
-  const result = spawnSync(command, args, { encoding: 'utf8' });
-  if (result.status !== 0) {
-    process.stderr.write(`Peringatan: sanitasi provision legacy gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
-    return;
   }
   if (result.stdout) process.stdout.write(result.stdout);
 }
@@ -307,14 +261,6 @@ function backfillVirtualParameterValuesViaMongo() {
     '  else if (number < -100 || number > 100) number /= 100;',
     '  if (!Number.isFinite(number) || number < -60 || number > 10) return "";',
     '  return String(Math.round(number * 100) / 100);',
-    '}',
-    'function invalidRxPower(value) {',
-    '  const number = Number(clean(value).replace(",", ".").replace(/[^\\d.-]/g, ""));',
-    '  return !Number.isFinite(number) || number >= 0 || number < -60 || [-255, 255, 65535, 32767].includes(number);',
-    '}',
-    'function invalidTemperature(value) {',
-    '  const number = Number(clean(value).replace(",", ".").replace(/[^\\d.-]/g, ""));',
-    '  return !Number.isFinite(number) || number < 5 || number > 120 || [-255, 255, 65535, 32767].includes(number);',
     '}',
     'function tempConvertRaw(value) {',
     '  const samples = [[11509,45],[11876,46],[10866,42],[10592,41],[11142,43],[11968,46]];',
@@ -426,7 +372,6 @@ function backfillVirtualParameterValuesViaMongo() {
     'let updated = 0;',
     'db.getCollection("devices").find({}).forEach((doc) => {',
     '  const set = {};',
-    '  const unset = {};',
     '  const rxSource = first(doc, rxPaths);',
     '  const rx = rxPowerText(rxSource.value, rxSource.path);',
     '  const temp = tempText(first(doc, tempPaths).value);',
@@ -434,8 +379,6 @@ function backfillVirtualParameterValuesViaMongo() {
     '  const pppBase = first(doc, pppUserPaths).path.replace(/\\.Username$/, "");',
     '  setVp(set, "RXPower", rx);',
     '  setVp(set, "gettemp", temp);',
-    '  if (!rx && invalidRxPower(leaf(doc, "VirtualParameters.RXPower"))) unset["VirtualParameters.RXPower"] = "";',
-    '  if (!temp && invalidTemperature(leaf(doc, "VirtualParameters.gettemp"))) unset["VirtualParameters.gettemp"] = "";',
     '  setVp(set, "getSerialNumber", clean(doc._deviceId && doc._deviceId._SerialNumber));',
     '  setVp(set, "PonMac", first(doc, ponMacPaths).value);',
     '  setVp(set, "getponmode", first(doc, ["InternetGatewayDevice.DeviceInfo.XponInterface.PonMode","InternetGatewayDevice.DeviceInfo.XponInterface.Mode","InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.WANAccessType"]).value);',
@@ -456,11 +399,8 @@ function backfillVirtualParameterValuesViaMongo() {
     '  const lanActive = hostPrefixes(doc).filter((prefix) => hostActive(doc, prefix) && !hostWifi(doc, prefix)).length;',
     '  setVp(set, "LANActiveClients", lanActive, "xsd:unsignedInt");',
     '  setVp(set, "LANClients", lanActive, "xsd:unsignedInt");',
-    '  if (Object.keys(set).length || Object.keys(unset).length) {',
-    '    const update = {};',
-    '    if (Object.keys(set).length) update.$set = set;',
-    '    if (Object.keys(unset).length) update.$unset = unset;',
-    '    db.getCollection("devices").updateOne({ _id: doc._id }, update);',
+    '  if (Object.keys(set).length) {',
+    '    db.getCollection("devices").updateOne({ _id: doc._id }, { $set: set });',
     '    updated += 1;',
     '  }',
     '});',
@@ -477,10 +417,16 @@ function backfillVirtualParameterValuesViaMongo() {
   if (result.stdout) process.stdout.write(result.stdout);
 }
 
-async function installVirtualParameters(token) {
+async function installVirtualParameters(token, baselineRows = []) {
   const rows = virtualParameterScripts();
   let installed = false;
-  if (token) {
+  try {
+    await installVirtualParametersViaNbi(rows);
+    installed = true;
+  } catch (error) {
+    process.stderr.write(`Peringatan: install Virtual Parameters via NBI gagal: ${error.message || error}\n`);
+  }
+  if (!installed && token) {
     try {
       await installVirtualParametersViaUi(token, rows);
       installed = true;
@@ -491,8 +437,6 @@ async function installVirtualParameters(token) {
   if (!installed) {
     installVirtualParametersViaMongo(rows);
   }
-  removeLegacyVirtualParametersViaMongo();
-
   const declarations = rows
     .filter((row) => autoProvisionVirtualParameters.has(row.name))
     .map((row) => `declare("VirtualParameters.${row.name}", {value: daily});`)
@@ -514,12 +458,22 @@ async function installVirtualParameters(token) {
       configurations: [{ type: 'provision', name: 'fakenet-virtual-parameters', args: [] }]
     })
   });
-  sanitizeLegacyProvisionsViaMongo();
   backfillVirtualParameterValuesViaMongo();
+  const currentRows = await readVirtualParametersViaNbi();
+  verifyVirtualParameterDefinitions(rows, currentRows, baselineRows);
 }
 
 async function main() {
   await waitForNbi();
+  const sourceRows = virtualParameterScripts();
+  const baselineRows = await readVirtualParametersViaNbi();
+  if (dryRun) {
+    const audit = auditVirtualParameterDefinitions(sourceRows, baselineRows, baselineRows);
+    process.stdout.write(`Audit Virtual Parameters (read-only): managed=${audit.managedCount}, existing=${audit.unmanagedCount}, missing=${audit.missing.length}, changed=${audit.changed.length}.\n`);
+    if (audit.missing.length) process.stdout.write(`Parameter billing belum ada: ${audit.missing.join(', ')}.\n`);
+    if (audit.changed.length) process.stdout.write(`Parameter billing perlu diperbarui: ${audit.changed.join(', ')}.\n`);
+    return;
+  }
   let token = '';
   if (externalBootstrap) {
     process.stdout.write('GenieACS existing terdeteksi: akun dan konfigurasi UI dipertahankan.\n');
@@ -534,7 +488,7 @@ async function main() {
       process.stderr.write(`Peringatan: bootstrap UI GenieACS dilewati: ${error.message || error}\n`);
     }
   }
-  await installVirtualParameters(token);
+  await installVirtualParameters(token, baselineRows);
   process.stdout.write('Bootstrap GenieACS selesai: akun UI, autentikasi Inform, dan Virtual Parameters aktif.\n');
 }
 
