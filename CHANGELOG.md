@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.7] - 2026-08-26
+
+### Fixed
+
+- Menyimpan alasan penghapusan PPP-DHCP sampai ke Statistik Cabut serta mempertahankan histori invoice dan transaksi member yang dihapus.
+- Menampilkan catatan pilihan `Lainnya` langsung sebagai alasan tanpa awalan atau duplikasi, dan memberi label `Cabut permanen` pada penghapusan lokal lama yang tidak memiliki metadata alasan.
+- Membersihkan status proses modal setiap kali popup dibuka agar teks `Menyiapkan data...` tidak menumpuk pada Statistik Cabut, Edit Pengeluaran, maupun popup lainnya.
+
 ## [4.3.6] - 2026-08-25
 
 ### Changed
