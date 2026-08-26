@@ -6781,7 +6781,7 @@ function updateRadiusMemberFromImport(customer = {}, payload = {}, radiusUser = 
 }
 
 function radiusDeleteReasonPayload(payload = {}) {
-  const code = String(payload.reasonCode || payload.deleteReasonCode || payload.reason || '').trim().toLowerCase();
+  const requestedCode = String(payload.reasonCode || payload.deleteReasonCode || payload.reason || '').trim().toLowerCase();
   const note = String(payload.reasonNote || payload.deleteReasonNote || payload.note || '').trim();
   const labels = {
     cabut_permanen: 'Cabut permanen',
@@ -6795,13 +6795,13 @@ function radiusDeleteReasonPayload(payload = {}) {
     lainnya: 'Lainnya'
   };
   const nonCabutReasons = new Set(['pindah_nas', 'duplikat', 'salah_input']);
+  const code = labels[requestedCode] ? requestedCode : 'cabut_permanen';
   let countedAsCabut = payload.countedAsCabut !== undefined
     ? payloadEnabled(payload.countedAsCabut)
     : !nonCabutReasons.has(code);
-  if (!code) countedAsCabut = true;
   return {
-    reasonCode: labels[code] ? code : '',
-    reasonLabel: labels[code] || '',
+    reasonCode: code,
+    reasonLabel: labels[code],
     reasonNote: note,
     countedAsCabut
   };
@@ -13557,8 +13557,23 @@ function radiusRemovedRecordCountsAsCabut(record = {}) {
   return record.countedAsCabut !== false;
 }
 
+function removedCustomerRawNoteText(record = {}) {
+  return String(
+    record.reasonNote
+    || record.deleteReasonNote
+    || record.removedReasonNote
+    || record.cabutNote
+    || record.note
+    || record.notes
+    || ''
+  ).trim();
+}
+
 function removedCustomerReasonText(record = {}) {
   const code = String(record.reasonCode || record.deleteReasonCode || record.removedReasonCode || record.reason || '').trim().toLowerCase();
+  const storedLabel = String(record.reasonLabel || record.deleteReason || record.removedReason || record.cabutReason || '').trim();
+  const customReason = code === 'lainnya' || code === 'other' || storedLabel.toLowerCase() === 'lainnya';
+  const customReasonText = customReason ? removedCustomerRawNoteText(record) : '';
   const labels = {
     cabut_permanen: 'Cabut permanen',
     permanent: 'Cabut permanen',
@@ -13581,21 +13596,21 @@ function removedCustomerReasonText(record = {}) {
     lainnya: 'Lainnya',
     other: 'Lainnya'
   };
-  return labels[code]
-    || String(record.reasonLabel || record.deleteReason || record.removedReason || record.cabutReason || '').trim()
+  const legacyLocalDelete = !code
+    && String(record.source || '').trim().toLowerCase() === 'ppp-delete'
+    && record.countedAsCabut !== false;
+  return customReasonText
+    || labels[code]
+    || storedLabel
+    || (legacyLocalDelete ? labels.cabut_permanen : '')
     || (code ? code : '-');
 }
 
 function removedCustomerNoteText(record = {}) {
-  return String(
-    record.reasonNote
-    || record.deleteReasonNote
-    || record.removedReasonNote
-    || record.cabutNote
-    || record.note
-    || record.notes
-    || ''
-  ).trim();
+  const code = String(record.reasonCode || record.deleteReasonCode || record.removedReasonCode || record.reason || '').trim().toLowerCase();
+  const storedLabel = String(record.reasonLabel || record.deleteReason || record.removedReason || record.cabutReason || '').trim().toLowerCase();
+  if (code === 'lainnya' || code === 'other' || storedLabel === 'lainnya') return '';
+  return removedCustomerRawNoteText(record);
 }
 
 function reportRemovedCustomerRows(data = {}, period = currentPeriod(), options = {}) {
@@ -23894,7 +23909,7 @@ async function handleApi(req, res, url) {
       return;
     }
     const id = radiusPppUserMatch[1] ? decodeURIComponent(radiusPppUserMatch[1]) : '';
-    const payload = method === 'DELETE' ? {} : await readBody(req);
+    const payload = await readBody(req);
     if (method !== 'POST' && !id) {
       badRequest(res, 'ID user PPP-DHCP tidak tersedia');
       return;
@@ -27215,6 +27230,8 @@ module.exports = {
     reportStatisticsPayload,
     saveUploadedImage,
     radiusMemberFromPayload,
+    radiusDeleteReasonPayload,
+    removedCustomerReasonText,
     readWorkbookRowsFromBase64,
     requireRadiusUserProfile,
     renderWaTemplate,

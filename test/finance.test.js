@@ -816,7 +816,12 @@ test('deleting radius user removes linked member but keeps transaction history',
   data.payments.push({ id: 'pay-1', invoiceId: 'inv-paid-1', customerId: customer.id, amount: 100000, paidAt: '2026-06-09', method: 'Tunai' });
 
   data.radiusUsers = data.radiusUsers.filter((user) => user.id !== radiusUser.id);
-  const removed = serverInternals.deleteRadiusLinkedMember(data, radiusUser, { name: 'Admin' });
+  const deleteReason = serverInternals.radiusDeleteReasonPayload({
+    reasonCode: 'pindah_provider',
+    reasonNote: 'Berpindah ke provider lain',
+    countedAsCabut: true
+  });
+  const removed = serverInternals.deleteRadiusLinkedMember(data, radiusUser, { name: 'Admin' }, deleteReason);
 
   assert.equal(removed.id, customer.id);
   assert.equal(data.customers.some((item) => item.id === customer.id), false);
@@ -829,8 +834,34 @@ test('deleting radius user removes linked member but keeps transaction history',
   assert.equal(data.radiusRemovedRecords[0].username, 'hapus@ppp.test');
   assert.equal(data.radiusRemovedRecords[0].source, 'ppp-delete');
   assert.equal(data.radiusRemovedRecords[0].customerId, customer.id);
+  assert.equal(data.radiusRemovedRecords[0].reasonCode, 'pindah_provider');
+  assert.equal(data.radiusRemovedRecords[0].reasonLabel, 'Pindah provider');
+  assert.equal(data.radiusRemovedRecords[0].reasonNote, 'Berpindah ke provider lain');
+  assert.equal(serverInternals.removedCustomerReasonText(data.radiusRemovedRecords[0]), 'Pindah provider');
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', currentPeriod()).removed, 1);
   assert.equal(serverInternals.dashboardRadiusServiceSummary(data, 'pppoe', addMonthsToPeriod(currentPeriod(), 1)).removed, 0);
+});
+
+test('labels local legacy PPP deletions without a stored reason as permanent removal', () => {
+  assert.deepEqual(serverInternals.radiusDeleteReasonPayload({}), {
+    reasonCode: 'cabut_permanen',
+    reasonLabel: 'Cabut permanen',
+    reasonNote: '',
+    countedAsCabut: true
+  });
+  assert.equal(serverInternals.removedCustomerReasonText({
+    source: 'ppp-delete',
+    countedAsCabut: true
+  }), 'Cabut permanen');
+  assert.equal(serverInternals.removedCustomerReasonText({
+    source: 'migration',
+    countedAsCabut: true
+  }), '-');
+  assert.equal(serverInternals.removedCustomerReasonText({
+    reasonCode: 'lainnya',
+    reasonLabel: 'Lainnya',
+    reasonNote: 'Pelanggan pindah keluar kota'
+  }), 'Pelanggan pindah keluar kota');
 });
 
 test('dashboard PPP-DHCP PSB counts linked members for selected period only', () => {

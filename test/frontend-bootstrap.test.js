@@ -305,6 +305,29 @@ test('keeps GenieACS list compact and loads recent activation data lazily', () =
   assert.match(appSource, /row\.clientCountAccurate === true/);
 });
 
+test('keeps the PPP delete reason body for single-user removals', () => {
+  const serverSource = sourceFile('src', 'server.js');
+  const routeStart = serverSource.indexOf('const radiusPppUserMatch = pathname.match');
+  const routeEnd = serverSource.indexOf('const radiusPppProfileMatch = pathname.match', routeStart);
+  assert.ok(routeStart >= 0 && routeEnd > routeStart, 'PPP user route was not found');
+
+  const routeSource = serverSource.slice(routeStart, routeEnd);
+  assert.match(routeSource, /const payload = await readBody\(req\)/);
+  assert.doesNotMatch(routeSource, /method === 'DELETE' \? \{\}/);
+});
+
+test('keeps only one submit status across repeated modal openings', () => {
+  const appSource = publicSource('app.js');
+  const openModalStart = appSource.indexOf('function openModal(title, body, onSubmit)');
+  const openModalEnd = appSource.indexOf("modal?.addEventListener('close'", openModalStart);
+  assert.ok(openModalStart >= 0 && openModalEnd > openModalStart, 'openModal implementation was not found');
+
+  const openModalSource = appSource.slice(openModalStart, openModalEnd);
+  assert.match(openModalSource, /form\.querySelectorAll\(':scope > \.modal-submit-status'\)\.forEach\(\(status\) => status\.remove\(\)\)/);
+  assert.match(openModalSource, /finally \{[\s\S]*?setSubmitStatus\(''\)/);
+  assert.doesNotMatch(openModalSource, /if \(modal\.open\) setSubmitStatus\(''\)/);
+});
+
 test('protects new public voucher status links with an access token', () => {
   const { hotspotVoucherOrderPublicAccessAllowed } = require('../src/server').__test;
   assert.equal(hotspotVoucherOrderPublicAccessAllowed({ reference: 'legacy-order' }, new URL('https://billing.example/status')), true);

@@ -3062,6 +3062,7 @@ function openModal(title, body, onSubmit) {
   modalTitle.textContent = title;
   modalBody.innerHTML = body;
   const form = modal.querySelector('.modal-frame');
+  form.querySelectorAll(':scope > .modal-submit-status').forEach((status) => status.remove());
   const submitStatus = document.createElement('div');
   submitStatus.className = 'muted modal-submit-status';
   submitStatus.setAttribute('role', 'status');
@@ -3141,7 +3142,7 @@ function openModal(title, body, onSubmit) {
         control.disabled = disabled;
         if (label) setControlLabel(control, label);
       });
-      if (modal.open) setSubmitStatus('');
+      setSubmitStatus('');
     }
   };
   modal.showModal();
