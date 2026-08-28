@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.10] - 2026-08-28
+
+### Fixed
+
+- Mendeteksi dan menonaktifkan preset GenieACS lama yang memanggil provision penghapus root `Device` atau `InternetGatewayDevice` pada setiap Inform.
+- Mempertahankan preset, provision, konfigurasi, dan Virtual Parameter existing; pengaman hanya mengubah precondition preset destruktif agar Summon tidak lagi menghilangkan cache parameter ONT.
+
 ## [4.3.9] - 2026-08-28
 
 ### Fixed

@@ -463,6 +463,43 @@ async function installVirtualParameters(token, baselineRows = []) {
   verifyVirtualParameterDefinitions(rows, currentRows, baselineRows);
 }
 
+function destructiveRootClearProvisionNames(provisions = []) {
+  return new Set((provisions || [])
+    .filter((row) => /clear\(\s*["'](?:Device|InternetGatewayDevice)["']\s*,/i.test(String(row?.script || '')))
+    .map((row) => String(row?._id || '').trim())
+    .filter(Boolean));
+}
+
+async function disableDestructiveRootClearPresets() {
+  const [presets, provisions] = await Promise.all([
+    request(`${nbiBase}/presets`),
+    request(`${nbiBase}/provisions`)
+  ]);
+  const destructive = destructiveRootClearProvisionNames(provisions);
+  if (!destructive.size) return [];
+  const disabled = [];
+  for (const preset of presets || []) {
+    const presetName = String(preset?._id || '').trim();
+    const invokesDestructiveProvision = (preset?.configurations || []).some((configuration) => (
+      configuration?.type === 'provision' && destructive.has(String(configuration?.name || '').trim())
+    ));
+    if (!presetName || !invokesDestructiveProvision) continue;
+    const disabledPrecondition = JSON.stringify({ _id: '__disabled_by_fakenet_billing__' });
+    if (preset.precondition === disabledPrecondition) continue;
+    const body = { ...preset, precondition: disabledPrecondition };
+    delete body._id;
+    await request(`${nbiBase}/presets/${encodeURIComponent(presetName)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body)
+    });
+    disabled.push(presetName);
+  }
+  if (disabled.length) {
+    process.stdout.write(`Preset clear root destruktif dinonaktifkan: ${disabled.join(', ')}.\n`);
+  }
+  return disabled;
+}
+
 async function main() {
   await waitForNbi();
   const sourceRows = virtualParameterScripts();
@@ -474,6 +511,7 @@ async function main() {
     if (audit.changed.length) process.stdout.write(`Parameter billing perlu diperbarui: ${audit.changed.join(', ')}.\n`);
     return;
   }
+  await disableDestructiveRootClearPresets();
   let token = '';
   if (externalBootstrap) {
     process.stdout.write('GenieACS existing terdeteksi: akun dan konfigurasi UI dipertahankan.\n');
@@ -492,7 +530,13 @@ async function main() {
   process.stdout.write('Bootstrap GenieACS selesai: akun UI, autentikasi Inform, dan Virtual Parameters aktif.\n');
 }
 
-main().catch((error) => {
-  console.error(`Bootstrap GenieACS gagal: ${error.message || error}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`Bootstrap GenieACS gagal: ${error.message || error}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  destructiveRootClearProvisionNames
+};

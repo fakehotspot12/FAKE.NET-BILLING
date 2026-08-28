@@ -256,6 +256,8 @@ test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () =
   assert.match(bootstrap, /GENIEACS_BOOTSTRAP_DRY_RUN/);
   assert.match(bootstrap, /verifyVirtualParameterDefinitions/);
   assert.doesNotMatch(bootstrap, /deleteMany\(\{ _id: \{ \$in: names \} \}\)/);
+  assert.match(bootstrap, /disableDestructiveRootClearPresets/);
+  assert.match(bootstrap, /Preset clear root destruktif dinonaktifkan/);
   const backfill = bootstrap.slice(
     bootstrap.indexOf('function backfillVirtualParameterValuesViaMongo()'),
     bootstrap.indexOf('async function installVirtualParameters(')
@@ -274,6 +276,16 @@ test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () =
   assert.doesNotMatch(lanClients, /Date\.now/);
   assert.match(lanClients, /LANEthernetInterfaceConfig\.\*\.AssociatedDeviceNumberOfEntries/);
   assert.doesNotMatch(lanClients, /Hosts\.Host/);
+});
+
+test('detects provisions that clear a GenieACS device root', () => {
+  const { destructiveRootClearProvisionNames } = require('../deploy/genieacs/bootstrap');
+  const detected = destructiveRootClearProvisionNames([
+    { _id: 'safe', script: 'declare("InternetGatewayDevice.DeviceInfo.UpTime", { value: 1 });' },
+    { _id: 'clear-igd', script: 'clear("InternetGatewayDevice", Date.now());' },
+    { _id: 'clear-device', script: "clear('Device', now);" }
+  ]);
+  assert.deepEqual([...detected].sort(), ['clear-device', 'clear-igd']);
 });
 
 test('normalizes WAN VLAN from virtual parameter fallback', () => {
