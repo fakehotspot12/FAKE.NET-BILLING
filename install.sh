@@ -648,7 +648,7 @@ install_env() {
   fi
   app_admin_password="$(random_hex 12)"
   append_env_if_missing /etc/fakenet-billing.env APP_ADMIN_USERNAME admin
-  append_env_if_missing /etc/fakenet-billing.env APP_ADMIN_NAME "Admin Billing"
+  append_env_if_missing /etc/fakenet-billing.env APP_ADMIN_NAME '"Admin Billing"'
   append_env_if_missing /etc/fakenet-billing.env APP_ADMIN_PASSWORD "$app_admin_password"
   ensure_wa_gateway_env_defaults
   ensure_update_env_defaults

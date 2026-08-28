@@ -353,8 +353,10 @@ test('keeps runtime secrets and updater backups root-only', () => {
 
   assert.match(installer, /chmod 600 \"\$file\"/);
   assert.match(installer, /APP_ADMIN_PASSWORD \"\$app_admin_password\"/);
+  assert.match(installer, /APP_ADMIN_NAME '\"Admin Billing\"'/);
   assert.match(updater, /umask 077/);
   assert.match(updater, /chmod 600 \"\$backup_file\"/);
+  assert.match(updater, /normalize_spaced_env_value APP_ADMIN_NAME/);
   assert.match(storeSource, /writeFile\(tempPath,[\s\S]*?\{ mode: 0o600 \}\)/);
 });
 

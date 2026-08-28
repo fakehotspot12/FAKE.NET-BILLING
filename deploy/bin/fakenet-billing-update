@@ -104,8 +104,27 @@ if [ ! -d "$APP_DIR" ]; then
   exit 1
 fi
 
+normalize_spaced_env_value() {
+  local key="$1" line value escaped
+  line="$(grep -m1 "^${key}=" "$ENV_FILE" 2>/dev/null || true)"
+  [ -n "$line" ] || return 0
+  value="${line#*=}"
+  case "$value" in
+    \"*\"|\'*\') return 0 ;;
+  esac
+  [[ "$value" =~ [[:space:]] ]] || return 0
+  escaped="${value//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  escaped="${escaped//\$/\\\$}"
+  escaped="${escaped//\`/\\\`}"
+  escaped="${escaped//|/\\|}"
+  sed -i "s|^${key}=.*$|${key}=\"${escaped}\"|" "$ENV_FILE"
+  echo "Format $key lama dinormalisasi agar aman dibaca updater."
+}
+
 load_env_file() {
   if [ -f "$ENV_FILE" ]; then
+    normalize_spaced_env_value APP_ADMIN_NAME
     set -a
     # shellcheck disable=SC1090
     . "$ENV_FILE"
