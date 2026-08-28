@@ -23,7 +23,7 @@ test('FreeRADIUS NAS rows only contain valid IP addresses', () => {
     id: 'site-fake',
     name: 'FAKE.NET',
     address: '172.16.125.254',
-    aliases: ['FAKE.NET', '172.16.125.254/32'],
+    aliases: ['FAKE.NET', '172.16.125.254/32', '10.1.13.6'],
     secret: 'radius-secret',
     active: true
   });

@@ -290,8 +290,10 @@ function isRadiusNasAddress(value = '') {
 }
 
 function radiusNasClientAddresses(entry = {}) {
-  return uniqueText([entry.address, ...(Array.isArray(entry.aliases) ? entry.aliases : [])]
-    .map(normalizeRadiusNasAddress));
+  // Aliases are retained for historical session/site matching only. Authorizing
+  // former addresses as live RADIUS clients leaves stale NAS records after a
+  // router or tunnel IP changes.
+  return uniqueText([entry.address].map(normalizeRadiusNasAddress));
 }
 
 function radiusConfig(target = {}) {

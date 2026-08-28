@@ -2,6 +2,13 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.9] - 2026-08-28
+
+### Fixed
+
+- Memisahkan alias historis NAS dari daftar client aktif FreeRADIUS agar perubahan IP router tidak mempertahankan alamat lama sebagai client RADIUS.
+- Memastikan sinkronisasi berikutnya membersihkan record NAS lama dan hanya mendaftarkan alamat utama site untuk autentikasi, accounting, dan CoA.
+
 ## [4.3.8] - 2026-08-26
 
 ### Fixed
