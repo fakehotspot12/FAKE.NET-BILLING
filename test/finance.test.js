@@ -236,7 +236,7 @@ test('first postpaid billing cycle invoice is prorated from active date to cycle
   assert.equal(nextBeforeCycle.prorated, false);
 });
 
-test('postpaid billing cycle skips active month when first invoice was paid', () => {
+test('postpaid billing cycle records paid prorata when first invoice was paid', () => {
   const data = createDefaultStore();
   data.settings.billing.postpaidDueDay = 15;
   data.customers.push(
@@ -265,7 +265,14 @@ test('postpaid billing cycle skips active month when first invoice was paid', ()
     }
   );
 
-  assert.equal(generateInvoices(data, '2026-07').length, 0);
+  const july = generateInvoices(data, '2026-07');
+  assert.equal(july.length, 1);
+  assert.equal(july[0].customerId, 'cus-cycle-paid');
+  assert.equal(july[0].status, 'paid');
+  assert.equal(july[0].amount, 5000);
+  assert.equal(july[0].paidAt, '2026-07-15');
+  assert.equal(july[0].paymentMethod, 'Pembayaran Awal');
+  assert.equal(july[0].prorated, true);
 
   const august = generateInvoices(data, '2026-08');
   assert.equal(august.length, 2);
@@ -1906,7 +1913,7 @@ test('ensureShape syncs stale linked PPP members from radius profile without tou
   assert.equal(data.invoices[0].amount, 150000);
 });
 
-test('ensureShape cancels invalid paid initial postpaid-cycle prorata invoices', () => {
+test('ensureShape settles paid initial postpaid-cycle prorata invoices', () => {
   const data = ensureShape({
     settings: { businessName: 'Prorata Cleanup' },
     customers: [
@@ -1965,8 +1972,10 @@ test('ensureShape cancels invalid paid initial postpaid-cycle prorata invoices',
   });
 
   const paidProrata = data.invoices.find((invoice) => invoice.id === 'inv-paid-prorata');
-  assert.equal(paidProrata.status, 'cancelled');
-  assert.match(paidProrata.cancelReason, /status invoice awal member Paid/i);
+  assert.equal(paidProrata.status, 'paid');
+  assert.equal(paidProrata.paidAt, '2026-07-15');
+  assert.equal(paidProrata.paymentMethod, 'Pembayaran Awal');
+  assert.doesNotMatch(paidProrata.notes, /Dibatalkan otomatis/i);
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-unpaid-prorata').status, 'pending');
   assert.equal(data.invoices.find((invoice) => invoice.id === 'inv-paid-normal-next').status, 'pending');
 });
@@ -2201,6 +2210,39 @@ test('standalone billing automation sends deferred invoice issued notification a
   assert.equal(data.invoices[0].invoiceIssuedPending, false);
   assert.ok(data.invoices[0].invoiceIssuedSentAt);
   assert.equal(after.invoiceIssuedInvoices.length, 1);
+});
+
+test('standalone billing automation does not send invoice issued WA for paid initial prorata', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = true;
+  data.settings.billing.postpaidDueDay = 15;
+  data.settings.billing.fixedInvoiceAdvanceDays = 14;
+  data.settings.billing.notificationSendTime = '08:00';
+  data.customers.push({
+    id: 'cus-paid-prorata-wa',
+    username: 'paid-prorata-wa@ppp.test',
+    name: 'Paid Prorata WA',
+    status: 'active',
+    phone: '081234567890',
+    price: 150000,
+    paymentType: 'postpaid',
+    billingPeriod: 'cycle',
+    activeDate: '2026-08-21',
+    firstInvoiceStatus: 'paid',
+    nextDue: '2026-10-15',
+    dueDate: '2026-10-15'
+  });
+
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-09-01T00:10:00.000Z') });
+
+  assert.equal(result.created.length, 1);
+  assert.equal(result.created[0].status, 'paid');
+  assert.equal(result.created[0].amount, 130000);
+  assert.equal(result.created[0].paidAt, '2026-08-21');
+  assert.equal(result.invoiceIssuedInvoices.length, 0);
+  assert.equal(data.waMessages.filter((message) => message.type === 'invoiceIssued').length, 0);
 });
 
 test('manual invoice discount updates unpaid invoice without changing recurring member discount', () => {

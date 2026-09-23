@@ -11,6 +11,7 @@ BILLING_UNITS=(
   fakenet-billing-wifiku.service
   fakenet-billing-radius-connector.service
   fakenet-billing-waha.service
+  fakenet-billing-license.service
 )
 
 GENIEACS_UNITS=(

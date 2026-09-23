@@ -1,0 +1,20 @@
+[Unit]
+Description=FAKE.NET GenieACS Inform Provision Guard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=genieacs
+Group=genieacs
+WorkingDirectory=/opt/fakenet-billing
+EnvironmentFile=/etc/fakenet-billing-genieacs.env
+Environment=HOME=/tmp
+Environment=GENIEACS_BACKFILL_ONLY=1
+Environment=GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS=5000
+ExecCondition=/usr/bin/grep -q GENIEACS_BACKFILL_ONLY /opt/fakenet-billing/deploy/genieacs/bootstrap.js
+ExecStart=/usr/bin/node /opt/fakenet-billing/deploy/genieacs/bootstrap.js
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

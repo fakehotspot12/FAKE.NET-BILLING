@@ -190,6 +190,19 @@ function customerFirstInvoiceUnpaid(customer = {}) {
   return candidates.some((status) => ['unpaid', 'pending', 'belum bayar'].includes(status));
 }
 
+function customerFirstInvoicePaid(customer = {}) {
+  const candidates = [
+    customer.firstInvoiceStatus,
+    customer.initialInvoiceStatus,
+    customer.memberInvoiceStatus,
+    customer.invoiceStatus,
+    customer.paymentStatus
+  ].map((value) => cleanText(value).toLowerCase()).filter(Boolean);
+  if (!candidates.length) return false;
+  return candidates.some((status) => ['paid', 'lunas', 'terbayar'].includes(status))
+    && !candidates.some((status) => ['unpaid', 'pending', 'belum bayar'].includes(status));
+}
+
 function dueDateForPeriod(period, day) {
   const safePeriod = normalizePeriod(period);
   const [year, month] = safePeriod.split('-').map((item) => Number(item));
@@ -1004,14 +1017,15 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       continue;
     }
     const proration = postpaidCycleProrationInfo(data.settings, customer, selectedPeriod);
-    if (proration && !customerFirstInvoiceUnpaid(customer)) {
+    const firstInvoicePaidProration = Boolean(proration && customerFirstInvoicePaid(customer));
+    if (proration && !customerFirstInvoiceUnpaid(customer) && !firstInvoicePaidProration) {
       continue;
     }
     if (!customerBillableInPeriod(customer, selectedPeriod) && !proration) {
       continue;
     }
     const nextDuePeriod = periodFromDateText(customer.nextDue || customer.dueDate || '');
-    if (nextDuePeriod && selectedPeriod < nextDuePeriod && !customerFirstInvoiceUnpaid(customer)) {
+    if (nextDuePeriod && selectedPeriod < nextDuePeriod && !customerFirstInvoiceUnpaid(customer) && !firstInvoicePaidProration) {
       continue;
     }
 
@@ -1028,6 +1042,11 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
 
     const billingAmount = billingAmountBreakdownForPeriods(data.settings, customer, [selectedPeriod]);
     const amount = billingAmount.totalAmount;
+    const paidInitialProration = firstInvoicePaidProration && amount > 0;
+    const now = new Date().toISOString();
+    const initialPaidAt = paidInitialProration
+      ? (isoDateFromText(customer.firstInvoicePaidAt || customer.initialPaidAt || customer.paidAt || customer.activeDate || customer.installedAt || customer.createdAt || '') || todayIso())
+      : '';
     const invoiceSeq = nextInvoiceSeq;
     nextInvoiceSeq += 1;
     const numbering = {
@@ -1069,16 +1088,16 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       totalAmount: billingAmount.totalAmount,
       amount,
       dueDate,
-      status: amount > 0 ? 'pending' : 'cancelled',
-      paidAt: '',
-      paymentMethod: '',
+      status: paidInitialProration ? 'paid' : (amount > 0 ? 'pending' : 'cancelled'),
+      paidAt: initialPaidAt,
+      paymentMethod: paidInitialProration ? 'Pembayaran Awal' : '',
       prorated: Boolean(billingAmount.proration),
       proration: billingAmount.proration || null,
       notes: amount > 0
-        ? (billingAmount.proration ? `Prorata ${billingAmount.proration.usedDays}/${billingAmount.proration.baseDays} hari` : '')
+        ? (billingAmount.proration ? `Prorata ${billingAmount.proration.usedDays}/${billingAmount.proration.baseDays} hari${paidInitialProration ? ' - dibayar awal' : ''}` : '')
         : 'Tarif paket belum diatur',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now
     };
     data.invoices.push(invoice);
     created.push(invoice);

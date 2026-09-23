@@ -1,0 +1,12 @@
+[Unit]
+Description=Run FAKE.NET GenieACS provision guard every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=fakenet-billing-acs-guard.service
+
+[Install]
+WantedBy=timers.target

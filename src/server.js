@@ -12119,6 +12119,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
 
   if (invoiceIssuedAutomationEnabled && notificationSendReady) {
     for (const invoice of created) {
+      if (!['pending', 'overdue'].includes(invoiceRuntimeStatus(invoice, today))) continue;
       const queued = queueInvoiceWaMessage(data, invoice, 'invoiceIssued', actor, invoiceAutomationWaOptions(data, invoice));
       if (queued) {
         invoice.invoiceIssuedSentAt = nowIso;
@@ -12141,6 +12142,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   } else if (invoiceIssuedAutomationEnabled) {
     const invoiceSendTime = sanitizeTime(settings.notificationSendTime, '08:00');
     for (const invoice of created) {
+      if (!['pending', 'overdue'].includes(invoiceRuntimeStatus(invoice, today))) continue;
       invoice.invoiceIssuedPending = true;
       invoice.invoiceIssuedDeferredDate = today;
       invoice.invoiceIssuedSendAfter = invoiceSendTime;

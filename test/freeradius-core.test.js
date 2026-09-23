@@ -17,6 +17,14 @@ test('installer disables unbounded FreeRADIUS detail accounting when SQL is enab
   assert.match(installer, /\^\[\[:space:\]\]\*detail/);
 });
 
+test('installer keeps simultaneous-use checks limited to fresh accounting sessions', () => {
+  const installer = fs.readFileSync(path.join(__dirname, '..', 'install.sh'), 'utf8');
+
+  assert.match(installer, /configure_freeradius_stale_session_queries/);
+  assert.match(installer, /RADIUS_SESSION_STALE_MINUTES:-10/);
+  assert.match(installer, /COALESCE\(a\.AcctUpdateTime, a\.AcctStartTime\) > CURRENT_TIMESTAMP/);
+});
+
 test('FreeRADIUS NAS rows only contain valid IP addresses', () => {
   const data = createDefaultStore();
   data.radiusNas.push({
@@ -371,11 +379,26 @@ test('linked profiles ignore queue selection and unsupported service choices are
 test('stale session cleanup only closes an older duplicate with a fresh replacement', () => {
   const query = freeradiusSessions.__test.closeSupersededSessionsQuery();
 
+  assert.match(query, /WHEN NULLIF\(trim\(radacct\.callingstationid\), ''\) IS NOT NULL/);
+  assert.match(query, /THEN lower\(trim\(radacct\.callingstationid\)\)/);
+  assert.match(query, /ELSE concat_ws\('\|'/);
   assert.match(query, /active_rank > 1/);
   assert.match(query, /replacement_started_at > ranked\.acctstarttime/);
   assert.match(query, /replacement_updated_at >=/);
   assert.match(query, /ranked\.updated_at </);
+  assert.match(query, /acctstoptime = GREATEST\(previous\.acctstarttime, ranked\.updated_at\)/);
   assert.match(query, /Stale-Replaced/);
+});
+
+test('stale session cleanup closes sessions from a retired NAS without touching configured NAS addresses', () => {
+  const query = freeradiusSessions.__test.closeRetiredNasSessionsQuery();
+
+  assert.match(query, /EXISTS \(SELECT 1 FROM nas\)/);
+  assert.match(query, /NOT EXISTS \(/);
+  assert.match(query, /FROM nas configured/);
+  assert.match(query, /configured\.nasname::text/);
+  assert.match(query, /host\(stale\.nasipaddress\)/);
+  assert.match(query, /Stale-Retired-NAS/);
 });
 
 test('session NAS addresses are normalized before matching a configured NAS', () => {

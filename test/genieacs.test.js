@@ -263,11 +263,12 @@ test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () =
     bootstrap.indexOf('async function installVirtualParameters(')
   );
   assert.doesNotMatch(backfill, /\$unset|const unset/);
-  assert.match(backfill, /\{ \$set: set \}/);
+  assert.match(backfill, /changedVpSet/);
+  assert.match(backfill, /\{ \$set: changedSet \}/);
   assert.match(bootstrap, /X_ZTE-COM_WANPONInterfaceConfig\.RXPower/);
   assert.match(bootstrap, /Device\.Optical\.Interface\.1\.RXPower/);
   assert.doesNotMatch(source, /name: 'refreshObject', objectName: ''/);
-  assert.match(source, /WANPPPConnection\.\*'/);
+  assert.match(source, /WANPPPConnection\.\*\.Username/);
   assert.match(source, /Promise\.all\(projectionChunks\(projection\)/);
   assert.match(source, /Client details open from the last Inform snapshot immediately/);
   assert.doesNotMatch(lanActive, /Date\.now/);
@@ -286,6 +287,67 @@ test('detects provisions that clear a GenieACS device root', () => {
     { _id: 'clear-device', script: "clear('Device', now);" }
   ]);
   assert.deepEqual([...detected].sort(), ['clear-device', 'clear-igd']);
+});
+
+test('hardens only the heavy GenieACS overview summon buttons', () => {
+  const { safeSummonButtonBases, safeSummonButtonParameters } = require('../deploy/genieacs/bootstrap');
+  const joined = safeSummonButtonParameters.join('\n');
+
+  assert.deepEqual(safeSummonButtonBases.sort(), [
+    'ui.device.1.components.0.parameters.0.components.2',
+    'ui.index.2'
+  ]);
+  assert.doesNotMatch(joined, /Hosts\.Host\.\*|AssociatedDevice\.\*|KeyPassphrase/);
+  assert.match(joined, /WANPPPConnection\.\*\.Username/);
+  assert.match(joined, /WLANConfiguration\.\*\.TotalAssociations/);
+  assert.match(joined, /X_HW_Security\.X_HW_FirewallLevel/);
+});
+
+test('keeps Huawei firewall UI section pointed to the editable firewall level', () => {
+  const bootstrap = fs.readFileSync(path.join(__dirname, '../deploy/genieacs/bootstrap.js'), 'utf8');
+
+  assert.match(bootstrap, /hardenHuaweiFirewallLevelUiViaMongo/);
+  assert.match(bootstrap, /ui\.device\.3\.components\.15\.parameters\.0\.components\.0\.parameters\.0/);
+  assert.match(bootstrap, /ui\.device\.3\.components\.15\.parameters\.1\.parameter/);
+  assert.match(bootstrap, /InternetGatewayDevice\.X_HW_Security\.X_HW_FirewallLevel/);
+});
+
+test('patches GenieACS firewall editor to use dropdown options', () => {
+  const bootstrap = fs.readFileSync(path.join(__dirname, '../deploy/genieacs/bootstrap.js'), 'utf8');
+
+  assert.match(bootstrap, /patchGenieacsFirewallDropdownUi/);
+  assert.match(bootstrap, /FAKENET_FIREWALL_DROPDOWN_PATCH/);
+  assert.match(bootstrap, /High/);
+  assert.match(bootstrap, /Medium/);
+  assert.match(bootstrap, /Low/);
+  assert.match(bootstrap, /Disable/);
+  assert.match(bootstrap, /User-Defined/);
+  assert.match(bootstrap, /InternetGatewayDevice\.X_HW_Security\.X_HW_FirewallLevel/);
+});
+
+test('hardens unsafe inform refresh timestamps without changing its interval', () => {
+  const { hardenInformProvisionScript } = require('../deploy/genieacs/bootstrap');
+  const hardened = hardenInformProvisionScript([
+    'const informInterval = 200;',
+    'const daily = Date.now(86400000);',
+    'const minutes = Date.now(300000);',
+    'const update = Date.now(60000);',
+    'const hourly = Date.now(3590000);',
+    'declare("InternetGatewayDevice.ManagementServer.ConnectionRequestPassword", {value: update}, {value: "secret"});'
+  ].join('\n'));
+
+  assert.match(hardened, /const informInterval = 200;/);
+  assert.match(hardened, /const daily = Date\.now\(\) - 86400000;/);
+  assert.match(hardened, /const minutes = Date\.now\(\) - 300000;/);
+  assert.match(hardened, /const update = Date\.now\(\) - 86400000;/);
+  assert.match(hardened, /const hourly = Date\.now\(\) - 3590000;/);
+  assert.doesNotMatch(hardened, /Date\.now\(\d+\)/);
+  assert.equal((hardened.match(/FAKENET_ACTIVE_CLIENTS_BEGIN/g) || []).length, 1);
+  assert.equal((hardened.match(/VirtualParameters\.gettemp/g) || []).length, 1);
+  assert.match(hardened, /VirtualParameters\.IPTR069/);
+  assert.match(hardened, /VirtualParameters\.getponmode/);
+  assert.doesNotMatch(hardened, /LANDevice\.\*\.Hosts\.Host\.\*/);
+  assert.equal(hardenInformProvisionScript(hardened), hardened);
 });
 
 test('normalizes WAN VLAN from virtual parameter fallback', () => {
@@ -1478,6 +1540,19 @@ test('splits the GenieACS list projection without requesting full device documen
   assert.match(clientProjection, /WLANConfiguration\.1\.AssociatedDevice/);
   assert.match(clientProjection, /WLANConfiguration\.8\.AssociatedDevice/);
   assert.match(clientProjection, /LANDevice\.1\.Hosts\.Host/);
+});
+
+test('keeps manual GenieACS refresh bounded to safe operational leaves', () => {
+  const parameters = genieAcs._internal.safeDeviceRefreshParameterNames();
+  const joined = parameters.join('\n');
+
+  assert.equal(parameters.length > 10, true);
+  assert.doesNotMatch(joined, /^Device\.\*$/m);
+  assert.doesNotMatch(joined, /^InternetGatewayDevice\.\*$/m);
+  assert.doesNotMatch(joined, /Hosts\.Host\.\*|AssociatedDevice\.\*/);
+  assert.match(joined, /WANPPPConnection\.\*\.Username/);
+  assert.match(joined, /WLANConfiguration\.\*\.TotalAssociations/);
+  assert.match(joined, /X_ZTE-COM_WANPONInterfaceConfig\.RXPower/);
 });
 
 test('searches GenieACS by SN, tag, SSID, and PPPoE while rejecting short scans', () => {

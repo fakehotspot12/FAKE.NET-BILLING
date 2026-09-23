@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.11] - 2026-09-23
+
+### Fixed
+
+- Membuat invoice prorata pertama untuk pelanggan Postpaid Billing Cycle yang status awalnya `Paid` tetap tercatat sebagai invoice `paid`, sehingga histori dan laporan tidak kosong tanpa menagih ulang pelanggan.
+- Mencegah invoice prorata awal yang sudah `paid` ikut antre sebagai pesan WA `Invoice Terbit`.
+- Memulihkan data prorata lama yang pernah dibatalkan otomatis karena status awal `Paid` menjadi record pembayaran awal yang valid.
+
 ## [4.3.10] - 2026-08-28
 
 ### Fixed

@@ -1107,6 +1107,48 @@ backup_freeradius_config_file() {
   esac
 }
 
+configure_freeradius_stale_session_queries() {
+  local sql_file="$1" stale_seconds stale_minutes tmp_sql_file
+  [ -f "$sql_file" ] || return 0
+
+  stale_seconds="${RADIUS_SESSION_STALE_SECONDS:-}"
+  case "$stale_seconds" in
+    ''|*[!0-9]*) stale_seconds="" ;;
+  esac
+  if [ -z "$stale_seconds" ]; then
+    stale_minutes="${RADIUS_SESSION_STALE_MINUTES:-10}"
+    case "$stale_minutes" in
+      ''|*[!0-9]*) stale_minutes=10 ;;
+    esac
+    stale_seconds=$((stale_minutes * 60))
+  fi
+  [ "$stale_seconds" -gt 0 ] || return 0
+
+  tmp_sql_file="$(mktemp)"
+  awk -v stale_seconds="$stale_seconds" '
+    BEGIN {
+      in_simul_query = 0
+      quote = sprintf("%c", 39)
+    }
+    /^[[:space:]]*simul_(count|verify)_query[[:space:]]*=/ {
+      in_simul_query = 1
+    }
+    in_simul_query && /COALESCE\(a\.AcctUpdateTime, a\.AcctStartTime\).*CURRENT_TIMESTAMP/ {
+      next
+    }
+    {
+      print
+      if (in_simul_query && /AND AcctStopTime IS NULL/) {
+        printf "\tAND COALESCE(a.AcctUpdateTime, a.AcctStartTime) > CURRENT_TIMESTAMP - INTERVAL %s%d seconds%s \\\n", quote, stale_seconds, quote
+      }
+      if (in_simul_query && /\)\"[[:space:]]*$/) {
+        in_simul_query = 0
+      }
+    }
+  ' "$sql_file" > "$tmp_sql_file" && cat "$tmp_sql_file" > "$sql_file"
+  rm -f "$tmp_sql_file"
+}
+
 configure_freeradius_sql_file() {
   local sql_file="$1" radius_db_conn="$2"
   [ -f "$sql_file" ] || return 0
@@ -1137,6 +1179,7 @@ configure_freeradius_sql_file() {
       }
     ' "$sql_file" > "$tmp_sql_file" && cat "$tmp_sql_file" > "$sql_file"
     rm -f "$tmp_sql_file"
+    configure_freeradius_stale_session_queries "$sql_file"
   else
     sed -i -E '/^[[:space:]]*sql_user_name[[:space:]]*=/d' "$sql_file" || true
   fi

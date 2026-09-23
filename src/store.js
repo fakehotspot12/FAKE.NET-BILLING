@@ -362,7 +362,7 @@ function firstInvoicePaid(customer = {}) {
     && !statuses.some((status) => ['unpaid', 'pending', 'belum bayar'].includes(status));
 }
 
-function cancelInvalidPaidInitialProrataInvoices(data = {}) {
+function settlePaidInitialProrataInvoices(data = {}) {
   const customers = new Map((data.customers || []).map((customer) => [String(customer.id || ''), customer]));
   const now = new Date().toISOString();
   for (const invoice of data.invoices || []) {
@@ -370,13 +370,27 @@ function cancelInvalidPaidInitialProrataInvoices(data = {}) {
     if (!customer || !firstInvoicePaid(customer)) continue;
     const activePeriod = periodFromDateText(customer.activeDate || customer.installedAt || customer.createdAt || '');
     if (!activePeriod || String(invoice.period || '') !== activePeriod) continue;
-    if (normalizedStatusText(invoice.status) !== 'pending') continue;
+    const status = normalizedStatusText(invoice.status);
+    const autoCancelledByOldRule = ['cancelled', 'canceled'].includes(status)
+      && /status invoice awal member Paid|Dibatalkan otomatis: status invoice awal Paid/i.test(`${invoice.cancelReason || ''} ${invoice.notes || ''}`);
+    if (status !== 'pending' && !autoCancelledByOldRule) continue;
     if (normalizedStatusText(invoice.source) !== 'generated') continue;
     if (invoice.prorated !== true && !/prorata/i.test(String(invoice.notes || ''))) continue;
-    invoice.status = 'cancelled';
-    invoice.cancelledAt = invoice.cancelledAt || now;
-    invoice.cancelReason = invoice.cancelReason || 'Invoice prorata bulan pemasangan dibatalkan karena status invoice awal member Paid.';
-    invoice.notes = `${String(invoice.notes || '').trim()} Dibatalkan otomatis: status invoice awal Paid.`.trim();
+    const paidAt = String(customer.firstInvoicePaidAt || customer.initialPaidAt || customer.paidAt || customer.activeDate || customer.installedAt || customer.createdAt || '').slice(0, 10);
+    invoice.status = 'paid';
+    invoice.paidAt = invoice.paidAt || (/^\d{4}-\d{2}-\d{2}$/.test(paidAt) ? paidAt : now.slice(0, 10));
+    invoice.paymentMethod = invoice.paymentMethod || 'Pembayaran Awal';
+    if (invoice.cancelReason) {
+      invoice.previousCancelReason = invoice.previousCancelReason || invoice.cancelReason;
+      delete invoice.cancelReason;
+    }
+    delete invoice.cancelledAt;
+    invoice.notes = String(invoice.notes || '')
+      .replace(/\s*Dibatalkan otomatis: status invoice awal Paid\.?/i, '')
+      .trim();
+    if (!/dibayar awal/i.test(invoice.notes)) {
+      invoice.notes = `${invoice.notes} - dibayar awal`.replace(/^\s*-\s*/, '').trim();
+    }
     invoice.updatedAt = now;
   }
   return data;
@@ -736,7 +750,7 @@ function ensureShape(data) {
     users: Array.isArray(safe.users) ? safe.users : [],
     activity: Array.isArray(safe.activity) ? safe.activity : []
   };
-  return syncLinkedRadiusMemberProfiles(cancelInvalidPaidInitialProrataInvoices(restoreTerminatedPendingInvoices(migrateBillingDefaultTimers(migrateLegacyMemberCodes(shaped)))));
+  return syncLinkedRadiusMemberProfiles(settlePaidInitialProrataInvoices(restoreTerminatedPendingInvoices(migrateBillingDefaultTimers(migrateLegacyMemberCodes(shaped)))));
 }
 
 function postgresEnabled() {

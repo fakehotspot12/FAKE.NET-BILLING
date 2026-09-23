@@ -15,6 +15,8 @@ const assetsDir = path.join(__dirname, 'virtual-parameters');
 const externalBootstrap = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BOOTSTRAP_EXTERNAL || '').toLowerCase());
 const autoProvisionEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_AUTO_VP_PROVISION || '').toLowerCase());
 const dryRun = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BOOTSTRAP_DRY_RUN || '').toLowerCase());
+const informGuardOnly = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_INFORM_GUARD_ONLY || '').toLowerCase());
+const backfillOnly = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BACKFILL_ONLY || '').toLowerCase());
 const requestTimeoutMs = Math.max(1000, Number(process.env.GENIEACS_BOOTSTRAP_REQUEST_TIMEOUT_MS || 2500) || 2500);
 const autoProvisionVirtualParameters = new Set([
   'IPTR069',
@@ -38,6 +40,49 @@ const autoProvisionVirtualParameters = new Set([
   'wifiSsid24',
   'wifiSsid5'
 ]);
+
+const safeSummonButtonParameters = [
+  'InternetGatewayDevice.DeviceInfo.*',
+  'InternetGatewayDevice.ManagementServer.ConnectionRequestURL',
+  'InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.Username',
+  'InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.ExternalIPAddress',
+  'InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.ConnectionStatus',
+  'InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANIPConnection.*.ExternalIPAddress',
+  'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.SSID',
+  'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.TotalAssociations',
+  'InternetGatewayDevice.X_HW_Security.X_HW_FirewallLevel',
+  'InternetGatewayDevice.X_HW_Security.FirewallLevel',
+  'InternetGatewayDevice.WANDevice.*.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.*.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.*.X_FH_GponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.*.X_FH_GponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.*.X_FH_EponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.*.X_FH_EponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.*.X_GponInterafceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.*.X_GponInterafceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.*.X_GC_GponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.*.X_GC_GponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.WANDevice.*.X_CT-COM_GponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.*.X_CT-COM_GponInterfaceConfig.TransceiverTemperature',
+  'InternetGatewayDevice.X_HW_RMS.PonStatus.RXPower',
+  'InternetGatewayDevice.X_HW_RMS.PonStatus.TransceiverTemperature',
+  'Device.DeviceInfo.*',
+  'Device.PPP.Interface.*.Username',
+  'Device.PPP.Interface.*.ConnectionStatus',
+  'Device.WiFi.SSID.*.SSID',
+  'Device.WiFi.AccessPoint.*.AssociatedDeviceNumberOfEntries',
+  'Device.Optical.Interface.*.RXPower',
+  'Device.Optical.Interface.*.Temperature',
+  'VirtualParameters.userAdmin',
+  'VirtualParameters.userPassword',
+  'VirtualParameters.superAdmin',
+  'VirtualParameters.superPassword'
+];
+
+const safeSummonButtonBases = [
+  'ui.device.1.components.0.parameters.0.components.2',
+  'ui.index.2'
+];
 
 async function request(url, options = {}) {
   const controller = new AbortController();
@@ -153,6 +198,25 @@ async function readVirtualParametersViaNbi() {
   const rows = await request(`${nbiBase}/virtualParameters?projection=_id,script`);
   if (!Array.isArray(rows)) throw new Error('Daftar Virtual Parameters NBI tidak valid');
   return rows;
+}
+
+function readVirtualParametersViaMongo() {
+  const command = ['mongosh', 'mongo'].find((candidate) => {
+    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
+    return result.status === 0;
+  });
+  if (!command) throw new Error('mongosh/mongo tidak tersedia untuk membaca Virtual Parameters');
+
+  const script = 'print(JSON.stringify(db.getCollection("virtualParameters").find({}, { _id: 1, script: 1 }).toArray()))';
+  const args = command === 'mongosh'
+    ? ['--quiet', mongoUrl, '--eval', script]
+    : ['--quiet', mongoUrl, '--eval', script];
+  const result = spawnSync(command, args, { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || 'baca Virtual Parameters via MongoDB gagal').trim());
+  }
+  const output = String(result.stdout || '').trim().split('\n').filter(Boolean).pop() || '[]';
+  return JSON.parse(output);
 }
 
 async function installVirtualParametersViaNbi(rows = []) {
@@ -328,6 +392,17 @@ function backfillVirtualParameterValuesViaMongo() {
     '  const text = ["InterfaceType","Layer1Interface","Layer2Interface","Interface","X_HW_InterfaceType","X_ZTE-COM_InterfaceType"].map((name) => clean(leaf(doc, prefix + "." + name))).join(" ");',
     '  return /wifi|wi-?fi|wlan|ssid|radio|wireless|802\\.11/i.test(text);',
     '}',
+    'function hostInterface(doc, prefix) {',
+    '  return ["InterfaceType","Layer1Interface","Layer2Interface","Interface","X_HW_InterfaceType","X_ZTE-COM_InterfaceType"].map((name) => clean(leaf(doc, prefix + "." + name))).join(" ");',
+    '}',
+    'function hotspotSsid(value) {',
+    '  return /(?:^|[\\s._-])(hotspot|wifi\\s*murah|wifimurah|voucher|free\\s*wifi|wifi\\s*gratis|public\\s*wifi)(?:$|[\\s._-])/i.test(clean(value));',
+    '}',
+    'function hostLooksHotspotWifi(doc, prefix) {',
+    '  const match = hostInterface(doc, prefix).match(/(?:WLANConfiguration|AccessPoint|SSID)[.\\s/_-]*(\\d+)/i);',
+    '  if (!match) return false;',
+    '  return hotspotSsid(leaf(doc, "InternetGatewayDevice.LANDevice.1.WLANConfiguration." + match[1] + ".SSID"));',
+    '}',
     'function hostPrefixes(doc) {',
     '  const roots = ["InternetGatewayDevice.LANDevice.1.Hosts.Host", "Device.Hosts.Host"];',
     '  const rows = [];',
@@ -341,6 +416,7 @@ function backfillVirtualParameterValuesViaMongo() {
     'function wifiTotal(doc) {',
     '  let total = 0;',
     '  for (let index = 1; index <= 8; index += 1) {',
+    '    if (hotspotSsid(leaf(doc, "InternetGatewayDevice.LANDevice.1.WLANConfiguration." + index + ".SSID"))) continue;',
     '    for (const suffix of ["TotalAssociations","AssociatedDeviceNumberOfEntries","WLAN_AssociatedDeviceNumberOfEntries"]) {',
     '      const value = Number(clean(leaf(doc, "InternetGatewayDevice.LANDevice.1.WLANConfiguration." + index + "." + suffix)));',
     '      if (Number.isFinite(value) && value > 0) { total += value; break; }',
@@ -348,9 +424,19 @@ function backfillVirtualParameterValuesViaMongo() {
     '  }',
     '  return total;',
     '}',
+    'function hostActiveTotal(doc) {',
+    '  return hostPrefixes(doc).filter((prefix) => hostActive(doc, prefix) && !hostLooksHotspotWifi(doc, prefix)).length;',
+    '}',
     'function setVp(set, name, value, type, writable) {',
     '  if (value === undefined || value === null || value === "") return;',
     '  set["VirtualParameters." + name] = { _object: false, _timestamp: new Date(), _type: type || "xsd:string", _value: value, _writable: writable === true };',
+    '}',
+    'function changedVpSet(doc, set) {',
+    '  const changed = {};',
+    '  for (const key of Object.keys(set)) {',
+    '    if (clean(leaf(doc, key)) !== clean(set[key]._value)) changed[key] = set[key];',
+    '  }',
+    '  return changed;',
     '}',
     'const rxPaths = ["InternetGatewayDevice.DeviceInfo.XponInterface.RXPower","InternetGatewayDevice.DeviceInfo.XponInterface.RxPower","InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_HW_EponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_HW_GponInterfaceConfig.RXPower","InternetGatewayDevice.X_HW_RMS.PonStatus.RXPower","Device.Optical.Interface.1.RXPower"];',
     'const tempPaths = ["InternetGatewayDevice.DeviceInfo.XponInterface.Temperature","InternetGatewayDevice.DeviceInfo.XponInterface.TransceiverTemperature","InternetGatewayDevice.DeviceInfo.XponInterface.OpticalTransceiver.Temperature","InternetGatewayDevice.X_HW_RMS.PonStatus.TransceiverTemperature","InternetGatewayDevice.X_HW_RMS.PonStatus.Temperature","Device.Optical.Interface.1.Temperature","Device.Optical.Interface.1.TransceiverTemperature"].concat(wanIndexedPaths(["InternetGatewayDevice.WANDevice.*.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Temperature","InternetGatewayDevice.WANDevice.*.X_CU_WANGPONInterfaceConfig.OpticalTransceiver.Temperature","InternetGatewayDevice.WANDevice.*.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_GC_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_GC_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_GC_WANPONInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_CMCC_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_CMCC_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_CT-COM_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_CT-COM_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_FH_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_FH_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_GponInterafceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_HW_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_HW_GponInterfaceConfig.TransceiverTemperature"]));',
@@ -358,6 +444,10 @@ function backfillVirtualParameterValuesViaMongo() {
     'const pppUserPaths = pppUsernamePaths();',
     'const ssid24Paths = ["InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.SSID","Device.WiFi.SSID.1.SSID","Device.WiFi.SSID.2.SSID"];',
     'const ssid5Paths = ["InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.6.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.7.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.8.SSID","Device.WiFi.SSID.5.SSID","Device.WiFi.SSID.2.SSID"];',
+    'const userAdminPaths = ["InternetGatewayDevice.X_CU_Function.Web.UserName","InternetGatewayDevice.UserInterface.X_ZTE-COM_WebUserInfo.UserName","InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.UserName","InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.WebUsername","InternetGatewayDevice.User.2.Username","InternetGatewayDevice.X_Authentication.WebAccount.Username","InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Username","InternetGatewayDevice.X_ZTE-COM_UserInterface.X_ZTE-COM_WebUserInfo.UserName"];',
+    'const userPasswordPaths = ["InternetGatewayDevice.X_CU_Function.Web.UserPassword","InternetGatewayDevice.UserInterface.X_ZTE-COM_WebUserInfo.UserPassword","InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Password","InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.WebPassword","InternetGatewayDevice.User.2.Password","InternetGatewayDevice.X_Authentication.WebAccount.Password","InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Password","InternetGatewayDevice.X_ZTE-COM_UserInterface.X_ZTE-COM_WebUserInfo.UserPassword"];',
+    'const superAdminPaths = ["InternetGatewayDevice.X_CU_Function.Web.AdminName","InternetGatewayDevice.UserInterface.X_ZTE-COM_WebUserInfo.AdminName","InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.UserName","InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount.Username","InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.WebSuperUsername","InternetGatewayDevice.User.1.Username","InternetGatewayDevice.X_Authentication.WebAccount.Username","InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Username","InternetGatewayDevice.DeviceInfo.X_ZTE-COM_AdminAccount.UserName","InternetGatewayDevice.X_ZTE-COM_UserInterface.X_ZTE-COM_WebUserInfo.AdminName"];',
+    'const superPasswordPaths = ["InternetGatewayDevice.X_CU_Function.Web.AdminPassword","InternetGatewayDevice.UserInterface.X_ZTE-COM_WebUserInfo.AdminPassword","InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.Password","InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount.Password","InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.WebSuperPassword","InternetGatewayDevice.User.1.Password","InternetGatewayDevice.X_Authentication.WebAccount.Password","InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Password","InternetGatewayDevice.DeviceInfo.X_ZTE-COM_AdminAccount.Password","InternetGatewayDevice.X_ZTE-COM_UserInterface.X_ZTE-COM_WebUserInfo.AdminPassword"];',
     'function wanVlanPaths(pppBase) {',
     '  const paths = [];',
     '  if (pppBase) {',
@@ -395,12 +485,17 @@ function backfillVirtualParameterValuesViaMongo() {
     '  setVp(set, "wifiSsid24", first(doc, ssid24Paths).value);',
     '  if (singleBandWifi(doc)) set["VirtualParameters.wifiSsid5"] = { _object: false, _timestamp: new Date(), _type: "xsd:string", _value: "", _writable: false };',
     '  else setVp(set, "wifiSsid5", first(doc, ssid5Paths).value);',
-    '  setVp(set, "activedevices", wifiTotal(doc), "xsd:int");',
+    '  setVp(set, "userAdmin", first(doc, userAdminPaths).value, "xsd:string", true);',
+    '  setVp(set, "userPassword", first(doc, userPasswordPaths).value, "xsd:string", true);',
+    '  setVp(set, "superAdmin", first(doc, superAdminPaths).value, "xsd:string", true);',
+    '  setVp(set, "superPassword", first(doc, superPasswordPaths).value, "xsd:string", true);',
+    '  setVp(set, "activedevices", Math.max(wifiTotal(doc), hostActiveTotal(doc)), "xsd:int");',
     '  const lanActive = hostPrefixes(doc).filter((prefix) => hostActive(doc, prefix) && !hostWifi(doc, prefix)).length;',
     '  setVp(set, "LANActiveClients", lanActive, "xsd:unsignedInt");',
     '  setVp(set, "LANClients", lanActive, "xsd:unsignedInt");',
-    '  if (Object.keys(set).length) {',
-    '    db.getCollection("devices").updateOne({ _id: doc._id }, { $set: set });',
+    '  const changedSet = changedVpSet(doc, set);',
+    '  if (Object.keys(changedSet).length) {',
+    '    db.getCollection("devices").updateOne({ _id: doc._id }, { $set: changedSet });',
     '    updated += 1;',
     '  }',
     '});',
@@ -415,6 +510,143 @@ function backfillVirtualParameterValuesViaMongo() {
     return;
   }
   if (result.stdout) process.stdout.write(result.stdout);
+}
+
+function hardenSummonButtonsViaMongo() {
+  const command = ['mongosh', 'mongo'].find((candidate) => {
+    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
+    return result.status === 0;
+  });
+  if (!command) return;
+
+  const script = [
+    'const bases = ' + JSON.stringify(safeSummonButtonBases) + ';',
+    'const parameters = ' + JSON.stringify(safeSummonButtonParameters) + ';',
+    'function escapeRegex(value) { return String(value).replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&"); }',
+    'function parameterIndex(id, base) {',
+    '  const raw = String(id || "").slice(String(base || "").length + ".parameters.".length).split(".")[0];',
+    '  const number = Number(raw);',
+    '  return Number.isFinite(number) ? number : Number.MAX_SAFE_INTEGER;',
+    '}',
+    'let changed = 0;',
+    'let skipped = 0;',
+    'for (const base of bases) {',
+    '  const type = db.getCollection("config").findOne({ _id: base + ".type" });',
+    '  if (!type || !String(type.value || "").includes("summon-button")) { skipped += 1; continue; }',
+    '  const paramRegex = new RegExp("^" + escapeRegex(base) + "\\\\.parameters\\\\.");',
+    '  const existing = db.getCollection("config").find({ _id: paramRegex }).toArray()',
+    '    .sort((a, b) => parameterIndex(a._id, base) - parameterIndex(b._id, base));',
+    '  const current = existing.map((row) => String(row.value || ""));',
+    '  if (current.length === parameters.length && current.every((value, index) => value === parameters[index])) continue;',
+    '  db.getCollection("config").deleteMany({ _id: paramRegex });',
+    '  parameters.forEach((value, index) => {',
+    '    db.getCollection("config").updateOne({ _id: base + ".parameters." + index }, { $set: { value } }, { upsert: true });',
+    '  });',
+    '  changed += 1;',
+    '}',
+    'print("Summon GenieACS aman: changed=" + changed + ", skipped=" + skipped);'
+  ].join('\n');
+  if (dryRun) {
+    process.stdout.write('Audit Summon GenieACS: tombol ringkasan akan dibatasi ke parameter aman.\n');
+    return;
+  }
+  const args = command === 'mongosh'
+    ? ['--quiet', mongoUrl, '--eval', script]
+    : ['--quiet', mongoUrl, '--eval', script];
+  const result = spawnSync(command, args, { encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stderr.write(`Peringatan: hardening Summon GenieACS gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
+    return;
+  }
+  if (result.stdout) process.stdout.write(result.stdout);
+}
+
+function hardenHuaweiFirewallLevelUiViaMongo() {
+  const command = ['mongosh', 'mongo'].find((candidate) => {
+    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
+    return result.status === 0;
+  });
+  if (!command) return;
+
+  const firewallPath = 'InternetGatewayDevice.X_HW_Security.X_HW_FirewallLevel';
+  const script = [
+    'const firewallPath = ' + JSON.stringify(firewallPath) + ';',
+    'const setKey = String.fromCharCode(36) + "set";',
+    'function setValue(id, value) {',
+    '  const op = {};',
+    '  op[setKey] = { value };',
+    '  db.getCollection("config").updateOne({ _id: id }, op, { upsert: true });',
+    '}',
+    'setValue("ui.device.3.components.15.parameters.0.components.0.parameters.0", firewallPath);',
+    'setValue("ui.device.3.components.15.parameters.1.label", String.fromCharCode(39) + "Firewall Level" + String.fromCharCode(39));',
+    'setValue("ui.device.3.components.15.parameters.1.parameter", firewallPath);',
+    'print("Firewall Huawei UI GenieACS diarahkan ke " + firewallPath);'
+  ].join('\n');
+  if (dryRun) {
+    process.stdout.write(`Audit Firewall Huawei UI: section Firewall akan diarahkan ke ${firewallPath}.\n`);
+    return;
+  }
+  const args = command === 'mongosh'
+    ? ['--quiet', mongoUrl, '--eval', script]
+    : ['--quiet', mongoUrl, '--eval', script];
+  const result = spawnSync(command, args, { encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stderr.write(`Peringatan: hardening Firewall Huawei UI gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
+    return;
+  }
+  if (result.stdout) process.stdout.write(result.stdout);
+}
+
+function patchGenieacsFirewallDropdownUi() {
+  const publicDirs = process.env.GENIEACS_PUBLIC_DIR
+    ? [String(process.env.GENIEACS_PUBLIC_DIR)]
+    : [
+        '/usr/lib/node_modules/genieacs/public',
+        '/opt/genieacs/node_modules/genieacs/public'
+      ];
+  const options = ['High', 'Medium', 'Low', 'Disable', 'User-Defined'];
+  const targetPaths = [
+    'InternetGatewayDevice.X_HW_Security.X_HW_FirewallLevel',
+    'InternetGatewayDevice.X_HW_Security.FirewallLevel'
+  ];
+
+  const files = [...new Set(publicDirs
+    .filter((publicDir) => fs.existsSync(publicDir))
+    .flatMap((publicDir) => fs.readdirSync(publicDir)
+      .filter((name) => /^app-[A-Z0-9]+\.js$/i.test(name))
+      .map((name) => path.join(publicDir, name))))];
+
+  let patched = false;
+  for (const file of files) {
+    let source = fs.readFileSync(file, 'utf8');
+    if (source.includes('FAKENET_FIREWALL_DROPDOWN_PATCH')) {
+      patched = true;
+      continue;
+    }
+
+    const markerRegex = /function ([A-Za-z_$][\w$]*)\(e,t,n\)\{function r\(i\)\{i\.key==="Enter"\?t\(\):i\.key==="Escape"\?n\(\):i\.redraw=!1\}let s;if\(e\.parameterValues\[0\]\[2\]==="xsd:boolean"\)/;
+    const match = source.match(markerRegex);
+    if (!match) continue;
+
+    const replacement = [
+      `function ${match[1]}(e,t,n){/* FAKENET_FIREWALL_DROPDOWN_PATCH */function r(i){i.key==="Enter"?t():i.key==="Escape"?n():i.redraw=!1}let s;`,
+      'if(' + JSON.stringify(targetPaths) + '.includes(e.parameterValues[0][0])){',
+      'let i=' + JSON.stringify(options) + ',o=String(e.parameterValues[0][1]||"");',
+      'i.includes(o)||i.unshift(o);',
+      's=(0,q.default)("select",{value:o,onchange:a=>{a.redraw=!1,e.parameterValues[0][1]=s.dom.value},onkeydown:r,oncreate:a=>{a.dom.focus()}},i.map(a=>(0,q.default)("option",{value:a},a||"-")))',
+      '}else if(e.parameterValues[0][2]==="xsd:boolean")'
+    ].join('');
+
+    const backup = `${file}.fakenet-firewall-dropdown.bak`;
+    if (!fs.existsSync(backup)) fs.copyFileSync(file, backup);
+    source = source.replace(markerRegex, replacement);
+    fs.writeFileSync(file, source);
+    patched = true;
+    process.stdout.write(`Dropdown Firewall GenieACS aktif: ${path.basename(file)}.\n`);
+  }
+
+  if (!patched) process.stderr.write('Peringatan: patch dropdown Firewall GenieACS dilewati, pola UI bundle tidak ditemukan.\n');
+  return patched;
 }
 
 async function installVirtualParameters(token, baselineRows = []) {
@@ -434,8 +666,12 @@ async function installVirtualParameters(token, baselineRows = []) {
       process.stderr.write(`Peringatan: install Virtual Parameters via UI gagal: ${error.message || error}\n`);
     }
   }
-  if (!installed) {
+  try {
     installVirtualParametersViaMongo(rows);
+    installed = true;
+  } catch (error) {
+    if (!installed) throw error;
+    process.stderr.write(`Peringatan: sinkronisasi Virtual Parameters via Mongo gagal: ${error.message || error}\n`);
   }
   const declarations = rows
     .filter((row) => autoProvisionVirtualParameters.has(row.name))
@@ -445,21 +681,31 @@ async function installVirtualParameters(token, baselineRows = []) {
     'const daily = Date.now() - 86400000;',
     declarations
   ].join('\n');
-  await request(`${nbiBase}/provisions/fakenet-virtual-parameters`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/javascript' },
-    body: provision
-  });
-  await request(`${nbiBase}/presets/fakenet-virtual-parameters`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      weight: 10,
-      precondition: autoProvisionEnabled ? '{}' : JSON.stringify({ _id: '__disabled_by_fakenet_billing__' }),
-      configurations: [{ type: 'provision', name: 'fakenet-virtual-parameters', args: [] }]
-    })
-  });
+  try {
+    await request(`${nbiBase}/provisions/fakenet-virtual-parameters`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/javascript' },
+      body: provision
+    });
+    await request(`${nbiBase}/presets/fakenet-virtual-parameters`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        weight: 10,
+        precondition: autoProvisionEnabled ? '{}' : JSON.stringify({ _id: '__disabled_by_fakenet_billing__' }),
+        configurations: [{ type: 'provision', name: 'fakenet-virtual-parameters', args: [] }]
+      })
+    });
+  } catch (error) {
+    process.stderr.write(`Peringatan: provision auto Virtual Parameters via NBI dilewati: ${error.message || error}\n`);
+  }
   backfillVirtualParameterValuesViaMongo();
-  const currentRows = await readVirtualParametersViaNbi();
+  let currentRows = [];
+  try {
+    currentRows = await readVirtualParametersViaNbi();
+  } catch (error) {
+    process.stderr.write(`Peringatan: verifikasi Virtual Parameters via NBI gagal, fallback Mongo: ${error.message || error}\n`);
+    currentRows = readVirtualParametersViaMongo();
+  }
   verifyVirtualParameterDefinitions(rows, currentRows, baselineRows);
 }
 
@@ -468,6 +714,56 @@ function destructiveRootClearProvisionNames(provisions = []) {
     .filter((row) => /clear\(\s*["'](?:Device|InternetGatewayDevice)["']\s*,/i.test(String(row?.script || '')))
     .map((row) => String(row?._id || '').trim())
     .filter(Boolean));
+}
+
+function hardenInformProvisionScript(script = '') {
+  let hardened = String(script || '');
+  const staleWindows = [86400000, 300000, 60000, 3590000];
+  for (const windowMs of staleWindows) {
+    hardened = hardened.replace(
+      new RegExp(`Date\\.now\\(\\s*${windowMs}\\s*\\)`, 'g'),
+      `Date.now() - ${windowMs}`
+    );
+  }
+  if (/ManagementServer\.ConnectionRequestPassword/.test(hardened)) {
+    hardened = hardened.replace(
+      /const\s+update\s*=\s*Date\.now\(\)\s*-\s*60000\s*;/g,
+      'const update = Date.now() - 86400000;'
+    );
+  }
+  const telemetryBlock = [
+    '// FAKENET_ACTIVE_CLIENTS_BEGIN',
+    'const fakenetActiveClientsRefresh = Date.now() - 15 * 60 * 1000;',
+    'declare("VirtualParameters.IPTR069", { value: fakenetActiveClientsRefresh });',
+    'declare("VirtualParameters.getponmode", { value: fakenetActiveClientsRefresh });',
+    'declare("VirtualParameters.gettemp", { value: fakenetActiveClientsRefresh });',
+    '// FAKENET_ACTIVE_CLIENTS_END'
+  ].join('\n');
+  hardened = hardened
+    .replace(/\/\/ FAKENET_ACTIVE_CLIENTS_BEGIN[\s\S]*?\/\/ FAKENET_ACTIVE_CLIENTS_END/g, '')
+    .trimEnd();
+  hardened = `${hardened}\n\n${telemetryBlock}\n`;
+  return hardened;
+}
+
+async function hardenInformProvision() {
+  const provisions = await request(`${nbiBase}/provisions`);
+  const inform = (Array.isArray(provisions) ? provisions : [])
+    .find((row) => String(row?._id || '').trim() === 'inform');
+  if (!inform || typeof inform.script !== 'string') return false;
+  const hardened = hardenInformProvisionScript(inform.script);
+  if (hardened === inform.script) return false;
+  if (dryRun) {
+    process.stdout.write('Audit provision inform: timestamp refresh terlalu agresif perlu diperbaiki.\n');
+    return true;
+  }
+  await request(`${nbiBase}/provisions/inform`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/javascript' },
+    body: hardened
+  });
+  process.stdout.write('Provision inform diamankan: refresh parameter manajemen dibatasi harian.\n');
+  return true;
 }
 
 async function disableDestructiveRootClearPresets() {
@@ -501,7 +797,20 @@ async function disableDestructiveRootClearPresets() {
 }
 
 async function main() {
+  if (backfillOnly) {
+    try {
+      await waitForNbi();
+      await hardenInformProvision();
+    } catch (error) {
+      process.stderr.write(`Peringatan: guard provision inform dilewati: ${error.message || error}\n`);
+    }
+    backfillVirtualParameterValuesViaMongo();
+    process.stdout.write('Backfill GenieACS selesai: Virtual Parameters diperbarui dari cache lokal.\n');
+    return;
+  }
   await waitForNbi();
+  await hardenInformProvision();
+  if (informGuardOnly) return;
   const sourceRows = virtualParameterScripts();
   const baselineRows = await readVirtualParametersViaNbi();
   if (dryRun) {
@@ -512,6 +821,9 @@ async function main() {
     return;
   }
   await disableDestructiveRootClearPresets();
+  hardenSummonButtonsViaMongo();
+  hardenHuaweiFirewallLevelUiViaMongo();
+  patchGenieacsFirewallDropdownUi();
   let token = '';
   if (externalBootstrap) {
     process.stdout.write('GenieACS existing terdeteksi: akun dan konfigurasi UI dipertahankan.\n');
@@ -538,5 +850,10 @@ if (require.main === module) {
 }
 
 module.exports = {
-  destructiveRootClearProvisionNames
+  destructiveRootClearProvisionNames,
+  hardenHuaweiFirewallLevelUiViaMongo,
+  hardenInformProvisionScript,
+  patchGenieacsFirewallDropdownUi,
+  safeSummonButtonBases,
+  safeSummonButtonParameters
 };

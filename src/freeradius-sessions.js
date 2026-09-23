@@ -244,10 +244,16 @@ function closeSupersededSessionsQuery() {
   if (staleSeconds <= 0) return '';
   const identity = `
         lower(COALESCE(radacct.username, '')),
-        COALESCE(radacct.nasipaddress::text, ''),
-        COALESCE(NULLIF(radacct.framedipaddress::text, ''), '__no_ip__'),
-        COALESCE(NULLIF(radacct.callingstationid, ''), '__no_calling__'),
-        COALESCE(NULLIF(radacct.calledstationid, ''), '__no_called__'),
+        CASE
+          WHEN NULLIF(trim(radacct.callingstationid), '') IS NOT NULL
+            THEN lower(trim(radacct.callingstationid))
+          ELSE concat_ws('|',
+            '__no_calling__',
+            COALESCE(radacct.nasipaddress::text, ''),
+            COALESCE(NULLIF(radacct.framedipaddress::text, ''), '__no_ip__'),
+            COALESCE(NULLIF(radacct.calledstationid, ''), '__no_called__')
+          )
+        END,
         COALESCE(NULLIF(radacct.servicetype, ''), '__no_service__'),
         COALESCE(NULLIF(radacct.framedprotocol, ''), '__no_protocol__')`;
   const order = 'COALESCE(radacct.acctupdatetime, radacct.acctstarttime) DESC, radacct.acctstarttime DESC, radacct.radacctid DESC';
@@ -266,8 +272,8 @@ WITH active_ranked AS (
 ), closed AS (
   UPDATE radacct previous
   SET
-    acctstoptime = GREATEST(previous.acctstarttime, ranked.replacement_started_at),
-    acctsessiontime = GREATEST(EXTRACT(EPOCH FROM (GREATEST(previous.acctstarttime, ranked.replacement_started_at) - previous.acctstarttime))::bigint, 0),
+    acctstoptime = GREATEST(previous.acctstarttime, ranked.updated_at),
+    acctsessiontime = GREATEST(EXTRACT(EPOCH FROM (GREATEST(previous.acctstarttime, ranked.updated_at) - previous.acctstarttime))::bigint, 0),
     acctterminatecause = COALESCE(NULLIF(previous.acctterminatecause, ''), 'Stale-Replaced')
   FROM active_ranked ranked
   WHERE previous.radacctid = ranked.radacctid
@@ -281,15 +287,52 @@ WITH active_ranked AS (
 SELECT json_build_object('closed', COUNT(*))::text FROM closed`;
 }
 
+function closeRetiredNasSessionsQuery() {
+  const staleSeconds = sessionStaleSeconds();
+  if (staleSeconds <= 0) return '';
+  return `
+WITH closed AS (
+  UPDATE radacct stale
+  SET
+    acctstoptime = GREATEST(stale.acctstarttime, COALESCE(stale.acctupdatetime, stale.acctstarttime)),
+    acctsessiontime = GREATEST(EXTRACT(EPOCH FROM (COALESCE(stale.acctupdatetime, stale.acctstarttime) - stale.acctstarttime))::bigint, 0),
+    acctterminatecause = COALESCE(NULLIF(stale.acctterminatecause, ''), 'Stale-Retired-NAS')
+  WHERE stale.acctstoptime IS NULL
+    AND COALESCE(stale.acctupdatetime, stale.acctstarttime) < (now() - (${staleSeconds} * interval '1 second'))
+    AND EXISTS (SELECT 1 FROM nas)
+    AND NOT EXISTS (
+      SELECT 1
+      FROM nas configured
+      WHERE lower(split_part(configured.nasname::text, '/', 1)) = lower(host(stale.nasipaddress))
+    )
+  RETURNING stale.radacctid
+)
+SELECT json_build_object('closed', COUNT(*))::text FROM closed`;
+}
+
 async function closeSupersededActiveSessions() {
   if (!enabled() || !configured() || sessionStaleSeconds() <= 0) {
-    return { ok: true, closed: 0 };
+    return { ok: true, closed: 0, supersededClosed: 0, retiredNasClosed: 0 };
   }
   try {
-    const payload = await psqlJson(closeSupersededSessionsQuery());
-    return { ok: true, closed: numberValue(payload.closed) };
+    const superseded = await psqlJson(closeSupersededSessionsQuery());
+    const retiredNas = await psqlJson(closeRetiredNasSessionsQuery());
+    const supersededClosed = numberValue(superseded.closed);
+    const retiredNasClosed = numberValue(retiredNas.closed);
+    return {
+      ok: true,
+      closed: supersededClosed + retiredNasClosed,
+      supersededClosed,
+      retiredNasClosed
+    };
   } catch (error) {
-    return { ok: false, closed: 0, error: error.message || 'Session stale FreeRADIUS tidak bisa ditutup' };
+    return {
+      ok: false,
+      closed: 0,
+      supersededClosed: 0,
+      retiredNasClosed: 0,
+      error: error.message || 'Session stale FreeRADIUS tidak bisa ditutup'
+    };
   }
 }
 
@@ -1659,6 +1702,7 @@ module.exports = {
   recordUsageDeltas,
   usageHistoryByUsername,
   __test: {
+    closeRetiredNasSessionsQuery,
     closeSupersededSessionsQuery,
     dailyUsageQuery,
     monthlyUsageQuery,
