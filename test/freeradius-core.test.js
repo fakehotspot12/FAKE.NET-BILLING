@@ -32,12 +32,13 @@ test('FreeRADIUS NAS rows only contain valid IP addresses', () => {
     name: 'FAKE.NET',
     address: '172.16.125.254',
     aliases: ['FAKE.NET', '172.16.125.254/32', '10.1.13.6'],
+    clientAliases: ['10.201.201.0', 'not-an-ip'],
     secret: 'radius-secret',
     active: true
   });
 
   const rows = freeradius.freeradiusRows(data);
-  assert.deepEqual(rows.nas.map((row) => row.nasname), ['172.16.125.254']);
+  assert.deepEqual(rows.nas.map((row) => row.nasname), ['172.16.125.254', '10.201.201.0']);
 
   const built = freeradiusSql.__test.buildSql(rows, {
     nasnames: ['172.16.125.254', 'FAKE.NET']
@@ -60,12 +61,14 @@ test('FreeRADIUS NAS rows only contain valid IP addresses', () => {
       nasname: '172.16.125.254/32'
     }]
   }, {});
-  assert.deepEqual(unsafe.currentManaged.nasnames, ['172.16.125.254']);
+  assert.deepEqual(unsafe.currentManaged.nasnames, ['172.16.125.254', '10.201.201.0']);
   assert.doesNotMatch(unsafe.sql, /'KAMPUNG\.NET'/);
   const nasInsert = unsafe.sql.match(/INSERT INTO nas .*? VALUES\n([\s\S]*?);/);
   assert.ok(nasInsert);
   assert.equal((nasInsert[1].match(/\('172\.16\.125\.254'/g) || []).length, 1);
+  assert.equal((nasInsert[1].match(/\('10\.201\.201\.0'/g) || []).length, 1);
   assert.doesNotMatch(nasInsert[1], /172\.16\.125\.254\/32/);
+  assert.doesNotMatch(nasInsert[1], /10\.1\.13\.6/);
 });
 
 test('hotspot radius users always use username as password', () => {

@@ -15832,6 +15832,11 @@ function monitoringFormBody(target = {}) {
         ${radius.credentialStored ? '<span class="muted">Secret ditampilkan agar dapat dicocokkan dengan konfigurasi MikroTik.</span>' : ''}
       </label>
       <label class="field full">
+        <span>Source IP RADIUS tambahan</span>
+        <input name="radiusClientAliases" value="${escapeHtml([...new Set([...(radius.clientAliases || []), ...(radius.sourceAliases || []), ...(radius.radiusClientAliases || []), ...(radius.radiusSourceAliases || [])].filter(Boolean))].join(', '))}" placeholder="10.201.201.0, 10.1.13.15">
+        <span class="muted">Isi hanya jika paket RADIUS terlihat datang dari IP berbeda karena VPN/NAT. IP lama dari Host/IP tetap disimpan sebagai riwayat, bukan client aktif.</span>
+      </label>
+      <label class="field full">
         <span>URL Login Hotspot</span>
         <input name="hotspotLoginUrl" type="url" value="${escapeHtml(hotspot.loginUrl || target.hotspotLoginUrl || '')}" placeholder="http://login.site.example/login">
         <span class="muted">Dipakai untuk auto-login setelah voucher dibayar dan QR voucher pada Site ini.</span>

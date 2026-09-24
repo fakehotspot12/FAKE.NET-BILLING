@@ -17410,9 +17410,15 @@ function publicMonitoringTarget(target = {}, fallbackMediaServices = {}, options
     radius: {
       enabled: radius.enabled === true,
       name: radius.name || target.name || '',
-      address: target.host || radius.address || '',
+      address: radius.address || target.host || '',
       port: radius.port || 3799,
       type: radius.type || 'mikrotik',
+      aliases: Array.isArray(radius.aliases) ? radius.aliases : [],
+      clientAliases: Array.isArray(radius.clientAliases) ? radius.clientAliases : [],
+      sourceAliases: Array.isArray(radius.sourceAliases) ? radius.sourceAliases : [],
+      radiusClientAliases: Array.isArray(radius.radiusClientAliases) ? radius.radiusClientAliases : [],
+      radiusSourceAliases: Array.isArray(radius.radiusSourceAliases) ? radius.radiusSourceAliases : [],
+      syncAliasesAsClients: radius.syncAliasesAsClients === true,
       credentialStored: Boolean(radius.secret),
       serverAddress: includeRadiusSecret ? suggestedRadiusServerAddress(target) : '',
       secret: includeRadiusSecret ? String(radius.secret || '') : ''

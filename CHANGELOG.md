@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.12] - 2026-09-24
+
+### Fixed
+
+- Memastikan perubahan IP NAS pada Site benar-benar memperbarui client FreeRADIUS ke IP baru dan membersihkan IP lama saat sinkron.
+- Menambahkan Source IP RADIUS tambahan untuk Site yang melewati VPN/NAT, sehingga accounting tetap diterima ketika source packet berbeda dari IP manajemen NAS.
+- Memisahkan alias historis NAS dari source/client alias aktif agar IP lama tetap bisa dipakai untuk matching riwayat tanpa ikut di-authorize sebagai NAS baru.
+
 ## [4.3.11] - 2026-09-23
 
 ### Fixed

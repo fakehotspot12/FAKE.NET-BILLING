@@ -290,10 +290,16 @@ function isRadiusNasAddress(value = '') {
 }
 
 function radiusNasClientAddresses(entry = {}) {
-  // Aliases are retained for historical session/site matching only. Authorizing
-  // former addresses as live RADIUS clients leaves stale NAS records after a
-  // router or tunnel IP changes.
-  return uniqueText([entry.address].map(normalizeRadiusNasAddress));
+  // `aliases` are retained for historical session/site matching only.
+  // Only explicit client/source aliases are authorized as live RADIUS clients,
+  // because keeping every old NAS address authorized can leave stale routers
+  // accepted after a tunnel or source-address change.
+  return uniqueText([
+    entry.address,
+    ...(Array.isArray(entry.clientAliases) ? entry.clientAliases : []),
+    ...(Array.isArray(entry.sourceAliases) ? entry.sourceAliases : []),
+    ...(entry.syncAliasesAsClients === true && Array.isArray(entry.aliases) ? entry.aliases : [])
+  ].map(normalizeRadiusNasAddress));
 }
 
 function radiusConfig(target = {}) {
@@ -332,6 +338,26 @@ function radiusNasEntries(data, options = {}) {
     }
     return aliases;
   };
+  const clientAliasList = (...items) => {
+    const aliases = [];
+    const used = new Set();
+    const add = (value = '') => {
+      const alias = normalizeRadiusNasAddress(value);
+      const key = alias.toLowerCase();
+      if (!alias || used.has(key)) return;
+      used.add(key);
+      aliases.push(alias);
+    };
+    for (const item of items) {
+      if (!item) continue;
+      if (Array.isArray(item)) {
+        item.forEach(add);
+      } else {
+        add(item);
+      }
+    }
+    return aliases;
+  };
   const scoreEntry = (entry = {}) => {
     let score = 0;
     if (entry.active !== false) score += 100;
@@ -354,7 +380,12 @@ function radiusNasEntries(data, options = {}) {
       site: text(entry.site || entry.location || entry.server),
       active: entry.active !== false,
       source: entry.source || 'radius',
-      aliases: aliasList(entry, { id, name: entry.name || entry.shortname, address })
+      aliases: aliasList(entry, { id, name: entry.name || entry.shortname, address }),
+      clientAliases: clientAliasList(entry.clientAliases, entry.sourceAliases, entry.radiusClientAliases),
+      sourceAliases: clientAliasList(entry.sourceAliases),
+      syncAliasesAsClients: entry.syncAliasesAsClients === true
+        || entry.radiusAliasesAsClients === true
+        || entry.authorizeAliases === true
     };
     const key = entryKey(normalized);
     if (!key) return;
@@ -384,7 +415,10 @@ function radiusNasEntries(data, options = {}) {
       site: preferred.site || fallback.site || '',
       active: preferred.active !== false,
       source: preferred.source || fallback.source || 'radius',
-      aliases: aliasList(current, normalized)
+      aliases: aliasList(current, normalized),
+      clientAliases: clientAliasList(current.clientAliases, normalized.clientAliases),
+      sourceAliases: clientAliasList(current.sourceAliases, normalized.sourceAliases),
+      syncAliasesAsClients: current.syncAliasesAsClients === true || normalized.syncAliasesAsClients === true
     };
     seen.set(key, existingIndex);
     const mergedNameKey = text(entries[existingIndex].name).toLowerCase();
@@ -405,14 +439,26 @@ function radiusNasEntries(data, options = {}) {
     pushEntry({
       id: text(cfg.id || target.radiusNasId || target.id),
       name: text(cfg.name || target.name),
-      address: text(target.host || cfg.address || target.radiusAddress),
+      address: text(cfg.address || target.radiusAddress || target.host),
       secret,
       type: text(cfg.type || target.radiusType) || 'mikrotik',
       ports: Math.max(0, Math.trunc(numberValue(cfg.port || target.radiusPort, 3799))),
       site: text(target.location || target.name),
       active: target.status !== 'inactive' && (explicitEnabled ? enabled : Boolean(secret)),
       source: 'site',
-      aliases: aliasList(target, cfg)
+      aliases: aliasList(target, cfg),
+      clientAliases: clientAliasList(
+        cfg.clientAliases,
+        cfg.sourceAliases,
+        cfg.radiusClientAliases,
+        target.radiusClientAliases,
+        target.radiusSourceAliases
+      ),
+      sourceAliases: clientAliasList(cfg.sourceAliases, target.radiusSourceAliases),
+      syncAliasesAsClients: cfg.syncAliasesAsClients === true
+        || cfg.radiusAliasesAsClients === true
+        || cfg.authorizeAliases === true
+        || target.radiusAliasesAsClients === true
     });
   }
 

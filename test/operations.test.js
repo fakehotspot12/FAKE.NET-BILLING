@@ -22,6 +22,8 @@ const {
   updateInventoryItem,
   updateMonitoringTarget
 } = require('../src/operations');
+const freeradius = require('../src/freeradius-core');
+const freeradiusSql = require('../src/freeradius-sql');
 const { createDefaultStore } = require('../src/store');
 
 test('inventory tracks stock movement and low stock summary', () => {
@@ -239,4 +241,43 @@ test('mikrotik customer summary counts active PPPoE and hotspot interfaces from 
     process.env.PATH = oldPath;
     fs.rmSync(binDir, { recursive: true, force: true });
   }
+});
+
+test('monitoring target NAS IP changes sync only the new client and explicit source aliases', () => {
+  const data = createDefaultStore();
+  const target = addMonitoringTarget(data, {
+    name: 'NYNET',
+    host: '172.16.255.2',
+    community: 'rad2026',
+    radiusEnabled: true,
+    radiusSecret: 'rad2026'
+  });
+
+  let rows = freeradius.freeradiusRows(data);
+  assert.deepEqual(rows.nas.map((row) => row.nasname), ['172.16.255.2']);
+
+  const updated = updateMonitoringTarget(data, target.id, {
+    name: 'NYNET',
+    host: '172.16.255.3',
+    community: 'rad2026',
+    radiusEnabled: true,
+    radiusSecret: 'rad2026',
+    radiusClientAliases: '10.201.201.0, bukan-ip'
+  });
+
+  assert.equal(updated.host, '172.16.255.3');
+  assert.equal(updated.radius.address, '172.16.255.3');
+  assert.deepEqual(updated.radius.aliases, ['172.16.255.2']);
+  assert.deepEqual(updated.radius.clientAliases, ['10.201.201.0', 'bukan-ip']);
+
+  rows = freeradius.freeradiusRows(data);
+  assert.deepEqual(rows.nas.map((row) => row.nasname), ['172.16.255.3', '10.201.201.0']);
+
+  const built = freeradiusSql.__test.buildSql(rows, {
+    nasnames: ['172.16.255.2']
+  });
+  assert.match(built.sql, /DELETE FROM nas WHERE nasname IN \([^;]*'172\.16\.255\.2'[^;]*\)/);
+  assert.match(built.sql, /\('172\.16\.255\.3', 'NYNET'/);
+  assert.match(built.sql, /\('10\.201\.201\.0', 'NYNET'/);
+  assert.doesNotMatch(built.sql, /\('bukan-ip'/);
 });

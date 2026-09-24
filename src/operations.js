@@ -583,6 +583,19 @@ function boolValue(value, fallback = false) {
   return fallback;
 }
 
+function cleanIpList(value) {
+  const source = Array.isArray(value) ? value : cleanText(value).split(/[\s,;]+/);
+  const used = new Set();
+  return source.reduce((rows, item) => {
+    const clean = cleanText(item);
+    const key = clean.toLowerCase();
+    if (!clean || used.has(key)) return rows;
+    used.add(key);
+    rows.push(clean);
+    return rows;
+  }, []).slice(-8);
+}
+
 function sanitizeSiteRadius(payload = {}, current = {}, target = {}) {
   const hasNestedRadius = payload.radius && typeof payload.radius === 'object';
   const source = hasNestedRadius ? payload.radius : payload;
@@ -590,12 +603,31 @@ function sanitizeSiteRadius(payload = {}, current = {}, target = {}) {
   const secret = cleanText(source.radiusSecret || source.secret);
   const previousAddress = cleanText(current.address || target.host || target.ipAddress);
   next.enabled = boolValue(source.radiusEnabled ?? source.enabled, Boolean(next.secret || secret));
-  next.address = cleanText(payload.host || payload.ipAddress || target.host);
+  next.address = cleanText(source.address || source.radiusAddress || payload.host || payload.ipAddress || target.host);
   const aliases = Array.isArray(current.aliases) ? [...current.aliases] : [];
   if (previousAddress && next.address && previousAddress !== next.address && !aliases.includes(previousAddress)) {
     aliases.push(previousAddress);
   }
   next.aliases = aliases.slice(-8);
+  const clientAliasValue = source.clientAliases
+    ?? source.radiusClientAliases
+    ?? payload.clientAliases
+    ?? payload.radiusClientAliases;
+  const sourceAliasValue = source.sourceAliases
+    ?? source.radiusSourceAliases
+    ?? payload.sourceAliases
+    ?? payload.radiusSourceAliases
+    ?? clientAliasValue;
+  if (Array.isArray(clientAliasValue) || typeof clientAliasValue === 'string') {
+    next.clientAliases = cleanIpList(clientAliasValue);
+  }
+  if (Array.isArray(sourceAliasValue) || typeof sourceAliasValue === 'string') {
+    next.sourceAliases = cleanIpList(sourceAliasValue);
+  }
+  next.syncAliasesAsClients = boolValue(
+    source.syncAliasesAsClients ?? source.radiusAliasesAsClients ?? payload.syncAliasesAsClients ?? payload.radiusAliasesAsClients,
+    next.syncAliasesAsClients === true
+  );
   const radiusPort = hasNestedRadius ? source.port : source.radiusPort;
   next.port = Math.max(1, Math.min(65535, Number(radiusPort || next.port) || 3799));
   next.type = cleanText((hasNestedRadius ? source.type : source.radiusType) || next.type || 'mikrotik');
