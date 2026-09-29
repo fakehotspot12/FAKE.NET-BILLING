@@ -6515,12 +6515,19 @@ function memberCodeUsed(data = {}, code = '') {
   ].some((item) => String(item || '').trim() === value));
 }
 
+function reservedMemberCodeSet(data = {}) {
+  return new Set((Array.isArray(data.memberCodeReservations) ? data.memberCodeReservations : [])
+    .map((reservation) => String(reservation?.code || reservation?.memberCode || reservation || '').trim())
+    .filter(Boolean));
+}
+
 function generateMemberCode(data = {}) {
   const used = new Set((data.customers || []).flatMap((customer) => [
     customer.code,
     customer.accountId,
     customer.userId
   ]).map((value) => String(value || '').trim()).filter(Boolean));
+  for (const code of reservedMemberCodeSet(data)) used.add(code);
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const code = `22${String(crypto.randomInt(0, 1_000_000_000)).padStart(9, '0')}`;
     if (!used.has(code)) return code;

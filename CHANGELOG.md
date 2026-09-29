@@ -2,6 +2,12 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.13] - 2026-09-29
+
+### Fixed
+
+- Menambahkan reservasi internal Member ID agar ID yang sudah ditempel pada PPP secret manual tidak dipakai ulang oleh generator member billing.
+
 ## [4.3.12] - 2026-09-24
 
 ### Fixed

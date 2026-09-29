@@ -240,6 +240,7 @@ function createDefaultStore() {
       }
     },
     customers: [],
+    memberCodeReservations: [],
     radiusNas: [],
     radiusProfiles: [],
     radiusHotspotTemplates: [{
@@ -533,6 +534,12 @@ function uniqueStandardMemberCode(usedCodes = new Set(), preferred = '') {
   return `22${String(Date.now()).slice(-9).padStart(9, '0')}`;
 }
 
+function reservedMemberCodeValues(data = {}) {
+  return (Array.isArray(data.memberCodeReservations) ? data.memberCodeReservations : [])
+    .map((reservation) => String(reservation?.code || reservation?.memberCode || reservation || '').trim())
+    .filter(Boolean);
+}
+
 function replaceMemberCodeReferences(value, replacements = new Map()) {
   if (Array.isArray(value)) {
     value.forEach((item) => replaceMemberCodeReferences(item, replacements));
@@ -557,7 +564,7 @@ function migrateLegacyMemberCodes(data = {}) {
     customer.accountId,
     customer.memberCode,
     customer.userId
-  ]).map((value) => String(value || '').trim()).filter(Boolean));
+  ]).concat(reservedMemberCodeValues(data)).map((value) => String(value || '').trim()).filter(Boolean));
   const replacements = new Map();
 
   for (const customer of customers) {
@@ -723,6 +730,7 @@ function ensureShape(data) {
       }
     },
     customers: Array.isArray(safe.customers) ? safe.customers : [],
+    memberCodeReservations: Array.isArray(safe.memberCodeReservations) ? safe.memberCodeReservations : [],
     radiusNas: Array.isArray(safe.radiusNas) ? safe.radiusNas : [],
     radiusProfiles: Array.isArray(safe.radiusProfiles) ? safe.radiusProfiles : [],
     radiusHotspotTemplates: Array.isArray(safe.radiusHotspotTemplates) ? safe.radiusHotspotTemplates : base.radiusHotspotTemplates,
