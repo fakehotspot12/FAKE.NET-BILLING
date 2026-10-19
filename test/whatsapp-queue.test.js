@@ -314,3 +314,99 @@ test('enabling Whatsapp recovers voucher delivery drafts automatically', () => {
   assert.equal(data.waMessages[0].deliveryMode, 'transactional');
   assert.equal(data.waMessages[0].queueRevision, 1);
 });
+
+test('paid online voucher notifications retain transactional priority', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  const message = serverInternals.queueWaGatewayMessage(data, {
+    type: 'hotspotVoucherPaid', phone: '081234567899', text: 'Voucher online dibayar', bulk: true
+  });
+  assert.equal(messagePriority(message.type), messagePriority('voucherIssued'));
+  assert.equal(message.deliveryMode, 'transactional');
+  assert.equal(message.throttleDelaySeconds, 6);
+});
+
+test('enabling Whatsapp recovers paid online voucher drafts without an invoice', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  data.waMessages.push({
+    id: 'wa-online-voucher-draft', status: 'draft', type: 'hotspotVoucherPaid',
+    phone: '081234567899', text: 'Voucher online berhasil', queueRevision: 0
+  });
+  const recovered = serverInternals.recoverRelevantWaGatewayDrafts(data);
+  assert.deepEqual(recovered.map(message => message.id), ['wa-online-voucher-draft']);
+  assert.equal(recovered[0].deliveryMode, 'transactional');
+});
+
+test('voucher draft recovery does not confuse different customers or voucher codes', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  data.waMessages.push(
+    { id: 'voucher-already-sent', status: 'delivered', type: 'voucherIssued', phone: '081234567891', text: 'Kode voucher AAA' },
+    { id: 'voucher-other-customer', status: 'draft', type: 'voucherIssued', phone: '081234567892', text: 'Kode voucher BBB' },
+    { id: 'voucher-other-code', status: 'draft', type: 'voucherIssued', phone: '081234567891', text: 'Kode voucher CCC' },
+    { id: 'voucher-duplicate', status: 'draft', type: 'voucherIssued', phone: '6281234567891', text: 'Kode voucher AAA' }
+  );
+  const recovered = serverInternals.recoverRelevantWaGatewayDrafts(data);
+  assert.deepEqual(recovered.map(message => message.id), ['voucher-other-customer', 'voucher-other-code']);
+  assert.equal(data.waMessages[3].status, 'draft');
+});
+
+test('draft recovery preserves safe billing cycle throttling', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  data.invoices.push({ id: 'inv-cycle-draft', status: 'pending', amount: 100000, dueDate: '2099-10-15' });
+  data.waMessages.push({
+    id: 'wa-cycle-draft', status: 'draft', type: 'paymentReminder', invoiceId: 'inv-cycle-draft',
+    phone: '081234567899', text: 'Reminder cycle', deliveryMode: 'bulk', bulkProfile: 'billingCycle',
+    throttleDelaySeconds: 24, throttleVersion: 2
+  });
+  const recovered = serverInternals.recoverRelevantWaGatewayDrafts(data);
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0].deliveryMode, 'bulk');
+  assert.equal(recovered[0].bulkProfile, 'billingCycle');
+  assert.equal(recovered[0].throttleDelaySeconds, 24);
+});
+
+test('recovering a billing cycle batch retains stagger and the batch pause', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  for (let index = 0; index < 121; index += 1) {
+    const invoiceId = `cycle-recovery-${index}`;
+    data.invoices.push({ id: invoiceId, status: 'pending', amount: 100000, dueDate: '2099-10-15' });
+    data.waMessages.push({
+      id: `wa-cycle-recovery-${index}`, status: 'draft', type: 'paymentReminder', invoiceId,
+      phone: `08123456${String(index).padStart(4, '0')}`, text: `Reminder ${index}`,
+      deliveryMode: 'bulk', bulkProfile: 'billingCycle'
+    });
+  }
+  const recovered = serverInternals.recoverRelevantWaGatewayDrafts(data);
+  assert.equal(recovered.length, 121);
+  for (let index = 1; index < recovered.length; index += 1) {
+    const delay = new Date(recovered[index].scheduledAt) - new Date(recovered[index - 1].scheduledAt);
+    assert.ok(delay >= 24000, `message ${index} lost its spacing`);
+    if (index === 120) assert.ok(delay >= 624000, 'batch pause was lost');
+  }
+});
+
+test('broadcast batch is staggered while new paid notifications remain immediate', () => {
+  const data = createDefaultStore();
+  data.settings.waGateway.enabled = true;
+  const batch = [];
+  for (let index = 0; index < 101; index += 1) {
+    batch.push(serverInternals.queueWaGatewayMessage(data, {
+      type: 'broadcast', phone: `08123456${String(index).padStart(4, '0')}`, text: 'Broadcast audit'
+    }));
+  }
+  for (let index = 1; index < batch.length; index += 1) {
+    const delay = new Date(batch[index].scheduledAt) - new Date(batch[index - 1].scheduledAt);
+    assert.ok(delay >= 30000);
+    if (index === 100) assert.ok(delay >= 750000);
+  }
+  const before = Date.now();
+  const payment = serverInternals.queueWaGatewayMessage(data, {
+    type: 'paymentPaid', phone: '081234567899', invoiceId: 'paid-during-broadcast', text: 'Sudah dibayar'
+  });
+  assert.ok(new Date(payment.scheduledAt).getTime() - before < 1000);
+  assert.ok(messagePriority(payment.type) < messagePriority('broadcast'));
+});

@@ -2,6 +2,28 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.14] - 2026-10-19
+
+### Fixed
+
+- Membatasi status Paid saat pendaftaran pada periode PSB: invoice Postpaid Billing Cycle yang jatuh pada bulan berikutnya tetap dibuat belum bayar, termasuk prorata, tanpa mengubah pembayaran nyata atau histori invoice existing.
+- Memperkuat pengujian tagihan bulan berikutnya untuk Fixed dan Cycle, pergantian tahun, jadwal WA, serta pencegahan invoice ganda.
+- Mempertahankan mode Open/WPA existing ketika mengedit SSID; SSID tambahan dimulai Open tanpa menyalin password utama, dengan verifikasi baca ulang sebelum menyimpan.
+- Memilih slot SSID berdasarkan radio fisik dan instance aktual modem, melindungi SSID utama/backhaul, serta menolak slot aktif, ambigu, atau berbeda band agar konfigurasi tidak salah sasaran.
+- Memastikan WAN bridge memakai service OTHER dan PPPoE memakai INTERNET, serta mewajibkan konfirmasi eksplisit untuk pembuatan WAN baru.
+- Menyamakan Total Active dengan data client aktual, membedakan nilai belum diketahui dari nol terkonfirmasi, dan mengecualikan SSID hotspot publik dari hitungan pelanggan.
+- Memperbaiki pemulihan Whatsapp Gateway melalui UI tanpa menghapus kredensial tertaut, memperbarui QR otomatis, dan mencegah proses reconnect ganda; pemulihan layanan dibatasi pada gateway lokal dan role berizin.
+- Memperbaiki prioritas pesan pembayaran voucher serta pemulihan draft dengan tetap mempertahankan pembatasan antrean broadcast dan Billing Cycle.
+- Melengkapi pembacaan parameter WiFi saat Summon dan menjaga nilai Virtual Parameters existing saat bootstrap; pembacaan IP PPPoE mengikuti koneksi username yang sesuai.
+
+### Security
+
+- Mengikat notifikasi pembayaran browser pada sesi login aktif, mencabut langganan saat logout, dan memverifikasi sesi sebelum menampilkan detail pembayaran, termasuk respons tertunda dan perpindahan akun/tab.
+
+### Performance
+
+- Membatasi penyegaran client modem pada perangkat yang sedang dilihat, dengan antrean berbatas, penggabungan request sejenis, dan cooldown tanpa polling seluruh armada.
+
 ## [4.3.13] - 2026-09-29
 
 ### Fixed

@@ -507,14 +507,14 @@ function vendorParameterNames(vendor = {}, mode = 'pppoe') {
       vlan: '',
       vlanEnable: '',
       serviceList: 'X_CT-COM_ServiceList',
-      serviceValue: 'INTERNET'
+      serviceValue: mode === 'bridge' ? 'OTHER' : 'INTERNET'
     };
   }
   return {
     vlan: 'X_ZTE-COM_VLANID',
     vlanEnable: 'X_ZTE-COM_VLANEnable',
     serviceList: 'X_ZTE-COM_ServiceList',
-    serviceValue: 'INTERNET'
+    serviceValue: mode === 'bridge' ? 'OTHER' : 'INTERNET'
   };
 }
 
@@ -607,6 +607,9 @@ function prepareWanProvision(device = {}, payload = {}) {
   if (unavailable.length) throw new Error(`Binding tidak tersedia pada modem: ${unavailable.join(', ')}`);
 
   const requestedTarget = cleanText(payload.targetWan || 'auto').toLowerCase();
+  if (requestedTarget === 'new' && payload.createWan !== true) {
+    throw new Error('Tambah WAN baru harus melalui tombol Tambah WAN Baru.');
+  }
   const automaticTarget = requestedTarget === 'auto'
     ? automaticWanTarget(summary, mode, vlan, payload.preferredUsername || username)
     : null;

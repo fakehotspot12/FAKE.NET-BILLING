@@ -85,6 +85,7 @@ const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
 const { BoundedJsonCache } = require('./bounded-json-cache');
 const { WhatsAppQueue } = require('./whatsapp-queue');
+const { createGatewayRecovery, restartLocalGateway } = require('./whatsapp-recovery');
 const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, queryNormalizedPage, queryNormalizedRows, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
 
 const PORT = Number(process.env.PORT || 8891);
@@ -164,7 +165,7 @@ const WA_GATEWAY_BULK_PROFILES = Object.freeze({
   billingCycle: Object.freeze({ delaySeconds: 24, maxPerBatch: 120, batchPauseSeconds: 10 * 60, jitterSeconds: 10 }),
   bulk: Object.freeze({ delaySeconds: 28, maxPerBatch: 100, batchPauseSeconds: 10 * 60, jitterSeconds: 10 })
 });
-const WA_GATEWAY_TRANSACTIONAL_TYPES = new Set(['paymentPaid', 'accountActive', 'voucherIssued', 'wifiku-otp']);
+const WA_GATEWAY_TRANSACTIONAL_TYPES = new Set(['paymentPaid', 'accountActive', 'voucherIssued', 'hotspotVoucherPaid', 'wifiku-otp']);
 const WA_GATEWAY_TRANSIENT_MAX_ATTEMPTS = Math.max(3, Number(process.env.WA_GATEWAY_TRANSIENT_MAX_ATTEMPTS || 10) || 10);
 const WIFIKU_OTP_DELIVERY_MAX_ATTEMPTS = Math.max(1, Number(process.env.WIFIKU_OTP_DELIVERY_MAX_ATTEMPTS || 3) || 3);
 const WAHA_ENV_FILE = process.env.WAHA_ENV_FILE || '/etc/fakenet-billing-waha.env';
@@ -16437,7 +16438,7 @@ function wahaFriendlyMessage(message = '') {
   const text = String(message || '').trim();
   if (!text) return '';
   if (/session status is not as expected|try again later|restart the session|scan_qr_code|starting|stopped|failed/i.test(text)) {
-    return 'Session Whatsapp Gateway sedang disiapkan. Klik Tampilkan QR lagi beberapa detik lagi, lalu scan jika QR muncul.';
+    return 'Session Whatsapp Gateway sedang disiapkan. QR akan muncul otomatis setelah gateway siap.';
   }
   return text;
 }
@@ -16480,8 +16481,9 @@ async function ensureWahaSessionReady(settings = {}) {
       payload: error.payload
     });
   }
+  const staleStarting = wahaStartingSessionIsStale(settings, status);
   if (wahaIsConnected(status)) return status;
-  if (wahaNeedsStart(status)) {
+  if (wahaNeedsStart(status) || staleStarting) {
     await wahaStartSession(settings).catch(() => null);
     await waitMs(1000);
     status = await wahaSessionStatus(settings, { timeoutMs: Math.min(5000, WA_GATEWAY_HTTP_TIMEOUT_MS) }).catch(() => status);
@@ -16491,32 +16493,89 @@ async function ensureWahaSessionReady(settings = {}) {
   throw transientWaGatewayError(`Whatsapp Gateway belum online (${state})`, { payload: status });
 }
 
-async function wahaStartSession(settings = {}) {
-  const session = wahaSessionName(settings);
-  const current = await wahaSessionStatus(settings).catch(() => null);
-  if (wahaStatusText(current) === 'FAILED') {
-    await wahaDeleteSession(settings).catch(() => null);
+const wahaStartRequests = new Map();
+const wahaQrRequests = new Map();
+const wahaSessionObservations = new Map();
+
+function wahaStartingSessionIsStale(settings = {}, status = {}, now = Date.now()) {
+  const key = joinUrl(wahaBaseUrl(settings), wahaSessionName(settings));
+  const observation = wahaSessionObservations.get(key) || { startingSince: null, lastRecoveryAt: null };
+  if (wahaStatusText(status) !== 'STARTING') {
+    observation.startingSince = null;
+  } else if (observation.startingSince === null) {
+    observation.startingSince = now;
   }
-  try {
-    await wahaJson(settings, '/api/sessions', {
-      method: 'POST',
-      body: JSON.stringify({ name: session, start: false })
-    });
-  } catch (error) {
-    if (![400, 409, 422].includes(Number(error.status))) throw error;
-  }
-  try {
-    return await wahaJson(settings, `/api/sessions/${encodeURIComponent(session)}/start`, {
-      method: 'POST',
-      body: JSON.stringify({})
-    });
-  } catch (error) {
-    if (Number(error.status) === 422) {
-      return wahaSessionStatus(settings);
-    }
-    throw error;
-  }
+  wahaSessionObservations.set(key, observation);
+  return observation.startingSince !== null
+    && now - observation.startingSince >= 120_000
+    && (observation.lastRecoveryAt === null || now - observation.lastRecoveryAt >= 300_000);
 }
+
+async function wahaStartSession(settings = {}, recoveryOptions = {}) {
+  const session = wahaSessionName(settings);
+  const key = joinUrl(wahaBaseUrl(settings), session);
+  if (wahaStartRequests.has(key)) return wahaStartRequests.get(key);
+  const request = (async () => {
+    const options = { timeoutMs: Math.min(5000, WA_GATEWAY_HTTP_TIMEOUT_MS) };
+    const current = await wahaSessionStatus(settings, options);
+    const staleStarting = wahaStartingSessionIsStale(settings, current)
+      || (recoveryOptions.restart === true && wahaStatusText(current) === 'STARTING');
+    if (wahaIsConnected(current) || wahaNeedsQr(current) || (wahaStatusText(current) === 'STARTING' && !staleStarting)) return current;
+    // Restart preserves linked credentials; only an explicit logout may remove them.
+    if (wahaStatusText(current) === 'FAILED' || staleStarting) {
+      const observation = wahaSessionObservations.get(key);
+      if (observation.lastRecoveryAt !== null && Date.now() - observation.lastRecoveryAt < 300_000) return current;
+      observation.startingSince = Date.now();
+      observation.lastRecoveryAt = observation.startingSince;
+      try {
+        return await wahaJson(settings, `/api/sessions/${encodeURIComponent(session)}/restart`, {
+          ...options, method: 'POST', body: JSON.stringify({})
+        });
+      } catch (error) {
+        if (![404, 405].includes(Number(error.status))) throw error;
+        await wahaJson(settings, `/api/sessions/${encodeURIComponent(session)}/stop`, {
+          ...options, method: 'POST', body: JSON.stringify({})
+        });
+      }
+    }
+    try {
+      await wahaJson(settings, '/api/sessions', {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify({ name: session, start: false })
+      });
+    } catch (error) {
+      if (![400, 409, 422].includes(Number(error.status))) throw error;
+    }
+    try {
+      return await wahaJson(settings, `/api/sessions/${encodeURIComponent(session)}/start`, {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+    } catch (error) {
+      if (Number(error.status) === 422) return wahaSessionStatus(settings, options);
+      throw error;
+    }
+  })().finally(() => wahaStartRequests.delete(key));
+  wahaStartRequests.set(key, request);
+  return request;
+}
+
+const waGatewayRecovery = createGatewayRecovery({
+  keyFor: settings => joinUrl(wahaBaseUrl(settings), wahaSessionName(settings)),
+  getStatus: settings => wahaSessionStatus(settings, { timeoutMs: 2000 }),
+  connectSession: settings => wahaStartSession(settings, { restart: true }),
+  restartService: settings => restartLocalGateway(wahaBaseUrl(settings), execFileAsync),
+  isConnected: wahaIsConnected,
+  needsQr: wahaNeedsQr,
+  onFinished: async (result, actor) => {
+    await mutate(store => addActivity(store, 'settings', `Pemulihan Whatsapp Gateway oleh ${actor.name || actor.username || 'Pengguna'}: ${result.phase === 'connected' ? 'Online' : result.phase === 'qr' ? 'Perlu scan QR' : 'Belum berhasil'}`, {
+      action: 'wa-gateway-recovery', actorId: actor.id, startedAt: result.startedAt,
+      finishedAt: result.finishedAt, result: result.phase, serviceRestarted: result.serviceRestarted
+    }));
+  }
+});
 
 async function pollWahaConnected(settings = {}, initialStatus = null, options = {}) {
   let status = initialStatus;
@@ -16568,8 +16627,8 @@ async function wahaStopSession(settings = {}) {
       body: JSON.stringify({})
     });
   } catch (error) {
-    if (![404, 405, 500].includes(Number(error.status))) throw error;
-    return wahaDeleteSession(settings);
+    if (Number(error.status) === 404) return { name: session, status: 'STOPPED' };
+    throw error;
   }
 }
 
@@ -16608,18 +16667,28 @@ async function wahaLogoutSession(settings = {}) {
 }
 
 async function wahaQr(settings = {}) {
+  const key = joinUrl(wahaBaseUrl(settings), wahaSessionName(settings));
+  if (wahaQrRequests.has(key)) return wahaQrRequests.get(key);
+  const request = loadWahaQr(settings).finally(() => wahaQrRequests.delete(key));
+  wahaQrRequests.set(key, request);
+  return request;
+}
+
+async function loadWahaQr(settings = {}) {
   const session = wahaSessionName(settings);
-  const reconnect = await wahaReconnectSession(settings, { restartStale: true, attempts: 6, restartAttempts: 8 });
-  let status = reconnect.status;
-  if (reconnect.connected) {
+  const options = { timeoutMs: Math.min(5000, WA_GATEWAY_HTTP_TIMEOUT_MS) };
+  let status = await wahaSessionStatus(settings, options);
+  const staleStarting = wahaStartingSessionIsStale(settings, status);
+  if ((wahaNeedsStart(status) && !wahaNeedsQr(status)) || staleStarting) status = await wahaStartSession(settings);
+  if (wahaIsConnected(status)) {
     return {
       connected: true,
       status,
-      reconnected: reconnect.reconnected,
-      message: reconnect.reconnected
-        ? 'Whatsapp Gateway berhasil reconnect tanpa scan ulang.'
-        : 'Whatsapp Gateway sudah terhubung. Klik Logout jika ingin scan ulang perangkat.'
+      message: 'Whatsapp Gateway sudah terhubung. Klik Logout jika ingin scan ulang perangkat.'
     };
+  }
+  if (wahaStatusText(status) === 'STARTING') {
+    return { connected: false, pending: true, status, message: 'Menyiapkan koneksi. QR akan muncul otomatis.' };
   }
   const suffixes = [
     `/api/${encodeURIComponent(session)}/auth/qr?format=base64`,
@@ -16631,21 +16700,21 @@ async function wahaQr(settings = {}) {
   for (const suffix of suffixes) {
     try {
       return await wahaJson(settings, suffix, {
+        ...options,
         headers: { Accept: 'application/json' }
       });
     } catch (error) {
       lastError = error;
-      if (Number(error.status) === 422 && error.payload?.status) {
-        const state = wahaStatusText(error.payload);
-        if (wahaNeedsStart(error.payload)) {
-          await wahaStartSession(settings).catch(() => null);
-        }
+      if (Number(error.status) === 422) {
+        const latestStatus = await wahaSessionStatus(settings, options);
         return {
-          connected: wahaIsConnected(error.payload),
-          status: error.payload,
-          message: wahaFriendlyMessage(error.payload.error || error.message)
+          connected: wahaIsConnected(latestStatus),
+          pending: !wahaIsConnected(latestStatus),
+          status: latestStatus,
+          message: 'Menunggu QR terbaru dari Whatsapp Gateway.'
         };
       }
+      if (![404, 405].includes(Number(error.status))) throw error;
     }
   }
   throw lastError || new Error('QR WAHA belum tersedia');
@@ -16856,7 +16925,7 @@ async function waGatewayQueueStatus(timeoutMs = 1500) {
 function waGatewayDraftIsRecoverable(data = {}, message = {}, messages = data.waMessages || []) {
   if (data.settings?.waGateway?.enabled !== true) return false;
   if (String(message.status || '').toLowerCase() !== 'draft') return false;
-  const isVoucherDelivery = ['voucherIssued', 'voucherExpired'].includes(String(message.type || ''));
+  const isVoucherDelivery = ['voucherIssued', 'hotspotVoucherPaid', 'voucherExpired'].includes(String(message.type || ''));
   if ((!isVoucherDelivery && !message.invoiceId) || !message.phone || !String(message.text || '').trim()) return false;
   const invoice = (data.invoices || []).find((item) => item.id === message.invoiceId);
   if (!invoice && !isVoucherDelivery) return false;
@@ -16869,8 +16938,12 @@ function waGatewayDraftIsRecoverable(data = {}, message = {}, messages = data.wa
   if (!relevant) return false;
   return !messages.some((other) => {
     return other.id !== message.id
-      && other.invoiceId === message.invoiceId
+      && String(other.invoiceId || '') === String(message.invoiceId || '')
       && other.type === message.type
+      && (!isVoucherDelivery || (
+        normalizeLocalPhone(other.phone) === normalizeLocalPhone(message.phone)
+        && String(other.text || '') === String(message.text || '')
+      ))
       && ['queued', 'sent', 'delivered', 'read', 'seen'].includes(String(other.status || '').toLowerCase());
   });
 }
@@ -16878,12 +16951,24 @@ function waGatewayDraftIsRecoverable(data = {}, message = {}, messages = data.wa
 function recoverRelevantWaGatewayDrafts(data = {}) {
   const messages = Array.isArray(data.waMessages) ? data.waMessages : [];
   const recovered = [];
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  let bulkQueuedCount = waGatewayQueuedBulkMessages(data).length;
   for (const message of messages) {
     if (!waGatewayDraftIsRecoverable(data, message, messages)) continue;
+    const profile = WA_GATEWAY_TRANSACTIONAL_TYPES.has(message.type) ? 'transactional' : waGatewayMessageThrottleProfile(message);
+    const bulk = profile !== 'transactional';
+    const throttle = waGatewayThrottleProfile(data.settings?.waGateway || {}, profile);
     message.status = 'queued';
-    message.deliveryMode = 'transactional';
-    message.scheduledAt = now;
+    message.deliveryMode = bulk ? 'bulk' : 'transactional';
+    message.bulkProfile = profile;
+    message.throttleVersion = WA_GATEWAY_THROTTLE_VERSION;
+    message.throttleDelaySeconds = throttle.delaySeconds;
+    message.throttleBatchSize = bulk ? throttle.maxPerBatch : 0;
+    message.throttleBatchPauseSeconds = bulk ? throttle.batchPauseSeconds : 0;
+    message.scheduledAt = bulk
+      ? new Date(nowDate.getTime() + waGatewayBulkScheduleOffsetMs(bulkQueuedCount++, message.type, message.phone, message.text, throttle)).toISOString()
+      : now;
     message.queueRevision = Math.max(0, Number(message.queueRevision) || 0) + 1;
     message.queueJobId = '';
     message.enqueuedAt = '';
@@ -17597,16 +17682,41 @@ async function markOnlinePaymentPushAttempt(payload = {}, result = {}) {
   }, { collections: [], includeCore: true });
 }
 
-function eligibleWebPushSubscriptions(data = {}) {
+function eligibleWebPushSubscriptions(data = {}, bindings = auth.activeSessionBindings()) {
   const paymentNotificationRoles = new Set(['admin', 'owner', 'finance']);
   const users = new Map((data.users || []).map((user) => [String(user.id || ''), user]));
   return (data.webPushSubscriptions || []).filter((item) => {
     const user = users.get(String(item.userId || ''));
     const permissionUser = auth.publicUser(user);
     return item.enabled !== false
+      && Boolean(item.sessionKey)
+      && bindings.get(String(item.sessionKey)) === String(item.userId || '')
       && permissionUser?.active !== false
       && paymentNotificationRoles.has(String(permissionUser?.role || '').toLowerCase())
       && auth.hasPermission(permissionUser, 'payment-gateway:manage');
+  });
+}
+
+function revokeSessionPushSubscriptions(data = {}, sessionKey = '', userId = '') {
+  let revoked = 0;
+  for (const item of data.webPushSubscriptions || []) {
+    if (item.sessionKey !== sessionKey && !(!item.sessionKey && userId && String(item.userId) === String(userId))) continue;
+    if (!sessionKey || item.enabled === false) continue;
+    item.enabled = false;
+    item.revokedAt = new Date().toISOString();
+    item.updatedAt = item.revokedAt;
+    revoked++;
+  }
+  return revoked;
+}
+
+function onlinePaymentPushEvent(data = {}, eventId = '') {
+  const transaction = onlinePaymentPushTransaction(data, { id: eventId });
+  if (!transaction || !['paid', 'settled', 'success'].includes(String(transaction.status || '').toLowerCase())) return null;
+  const kind = [transaction.kind, transaction.transactionKind, transaction.sourceType].join(' ').toLowerCase();
+  return onlinePaymentPushPayload(data, {
+    status: 'paid', transaction, reference: transaction.reference || transaction.invoiceNo || '',
+    type: /voucher|hotspot/.test(kind) ? 'hotspot-voucher' : 'monthly-package'
   });
 }
 
@@ -17643,12 +17753,13 @@ async function sendOnlinePaymentPushNotifications(data = {}, fulfilled = {}) {
   await Promise.all(subscriptions.map(async (item) => {
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (!auth.sessionBindingActive(item.sessionKey, item.userId)) return;
       try {
         await webPush.sendNotification({
           endpoint: item.endpoint,
           expirationTime: item.expirationTime || null,
           keys: item.keys
-        }, JSON.stringify(payload), {
+        }, JSON.stringify({ type: 'payment-signal', id: payload.id, sessionKey: item.sessionKey }), {
           TTL: 86400,
           urgency: 'high',
           timeout: 8000
@@ -21600,17 +21711,33 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === '/api/notifications/web-push' && ['GET', 'POST', 'DELETE'].includes(method)) {
-    const authContext = await requirePermission(req, res, 'payment-gateway:manage');
-    if (!authContext) return;
+    const data = await requestStore(req);
+    const user = auth.requestUser(req, data, { refresh: false });
+    if (!user) { unauthorized(res); return; }
+    if (!['admin', 'owner', 'finance'].includes(String(user.role || '').toLowerCase())
+      || !auth.hasPermission(user, 'payment-gateway:manage')) { forbidden(res); return; }
+    const authContext = { data, user };
+    const sessionKey = auth.sessionFingerprint(auth.getSessionId(req));
     try {
+      if (method === 'GET' && url.searchParams.has('eventId')) {
+        const expected = String(url.searchParams.get('sessionKey') || '');
+        const subscribed = (data.webPushSubscriptions || []).some(item => item.enabled !== false
+          && item.sessionKey === sessionKey && String(item.userId) === String(user.id));
+        if (expected !== sessionKey || !subscribed) { forbidden(res); return; }
+        const event = onlinePaymentPushEvent(data, String(url.searchParams.get('eventId') || ''));
+        sendJson(res, 200, { ok: true, sessionKey, event });
+        return;
+      }
       const vapid = await ensureWebPushVapid();
       if (method === 'GET') {
         const subscriptions = (authContext.data.webPushSubscriptions || [])
-          .filter((item) => String(item.userId || '') === String(authContext.user.id || '') && item.enabled !== false);
+          .filter((item) => String(item.userId || '') === String(authContext.user.id || '') && item.enabled !== false && item.sessionKey === sessionKey);
         sendJson(res, 200, {
           ok: true,
           enabled: true,
           publicKey: vapid.publicKey,
+          sessionKey,
+          userId: user.id,
           subscriptionCount: subscriptions.length
         });
         return;
@@ -21619,6 +21746,7 @@ async function handleApi(req, res, url) {
       if (method === 'POST') {
         const subscription = normalizeWebPushSubscription(payload.subscription || payload);
         const { result } = await mutate((store) => {
+          if (!auth.sessionBindingActive(sessionKey, user.id)) throw new Error('Sesi login sudah berakhir');
           store.webPushSubscriptions = Array.isArray(store.webPushSubscriptions) ? store.webPushSubscriptions : [];
           const now = new Date().toISOString();
           const existing = store.webPushSubscriptions.find((item) => item.endpoint === subscription.endpoint);
@@ -21629,6 +21757,7 @@ async function handleApi(req, res, url) {
             userId: authContext.user.id || '',
             username: authContext.user.username || '',
             role: authContext.user.role || '',
+            sessionKey,
             userAgent: String(req.headers['user-agent'] || '').slice(0, 240),
             enabled: true,
             createdAt: existing?.createdAt || now,
@@ -21639,7 +21768,7 @@ async function handleApi(req, res, url) {
           store.webPushSubscriptions = store.webPushSubscriptions.slice(-1000);
           return { id: next.id, endpoint: next.endpoint };
         });
-        sendJson(res, 200, { ok: true, subscribed: true, id: result.id });
+        sendJson(res, 200, { ok: true, subscribed: true, id: result.id, sessionKey });
         return;
       }
       const endpoint = String(payload.endpoint || payload.subscription?.endpoint || '').trim();
@@ -21647,6 +21776,7 @@ async function handleApi(req, res, url) {
         const before = (store.webPushSubscriptions || []).length;
         store.webPushSubscriptions = (store.webPushSubscriptions || []).filter((item) => !(
           item.endpoint === endpoint && String(item.userId || '') === String(authContext.user.id || '')
+          && (!item.sessionKey || item.sessionKey === sessionKey)
         ));
         return before - store.webPushSubscriptions.length;
       });
@@ -21658,7 +21788,15 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'POST' && pathname === '/api/auth/logout') {
-    auth.destroySession(auth.getSessionId(req));
+    const sessionId = auth.getSessionId(req);
+    const sessionKey = auth.sessionFingerprint(sessionId);
+    const userId = auth.activeSessionBindings().get(sessionKey) || '';
+    auth.destroySession(sessionId);
+    if (sessionKey) {
+      await mutate(store => revokeSessionPushSubscriptions(store, sessionKey, userId)).catch(() => {
+        console.error('Langganan push belum dapat dicabut; sesi login sudah ditutup.');
+      });
+    }
     sendJson(res, 200, { ok: true }, {
       'Set-Cookie': auth.clearSessionCookie()
     });
@@ -26487,7 +26625,11 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname.startsWith('/api/wa-gateway/waha/')) {
-    const authContext = await requirePermission(req, res, 'wa-gateway:manage');
+    const recoveryAccess = (method === 'GET' && ['status', 'qr'].some(action => pathname === `/api/wa-gateway/waha/${action}`))
+      || (method === 'POST' && pathname === '/api/wa-gateway/waha/recover');
+    const authContext = recoveryAccess
+      ? await requireAnyPermission(req, res, ['wa-gateway:manage', 'wa-gateway:recover'])
+      : await requirePermission(req, res, 'wa-gateway:manage');
     if (!authContext) return;
     const settings = {
       ...(authContext.data.settings?.waGateway || {}),
@@ -26495,12 +26637,23 @@ async function handleApi(req, res, url) {
     };
     try {
       if (method === 'GET' && pathname === '/api/wa-gateway/waha/status') {
-        const status = await wahaSessionStatusWithProfile(settings, { timeoutMs: 5000 });
+        const recovery = waGatewayRecovery.status(settings);
+        const status = recovery.running
+          ? (recovery.status || { status: 'STARTING' })
+          : await wahaSessionStatusWithProfile(settings, { timeoutMs: 5000 });
         sendJson(res, 200, {
           ok: true,
           session: wahaSessionName(settings),
-          status
+          status,
+          recovery
         });
+        return;
+      }
+      if (method === 'POST' && pathname === '/api/wa-gateway/waha/recover') {
+        const recovery = waGatewayRecovery.start(settings, {
+          id: authContext.user.id, name: authContext.user.name, username: authContext.user.username
+        });
+        sendJson(res, recovery.accepted ? 202 : 200, { ok: true, recovery });
         return;
       }
       if (method === 'POST' && pathname === '/api/wa-gateway/waha/start') {
@@ -26544,7 +26697,8 @@ async function handleApi(req, res, url) {
       sendJson(res, 502, {
         ok: false,
         error: error.message || 'WAHA tidak bisa diakses',
-        session: wahaSessionName(settings)
+        session: wahaSessionName(settings),
+        recovery: waGatewayRecovery.status(settings)
       });
     }
     return;
@@ -27173,6 +27327,8 @@ if (require.main === module) {
 
 module.exports = {
   __test: {
+    revokeSessionPushSubscriptions,
+    onlinePaymentPushEvent,
     addDaysIso,
     applyHotspotVoucherExpirations,
     applyResellerVoucherNasLock,
@@ -27258,6 +27414,8 @@ module.exports = {
     wahaStatusText,
     wahaIsConnected,
     wahaNeedsQr,
+    wahaQr,
+    wahaStartSession,
     wahaProviderMessageId,
     applyWahaAckEvent,
     filterVoucherReportOrders,

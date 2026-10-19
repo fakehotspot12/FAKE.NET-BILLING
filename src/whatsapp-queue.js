@@ -38,6 +38,7 @@ function messagePriority(type = '') {
     paymentPaid: 2,
     accountActive: 3,
     voucherIssued: 3,
+    hotspotVoucherPaid: 3,
     paymentReminder: 4,
     invoiceIssued: 5,
     accountSuspend: 6,

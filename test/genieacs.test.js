@@ -293,11 +293,14 @@ test('hardens only the heavy GenieACS overview summon buttons', () => {
   const { safeSummonButtonBases, safeSummonButtonParameters } = require('../deploy/genieacs/bootstrap');
   const joined = safeSummonButtonParameters.join('\n');
 
-  assert.deepEqual(safeSummonButtonBases.sort(), [
+  assert.deepEqual([...safeSummonButtonBases].sort(), [
     'ui.device.1.components.0.parameters.0.components.2',
     'ui.index.2'
   ]);
-  assert.doesNotMatch(joined, /Hosts\.Host\.\*|AssociatedDevice\.\*|KeyPassphrase/);
+  assert.doesNotMatch(joined, /Hosts\.Host\.\*|AssociatedDevice\.\*/);
+  assert.equal(safeSummonButtonParameters.some(name => ['Device', 'InternetGatewayDevice', 'VirtualParameters'].includes(name)), false);
+  assert.match(joined, /WLANConfiguration\.\*\.PreSharedKey\.\*/);
+  assert.match(joined, /WLANConfiguration\.\*\.KeyPassphrase/);
   assert.match(joined, /WANPPPConnection\.\*\.Username/);
   assert.match(joined, /WLANConfiguration\.\*\.TotalAssociations/);
   assert.match(joined, /X_HW_Security\.X_HW_FirewallLevel/);
@@ -1639,9 +1642,21 @@ test('selects the matching WAN automatically during provisioning', () => {
   assert.equal(bridge.existing.mode, 'bridge');
 });
 
+test('requires an explicit new WAN action without mutating existing configuration', () => {
+  const device = huaweiMultiWanDevice();
+  const before = JSON.stringify(device);
+  const payload = { targetWan: 'new', mode: 'pppoe', vlan: 500, username: 'new-user', password: 'private-password', bindings: ['LAN3'] };
+  for (const createWan of [undefined, false, 'true']) {
+    assert.throws(() => genieAcsWan.prepareWanProvision(device, { ...payload, createWan }), /Tambah WAN baru harus melalui tombol/);
+  }
+  assert.equal(genieAcsWan.prepareWanProvision(device, { ...payload, createWan: true }).isNew, true);
+  assert.equal(JSON.stringify(device), before);
+});
+
 test('rebases a new WAN plan to instance numbers returned by the modem', () => {
   const plan = genieAcsWan.prepareWanProvision(huaweiMultiWanDevice(), {
     targetWan: 'new',
+    createWan: true,
     mode: 'pppoe',
     vlan: 500,
     username: 'new-user',
@@ -1766,6 +1781,7 @@ test('requires confirmation and cleans old WAN when moving a binding', () => {
   const device = huaweiMultiWanDevice();
   assert.throws(() => genieAcsWan.prepareWanProvision(device, {
     targetWan: 'new',
+    createWan: true,
     mode: 'bridge',
     vlan: 400,
     bindings: ['LAN2']
@@ -1773,6 +1789,7 @@ test('requires confirmation and cleans old WAN when moving a binding', () => {
 
   const plan = genieAcsWan.prepareWanProvision(device, {
     targetWan: 'new',
+    createWan: true,
     mode: 'bridge',
     vlan: 400,
     bindings: ['LAN2'],
@@ -1795,6 +1812,7 @@ test('rejects protected WAN and never exposes PPPoE password in public plan', ()
 
   const plan = genieAcsWan.prepareWanProvision(device, {
     targetWan: 'new',
+    createWan: true,
     mode: 'pppoe',
     vlan: 500,
     username: 'new-user',
@@ -1884,7 +1902,7 @@ test('selects Huawei SSID slot by 2.4 GHz and 5 GHz band', () => {
   }).needsObject, true);
 });
 
-test('reuses disabled FiberHome SSID slot and enables radio in final batch', () => {
+test('reuses disabled FiberHome SSID as open and enables radio in final batch', () => {
   const device = wifiAddDevice('FiberHome');
   const plan = genieAcsWifi.prepareAddSsid(device, {
     band: '2.4ghz',
@@ -1894,14 +1912,14 @@ test('reuses disabled FiberHome SSID slot and enables radio in final batch', () 
   });
   const batches = genieAcsWifi.addSsidBatches(device, plan.index, plan);
   const enable = new Map(batches.find((item) => item.name === 'enable').values.map(([name, value]) => [name, value]));
-  const passwordPaths = batches.find((item) => item.name === 'password').values.map(([name]) => name);
 
   assert.equal(plan.index, 2);
   assert.equal(plan.needsObject, false);
   assert.equal(enable.get(`${plan.path}.Enable`), true);
   assert.equal(enable.get(`${plan.path}.RadioEnabled`), true);
-  assert.equal(passwordPaths.includes(`${plan.path}.KeyPassphrase`), true);
-  assert.equal(passwordPaths.includes(`${plan.path}.PreSharedKey.1.KeyPassphrase`), true);
+  assert.equal(plan.security, 'none');
+  assert.equal(plan.password, '');
+  assert.equal(batches.some(item => item.name === 'password'), false);
 });
 
 test('builds explicit enable and disable values when editing an SSID', () => {
@@ -1917,7 +1935,7 @@ test('builds explicit enable and disable values when editing an SSID', () => {
   assert.equal(disabled.enabled, false);
   assert.equal(disabled.security, 'none');
   assert.equal(disabled.index, 2);
-  assert.equal(disabledValues.get(`${base}.Enable`), false);
+  assert.equal(disabledValues.has(`${base}.Enable`), false);
   assert.equal(disabledValues.has(`${base}.RadioEnabled`), false);
 
   const enabled = genieAcs._internal.wifiCredentialsPlan(device, {
@@ -1929,10 +1947,10 @@ test('builds explicit enable and disable values when editing an SSID', () => {
     enabled: true
   });
   const enabledValues = new Map(enabled.values.map(([name, value]) => [name, value]));
-  assert.equal(enabled.security, 'pass');
+  assert.equal(enabled.security, 'none');
   assert.equal(enabledValues.get(`${base}.Enable`), true);
   assert.equal(enabledValues.get(`${base}.RadioEnabled`), true);
-  assert.equal(enabledValues.get(`${base}.PreSharedKey.1.KeyPassphrase`), 'passwordbaru');
+  assert.equal(enabledValues.has(`${base}.PreSharedKey.1.KeyPassphrase`), false);
 });
 
 test('builds the SSID task order and verifies readback', () => {
@@ -1975,12 +1993,7 @@ test('treats an explicit open beacon as open when an SSID slot retains WPA value
 
 test('does not verify secured SSID readback until security and password match', () => {
   const device = wifiAddDevice('FiberHome');
-  const plan = genieAcsWifi.prepareAddSsid(device, {
-    band: '2.4ghz',
-    ssid: 'SSID Aman',
-    security: 'pass',
-    password: 'passwordbaru'
-  });
+  const plan = { index: 2, ssid: 'SSID Aman', security: 'pass', password: 'passwordbaru' };
   const config = device.InternetGatewayDevice.LANDevice[1].WLANConfiguration[2];
   config.SSID._value = plan.ssid;
   config.Enable._value = true;
@@ -2030,7 +2043,10 @@ test('keeps GenieACS popup feedback mobile-safe without exposing WiFi passwords'
   assert.equal(wanSource.indexOf('sortedWanRows.map') < wanSource.indexOf('Target WAN'), true);
   assert.match(wanSource, /const initialWan = editableRows\.find/);
   assert.match(wanSource, /defaultTargetIds\[input\.value\]/);
-  assert.equal(targetOptionsSource.indexOf('Edit WAN') < targetOptionsSource.indexOf('Tambah WAN baru'), true);
+  assert.match(targetOptionsSource, /Edit WAN/);
+  assert.doesNotMatch(targetOptionsSource, /<option value="new"/);
+  assert.match(wanSource, /id="genieWanCreateNew" type="button">Tambah WAN Baru/);
+  assert.match(wanSource, /createWan: createWanRequested/);
   assert.match(appSource, /Antrian Aktivasi ONT/);
   assert.doesNotMatch(appSource, /ONT Baru Perlu Internet/);
   assert.doesNotMatch(appSource, /Deteksi otomatis/);

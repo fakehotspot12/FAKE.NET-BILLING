@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'billing-view-audit-20260822';
+  const assetRevision = 'client-totals-verified-20261017-r2';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {
@@ -21,6 +21,28 @@
   };
   let branding = { ...defaultBranding };
   let applicationLoading = false;
+  let loginActive = false;
+  let pushCleanupGeneration = 0;
+  let loggedOutPushCleaned = false;
+
+  async function revokeLoggedOutPush() {
+    if (!('serviceWorker' in navigator)) return;
+    const generation = ++pushCleanupGeneration;
+    const stillLoggedOut = () => !loginActive && generation === pushCleanupGeneration;
+    const registration = await navigator.serviceWorker.getRegistration('/');
+    if (!registration || !stillLoggedOut()) return;
+    const revoke = async () => {
+      if (!stillLoggedOut()) return;
+      registration.active?.postMessage({ type: 'FAKENET_PUSH_LOGOUT' });
+      const visible = await registration.getNotifications();
+      if (!stillLoggedOut()) return;
+      visible.filter(item => String(item.tag || '').startsWith('fakenet-payment-')).forEach(item => item.close());
+    };
+    await revoke();
+    if (!stillLoggedOut()) return;
+    await registration.update().catch(() => {});
+    await revoke();
+  }
 
   function escapeHtml(value = '') {
     return String(value ?? '')
@@ -124,6 +146,10 @@
   }
 
   function showLogin(message = '', error = false) {
+    if (!loggedOutPushCleaned) {
+      loggedOutPushCleaned = true;
+      revokeLoggedOutPush().catch(() => {});
+    }
     document.body.classList.remove('is-loading-auth');
     document.body.classList.add('is-bootstrap-login', 'is-login');
     app.innerHTML = `<section class="fakenet-boot boot-login-screen">
@@ -280,6 +306,8 @@
 
   async function loadApplication(authPayload = null) {
     if (applicationLoading) return;
+    loginActive = Boolean(authPayload?.user);
+    if (loginActive) pushCleanupGeneration++;
     applicationLoading = true;
     if (authPayload?.user) window.__FAKENET_BOOTSTRAP_AUTH__ = authPayload;
     showDashboardSkeleton(authPayload?.user ? 'Menyiapkan dashboard...' : 'Memuat aplikasi...');

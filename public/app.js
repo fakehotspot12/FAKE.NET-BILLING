@@ -162,7 +162,7 @@ const viewPermissions = {
   reportsInventoryStock: 'inventory:read',
   logDetection: 'activity:read',
   activity: 'activity:read',
-  waGateway: 'wa-gateway:manage',
+  waGateway: ['wa-gateway:manage', 'wa-gateway:recover'],
   paymentGateway: 'payment-gateway:manage',
   inventory: 'inventory:read',
   networkAssets: 'network-assets:read',
@@ -419,6 +419,10 @@ let lastNotificationsFetchAt = 0;
 let webPushRegistration = null;
 let webPushSyncing = null;
 let webPushSubscriptionActive = false;
+let paymentNotificationsSuppressed = false;
+let paymentNotificationGeneration = 0;
+const nativePaymentNotifications = new Set();
+const PAYMENT_LOGOUT_KEY = 'fakenetPaymentLogoutAt';
 const paymentNotificationTimers = new Map();
 let topWaStatusTimer = null;
 let topWaStatusLoading = false;
@@ -1548,6 +1552,7 @@ async function api(path, options = {}) {
     const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
     if (response.status === 401 && !skipAuthRedirect) {
       rememberLoginReturnView();
+      suppressPaymentNotifications();
       state.auth = null;
       state.csrfToken = '';
       abortPageRequests();
@@ -1795,6 +1800,44 @@ function webPushSupported() {
     && 'PushManager' in window;
 }
 
+function paymentNotificationsAllowed() {
+  return Boolean(state.auth && !paymentNotificationsSuppressed
+    && ['admin', 'owner', 'finance'].includes(String(state.auth.role || '').toLowerCase())
+    && can('payment-gateway:manage'));
+}
+
+async function setPushWorkerAuth(registration, sessionKey = '') {
+  const worker = registration?.active;
+  if (!worker) return false;
+  return new Promise(resolve => {
+    const channel = new MessageChannel();
+    const timer = window.setTimeout(() => { channel.port1.close(); resolve(false); }, 2500);
+    channel.port1.onmessage = event => {
+      window.clearTimeout(timer);
+      channel.port1.close();
+      resolve(event.data?.ok === true);
+    };
+    worker.postMessage({ type: sessionKey ? 'FAKENET_PUSH_LOGIN' : 'FAKENET_PUSH_LOGOUT', sessionKey }, [channel.port2]);
+  });
+}
+
+function suppressPaymentNotifications() {
+  paymentNotificationsSuppressed = true;
+  paymentNotificationGeneration++;
+  webPushSubscriptionActive = false;
+  clearPaymentNotifications();
+  nativePaymentNotifications.forEach(notification => notification.close());
+  nativePaymentNotifications.clear();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistration('/').then(async registration => {
+      if (!registration) return;
+      await setPushWorkerAuth(registration);
+      const visible = await registration.getNotifications();
+      visible.filter(item => String(item.tag || '').startsWith('fakenet-payment-')).forEach(item => item.close());
+    }).catch(() => {});
+  }
+}
+
 function urlBase64ToUint8Array(value = '') {
   const padding = '='.repeat((4 - (value.length % 4)) % 4);
   const base64 = `${value}${padding}`.replace(/-/g, '+').replace(/_/g, '/');
@@ -1805,30 +1848,44 @@ function urlBase64ToUint8Array(value = '') {
 async function ensureWebPushRegistration() {
   if (!webPushSupported()) return null;
   if (!webPushRegistration) {
-    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-__FAKENET_APP_VERSION__', {
-      scope: '/'
+    webPushRegistration = await navigator.serviceWorker.register('/service-worker.js?v=fakenet-billing-__FAKENET_APP_VERSION__&auth=session-20261015', {
+      scope: '/', updateViaCache: 'none'
     });
+    const incoming = webPushRegistration.installing || webPushRegistration.waiting;
+    if (incoming && incoming.state !== 'activated') {
+      await new Promise(resolve => {
+        const done = () => { window.clearTimeout(timer); incoming.removeEventListener('statechange', changed); resolve(); };
+        const changed = () => { if (['activated', 'redundant'].includes(incoming.state)) done(); };
+        const timer = window.setTimeout(done, 5000);
+        incoming.addEventListener('statechange', changed);
+        changed();
+      });
+    }
   }
   return webPushRegistration;
 }
 
 async function syncWebPushSubscription(options = {}) {
-  if (!state.auth || !can('payment-gateway:manage') || !webPushSupported()) {
+  if (!paymentNotificationsAllowed() || !webPushSupported()) {
     webPushSubscriptionActive = false;
     return null;
   }
   if (webPushSyncing) return webPushSyncing;
+  const userId = String(state.auth.id || '');
+  const generation = paymentNotificationGeneration;
+  const stillActive = () => paymentNotificationsAllowed() && generation === paymentNotificationGeneration && String(state.auth?.id || '') === userId;
   webPushSyncing = (async () => {
     if (window.Notification.permission === 'default' && options.requestPermission === true) {
       await window.Notification.requestPermission();
     }
-    if (window.Notification.permission !== 'granted') {
+    if (window.Notification.permission !== 'granted' || !stillActive()) {
       webPushSubscriptionActive = false;
       return null;
     }
     const registration = await ensureWebPushRegistration();
-    if (!registration) return null;
+    if (!registration || !stillActive()) return null;
     const config = await api('/api/notifications/web-push', { skipAuthRedirect: true });
+    if (!stillActive() || String(config.userId || '') !== userId || !config.sessionKey) return null;
     let subscription = await registration.pushManager.getSubscription();
     const expectedKey = urlBase64ToUint8Array(config.publicKey || '');
     const currentKey = subscription?.options?.applicationServerKey
@@ -1845,12 +1902,17 @@ async function syncWebPushSubscription(options = {}) {
         applicationServerKey: expectedKey
       });
     }
+    if (!stillActive()) return null;
     await api('/api/notifications/web-push', {
       method: 'POST',
       skipAuthRedirect: true,
       body: JSON.stringify({ subscription: subscription.toJSON() })
     });
-    webPushSubscriptionActive = true;
+    if (!stillActive()) return null;
+    const enabled = await setPushWorkerAuth(registration, config.sessionKey);
+    if (!stillActive()) { await setPushWorkerAuth(registration); return null; }
+    webPushSubscriptionActive = enabled;
+    if (!enabled) return null;
     return subscription;
   })().catch(() => {
     webPushSubscriptionActive = false;
@@ -1864,11 +1926,15 @@ async function syncWebPushSubscription(options = {}) {
 async function disableWebPushSubscription() {
   if (!webPushSupported()) return;
   const registration = webPushRegistration || await navigator.serviceWorker.getRegistration('/');
+  await setPushWorkerAuth(registration);
+  const visible = await registration?.getNotifications() || [];
+  visible.filter(item => String(item.tag || '').startsWith('fakenet-payment-')).forEach(item => item.close());
   const subscription = await registration?.pushManager?.getSubscription();
   if (subscription && state.auth && can('payment-gateway:manage')) {
     await api('/api/notifications/web-push', {
       method: 'DELETE',
       skipAuthRedirect: true,
+      timeoutMs: 5000,
       body: JSON.stringify({ endpoint: subscription.endpoint })
     }).catch(() => ({}));
     await subscription.unsubscribe().catch(() => false);
@@ -1877,11 +1943,15 @@ async function disableWebPushSubscription() {
 }
 
 async function showBrowserPaymentNotification(item = {}) {
-  if (!('Notification' in window) || window.Notification.permission !== 'granted' || webPushSubscriptionActive) return;
+  if (!paymentNotificationsAllowed() || !('Notification' in window) || window.Notification.permission !== 'granted' || webPushSubscriptionActive) return;
+  const userId = String(state.auth.id || '');
+  const generation = paymentNotificationGeneration;
+  const stillActive = () => paymentNotificationsAllowed() && generation === paymentNotificationGeneration && String(state.auth?.id || '') === userId;
   const tag = `fakenet-payment-${item.id || Date.now()}`;
   const branding = currentBranding();
   try {
     const registration = await ensureWebPushRegistration();
+    if (!stillActive()) return;
     if (registration) {
       await registration.showNotification(item.title || 'Pembayaran online masuk', {
         body: item.description || 'Pembayaran online berhasil.',
@@ -1891,6 +1961,10 @@ async function showBrowserPaymentNotification(item = {}) {
         requireInteraction: true,
         data: { url: '/#paymentGateway' }
       });
+      if (!stillActive()) {
+        const visible = await registration.getNotifications({ tag });
+        visible.forEach(notification => notification.close());
+      }
       return;
     }
     const browserNotification = new window.Notification(item.title || 'Pembayaran online masuk', {
@@ -1899,6 +1973,8 @@ async function showBrowserPaymentNotification(item = {}) {
       tag,
       requireInteraction: true
     });
+    nativePaymentNotifications.add(browserNotification);
+    browserNotification.onclose = () => nativePaymentNotifications.delete(browserNotification);
   } catch {
     // Notifikasi lonceng tetap menjadi fallback bila browser menolak notifikasi sistem.
   }
@@ -1919,6 +1995,7 @@ function ensureBrowserNotificationPermission() {
 }
 
 function ingestPaymentNotifications(notifications = {}) {
+  if (!paymentNotificationsAllowed()) return;
   const onlinePayments = notifications.onlinePayments || {};
   if (!onlinePayments.visible || !Array.isArray(onlinePayments.events)) return;
   const seen = readSeenPaymentNotificationIds();
@@ -2051,6 +2128,7 @@ function setNotificationMenu(notifications = {}) {
 }
 
 function applyNotifications(payload = {}) {
+  if (!state.auth || paymentNotificationsSuppressed) return;
   const rawNotifications = payload.notifications || payload || {};
   ingestPaymentNotifications(rawNotifications);
   const notifications = notificationCachePayload(rawNotifications);
@@ -2113,7 +2191,7 @@ function openNotificationTarget(action) {
 }
 
 async function refreshNotifications(options = {}) {
-  if (!state.auth) {
+  if (!state.auth || paymentNotificationsSuppressed) {
     hideNotifications();
     return;
   }
@@ -2123,11 +2201,15 @@ async function refreshNotifications(options = {}) {
   }
   if (notificationsLoading) return;
   notificationsLoading = true;
+  const userId = String(state.auth.id || '');
+  const generation = paymentNotificationGeneration;
   try {
     const payload = await api('/api/notifications', { skipAuthRedirect: true });
+    if (!state.auth || paymentNotificationsSuppressed || generation !== paymentNotificationGeneration || String(state.auth.id || '') !== userId) return;
     lastNotificationsFetchAt = Date.now();
     applyNotifications(payload);
-  } catch {
+  } catch (error) {
+    if (error.status === 401) suppressPaymentNotifications();
     lastNotificationsFetchAt = Date.now();
   } finally {
     notificationsLoading = false;
@@ -2140,6 +2222,7 @@ function startNotificationsTimer() {
     hideNotifications();
     return;
   }
+  paymentNotificationsSuppressed = false;
   const cached = readCachedNotifications();
   const initialNotifications = cached || notificationBasePayload(true);
   clearPaymentNotifications();
@@ -4962,6 +5045,10 @@ async function refreshLoginVerification() {
 }
 
 function renderLogin() {
+  suppressPaymentNotifications();
+  ensureWebPushRegistration().then(registration => {
+    if (!state.auth && registration) return setPushWorkerAuth(registration);
+  }).catch(() => {});
   nextRenderGeneration();
   abortPageRequests();
   clearRealtimeTimers();
@@ -17424,7 +17511,8 @@ function genieWifiNetworks(row = {}) {
 function genieWifiOptionLabel(network = {}) {
   const status = network.enabled ? 'Aktif' : 'Nonaktif';
   const clients = `${displayNumber(network.clients || 0)} user`;
-  return `${network.band || 'WiFi'} - ${network.ssid || '-'} (${status}, ${clients})`;
+  const slot = Number(network.index) > 0 ? `SSID${Number(network.index)} / ` : '';
+  return `${slot}${network.band || 'WiFi'} - ${network.ssid || '-'} (${status}, ${clients})`;
 }
 
 function genieClientRows(row = {}) {
@@ -17461,10 +17549,11 @@ function genieClientCounts(row = {}) {
   const rows = genieClientRows(row);
   const hasWifi5 = genieHasWifi5(row);
   if (row.clientCountAccurate === true) {
-    const count24 = genieClientCountByType(rows, '2.4G');
-    const count5 = hasWifi5 ? genieClientCountByType(rows, '5G') : 0;
-    const countLan = genieClientCountByType(rows, 'LAN');
-    return { count24, count5, countLan, total: rows.length, hasWifi5 };
+    const measured = row.clientDetailsIncomplete === true;
+    const count24 = Math.max(measured ? Number(row.wifiClients24 || 0) : 0, genieClientCountByType(rows, '2.4G'));
+    const count5 = hasWifi5 ? Math.max(measured ? Number(row.wifiClients5 || 0) : 0, genieClientCountByType(rows, '5G')) : 0;
+    const countLan = Math.max(measured ? Number(row.lanClients || 0) : 0, genieClientCountByType(rows, 'LAN'));
+    return { count24, count5, countLan, total: Math.max(rows.length, count24 + count5 + countLan), hasWifi5 };
   }
   const count24 = Math.max(Number(row.wifiClients24 || 0), genieClientCountByType(rows, '2.4G'));
   const count5 = hasWifi5
@@ -17480,39 +17569,52 @@ function applyGenieClientCount(count = {}) {
   if (!id) return;
   app.querySelectorAll('[data-genie-client-id]').forEach((button) => {
     if (button.dataset.genieClientId !== id) return;
-    button.textContent = displayNumber(count.total || 0);
-    button.removeAttribute('aria-busy');
-    button.title = 'Lihat client terkoneksi';
+    button.textContent = count.known === false ? (count.pending ? '...' : '-') : displayNumber(count.total || 0);
+    if (count.pending) button.setAttribute('aria-busy', 'true');
+    else button.removeAttribute('aria-busy');
+    button.title = count.known === false
+      ? (count.pending ? 'Memperbarui data client dari modem' : 'Data client terkini belum terkonfirmasi')
+      : 'Lihat client terkoneksi';
   });
 }
 
 async function refreshVisibleGenieClientCounts(rows = [], renderToken = 0, refresh = false) {
-  const ids = [...new Set(rows.map((row) => String(row.id || '').trim()).filter(Boolean))];
+  let ids = [...new Set(rows.map((row) => String(row.id || '').trim()).filter(Boolean))];
   if (!ids.length) return;
-  const payload = await api('/api/genieacs/devices/client-counts', {
-    method: 'POST',
-    body: JSON.stringify({ ids, refresh })
-  });
-  if (renderToken !== genieAcsRenderToken || state.view !== 'genieAcs') return;
-  const counts = Array.isArray(payload.counts) ? payload.counts : [];
-  const countMap = new Map(counts.map((count) => [String(count.id || ''), count]));
-  for (const row of rows) {
-    const count = countMap.get(String(row.id || ''));
-    if (!count) continue;
-    Object.assign(row, {
-      wifiClients24: Number(count.wifi24 || 0),
-      wifiClients5: Number(count.wifi5 || 0),
-      lanClients: Number(count.lan || 0),
-      clientsTotal: Number(count.total || 0),
-      wifiClientsTotal: Number(count.total || 0),
-      hasWifi5: count.hasWifi5 === true
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const payload = await api('/api/genieacs/devices/client-counts', {
+      method: 'POST',
+      body: JSON.stringify({ ids, refresh: attempt === 0 && refresh })
     });
-    applyGenieClientCount(count);
+    if (renderToken !== genieAcsRenderToken || state.view !== 'genieAcs') return;
+    const counts = Array.isArray(payload.counts) ? payload.counts : [];
+    const countMap = new Map(counts.map((count) => [String(count.id || ''), count]));
+    for (const row of rows) {
+      const count = countMap.get(String(row.id || ''));
+      if (!count) continue;
+      Object.assign(row, {
+        wifiClients24: Number(count.wifi24 || 0),
+        wifiClients5: Number(count.wifi5 || 0),
+        lanClients: Number(count.lan || 0),
+        clientsTotal: count.total,
+        wifiClientsTotal: count.total,
+        hasWifi5: count.hasWifi5 === true
+      });
+      applyGenieClientCount(attempt === 4 && count.pending ? { ...count, pending: false } : count);
+    }
+    ids = counts.filter(count => count.pending).map(count => String(count.id || '')).filter(Boolean);
+    if (!ids.length) break;
+    await new Promise(resolve => window.setTimeout(resolve, 900));
+    if (renderToken !== genieAcsRenderToken || state.view !== 'genieAcs') return;
   }
 }
 
 async function openGenieClientsModal(row = {}) {
-  const payload = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/clients?refresh=1`);
+  let payload = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/clients?refresh=1`);
+  for (let attempt = 0; attempt < 4 && payload.device?.clientDataStale && payload.device?.clientRefreshPending; attempt += 1) {
+    await new Promise(resolve => window.setTimeout(resolve, 600));
+    payload = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/clients`);
+  }
   row = { ...row, ...(payload.device || {}) };
   const rows = genieClientRows(row);
   const counts = genieClientCounts(row);
@@ -17524,6 +17626,8 @@ async function openGenieClientsModal(row = {}) {
         <strong>${escapeHtml(row.username || genieDeviceLabel(row))}</strong>
         <span>${escapeHtml(row.serialNumber || row.productClass || '-')}</span>
       </div>
+      ${row.clientDataStale ? '<p class="muted">Data client terkini belum terkonfirmasi dari modem.</p>' : ''}
+      ${row.clientDetailsIncomplete ? `<p class="muted">${displayNumber(rows.length)} perangkat teridentifikasi dari ${displayNumber(counts.total)} client aktif.</p>` : ''}
       <div class="client-summary-strip">
         <span>2.4G ${displayNumber(counts.count24)}</span>
         ${counts.hasWifi5 ? `<span>5G ${displayNumber(counts.count5)}</span>` : ''}
@@ -17682,18 +17786,8 @@ async function openGenieWifiModal(row = {}, options = {}) {
       </label>
       <label class="field">
         <span>Security</span>
-        <select id="genieWifiAddSecurity">
-          <option value="none">Open / Tanpa Password</option>
-          <option value="pass">WPA/WPA2 Password</option>
-        </select>
-      </label>
-      <label class="field" id="genieWifiAddPasswordField" hidden>
-        <span>Password</span>
-        <input id="genieWifiAddPassword" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Minimal 8 karakter">
-      </label>
-      <label class="field checkbox-field full" id="genieWifiAddShowPasswordField" hidden>
-        <input id="genieWifiAddShowPassword" type="checkbox" value="true">
-        <span>Tampilkan password</span>
+        <input type="text" value="Open / Tanpa Password" readonly>
+        <input id="genieWifiAddSecurity" type="hidden" value="none">
       </label>
       <div class="modal-actions field full genie-wifi-add-actions">
         <button class="ghost-button" type="button" data-close-modal>Batal</button>
@@ -17770,7 +17864,7 @@ async function openGenieWifiModal(row = {}, options = {}) {
     const statusElement = document.getElementById('genieWifiOperationStatus');
     const submitButton = form.querySelector('button[type="submit"]');
     const enabled = String(payload.enabled) !== 'false';
-    const security = payload.security === 'none' ? 'none' : 'pass';
+    const security = (payload.security || form.querySelector('[name="security"]')?.value) === 'none' ? 'none' : 'pass';
     let accepted = false;
     try {
       if (submitButton) submitButton.disabled = true;
@@ -17780,6 +17874,7 @@ async function openGenieWifiModal(row = {}, options = {}) {
         body: JSON.stringify({
           ssid: payload.ssid,
           ssidParameter: payload.ssidParameter,
+          expectedSsid: networks.find((item) => item.ssidParameter === payload.ssidParameter)?.ssid,
           password: String(payload.password || '') === String(networks.find((item) => item.ssidParameter === payload.ssidParameter)?.password || '')
             ? ''
             : payload.password,
@@ -17790,12 +17885,13 @@ async function openGenieWifiModal(row = {}, options = {}) {
       });
       accepted = true;
       const verification = response.result?.verification || {};
+      const actualSecurity = response.result?.security || security;
       setGenieModalStatus(
         statusElement,
         verification.verified ? 'success' : 'pending',
         verification.verified ? 'WiFi berhasil diperbarui' : 'Konfigurasi WiFi sudah dikirim',
         verification.verified
-          ? `SSID ${payload.ssid} terverifikasi ${enabled ? 'aktif' : 'nonaktif'} dengan security ${security === 'pass' ? 'Password' : 'Open'}.`
+          ? `SSID ${payload.ssid} terverifikasi ${enabled ? 'aktif' : 'nonaktif'} dengan security ${actualSecurity === 'pass' ? 'Password' : 'Open'}.`
           : 'Task diterima, tetapi SSID, status, security, atau password belum seluruhnya terbaca sesuai. Buka ulang popup untuk cek ulang.'
       );
       const closeButton = form.querySelector('[data-close-modal]');
@@ -17834,9 +17930,12 @@ async function openGenieWifiModal(row = {}, options = {}) {
     if (!option) return;
     if (ssidInput) ssidInput.value = option.dataset.ssid || '';
     const network = networks.find((item) => item.ssidParameter === option.value) || {};
-    if (passwordInput) passwordInput.value = network.password || '';
+    if (passwordInput) passwordInput.value = network.securityEnabled === true ? (network.password || '') : '';
     if (passwordParameter) passwordParameter.value = option.dataset.passwordParameter || '';
-    if (wifiSecurity) wifiSecurity.value = option.dataset.passwordEnabled === 'true' ? 'pass' : 'none';
+    if (wifiSecurity) {
+      wifiSecurity.value = option.dataset.passwordEnabled === 'true' ? 'pass' : 'none';
+      wifiSecurity.disabled = false;
+    }
     if (wifiEnabled) wifiEnabled.value = option.dataset.enabled === 'false' ? 'false' : 'true';
     if (passwordInput && wifiSecurity) {
       passwordInput.disabled = wifiSecurity.value === 'none';
@@ -17863,6 +17962,22 @@ async function openGenieWifiModal(row = {}, options = {}) {
     return refreshed;
   };
   select?.addEventListener('change', syncWifiForm);
+  wifiEnabled?.addEventListener('change', () => {
+    const currentNetwork = networks.find(item => item.ssidParameter === select?.value);
+    if (wifiSecurity) wifiSecurity.disabled = false;
+    if (wifiEnabled.value !== 'true' || currentNetwork?.enabled !== false) return;
+    if (wifiSecurity) {
+      wifiSecurity.value = 'none';
+      wifiSecurity.disabled = true;
+    }
+    if (passwordInput) {
+      passwordInput.value = '';
+      passwordInput.disabled = true;
+      passwordInput.type = 'password';
+    }
+    if (showPasswordField) showPasswordField.hidden = true;
+    if (showPassword) showPassword.checked = false;
+  });
   wifiSecurity?.addEventListener('change', () => {
     if (!passwordInput) return;
     passwordInput.disabled = wifiSecurity.value === 'none';
@@ -17922,8 +18037,8 @@ async function openGenieWifiModal(row = {}, options = {}) {
     const statusElement = document.getElementById('genieWifiOperationStatus');
     const band = document.getElementById('genieWifiAddBand')?.value || '';
     const ssid = String(document.getElementById('genieWifiAddName')?.value || '').trim();
-    const security = addSecurity?.value || 'none';
-    const password = String(addPassword?.value || '');
+    const security = 'none';
+    const password = '';
     if (!ssid) {
       setGenieModalStatus(statusElement, 'error', 'Tambah SSID belum lengkap', 'Nama SSID wajib diisi.');
       return;
@@ -17935,7 +18050,7 @@ async function openGenieWifiModal(row = {}, options = {}) {
     let accepted = false;
     try {
       button.disabled = true;
-      setGenieModalStatus(statusElement, 'loading', 'Menambahkan SSID', 'Menjalankan konfigurasi SSID, security, password, dan enable secara berurutan.');
+      setGenieModalStatus(statusElement, 'loading', 'Menambahkan SSID', 'Menyiapkan SSID open dan memverifikasi konfigurasi modem.');
       const result = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wifi-add-ssid`, {
         method: 'POST',
         body: JSON.stringify({
@@ -18008,17 +18123,17 @@ async function openGenieWanModal(row = {}) {
     || primary
     || editableRows[0]
     || null;
-  const initialTarget = initialWan?.id || 'new';
+  const initialTarget = initialWan?.id || '';
   const defaultTargetIds = {
     pppoe: payload.defaultTargetIds?.pppoe
       || (primary?.mode === 'pppoe' ? primary.id : editableRows.find((item) => item.mode === 'pppoe')?.id)
-      || 'new',
+      || '',
     bridge: payload.defaultTargetIds?.bridge
       || editableRows.find((item) => item.mode === 'bridge')?.id
-      || 'new',
+      || '',
     ip: payload.defaultTargetIds?.ip
       || editableRows.find((item) => item.mode === 'ip')?.id
-      || 'new'
+      || ''
   };
   const occupied = new Map();
   wanRows.forEach((wan) => (wan.bindings || []).forEach((key) => {
@@ -18046,6 +18161,7 @@ async function openGenieWanModal(row = {}) {
     : '<div class="empty-detail">Belum ada WAN yang terbaca dari modem.</div>';
   const bridgeDisabled = payload.vendor?.bridgeSupported === false ? 'disabled' : '';
   let bindingOnlyRequested = false;
+  let createWanRequested = !initialWan;
   openModal('Konfigurasi WAN', `
     <div class="genie-wan-form-layout">
     <div class="genie-wan-modal field full">
@@ -18065,9 +18181,9 @@ async function openGenieWanModal(row = {}) {
     </div>
     <label class="field full">
       <span>Target WAN</span>
-      <select name="targetWan" id="genieWanTarget">
+      <select name="targetWan" id="genieWanTarget" ${editableRows.length ? '' : 'disabled'}>
         ${editableRows.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === initialTarget ? 'selected' : ''}>Edit WAN ${escapeHtml(item.label)}${item.username ? ` - ${escapeHtml(item.username)}` : ''}${item.editable ? '' : ' - binding saja'}</option>`).join('')}
-        <option value="new" ${initialTarget === 'new' ? 'selected' : ''}>Tambah WAN baru</option>
+        ${editableRows.length ? '' : '<option value="">Belum ada WAN existing yang dapat diedit</option>'}
       </select>
     </label>
     <div class="genie-wan-mode field full" role="group" aria-label="Mode WAN">
@@ -18112,6 +18228,7 @@ async function openGenieWanModal(row = {}) {
     </div>
     <div class="modal-actions field full">
       <button class="ghost-button" type="button" data-close-modal>Tutup</button>
+      <button class="ghost-button" id="genieWanCreateNew" type="button">Tambah WAN Baru</button>
       <button class="ghost-button" id="genieWanBindingOnly" type="button">Simpan Binding</button>
       <button class="button" id="genieWanSubmit" type="submit">Kirim Konfigurasi</button>
     </div>
@@ -18122,8 +18239,13 @@ async function openGenieWanModal(row = {}) {
     const bindingOnly = bindingOnlyRequested;
     bindingOnlyRequested = false;
     const mode = String(formPayload.mode || 'pppoe').trim().toLowerCase();
-    if (bindingOnly && String(formPayload.targetWan || '') === 'new') {
+    const targetWanValue = createWanRequested ? 'new' : String(formPayload.targetWan || '');
+    if (bindingOnly && createWanRequested) {
       setGenieModalStatus(statusElement, 'error', 'Binding belum dapat disimpan', 'Pilih WAN yang sudah ada.');
+      return false;
+    }
+    if (!createWanRequested && !targetWanValue) {
+      setGenieModalStatus(statusElement, 'error', 'Target WAN belum dipilih', 'Pilih WAN existing atau gunakan tombol Tambah WAN Baru.');
       return false;
     }
     if (!bindingOnly && mode === 'ip') {
@@ -18145,7 +18267,8 @@ async function openGenieWanModal(row = {}) {
       const response = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wan`, {
         method: 'POST',
         body: JSON.stringify({
-          targetWan: formPayload.targetWan || 'new',
+          targetWan: targetWanValue,
+          createWan: createWanRequested,
           mode,
           vlan: Number(formPayload.vlan || 0),
           username: formPayload.username,
@@ -18181,13 +18304,15 @@ async function openGenieWanModal(row = {}) {
   const username = document.getElementById('genieWanUsername');
   const password = document.getElementById('genieWanPassword');
   const bindingOnlyButton = document.getElementById('genieWanBindingOnly');
+  const createNewButton = document.getElementById('genieWanCreateNew');
   const submitButton = document.getElementById('genieWanSubmit');
   const formTitle = document.getElementById('genieWanFormTitle');
   const modeInputs = [...modalBody.querySelectorAll('input[name="mode"]')];
   const bindingInputs = [...modalBody.querySelectorAll('input[name="bindings"]')];
   const syncWanForm = () => {
-    const selected = rowById.get(target?.value || '') || null;
-    if (formTitle) formTitle.textContent = selected ? `Edit WAN ${selected.label}` : 'Tambah WAN baru';
+    const selected = createWanRequested ? null : (rowById.get(target?.value || '') || null);
+    if (formTitle) formTitle.textContent = createWanRequested ? 'Tambah WAN baru' : (selected ? `Edit WAN ${selected.label}` : 'Pilih WAN existing');
+    if (target) target.disabled = createWanRequested || !editableRows.length;
     if (selected) {
       const modeInput = modeInputs.find((input) => input.value === selected.mode);
       if (modeInput && !modeInput.disabled) modeInput.checked = true;
@@ -18209,22 +18334,32 @@ async function openGenieWanModal(row = {}) {
     }
     const mode = modeInputs.find((input) => input.checked)?.value || 'pppoe';
     modalBody.querySelectorAll('[data-genie-wan-pppoe]').forEach((field) => { field.hidden = mode !== 'pppoe'; });
-    if (vlan) vlan.readOnly = selected?.mode === 'ip';
+    if (vlan) vlan.readOnly = !createWanRequested && selected?.mode === 'ip';
     if (username) username.required = mode === 'pppoe';
-    if (password) password.required = mode === 'pppoe' && !selected;
-    if (bindingOnlyButton) bindingOnlyButton.disabled = !selected?.bindingEditable || payload.vendor?.wanWriteSupported === false;
+    if (password) password.required = mode === 'pppoe' && createWanRequested;
+    if (createNewButton) createNewButton.disabled = payload.vendor?.wanWriteSupported === false;
+    if (bindingOnlyButton) bindingOnlyButton.disabled = createWanRequested || !selected?.bindingEditable || payload.vendor?.wanWriteSupported === false;
     if (submitButton) {
-      submitButton.disabled = Boolean(selected && !selected.editable) || payload.vendor?.wanWriteSupported === false;
-      submitButton.title = selected?.mode === 'ip' ? 'WAN IP existing hanya dapat diperbarui binding-nya' : '';
+      submitButton.disabled = (!createWanRequested && Boolean(selected && !selected.editable)) || payload.vendor?.wanWriteSupported === false;
+      submitButton.title = !createWanRequested && selected?.mode === 'ip' ? 'WAN IP existing hanya dapat diperbarui binding-nya' : '';
+      submitButton.textContent = createWanRequested ? 'Tambah WAN' : 'Kirim Konfigurasi';
     }
   };
-  target?.addEventListener('change', syncWanForm);
+  target?.addEventListener('change', () => {
+    createWanRequested = false;
+    syncWanForm();
+  });
   modeInputs.forEach((input) => input.addEventListener('change', () => {
-    if (target) target.value = defaultTargetIds[input.value] || 'new';
+    if (!createWanRequested && target && defaultTargetIds[input.value]) target.value = defaultTargetIds[input.value];
     syncWanForm();
   }));
+  createNewButton?.addEventListener('click', () => {
+    createWanRequested = true;
+    bindingOnlyRequested = false;
+    syncWanForm();
+  });
   bindingOnlyButton?.addEventListener('click', () => {
-    if (!rowById.has(target?.value || '')) {
+    if (createWanRequested || !rowById.has(target?.value || '')) {
       setGenieModalStatus(
         document.getElementById('genieWanOperationStatus'),
         'error',
@@ -18829,7 +18964,11 @@ async function renderGenieAcs(options = {}) {
       button.disabled = true;
       try {
         const detail = await openGenieClientsModal(row);
-        if (detail?.id) applyGenieClientCount({ id: detail.id, total: genieClientRows(detail).length });
+        if (detail?.id) {
+          Object.assign(row, detail);
+          const counts = genieClientCounts(detail);
+          applyGenieClientCount({ id: detail.id, total: counts.total, wifi24: counts.count24, wifi5: counts.count5, lan: counts.countLan, hasWifi5: counts.hasWifi5, known: !detail.clientDataStale && detail.online, pending: false });
+        }
       } catch (error) {
         setToast(error.message || 'Detail client belum dapat dibaca');
       } finally {
@@ -23951,10 +24090,16 @@ function openAccountSettingsModal() {
 
 async function logoutCurrentUser() {
   rememberLoginReturnView();
+  suppressPaymentNotifications();
+  window.clearInterval(notificationsTimer);
+  abortPageRequests();
+  hideNotifications();
+  try { window.localStorage.setItem(PAYMENT_LOGOUT_KEY, String(Date.now())); } catch {}
   await disableWebPushSubscription().catch(() => {});
   await api('/api/auth/logout', {
     method: 'POST',
-    skipAuthRedirect: true
+    skipAuthRedirect: true,
+    timeoutMs: 8000
   }).catch(() => ({}));
   setMenuOpen(false);
   setAccountMenuOpen(false);
@@ -24151,7 +24296,7 @@ function wahaFriendlyMessage(message = '') {
   const text = String(message || '').trim();
   if (!text) return '';
   if (/session status is not as expected|try again later|restart the session|scan_qr_code|starting|stopped|failed/i.test(text)) {
-    return 'Session Whatsapp Gateway sedang disiapkan. Klik Tampilkan QR lagi beberapa detik lagi, lalu scan jika QR muncul.';
+    return 'Session Whatsapp Gateway sedang disiapkan. QR akan muncul otomatis setelah gateway siap.';
   }
   return text;
 }
@@ -24338,7 +24483,7 @@ function wahaQrImage(qr = {}) {
     }
     return `<pre class="code-block">${escapeHtml(rawText)}</pre>`;
   }
-  return `<div class="notice warning"><strong>QR belum tersedia</strong><span>${escapeHtml(wahaFriendlyMessage(qr.message) || 'Klik Tampilkan QR lagi untuk reconnect/start session otomatis.')}</span></div>`;
+  return `<div class="notice warning"><strong>Menyiapkan QR</strong><span>${escapeHtml(wahaFriendlyMessage(qr.message) || 'QR akan muncul otomatis setelah gateway siap.')}</span></div>`;
 }
 
 function wahaStatusLabel(status = {}) {
@@ -24351,7 +24496,7 @@ function wahaStatusRaw(status = {}) {
 }
 
 function wahaIsOnline(status = {}) {
-  return ['WORKING', 'CONNECTED', 'READY', 'ONLINE'].includes(wahaStatusRaw(status).toUpperCase());
+  return ['WORKING', 'CONNECTED', 'READY', 'ONLINE', 'OPEN'].includes(wahaStatusRaw(status).toUpperCase());
 }
 
 function wahaStatusText(status = {}) {
@@ -24388,13 +24533,15 @@ function wahaStatusCard(result = {}) {
   if (result.loading) {
     return '<div class="wa-gateway-status-loading">Memuat status gateway...</div>';
   }
+  const recoveryRunning = result.recovery?.running === true;
+  const connectAction = `<button class="button compact" id="wahaQrAction" type="button" ${recoveryRunning ? 'disabled aria-busy="true"' : ''}>${recoveryRunning ? 'Menghubungkan...' : 'Hubungkan Ulang'}</button>`;
   if (result.error) {
     return `
       <div class="wa-gateway-status-grid">
         <div class="wa-gateway-status-field"><span>Status</span><strong class="negative">Offline</strong></div>
         <div class="wa-gateway-status-field wide"><span>Jid</span><strong>-</strong></div>
         <div class="wa-gateway-status-field"><span>Name</span><strong>-</strong></div>
-        <div class="wa-gateway-status-field action"><span>Action</span><button class="button compact" id="wahaQrAction" type="button">Tampilkan QR</button></div>
+        <div class="wa-gateway-status-field action"><span>Action</span>${connectAction}</div>
       </div>
       <div class="muted clamp-2">${escapeHtml(result.error)}</div>
     `;
@@ -24405,22 +24552,26 @@ function wahaStatusCard(result = {}) {
       <div class="wa-gateway-status-field"><span>Status</span><strong class="${profile.online ? 'positive' : 'negative'}">${escapeHtml(profile.status)}</strong></div>
       <div class="wa-gateway-status-field wide"><span>Jid</span><strong>${escapeHtml(profile.jid)}</strong></div>
       <div class="wa-gateway-status-field"><span>Name</span><strong>${escapeHtml(profile.name)}</strong></div>
-      <div class="wa-gateway-status-field action"><span>Action</span>${profile.online
-        ? '<button class="danger-button compact" id="wahaLogout" type="button">Logout</button>'
-        : '<button class="button compact" id="wahaQrAction" type="button">Tampilkan QR</button>'}</div>
+      <div class="wa-gateway-status-field action"><span>Action</span>${recoveryRunning ? connectAction : profile.online
+        ? (can('wa-gateway:manage') ? '<button class="danger-button compact" id="wahaLogout" type="button">Logout</button>' : '<strong class="positive">Terhubung</strong>')
+        : connectAction}</div>
     </div>
   `;
 }
 
 function openWahaQrModal(qr = {}, onConnected = null) {
   let stopped = false;
-  let polling = false;
   let pollTimer = null;
   let closeTimer = null;
+  let requestController = null;
+  let qrBox = null;
+  let statusEl = null;
+  let lastImage = '';
   const stopPolling = () => {
     stopped = true;
+    requestController?.abort();
     if (pollTimer) {
-      clearInterval(pollTimer);
+      clearTimeout(pollTimer);
       pollTimer = null;
     }
     if (closeTimer) {
@@ -24429,38 +24580,49 @@ function openWahaQrModal(qr = {}, onConnected = null) {
     }
   };
   const updateQrStatus = (message, tone = '') => {
-    const statusEl = modalBody.querySelector('[data-waha-qr-status]');
-    if (!statusEl) return;
+    if (!statusEl?.isConnected) return;
     statusEl.className = `notice ${tone}`.trim();
     statusEl.innerHTML = `<strong>${escapeHtml(message)}</strong>`;
   };
   const checkConnected = async () => {
-    if (stopped || !modal.open) {
+    if (stopped || !modal.open || !qrBox?.isConnected) {
       stopPolling();
       return;
     }
-    if (polling) return;
-    polling = true;
+    requestController = new AbortController();
+    const timeout = setTimeout(() => requestController?.abort(), 15000);
+    let connected = false;
     try {
-      updateQrStatus(qr.connected ? 'Memastikan Whatsapp Gateway tetap online...' : 'Mengecek koneksi Whatsapp Gateway...');
-      const result = await api('/api/wa-gateway/waha/status', { timeoutMs: 7000 });
-      if (!wahaIsOnline(result.status || {})) return;
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
+      const result = await api('/api/wa-gateway/waha/qr', { signal: requestController.signal });
+      if (stopped || !qrBox.isConnected || !modal.open) return;
+      const current = result.qr || {};
+      connected = current.connected === true || wahaIsOnline(current.status || {});
+      if (!connected) {
+        const imageKey = String(current.data || current.image || current.base64 || current.value || current.raw || '');
+        if (imageKey && imageKey !== lastImage) {
+          qrBox.innerHTML = wahaQrImage(current);
+          lastImage = imageKey;
+        } else if (!imageKey && lastImage) {
+          qrBox.innerHTML = wahaQrImage(current);
+          lastImage = '';
+        }
+        updateQrStatus(imageKey ? 'Scan QR melalui WhatsApp > Perangkat tertaut.' : (current.message || 'Menyiapkan QR otomatis...'));
+        return;
       }
       updateQrStatus('Berhasil terhubung. Popup akan ditutup otomatis.', 'positive');
       setToast('Whatsapp Gateway sudah online');
-      if (typeof onConnected === 'function') {
-        await onConnected(result);
-      }
       closeTimer = setTimeout(() => {
-        if (modal.open) modal.close();
+        if (modal.open && qrBox.isConnected) modal.close();
       }, 1200);
-    } catch {
-      updateQrStatus('Menunggu koneksi gateway...');
+      if (typeof onConnected === 'function') await onConnected({ ...result, status: current.status });
+    } catch (error) {
+      if (!stopped && !connected && qrBox.isConnected) updateQrStatus(error.name === 'AbortError'
+        ? 'Gateway belum merespons. Mencoba kembali otomatis...'
+        : 'Koneksi gateway terputus. Mencoba kembali otomatis...', 'warning');
     } finally {
-      polling = false;
+      clearTimeout(timeout);
+      requestController = null;
+      if (!stopped && !connected && modal.open && qrBox.isConnected) pollTimer = setTimeout(checkConnected, 3000);
     }
   };
   openModal('Whatsapp Gateway', `
@@ -24472,9 +24634,11 @@ function openWahaQrModal(qr = {}, onConnected = null) {
       </div>
     </div>
   `, async () => {});
+  qrBox = modalBody.querySelector('.wa-qr-box');
+  statusEl = modalBody.querySelector('[data-waha-qr-status]');
+  lastImage = String(qr.data || qr.image || qr.base64 || qr.value || qr.raw || '');
   modal.addEventListener('close', stopPolling, { once: true });
-  pollTimer = setInterval(checkConnected, 2000);
-  setTimeout(checkConnected, 800);
+  pollTimer = setTimeout(checkConnected, 0);
 }
 
 function waGatewayTemplateModalBody(settings = {}, definitions = WA_BILLING_TEMPLATE_DEFINITIONS, variables = WA_INVOICE_VARIABLES) {
@@ -24628,6 +24792,7 @@ async function openWaBroadcastModal() {
 }
 
 async function renderWaGateway() {
+  if (!can('wa-gateway:manage')) return renderWaGatewayRecovery();
   app.innerHTML = '<div class="empty">Memuat Whatsapp Gateway...</div>';
   const payload = await api(`/api/wa-gateway?${queryString({
     page: state.waMessagePage,
@@ -24896,13 +25061,41 @@ async function renderWaGateway() {
     state.waMessagePage = page;
   }, renderWaGateway, 10);
   updateWaMessageBatchActions();
-  document.getElementById('wahaHeaderStatus')?.addEventListener('click', async (event) => {
+  bindWaConnectionActions(() => loadWahaStatus({ force: true }));
+}
+
+async function renderWaGatewayRecovery() {
+  app.innerHTML = `
+    <section class="form-panel">
+      <div class="section-head"><h2>Whatsapp Gateway</h2></div>
+      <div class="wa-gateway-status-inline" id="wahaHeaderStatus">${wahaStatusCard({ loading: true })}</div>
+      <div id="wahaPanelResult" class="wa-local-result"></div>
+    </section>
+  `;
+  const panel = document.getElementById('wahaHeaderStatus');
+  const refreshStatus = async () => {
+    try {
+      const result = await api('/api/wa-gateway/waha/status', { timeoutMs: 10000 });
+      if (panel.isConnected) panel.innerHTML = wahaStatusCard(result);
+    } catch (error) {
+      if (panel.isConnected) panel.innerHTML = wahaStatusCard({ error: 'Gateway belum tersambung.', recovery: error.payload?.recovery });
+    }
+  };
+  bindWaConnectionActions(refreshStatus);
+  await refreshStatus();
+}
+
+function bindWaConnectionActions(refreshStatus) {
+  const panel = document.getElementById('wahaHeaderStatus');
+  let connecting = false;
+  panel?.addEventListener('click', async (event) => {
     const logoutButton = event.target.closest?.('#wahaLogout');
     const qrButton = event.target.closest?.('#wahaQrAction');
     const button = logoutButton || qrButton;
-    if (!button) return;
+    if (!button || button.disabled || connecting) return;
     const resultEl = document.getElementById('wahaPanelResult');
     button.disabled = true;
+    connecting = true;
     try {
       if (logoutButton) {
         button.textContent = 'Logout...';
@@ -24910,25 +25103,50 @@ async function renderWaGateway() {
         const result = await api('/api/wa-gateway/waha/logout', { method: 'POST', body: JSON.stringify({}) });
         if (resultEl) resultEl.innerHTML = `<div class="notice"><strong>Gateway logout</strong><span>${escapeHtml(wahaStatusLabel(result.status) || 'Session dihentikan')}</span></div>`;
       } else {
-        button.textContent = 'Reconnect...';
-        if (resultEl) resultEl.innerHTML = '<div class="empty compact">Mencoba reconnect Whatsapp Gateway...</div>';
-        const result = await api('/api/wa-gateway/waha/qr');
-        openWahaQrModal(result.qr || {}, () => {
-          loadWahaStatus({ force: true });
-          refreshTopWaStatus();
-        });
-        if (resultEl) {
-          resultEl.innerHTML = result.qr?.connected
-            ? '<div class="notice positive"><strong>Gateway terhubung</strong><span>Session berhasil aktif tanpa scan ulang.</span></div>'
-            : '<div class="notice"><strong>QR ditampilkan</strong><span>Scan QR dari popup Whatsapp Gateway.</span></div>';
+        button.textContent = 'Menghubungkan...';
+        button.setAttribute('aria-busy', 'true');
+        if (resultEl) resultEl.innerHTML = '';
+        const result = await api('/api/wa-gateway/waha/recover', { method: 'POST', body: JSON.stringify({}), timeoutMs: 10000 });
+        let recovery = result.recovery || {};
+        const deadline = Date.now() + 240000;
+        while (recovery.running && panel.isConnected && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          if (!panel.isConnected) return;
+          try {
+            const current = await api('/api/wa-gateway/waha/status', { timeoutMs: 10000 });
+            recovery = current.recovery || recovery;
+            if (panel.isConnected) panel.innerHTML = wahaStatusCard(current);
+          } catch (error) {
+            recovery = error.payload?.recovery || recovery;
+          }
         }
+        if (!panel.isConnected) return;
+        if (recovery.phase === 'connected') {
+          if (resultEl?.isConnected) resultEl.innerHTML = '<div class="notice positive"><strong>Whatsapp Gateway sudah Online.</strong></div>';
+        } else if (recovery.phase === 'qr') {
+          openWahaQrModal({}, async () => {
+            await refreshStatus();
+            await refreshTopWaStatus();
+          });
+        } else {
+          const message = recovery.running ? 'Pemulihan masih berjalan. Silakan cek status kembali.'
+            : recovery.retryAfterSeconds > 0 ? `Belum tersambung. Coba lagi dalam ${Math.ceil(recovery.retryAfterSeconds / 60)} menit.`
+              : (recovery.error || 'Gateway belum tersambung. Silakan coba kembali.');
+          if (resultEl?.isConnected) resultEl.innerHTML = `<div class="notice warning">${escapeHtml(message)}</div>`;
+        }
+        await refreshStatus();
+        await refreshTopWaStatus();
+        return;
       }
-      await loadWahaStatus({ force: true });
+      await refreshStatus();
       await refreshTopWaStatus();
     } catch (error) {
-      if (resultEl) resultEl.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
-      await loadWahaStatus({ force: true });
+      if (resultEl?.isConnected) resultEl.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+      await refreshStatus();
       await refreshTopWaStatus();
+    } finally {
+      connecting = false;
+      if (button.isConnected) button.disabled = false;
     }
   });
 }
@@ -26753,6 +26971,19 @@ accountProfileMenu?.addEventListener('click', () => {
 });
 
 accountLogoutMenu?.addEventListener('click', logoutCurrentUser);
+window.addEventListener('storage', (event) => {
+  if (event.key !== PAYMENT_LOGOUT_KEY || !event.newValue) return;
+  suppressPaymentNotifications();
+  window.clearInterval(notificationsTimer);
+  if (!state.auth) return;
+  state.auth = null;
+  state.csrfToken = '';
+  abortPageRequests();
+  clearRealtimeTimers();
+  hideNotifications();
+  if (modal?.open) modal.close();
+  renderLogin();
+});
 
 logoutButton?.addEventListener('click', logoutCurrentUser);
 

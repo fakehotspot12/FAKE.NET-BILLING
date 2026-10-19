@@ -1017,8 +1017,13 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       continue;
     }
     const proration = postpaidCycleProrationInfo(data.settings, customer, selectedPeriod);
-    const firstInvoicePaidProration = Boolean(proration && customerFirstInvoicePaid(customer));
-    if (proration && !customerFirstInvoiceUnpaid(customer) && !firstInvoicePaidProration) {
+    const registrationPeriod = periodFromDateText(customer.activeDate || customer.installedAt || customer.createdAt || '');
+    // Paid at registration must not settle a first cycle that falls in a later month.
+    const firstInvoicePaidProration = Boolean(proration
+      && customerFirstInvoicePaid(customer)
+      && selectedPeriod === registrationPeriod);
+    if (proration && !customerBillableInPeriod(customer, selectedPeriod)
+      && !customerFirstInvoiceUnpaid(customer) && !firstInvoicePaidProration) {
       continue;
     }
     if (!customerBillableInPeriod(customer, selectedPeriod) && !proration) {

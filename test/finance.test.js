@@ -281,6 +281,133 @@ test('postpaid billing cycle records paid prorata when first invoice was paid', 
   assert.equal(august.every((invoice) => invoice.prorated === false), true);
 });
 
+test('paid registration does not settle next-month postpaid cycle prorata', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 15;
+  const cases = [
+    { id: 'cus-psb-september-18', activeDate: '2026-09-18', price: 150000, expected: 140000, days: 28 },
+    { id: 'cus-psb-september-21', activeDate: '2026-09-21', price: 180000, expected: 150000, days: 25 }
+  ];
+  for (const row of cases) data.customers.push({
+    id: row.id,
+    username: `${row.id}@isp.test`,
+    name: row.id,
+    status: 'active',
+    paymentType: 'postpaid',
+    billingPeriod: 'cycle',
+    activeDate: row.activeDate,
+    createdAt: `${row.activeDate}T01:00:00.000Z`,
+    firstInvoiceStatus: 'paid',
+    initialInvoiceStatus: 'paid',
+    nextDue: '2026-10-15',
+    dueDate: '2026-10-15',
+    price: row.price
+  });
+
+  assert.equal(generateInvoices(data, '2026-09').length, 0);
+  const october = generateInvoices(data, '2026-10');
+  assert.equal(october.length, cases.length);
+  for (const row of cases) {
+    const invoice = october.find(item => item.customerId === row.id);
+    assert.equal(invoice.status, 'pending');
+    assert.equal(invoice.paidAt, '');
+    assert.equal(invoice.paymentMethod, '');
+    assert.equal(invoice.dueDate, '2026-10-15');
+    assert.equal(invoice.amount, row.expected);
+    assert.equal(invoice.proration.usedDays, row.days);
+    assert.doesNotMatch(invoice.notes, /dibayar awal/i);
+    assert.equal(data.customers.find(item => item.id === row.id).firstInvoiceStatus, 'paid');
+  }
+  assert.equal(generateInvoices(data, '2026-10').length, 0);
+  const november = generateInvoices(data, '2026-11');
+  assert.equal(november.length, cases.length);
+  for (const row of cases) {
+    const invoice = november.find(item => item.customerId === row.id);
+    assert.equal(invoice.amount, row.price);
+    assert.equal(invoice.status, 'pending');
+    assert.equal(invoice.prorated, false);
+  }
+});
+
+test('paid registration never settles the following cycle across due-day and year boundaries', () => {
+  for (const dueDay of [5, 10, 15, 20]) {
+    const data = createDefaultStore();
+    data.settings.billing.postpaidDueDay = dueDay;
+    data.customers.push({
+      id: `cus-december-${dueDay}`, username: `psb-${dueDay}@isp.test`, status: 'active',
+      paymentType: 'postpaid', billingPeriod: 'cycle', activeDate: '2026-12-21',
+      firstInvoiceStatus: 'paid', initialInvoiceStatus: 'paid', price: 150000,
+      nextDue: `2027-01-${String(dueDay).padStart(2, '0')}`
+    });
+    const january = generateInvoices(data, '2027-01');
+    assert.equal(january.length, 1);
+    assert.equal(january[0].status, 'pending');
+    assert.equal(january[0].paidAt, '');
+  }
+});
+
+test('a first postpaid cycle in the following month is generated without an explicit registration status', () => {
+  const data = createDefaultStore();
+  data.settings.billing.postpaidDueDay = 15;
+  data.customers.push({
+    id: 'cus-psb-unspecified', username: 'unspecified@isp.test', status: 'active',
+    paymentType: 'postpaid', billingPeriod: 'cycle', activeDate: '2026-09-21', price: 180000,
+    nextDue: '2026-10-15'
+  });
+  const created = generateInvoices(data, '2026-10');
+  assert.equal(created.length, 1);
+  assert.equal(created[0].status, 'pending');
+  assert.equal(created[0].amount, 150000);
+});
+
+test('restored next-month cycle invoices stay unpaid during store normalization and generation', () => {
+  const data = ensureShape({
+    settings: { billing: { postpaidDueDay: 15 } },
+    customers: [{
+      id: 'cus-restored-psb', username: 'restored@isp.test', status: 'active',
+      paymentType: 'postpaid', billingPeriod: 'cycle', activeDate: '2026-09-21', price: 180000,
+      firstInvoiceStatus: 'paid', initialInvoiceStatus: 'paid', nextDue: '2026-11-15'
+    }],
+    invoices: [{
+      id: 'inv-restored-october', invoiceNo: '000123', customerId: 'cus-restored-psb',
+      source: 'generated', period: '2026-10', coveredPeriods: ['2026-10'], status: 'pending',
+      amount: 150000, totalAmount: 150000, dueDate: '2026-10-15', paidAt: '', paymentMethod: '',
+      prorated: true, notes: 'Prorata 25/30 hari'
+    }]
+  });
+  assert.equal(data.invoices[0].status, 'pending');
+  assert.equal(generateInvoices(data, '2026-10').length, 0);
+  assert.equal(ensureShape(data).invoices[0].status, 'pending');
+});
+
+test('paid PSB in Fixed billing leaves the next month unpaid at the customer due date', () => {
+  for (const sample of [
+    { paymentType: 'postpaid', activeDate: '2026-09-18', dueDay: 18, nextDue: '2026-10-18' },
+    { paymentType: 'postpaid', activeDate: '2026-09-21', dueDay: 21, nextDue: '2026-10-21' },
+    { paymentType: 'prepaid', activeDate: '2026-09-21', dueDay: 21, nextDue: '2026-10-21' },
+    { paymentType: 'postpaid', activeDate: '2026-09-21', dueDay: 21, billingDueDayOverride: 10, nextDue: '2026-10-10' }
+  ]) {
+    const data = createDefaultStore();
+    data.settings.billing.postpaidDueDay = 15;
+    data.customers.push({
+      id: 'cus-fixed-paid-psb', username: 'fixed-paid-psb@isp.test', status: 'active',
+      billingPeriod: 'fixed', firstInvoiceStatus: 'paid', initialInvoiceStatus: 'paid',
+      price: 180000, ...sample
+    });
+    assert.equal(generateInvoices(data, '2026-09').length, 0);
+    const october = generateInvoices(data, '2026-10');
+    assert.equal(october.length, 1);
+    assert.equal(october[0].status, 'pending');
+    assert.equal(october[0].paidAt, '');
+    assert.equal(october[0].paymentMethod, '');
+    assert.equal(october[0].amount, 180000);
+    assert.equal(october[0].dueDate, sample.nextDue);
+    assert.equal(october[0].prorated, false);
+    assert.equal(generateInvoices(data, '2026-10').length, 0);
+    assert.equal(data.customers[0].firstInvoiceStatus, 'paid');
+  }
+});
+
 test('invoice generation respects a paid member next due period', () => {
   const data = createDefaultStore();
   data.customers.push(
@@ -2212,7 +2339,7 @@ test('standalone billing automation sends deferred invoice issued notification a
   assert.equal(after.invoiceIssuedInvoices.length, 1);
 });
 
-test('standalone billing automation does not send invoice issued WA for paid initial prorata', () => {
+test('standalone billing automation does not send invoice issued WA for same-month paid initial prorata', () => {
   const data = createDefaultStore();
   data.settings.appMode = 'standalone';
   data.settings.billingSource = 'local';
@@ -2229,20 +2356,49 @@ test('standalone billing automation does not send invoice issued WA for paid ini
     price: 150000,
     paymentType: 'postpaid',
     billingPeriod: 'cycle',
-    activeDate: '2026-08-21',
+    activeDate: '2026-08-10',
     firstInvoiceStatus: 'paid',
-    nextDue: '2026-10-15',
-    dueDate: '2026-10-15'
+    nextDue: '2026-09-15',
+    dueDate: '2026-09-15'
   });
 
-  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-09-01T00:10:00.000Z') });
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, { now: new Date('2026-08-10T00:10:00.000Z') });
 
   assert.equal(result.created.length, 1);
   assert.equal(result.created[0].status, 'paid');
-  assert.equal(result.created[0].amount, 130000);
-  assert.equal(result.created[0].paidAt, '2026-08-21');
+  assert.equal(result.created[0].amount, 30000);
+  assert.equal(result.created[0].paidAt, '2026-08-10');
   assert.equal(result.invoiceIssuedInvoices.length, 0);
   assert.equal(data.waMessages.filter((message) => message.type === 'invoiceIssued').length, 0);
+});
+
+test('standalone cycle automation issues next-month unpaid invoice and WA after paid PSB', () => {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = true;
+  data.settings.billing.postpaidDueDay = 15;
+  data.settings.billing.fixedInvoiceAdvanceDays = 14;
+  data.settings.billing.notificationSendTime = '08:00';
+  data.customers.push({
+    id: 'cus-psb-next-month-wa', username: 'psb-next-month@isp.test', name: 'Paid PSB',
+    status: 'active', phone: '081234567890', price: 180000,
+    paymentType: 'postpaid', billingPeriod: 'cycle', activeDate: '2026-09-21',
+    firstInvoiceStatus: 'paid', initialInvoiceStatus: 'paid',
+    nextDue: '2026-10-15', dueDate: '2026-10-15'
+  });
+  const options = { now: new Date('2026-10-01T00:10:00.000Z') };
+  const result = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, options);
+  assert.equal(result.created.length, 1);
+  assert.equal(result.created[0].period, '2026-10');
+  assert.equal(result.created[0].status, 'pending');
+  assert.equal(result.created[0].amount, 150000);
+  assert.equal(result.created[0].paidAt, '');
+  assert.equal(result.invoiceIssuedInvoices.length, 1);
+  assert.equal(data.waMessages.filter(message => message.type === 'invoiceIssued').length, 1);
+  const again = serverInternals.standaloneBillingAutomation(data, { name: 'Billing Test' }, options);
+  assert.equal(again.created.length, 0);
+  assert.equal(data.waMessages.filter(message => message.type === 'invoiceIssued').length, 1);
 });
 
 test('manual invoice discount updates unpaid invoice without changing recurring member discount', () => {
@@ -7277,6 +7433,7 @@ test('online payment Web Push resolves role permissions from stored users', () =
   data.webPushSubscriptions = data.users.map((user) => ({
     id: `push-${user.id}`,
     userId: user.id,
+    sessionKey: `bound-${user.id}`,
     endpoint: `https://push.example.test/${user.id}`,
     enabled: true
   }));
@@ -7287,7 +7444,8 @@ test('online payment Web Push resolves role permissions from stored users', () =
     enabled: false
   });
 
-  const recipients = serverInternals.eligibleWebPushSubscriptions(data);
+  const bindings = new Map(data.users.map(user => [`bound-${user.id}`, user.id]));
+  const recipients = serverInternals.eligibleWebPushSubscriptions(data, bindings);
   assert.deepEqual(recipients.map((row) => row.userId), ['admin-id', 'owner-id', 'finance-id']);
 });
 

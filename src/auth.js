@@ -44,6 +44,7 @@ const ROLE_DEFINITIONS = {
       'invoices:manage',
       'billing-settings:manage',
       'wa-gateway:manage',
+      'wa-gateway:recover',
       'payment-gateway:manage',
       'xendit:read',
       'xendit:balance',
@@ -79,6 +80,7 @@ const ROLE_DEFINITIONS = {
       'invoices:manage',
       'billing-settings:manage',
       'wa-gateway:manage',
+      'wa-gateway:recover',
       'payment-gateway:manage',
       'xendit:read',
       'xendit:balance',
@@ -113,6 +115,7 @@ const ROLE_DEFINITIONS = {
       'invoices:manage',
       'billing-settings:manage',
       'wa-gateway:manage',
+      'wa-gateway:recover',
       'payment-gateway:manage',
       'xendit:read',
       'radius:read',
@@ -126,6 +129,7 @@ const ROLE_DEFINITIONS = {
       'dashboard:read',
       'activity:read',
       'diagnostics:read',
+      'wa-gateway:recover',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',
@@ -594,7 +598,24 @@ function validateCsrfToken(req, token = '') {
   return timingSafeStringEqual(session.csrfToken || '', token);
 }
 
-function requestUser(req, data) {
+function sessionFingerprint(sessionId = '') {
+  return sessionId ? crypto.createHash('sha256').update(String(sessionId)).digest('hex') : '';
+}
+
+function activeSessionBindings(now = Date.now()) {
+  loadSessions();
+  const bindings = new Map();
+  for (const [id, session] of sessions) {
+    if (Number(session.expiresAt || 0) > now) bindings.set(sessionFingerprint(id), String(session.userId || ''));
+  }
+  return bindings;
+}
+
+function sessionBindingActive(binding = '', userId = '') {
+  return Boolean(binding && userId && activeSessionBindings().get(String(binding)) === String(userId));
+}
+
+function requestUser(req, data, options = {}) {
   loadSessions();
   const sessionId = getSessionId(req);
   const session = sessions.get(sessionId);
@@ -615,8 +636,10 @@ function requestUser(req, data) {
     return null;
   }
 
-  session.expiresAt = Date.now() + Number(session.maxAgeSeconds || SESSION_DEFAULT_AGE_SECONDS) * 1000;
-  scheduleSessionSave();
+  if (options.refresh !== false) {
+    session.expiresAt = Date.now() + Number(session.maxAgeSeconds || SESSION_DEFAULT_AGE_SECONDS) * 1000;
+    scheduleSessionSave();
+  }
   return userWithSession(user);
 }
 
@@ -936,6 +959,7 @@ function radbooxCredentialsForUser(data = {}, user = {}) {
 
 module.exports = {
   SESSION_COOKIE,
+  activeSessionBindings,
   clearSessionCookie,
   createSession,
   csrfTokenForSessionId,
@@ -953,6 +977,8 @@ module.exports = {
   radbooxCredentialsForUser,
   requestUser,
   sessionMaxAgeSeconds,
+  sessionFingerprint,
+  sessionBindingActive,
   sessionCookie,
   updateOwnProfile,
   updateUser,
