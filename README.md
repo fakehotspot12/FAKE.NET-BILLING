@@ -225,6 +225,7 @@ Fitur ini **nonaktif secara default**. Aktifkan `Aktifkan Janji Bayar` di `Radiu
 - Tanggal maksimal adalah satu bulan kalender dari jatuh tempo tunggakan tertua, bukan dari tanggal perubahan janji. Tanggal akhir bulan disesuaikan ke hari terakhir bulan berikutnya jika diperlukan.
 - Contoh: jatuh tempo 25 Oktober, janji bayar 30 Oktober. Tagihan tercakup ditahan sampai akhir 30 Oktober. Jika masih belum dibayar, isolir diproses mulai 31 Oktober pada jam isolir otomatis yang diatur, tanpa tambahan masa tenggang.
 - Tanggal, periode, nominal, dan status pembayaran invoice asli tetap. Invoice lain yang belum dicakup janji tetap mengikuti aturan billing biasa.
+- Ringkasan di bawah Catatan menampilkan jadwal yang sudah tersimpan, bukan tanggal hari ini atau calon janji yang sedang dipilih. Tanpa janji, ringkasan mengikuti jatuh tempo dan masa tenggang normal; perubahan tanggal baru berlaku setelah Simpan.
 - Pengecualian isolir pelanggan tetap diprioritaskan. Janji tidak mengaktifkan akun terminated atau isolir manual, dan tidak menimpa kebijakan aktivasi sementara tanpa batas.
 - Pembayaran menyelesaikan janji ketika seluruh tagihan tercakup sudah lunas. Pembatalan janji mengembalikan aturan isolir normal. Menonaktifkan fitur saat ada janji aktif memerlukan konfirmasi pembatalan.
 - Riwayat janji tersimpan pada audit internal. Fitur memakai scheduler existing tanpa polling jaringan tambahan.

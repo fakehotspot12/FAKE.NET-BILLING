@@ -20,7 +20,7 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const appSource = publicSource('app.js');
 
   assert.match(indexSource, /href="\/boot\.css\?ui=billing-view-audit-20260822"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?ui=billing-view-audit-20260822"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=payment-promise-real-dates-20261021"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
@@ -41,6 +41,19 @@ test('loads the lightweight bootstrap before the full authenticated application'
   assert.match(bootStyleSource, /body\.is-loading-auth \.content::before/);
   assert.match(bootStyleSource, /display: none !important/);
   assert.match(bootStyleSource, /\.boot-app-pending/);
+});
+
+test('versions the bootstrap entry point and matches fresh application asset revisions', () => {
+  const html = publicSource('index.html');
+  const bootstrap = publicSource('bootstrap.js');
+  const entry = html.match(/src="(\/bootstrap\.js\?[^"]+)"/);
+  assert(entry, 'The HTML must load a versioned bootstrap');
+  const query = new URL(entry[1], 'https://billing.example.test').searchParams;
+  const revision = bootstrap.match(/const assetRevision = '([^']+)'/)[1];
+  assert.equal(query.get('v'), 'fakenet-billing-__FAKENET_APP_VERSION__');
+  assert.equal(query.get('ui'), revision);
+  assert.match(bootstrap, /const appScriptUrl = `\/app\.js\?v=fakenet-billing-\$\{appVersion\}&ui=\$\{assetRevision\}`/);
+  assert.match(bootstrap, /const appStyleUrl = `\/styles\.css\?v=fakenet-billing-\$\{appVersion\}&ui=\$\{assetRevision\}`/);
 });
 
 test('keeps the login viewport dark through bootstrap and authenticated app handoff', () => {

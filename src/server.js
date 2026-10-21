@@ -12057,11 +12057,14 @@ function billingPaymentPromiseOperation(data, payload, actor, now = new Date()) 
     paymentPromise.cancel(data, customer, actor);
   } else if (action !== 'preview') throw new Error('Aksi janji bayar tidak dikenal');
   const result = action === 'preview' ? context : paymentPromise.preview(data, invoice, customer, user, today);
+  const normalDueDate = result.invoices.reduce((oldest, item) => item.dueDate < oldest ? item.dueDate : oldest, invoice.dueDate);
+  const graceDays = Math.max(0, Number(data.settings.billing.suspendGraceDays || 0));
   return {
     customer: { id: customer.id, name: customer.name || customer.username, status: customer.status },
     minDate: result.minDate, maxDate: result.maxDate, revision: result.revision,
     promise: result.promise, today,
     isolationTime: data.settings.billing.autoSuspendTime || '13:30',
+    normalSchedule: { dueDate: normalDueDate, isolationDate: graceDays > 0 ? addDaysIso(normalDueDate, graceDays) : '' },
     excluded: customer.billingIsolationOverride === true || user.billingIsolationOverride === true,
     invoices: result.invoices.map(item => ({ id: item.id, invoiceNo: displayBillingInvoiceNo(item.externalId || item.invoiceNo || item.id), dueDate: item.dueDate, amount: Number(item.amount || 0) })),
     activatedUser

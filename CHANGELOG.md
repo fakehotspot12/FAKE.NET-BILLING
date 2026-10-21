@@ -12,6 +12,10 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Memastikan ringkasan di bawah Catatan Janji Bayar selalu menampilkan jadwal yang sudah tersimpan: jatuh tempo dan isolir normal jika belum ada janji, atau tanggal janji existing jika sudah dibuat. Memilih calon tanggal baru tidak mengganti ringkasan sebelum disimpan.
+- Menghilangkan pengisian otomatis tanggal hari ini pada janji baru dan mengunci Simpan sampai tanggal valid dipilih, tanpa mengubah default date picker pada form lain.
+- Meringkas tanggal ringkasan dengan nama bulan Indonesia dan jam isolir dari Billing Setting, termasuk pergantian bulan/tahun serta kondisi pengecualian atau isolir otomatis nonaktif.
+- Memberi versi pada URL bootstrap dan menyamakan revisi cache aset aplikasi agar perubahan tampilan segera diambil melalui domain, tanpa menghapus sesi login atau cache data pelanggan.
 - Mempertahankan tanggal, periode, nominal, dan histori invoice asli; Janji Bayar tidak mengubah tagihan menjadi paid atau membatalkan pengecualian isolir pelanggan.
 - Menyelesaikan janji otomatis ketika tagihan tercakup sudah dibayar, menolak perubahan dari data popup yang sudah usang, serta meminta konfirmasi sebelum menonaktifkan fitur ketika masih ada janji aktif.
 - Memastikan aktivasi kembali hanya untuk isolir billing, tidak melewati isolir manual atau terminated, dengan sinkron RADIUS/CoA melalui alur existing.

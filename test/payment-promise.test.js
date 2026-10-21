@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const promise = require('../src/payment-promise');
 const { createDefaultStore, ensureShape } = require('../src/store');
 const { markInvoicePaid, markInvoiceUnpaid } = require('../src/finance');
@@ -243,10 +244,101 @@ test('UI toggle stays beside merge, promise actions are feature/permission gated
   const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
   assert.match(source, /billing-policy-toggles[\s\S]*name="mergeInvoice"[\s\S]*name="paymentPromiseEnabled"/);
   assert.match(source, /standaloneBilling && paymentPromiseEnabled && can\('invoices:manage'\)/);
-  assert.match(source, /escapeHtml\(active \? payload\.promise\.note/);
+  assert.match(source, /escapeHtml\(savedPromise \? payload\.promise\.note/);
+  assert.match(source, /const date = savedPromise \? payload\.promise\.date : ''/);
+  assert.match(source, /allowEmpty: true, placeholder: 'Pilih tanggal janji bayar'/);
   assert.match(source, /cancelActivePromises = true/);
   assert.match(fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8'), /automation\?\.paymentPromiseUpdates\?\.length/);
   for (const file of ['install.sh', 'deploy/bin/fakenet-billing-update']) {
     assert.match(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), /src\/payment-promise\.js/);
   }
+});
+
+test('promise deadline notice uses compact Indonesian dates and the configured isolation time', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  const modal = source.slice(source.indexOf('async function openBillingPaymentPromiseModal'), source.indexOf('function billingActionButtons'));
+  const update = modal.match(/const update = \(\) => \{([\s\S]*?)\n  \};/)[1];
+  const months = source.match(/const MONTH_LABELS = (\[[^\n]+\]);/)[0];
+  for (const [date, time, expected] of [
+    ['2026-10-21', '13:30', 'Janji Bayar 21 Okt, Isolir 22 Okt 13:30'],
+    ['2026-10-31', '07:45', 'Janji Bayar 31 Okt, Isolir 1 Nov 07:45'],
+    ['2026-12-31', '13:30', 'Janji Bayar 31 Des, Isolir 1 Jan 13:30'],
+    ['2028-02-28', '13:30', 'Janji Bayar 28 Feb, Isolir 29 Feb 13:30'],
+    ['', '13:30', 'Jadwal tagihan belum tersedia.']
+  ]) {
+    const notice = {};
+    vm.runInNewContext(`${months}\n${update}`, {
+      input: { value: date }, payload: { invoices: [], isolationTime: time, promise: date ? { status: 'active', date } : null }, unavailable: false,
+      modalBody: { querySelector: selector => selector === '[data-promise-deadline]' ? notice : {} }
+    });
+    assert.equal(notice.textContent, expected);
+  }
+});
+
+test('an unset promise preview reports actual normal billing dates without changing data', () => {
+  const data = fixture('2026-10-10');
+  Object.assign(data.settings.billing, { suspendGraceDays: 5, autoSuspendTime: '09:15' });
+  const before = structuredClone(data);
+  const preview = server.billingPaymentPromiseOperation(data, { invoiceId: data.invoices[0].id }, actor, at('2026-10-21'));
+  assert.equal(preview.minDate, '2026-10-21');
+  assert.equal(preview.promise, null);
+  assert.deepEqual(preview.normalSchedule, { dueDate: '2026-10-10', isolationDate: '2026-10-15' });
+  assert.equal(preview.isolationTime, '09:15');
+  assert.deepEqual(data, before);
+  data.settings.billing.suspendGraceDays = 0;
+  const disabled = server.billingPaymentPromiseOperation(data, { invoiceId: data.invoices[0].id }, actor, at('2026-10-21'));
+  assert.deepEqual(disabled.normalSchedule, { dueDate: '2026-10-10', isolationDate: '' });
+});
+
+test('an empty promise date shows the real due date and normal isolation, not today or H+1', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  const modal = source.slice(source.indexOf('async function openBillingPaymentPromiseModal'), source.indexOf('function billingActionButtons'));
+  const update = modal.match(/const update = \(\) => \{([\s\S]*?)\n  \};/)[1];
+  const months = source.match(/const MONTH_LABELS = (\[[^\n]+\]);/)[0];
+  for (const [normalSchedule, excluded, expected] of [
+    [{ dueDate: '2026-10-10', isolationDate: '2026-10-15' }, false, 'Jatuh Tempo 10 Okt, Isolir 15 Okt 09:15'],
+    [{ dueDate: '2026-11-04', isolationDate: '2026-11-09' }, false, 'Jatuh Tempo 4 Nov, Isolir 9 Nov 09:15'],
+    [{ dueDate: '2026-10-10', isolationDate: '' }, false, 'Jatuh Tempo 10 Okt, Isolir otomatis nonaktif'],
+    [{ dueDate: '2026-10-10', isolationDate: '2026-10-15' }, true, 'Jatuh Tempo 10 Okt, Dikecualikan dari isolir']
+  ]) for (const selected of ['', '2026-10-30']) {
+    const notice = {}, submit = {};
+    vm.runInNewContext(`${months}\n${update}`, {
+      input: { value: selected }, unavailable: false,
+      payload: { invoices: [], isolationTime: '09:15', minDate: '2026-10-21', maxDate: '2026-11-10', normalSchedule, excluded },
+      modalBody: { querySelector: selector => selector === '[data-promise-deadline]' ? notice : selector === 'button[type="submit"]' ? submit : {} }
+    });
+    assert.equal(notice.textContent, expected);
+    assert.equal(submit.disabled, !selected);
+  }
+});
+
+test('changing a draft promise never replaces the displayed saved promise schedule', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  const modal = source.slice(source.indexOf('async function openBillingPaymentPromiseModal'), source.indexOf('function billingActionButtons'));
+  const update = modal.match(/const update = \(\) => \{([\s\S]*?)\n  \};/)[1];
+  const months = source.match(/const MONTH_LABELS = (\[[^\n]+\]);/)[0];
+  for (const date of ['2026-10-23', '2026-10-30', '2026-11-01']) {
+    const notice = {};
+    vm.runInNewContext(`${months}\n${update}`, {
+      input: { value: date }, unavailable: false,
+      payload: { invoices: [], isolationTime: '09:15', minDate: '2026-10-21', maxDate: '2026-11-10', promise: { status: 'active', date: '2026-10-25' } },
+      modalBody: { querySelector: selector => selector === '[data-promise-deadline]' ? notice : {} }
+    });
+    assert.equal(notice.textContent, 'Janji Bayar 25 Okt, Isolir 26 Okt 09:15');
+  }
+});
+
+test('an explicitly empty promise picker never falls back to today', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  const picker = source.slice(source.indexOf('function datePickerControl('), source.indexOf('function closeDatePickers('));
+  const context = {
+    todayInput: () => '2026-10-21', dateIsoInput: () => '2026-10-21',
+    dateDisplayInput: () => '21/10/2026', escapeHtml: value => String(value)
+  };
+  const empty = vm.runInNewContext(`${picker}\ndatePickerControl({ name: 'date', value: '', allowEmpty: true, placeholder: 'Pilih tanggal janji bayar' })`, context);
+  assert.match(empty, /name="date" type="hidden" value=""/);
+  assert.match(empty, /Pilih tanggal janji bayar/);
+  assert.doesNotMatch(empty, /2026-10-21|21\/10\/2026/);
+  const normal = vm.runInNewContext(`${picker}\ndatePickerControl({ name: 'normal' })`, context);
+  assert.match(normal, /value="2026-10-21"/);
 });

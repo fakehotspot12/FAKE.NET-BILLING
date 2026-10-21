@@ -9068,6 +9068,8 @@ function datePickerControl(options = {}) {
     value = todayInput(),
     required = false,
     disabled = false,
+    allowEmpty = false,
+    placeholder = 'Pilih tanggal',
     min = '',
     max = '',
     className = ''
@@ -9077,8 +9079,9 @@ function datePickerControl(options = {}) {
   const safeClass = className ? ` ${escapeHtml(className)}` : '';
   const requiredAttr = required ? ' required' : '';
   const disabledAttr = disabled ? ' disabled' : '';
-  const isoValue = dateIsoInput(value);
-  const displayValue = dateDisplayInput(value);
+  const empty = allowEmpty && !String(value || '').trim();
+  const isoValue = empty ? '' : dateIsoInput(value);
+  const displayValue = empty ? placeholder : dateDisplayInput(value);
   return `
     <div class="date-picker-control${safeClass}" data-date-picker${min ? ` data-date-min="${escapeHtml(min)}"` : ''}${max ? ` data-date-max="${escapeHtml(max)}"` : ''}>
       <input${safeId}${safeName} type="hidden" value="${escapeHtml(isoValue)}" data-date-picker-value${requiredAttr}${disabledAttr}>
@@ -9141,7 +9144,7 @@ function renderDatePicker(picker) {
     if (day < 1 || day > daysInMonth) {
       return '<span class="date-picker-day is-empty"></span>';
     }
-    const isSelected = selected.year === viewYear && selected.month === viewMonth + 1 && selected.day === day;
+    const isSelected = Boolean(input.value) && selected.year === viewYear && selected.month === viewMonth + 1 && selected.day === day;
     const isToday = today.year === viewYear && today.month === viewMonth + 1 && today.day === day;
     const isoDay = formatDateIsoFromParts({ year: viewYear, month: viewMonth + 1, day });
     const outsideRange = (picker.dataset.dateMin && isoDay < picker.dataset.dateMin) || (picker.dataset.dateMax && isoDay > picker.dataset.dateMax);
@@ -19406,24 +19409,26 @@ async function openBillingPaymentPromiseModal(invoice) {
   const invoiceId = invoice.invoiceId || invoice.id;
   const payload = await api(`/api/monitoring/billing-payment-promise?${queryString({ invoiceId })}`);
   const active = payload.promise?.status === 'active';
-  const date = active ? payload.promise.date : payload.minDate;
+  const savedPromise = ['active', 'broken'].includes(payload.promise?.status);
+  const date = savedPromise ? payload.promise.date : '';
   const unavailable = payload.excluded || payload.minDate > payload.maxDate;
   openModal('Janji Bayar', `
     <div class="form-grid payment-promise-form">
       <div class="field full"><strong>${escapeHtml(payload.customer.name)}</strong><span class="muted">${escapeHtml(billingInvoiceNo(invoice))}</span></div>
-      <label class="field"><span>Tanggal janji bayar</span>${datePickerControl({ name: 'date', value: date, min: payload.minDate, max: payload.maxDate, required: true, disabled: unavailable })}</label>
+      <label class="field"><span>Tanggal janji bayar</span>${datePickerControl({ name: 'date', value: date, min: payload.minDate, max: payload.maxDate, required: true, disabled: unavailable, allowEmpty: true, placeholder: 'Pilih tanggal janji bayar' })}</label>
       <label class="field"><span>Batas maksimal</span><input value="${escapeHtml(dateText(payload.maxDate))}" readonly></label>
-      <label class="field full"><span>Catatan</span><textarea name="note" rows="2" maxlength="500" ${unavailable ? 'disabled' : ''}>${escapeHtml(active ? payload.promise.note || '' : '')}</textarea></label>
+      <label class="field full"><span>Catatan</span><textarea name="note" rows="2" maxlength="500" ${unavailable ? 'disabled' : ''}>${escapeHtml(savedPromise ? payload.promise.note || '' : '')}</textarea></label>
       <div class="notice field full" data-promise-deadline></div>
       ${unavailable ? `<div class="notice warning field full">${payload.excluded ? 'Pelanggan memiliki pengecualian isolir atau aktivasi manual tanpa batas. Atur pengecualian di Payment Pelanggan sebelum memakai janji bayar.' : 'Batas satu bulan dari jatuh tempo tertua sudah terlewat. Janji bayar baru tidak dapat dibuat.'}</div>` : ''}
       <div class="field full payment-promise-invoices" data-promise-invoices></div>
       <div class="modal-actions field full">
         ${active ? '<button class="danger-button" type="button" data-cancel-payment-promise>Batalkan Janji</button>' : ''}
         <button class="ghost-button" type="button" data-close-modal>Tutup</button>
-        <button class="button" type="submit" ${unavailable ? 'disabled' : ''}>Simpan Janji Bayar</button>
+        <button class="button" type="submit" ${unavailable || !date ? 'disabled' : ''}>Simpan Janji Bayar</button>
       </div>
     </div>
   `, async values => {
+    if (!values.date) throw new Error('Pilih tanggal janji bayar terlebih dahulu');
     const result = await api('/api/monitoring/billing-payment-promise', {
       method: 'POST', body: JSON.stringify({ ...values, action: 'save', invoiceId, revision: payload.revision })
     });
@@ -19433,12 +19438,22 @@ async function openBillingPaymentPromiseModal(invoice) {
   const input = modalBody.querySelector('input[name="date"]');
   const update = () => {
     const selected = input.value;
-    const next = new Date(`${selected}T00:00:00Z`);
+    const actualPromise = ['active', 'broken'].includes(payload.promise?.status) ? payload.promise : null;
+    const promised = new Date(`${actualPromise?.date || ''}T00:00:00Z`);
+    const next = new Date(promised);
     next.setUTCDate(next.getUTCDate() + 1);
+    const shortDate = value => `${value.getUTCDate()} ${MONTH_LABELS[value.getUTCMonth()]}`;
+    const normal = payload.normalSchedule || {};
+    const due = new Date(`${normal.dueDate}T00:00:00Z`);
+    const normalIsolation = new Date(`${normal.isolationDate}T00:00:00Z`);
+    const normalStatus = payload.excluded ? 'Dikecualikan dari isolir'
+      : Number.isFinite(normalIsolation.getTime()) ? `Isolir ${shortDate(normalIsolation)} ${payload.isolationTime}` : 'Isolir otomatis nonaktif';
     modalBody.querySelector('[data-promise-deadline]').textContent = Number.isFinite(next.getTime())
-      ? `Belum lunas: isolir mulai ${dateText(next.toISOString().slice(0, 10))} pukul ${payload.isolationTime} (${appTimeZoneLabel()}). Pengecualian isolir tetap berlaku.` : 'Pilih tanggal janji bayar.';
-    const covered = payload.invoices.filter(item => item.dueDate <= selected);
-    modalBody.querySelector('[data-promise-invoices]').innerHTML = `<span>Tagihan yang dicakup</span>${covered.map(item => `<div class="payment-promise-invoice"><span><strong>${escapeHtml(item.invoiceNo)}</strong><small>Jatuh tempo ${escapeHtml(dateText(item.dueDate))}</small></span><strong>${rupiah(item.amount)}</strong></div>`).join('') || '<span class="muted">Belum ada tagihan pada tanggal dipilih.</span>'}`;
+      ? `Janji Bayar ${shortDate(promised)}, Isolir ${shortDate(next)} ${payload.isolationTime}`
+      : Number.isFinite(due.getTime()) ? `Jatuh Tempo ${shortDate(due)}, ${normalStatus}` : 'Jadwal tagihan belum tersedia.';
+    modalBody.querySelector('button[type="submit"]').disabled = unavailable || !selected || selected < payload.minDate || selected > payload.maxDate;
+    const covered = selected ? payload.invoices.filter(item => item.dueDate <= selected) : payload.invoices;
+    modalBody.querySelector('[data-promise-invoices]').innerHTML = `<span>${selected ? 'Tagihan yang dicakup' : 'Tagihan belum lunas'}</span>${covered.map(item => `<div class="payment-promise-invoice"><span><strong>${escapeHtml(item.invoiceNo)}</strong><small>Jatuh tempo ${escapeHtml(dateText(item.dueDate))}</small></span><strong>${rupiah(item.amount)}</strong></div>`).join('') || '<span class="muted">Belum ada tagihan pada tanggal dipilih.</span>'}`;
   };
   input.addEventListener('change', update);
   update();
