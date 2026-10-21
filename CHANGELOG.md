@@ -2,6 +2,26 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.15] - 2026-10-21
+
+### Added
+
+- Menambahkan Janji Bayar pada Monitoring Tagihan Pelanggan, dengan checkbox aktivasi di Billing Setting di sebelah Merge Invoice. Default nonaktif, termasuk setelah update pada instalasi existing.
+- Membatasi tanggal janji maksimal satu bulan kalender dari jatuh tempo tunggakan tertua, termasuk penyesuaian akhir bulan. Tunggakan yang dicakup ditahan sampai akhir tanggal janji, lalu diproses isolir H+1 pada jam isolir billing jika belum dibayar.
+- Mencatat pembuatan, perubahan, pembatalan, pemenuhan, dan pelanggaran janji pada audit internal, dengan pembatasan akses sesuai kewenangan dan NAS pelanggan.
+
+### Fixed
+
+- Mempertahankan tanggal, periode, nominal, dan histori invoice asli; Janji Bayar tidak mengubah tagihan menjadi paid atau membatalkan pengecualian isolir pelanggan.
+- Menyelesaikan janji otomatis ketika tagihan tercakup sudah dibayar, menolak perubahan dari data popup yang sudah usang, serta meminta konfirmasi sebelum menonaktifkan fitur ketika masih ada janji aktif.
+- Memastikan aktivasi kembali hanya untuk isolir billing, tidak melewati isolir manual atau terminated, dengan sinkron RADIUS/CoA melalui alur existing.
+- Menyimpan perubahan status akun RADIUS pada core PostgreSQL saat aktivasi atau isolir agar konsisten setelah restart, tanpa menulis ulang core pada pemeriksaan scheduler yang tidak mengubah status.
+- Melengkapi validasi payload installer/updater untuk modul Janji Bayar agar rilis tidak dipasang dalam keadaan file tidak lengkap.
+
+### Performance
+
+- Menggunakan scheduler billing existing dan indeks tunggakan per pelanggan, tanpa timer, polling jaringan, tabel, atau dependency tambahan.
+
 ## [4.3.14] - 2026-10-19
 
 ### Fixed

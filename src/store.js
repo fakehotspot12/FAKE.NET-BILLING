@@ -159,6 +159,7 @@ function createDefaultStore() {
         notifyPaymentStatus: true,
         notifyMemberStatus: true,
         mergeInvoice: false,
+        paymentPromiseEnabled: false,
         bhpUsoEnabled: false,
         bhpUsoRate: 1.25
       },

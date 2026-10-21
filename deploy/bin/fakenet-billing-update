@@ -276,6 +276,7 @@ verify_update_payload() {
     src/subweb-server.js
     src/radius-connector-service.js
     src/whatsapp-queue.js
+    src/payment-promise.js
     public/index.html
     public/app.js
     public/styles.css
@@ -525,7 +526,7 @@ install_node_dependencies() {
   fi
   rm -rf "$dependency_stage"
   dependency_stage=""
-  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue')" >/dev/null; then
+  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise')" >/dev/null; then
     rm -rf "$APP_DIR/node_modules"
     [ ! -d "$previous_modules" ] || mv "$previous_modules" "$APP_DIR/node_modules"
     echo "Verifikasi dependency baru gagal; dependency lama dipulihkan." >&2

@@ -86,6 +86,7 @@ const secureSecrets = require('./secure-secrets');
 const { BoundedJsonCache } = require('./bounded-json-cache');
 const { WhatsAppQueue } = require('./whatsapp-queue');
 const { createGatewayRecovery, restartLocalGateway } = require('./whatsapp-recovery');
+const paymentPromise = require('./payment-promise');
 const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, queryNormalizedPage, queryNormalizedRows, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
 
 const PORT = Number(process.env.PORT || 8891);
@@ -4156,6 +4157,7 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod(), options = 
         rawStatus: invoice.status || '',
         customerStatus,
         serviceStatus: customerStatus,
+        paymentPromise: paymentPromise.summary(customer),
         isIsolated: customerStatus === 'isolated',
         dueDate: invoice.dueDate || '',
         invoiceDate: invoice.createdAt || '',
@@ -11274,6 +11276,7 @@ function sanitizeBillingSettings(payload = {}, current = {}) {
     notifyPaymentStatus: payload.notifyPaymentStatus !== false,
     notifyMemberStatus: payload.notifyMemberStatus !== false,
     mergeInvoice: payload.mergeInvoice === true,
+    paymentPromiseEnabled: Object.hasOwn(payload, 'paymentPromiseEnabled') ? payload.paymentPromiseEnabled === true : current.paymentPromiseEnabled === true,
     bhpUsoEnabled: payload.bhpUsoEnabled === true,
     bhpUsoRate: Math.max(0, Math.min(100, Number(payload.bhpUsoRate ?? current.bhpUsoRate ?? 1.25) || 0))
   };
@@ -11407,11 +11410,13 @@ function billingAutomationTimeReady(settings = {}, field = '', now = new Date(),
   return localTimeText(now) >= sendTime;
 }
 
-function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, today = localTodayIso(), dateInitializations = []) {
+function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, today = localTodayIso(), dateInitializations = [], promiseInvoices = null) {
   const terminateAfterDays = clampInteger(settings.autoTerminateAfterDays, 0, 3650, 0);
   if (terminateAfterDays <= 0) return [];
   const paidCoverage = paidInvoiceCoverageByCustomer(data);
   const radiusLookup = indexedRadiusUserLookup(data);
+  const promises = settings.paymentPromiseEnabled === true
+    ? promiseInvoices || paymentPromise.openInvoicesByCustomer(data, today) : null;
   const unpaidCustomerIds = new Set((data.invoices || [])
     .filter((invoice) => ['pending', 'overdue'].includes(invoiceRuntimeStatus(invoice, today)))
     .filter((invoice) => invoiceUncoveredPeriods(invoice, paidCoverage).length > 0)
@@ -11425,6 +11430,8 @@ function autoTerminateOverdueCustomers(data = {}, settings = {}, actor = {}, tod
     if (normalizeCustomerStatusLocal(customer.status) !== 'isolated') continue;
     const user = radiusUserForCustomer(data, customer, radiusLookup);
     if (!user || radiusStatusForCustomer(user) !== 'isolated') continue;
+    if (customer.billingIsolationOverride === true || user.billingIsolationOverride === true) continue;
+    if (promises && paymentPromise.evaluate(customer, promises.get(customer.id) || [], today)?.holding) continue;
     const isolationSource = String(customer.isolationSource || user.isolationSource || '').trim().toLowerCase();
     if (!['billing', 'overdue', 'system', 'auto'].includes(isolationSource)) continue;
     const isolatedAt = String(user.isolatedAt || customer.isolatedAt || '').slice(0, 10);
@@ -11962,6 +11969,9 @@ function reactivateCustomerAfterPaidInvoice(data = {}, invoice = {}, actor = {})
   if (!customer?.id) {
     return { customer: null, activatedUser: null, requiresAdmin: false, source: '' };
   }
+  if (['active', 'broken'].includes(customer.paymentPromise?.status)) {
+    paymentPromise.reconcile({ ...data, customers: [customer] }, actor, localTodayIso(), false);
+  }
   const state = customerAutoReactivationState(data, customer);
   if (!state.eligible) {
     return {
@@ -12023,6 +12033,41 @@ async function finalizePaidInvoiceRadiusActivation(data = {}, activation = {}, a
   return { synced: true, syncResult, disconnects };
 }
 
+function billingPaymentPromiseOperation(data, payload, actor, now = new Date()) {
+  const invoice = (data.invoices || []).find(item => item.id === String(payload.invoiceId || ''));
+  if (!invoice || !invoiceMatchesBillingMonitorScope(data, invoice, actor)) throw new Error('Tagihan tidak ditemukan atau di luar kewenangan Anda');
+  const customer = (data.customers || []).find(item => item.id === invoice.customerId);
+  const user = customer && radiusUserForCustomer(data, customer);
+  if (!customer || !user || user.serviceType === 'hotspot') throw new Error('Member PPP-DHCP tidak ditemukan');
+  const today = localTodayIso(now);
+  const context = paymentPromise.preview(data, invoice, customer, user, today);
+  if (context.invoices.some(item => !invoiceMatchesBillingMonitorScope(data, item, actor))) throw new Error('Ada tagihan di luar kewenangan Anda; hubungi admin');
+  const action = payload.action || 'preview';
+  let activatedUser = null;
+  if (action === 'save') {
+    paymentPromise.save(data, invoice, customer, user, payload, actor, today,
+      item => invoiceMatchesBillingMonitorScope(data, item, actor));
+    if (radiusStatusForCustomer(user) === 'isolated' || normalizeCustomerStatusLocal(customer.status) === 'isolated') {
+      activatedUser = syncCustomerToRadiusActive(data, customer, actor);
+    }
+  } else if (action === 'cancel') {
+    if (!payload.revision || payload.revision !== context.revision) throw new Error('Data tagihan berubah. Buka ulang Janji Bayar');
+    if (context.invoices.filter(item => customer.paymentPromise?.invoiceIds?.includes(item.id))
+      .some(item => !invoiceMatchesBillingMonitorScope(data, item, actor))) throw new Error('Ada tagihan di luar kewenangan Anda');
+    paymentPromise.cancel(data, customer, actor);
+  } else if (action !== 'preview') throw new Error('Aksi janji bayar tidak dikenal');
+  const result = action === 'preview' ? context : paymentPromise.preview(data, invoice, customer, user, today);
+  return {
+    customer: { id: customer.id, name: customer.name || customer.username, status: customer.status },
+    minDate: result.minDate, maxDate: result.maxDate, revision: result.revision,
+    promise: result.promise, today,
+    isolationTime: data.settings.billing.autoSuspendTime || '13:30',
+    excluded: customer.billingIsolationOverride === true || user.billingIsolationOverride === true,
+    invoices: result.invoices.map(item => ({ id: item.id, invoiceNo: displayBillingInvoiceNo(item.externalId || item.invoiceNo || item.id), dueDate: item.dueDate, amount: Number(item.amount || 0) })),
+    activatedUser
+  };
+}
+
 function standaloneBillingAutomation(data = {}, actor = { username: 'billing-auto', name: 'Billing Auto' }, runtime = {}) {
   if (!standaloneMode(data)) return { created: [], invoiceIssuedInvoices: [], reminderInvoices: [], isolatedUsers: [], terminatedUsers: [], activatedUsers: [], voucherExpirations: { removed: [], updated: [], notices: [] } };
   const settings = data.settings?.billing || {};
@@ -12031,8 +12076,12 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   const today = localTodayIso(now);
   const period = normalizePeriod(String(today).slice(0, 7));
   const invoicePeriods = [...new Set([period, addMonthsToPeriod(period, 1)])];
+  const promiseInvoices = (data.customers || []).some(customer => ['active', 'broken'].includes(customer.paymentPromise?.status))
+    ? paymentPromise.openInvoicesByCustomer(data, today) : null;
+  const isolationTimeReady = localTimeText(now) >= (settings.autoSuspendTime || '13:30');
+  const paymentPromiseUpdates = promiseInvoices ? paymentPromise.reconcile(data, actor, today, isolationTimeReady, promiseInvoices) : [];
   const terminationDateInitializations = [];
-  const terminatedUsers = autoTerminateOverdueCustomers(data, settings, actor, today, terminationDateInitializations);
+  const terminatedUsers = autoTerminateOverdueCustomers(data, settings, actor, today, terminationDateInitializations, promiseInvoices);
   const created = invoicePeriods.flatMap((invoicePeriod) => generateInvoices(data, invoicePeriod, {
     shouldGenerateCustomerInvoice: (customer) => customerInvoiceGenerationDue(settings, customer, invoicePeriod, today)
   }));
@@ -12056,7 +12105,8 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     const key = invoice.customerId || '';
     if (!key) continue;
     const amount = Number(invoice.amount || 0);
-    const current = unpaidByCustomer.get(key) || { dueDate: invoice.dueDate || '', amount: 0 };
+    const current = unpaidByCustomer.get(key) || { dueDate: invoice.dueDate || '', amount: 0, invoices: [] };
+    current.invoices.push(invoice);
     current.amount += amount;
     if (invoice.dueDate && (!current.dueDate || invoice.dueDate < current.dueDate)) {
       current.dueDate = invoice.dueDate;
@@ -12094,19 +12144,29 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
   }
 
   const graceDays = Number(settings.suspendGraceDays || 0);
-  if (graceDays > 0 && localTimeText(now) >= (settings.autoSuspendTime || '13:30')) {
+  if ((graceDays > 0 || settings.paymentPromiseEnabled === true) && isolationTimeReady) {
+    let isolationRadiusLookup = null;
     for (const [customerId, info] of unpaidByCustomer.entries()) {
-      if (!info.dueDate || today < addDaysIso(info.dueDate, graceDays)) continue;
       const customer = customers.get(customerId);
       if (!customer || normalizeCustomerStatusLocal(customer.status) === 'terminate') continue;
-      const user = (data.radiusUsers || []).find((item) => item.customerId === customer.id || item.id === customer.radiusUserId || String(item.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase());
-      if (!user || user.status === 'terminated') continue;
-      if (customer.billingIsolationOverride === true || user.billingIsolationOverride === true) continue;
+      if (customer.billingIsolationOverride === true) continue;
+      const promise = settings.paymentPromiseEnabled === true
+        ? paymentPromise.evaluate(customer, info.invoices, today) : null;
+      const isolationInvoices = promise?.holding
+        ? info.invoices.filter(invoice => !promise.coveredIds.has(invoice.id)) : info.invoices;
+      const isolationDueDate = promise?.holding
+        ? isolationInvoices.reduce((oldest, invoice) => invoice.dueDate && (!oldest || invoice.dueDate < oldest) ? invoice.dueDate : oldest, '')
+        : info.dueDate;
+      const normalIsolationDue = graceDays > 0 && isolationDueDate && today >= addDaysIso(isolationDueDate, graceDays);
+      if (!normalIsolationDue && !promise?.overdue) continue;
+      isolationRadiusLookup ||= indexedRadiusUserLookup(data);
+      const user = radiusUserForCustomer(data, customer, isolationRadiusLookup);
+      if (!user || radiusStatusForCustomer(user) === 'terminate' || user.billingIsolationOverride === true) continue;
       if (normalizeCustomerStatusLocal(customer.status) === 'isolated' && radiusStatusForCustomer(user) === 'isolated') continue;
       user.status = 'isolated';
       user.isolatedAt = user.isolatedAt || today;
       user.isolationSource = 'billing';
-      user.isolationReason = 'overdue';
+      user.isolationReason = promise?.overdue ? 'payment-promise-overdue' : 'overdue';
       user.isolatedByName = actor.name || actor.username || 'Billing';
       user.isolatedByUsername = actor.username || '';
       user.isolatedByRole = actor.role || 'system';
@@ -12115,7 +12175,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       customer.status = 'isolir';
       customer.isolatedAt = user.isolatedAt;
       customer.isolationSource = 'billing';
-      customer.isolationReason = 'overdue';
+      customer.isolationReason = user.isolationReason;
       customer.isolatedByName = user.isolatedByName;
       customer.isolatedByUsername = user.isolatedByUsername;
       customer.isolatedByRole = user.isolatedByRole;
@@ -12200,7 +12260,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
       expiredVouchers: voucherExpirations.removed.length + voucherExpirations.updated.length
     });
   }
-  return { created, invoiceIssuedInvoices, reminderInvoices, isolatedUsers, terminatedUsers, activatedUsers, voucherExpirations, terminationDateInitializations };
+  return { created, invoiceIssuedInvoices, reminderInvoices, isolatedUsers, terminatedUsers, activatedUsers, voucherExpirations, terminationDateInitializations, paymentPromiseUpdates };
 }
 
 function publicWaGatewaySettings(settings = {}) {
@@ -17555,6 +17615,10 @@ async function mutate(mutator, saveOptions = {}) {
     }
     const persistOptions = { ...saveOptions };
     delete persistOptions.shouldPersist;
+    if (typeof persistOptions.persistCore === 'function') {
+      persistOptions.includeCore = persistOptions.persistCore(result, data, current) === true;
+    }
+    delete persistOptions.persistCore;
     if (typeof persistOptions.persistCollections === 'function') {
       persistOptions.collections = persistOptions.persistCollections(result, data, current);
     }
@@ -17837,6 +17901,11 @@ async function runStandaloneBillingAutomation(reason = 'interval') {
     }, {
       collections: ['customers', 'radiusUsers', 'radiusVoucherRecords', 'invoices', 'waMessages', 'activity'],
       includeCore: false,
+      persistCore: automation => Boolean(automation?.created?.length
+        || automation?.isolatedUsers?.length || automation?.terminatedUsers?.length
+        || automation?.activatedUsers?.length || automation?.stampedVouchers?.length
+        || automation?.terminationDateInitializations?.length
+        || automation?.voucherExpirations?.removed?.length || automation?.voucherExpirations?.updated?.length),
       shouldPersist: (automation) => {
         const voucherExpirations = automation?.voucherExpirations || {};
         return Boolean(
@@ -17848,6 +17917,7 @@ async function runStandaloneBillingAutomation(reason = 'interval') {
           || automation?.activatedUsers?.length
           || automation?.stampedVouchers?.length
           || automation?.terminationDateInitializations?.length
+          || automation?.paymentPromiseUpdates?.length
           || voucherExpirations.removed?.length
           || voucherExpirations.updated?.length
           || voucherExpirations.notices?.length
@@ -22607,7 +22677,8 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     sendJson(res, 200, {
       ok: true,
-      settings: authContext.data.settings?.billing || {}
+      settings: authContext.data.settings?.billing || {},
+      activePaymentPromises: (authContext.data.customers || []).filter(customer => customer.paymentPromise?.status === 'active').length
     });
     return;
   }
@@ -23039,6 +23110,10 @@ async function handleApi(req, res, url) {
     try {
       const { data, result } = await mutate(async (store) => {
         store.settings = store.settings || {};
+        const requestedBilling = payload.billing || payload;
+        const disablingPromises = store.settings.billing?.paymentPromiseEnabled === true && requestedBilling.paymentPromiseEnabled === false;
+        if (disablingPromises && (store.customers || []).some(customer => customer.paymentPromise?.status === 'active')
+          && requestedBilling.cancelActivePromises !== true) throw new Error('Konfirmasi pembatalan janji bayar aktif sebelum menonaktifkan fitur');
         store.settings.billing = sanitizeBillingSettings(payload.billing || payload, store.settings.billing || {});
         if (!store.settings.billing.invoiceBusinessCode || store.settings.billing.invoiceBusinessCode === 'FAKE.NET') {
           store.settings.billing.invoiceBusinessCode = sanitizeReceiptBusinessCode(store.settings.receiptBusinessCode || '', 'ISP');
@@ -24825,6 +24900,7 @@ async function handleApi(req, res, url) {
         source: 'local',
         revision: localBillingRevision(authContext.data, period, { scope }),
         paymentGatewayEnabled: authContext.data.settings?.paymentGateway?.enabled === true,
+        paymentPromiseEnabled: authContext.data.settings?.billing?.paymentPromiseEnabled === true,
         sites: billingMonitorSitesForUser(authContext.data, Array.isArray(base.sites) && base.sites.length ? base.sites : billingSites, authContext.user),
         collector: billingMonitorCollectorScopePayload(authContext.data, authContext.user),
         partnerScope: partnerScopeResponse(partnerScope),
@@ -25067,6 +25143,44 @@ async function handleApi(req, res, url) {
         error: error.message || 'QR payment gateway gagal dibuat'
       });
     }
+    return;
+  }
+
+  if (['GET', 'POST'].includes(method) && pathname === '/api/monitoring/billing-payment-promise') {
+    const authContext = await requirePermission(req, res, 'invoices:manage');
+    if (!authContext) return;
+    if (!standaloneMode(authContext.data)) { badRequest(res, 'Janji bayar hanya tersedia pada billing standalone'); return; }
+    try {
+      if (method === 'GET') {
+        const { activatedUser, ...result } = billingPaymentPromiseOperation(authContext.data, {
+          invoiceId: url.searchParams.get('invoiceId'), action: 'preview'
+        }, authContext.user);
+        sendJson(res, 200, { ok: true, ...result });
+        return;
+      }
+      const payload = await readBody(req);
+      if (!['save', 'cancel'].includes(payload.action)) throw new Error('Aksi janji bayar tidak dikenal');
+      const { data, result } = await mutate(store => billingPaymentPromiseOperation(store, payload, authContext.user), {
+        collections: ['customers', 'radiusUsers', 'activity'], includeCore: false,
+        persistCore: operation => Boolean(operation.activatedUser)
+      });
+      let radius = null;
+      if (result.activatedUser) {
+        try {
+          radius = await finalizePaidInvoiceRadiusActivation(data, { activatedUser: result.activatedUser }, authContext.user, 'billing-payment-promise');
+        } catch (error) {
+          console.error(`Sinkron Radius janji bayar belum selesai: ${error.message}`);
+          radius = { pending: true };
+        }
+      }
+      const { activatedUser, ...publicResult } = result;
+      sendJson(res, 200, {
+        ok: true, ...publicResult, radius,
+        message: payload.action === 'cancel' ? 'Janji bayar dibatalkan. Aturan isolir normal berlaku kembali.'
+          : radius?.pending || radius?.disconnects?.some(item => !item.ok)
+            ? 'Janji bayar tersimpan. Sinkronisasi sesi Radius belum terkonfirmasi; periksa status koneksi pelanggan.' : 'Janji bayar berhasil disimpan'
+      });
+    } catch (error) { badRequest(res, error.message || 'Janji bayar gagal disimpan'); }
     return;
   }
 
@@ -27327,6 +27441,8 @@ if (require.main === module) {
 
 module.exports = {
   __test: {
+    runStandaloneBillingAutomation,
+    billingPaymentPromiseOperation,
     revokeSessionPushSubscriptions,
     onlinePaymentPushEvent,
     addDaysIso,

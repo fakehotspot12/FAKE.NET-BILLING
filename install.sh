@@ -263,6 +263,7 @@ verify_repository_payload() {
     src/subweb-server.js
     src/radius-connector-service.js
     src/whatsapp-queue.js
+    src/payment-promise.js
     public/index.html
     public/app.js
     public/styles.css
@@ -361,7 +362,7 @@ install_node_deps() {
     return 1
   fi
   [ "$install_status" -eq 0 ] || return "$install_status"
-  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue')" >/dev/null
+  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise')" >/dev/null
 }
 
 install_genieacs_runtime() {

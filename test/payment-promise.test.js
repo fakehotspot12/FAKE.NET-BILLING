@@ -1,0 +1,252 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const promise = require('../src/payment-promise');
+const { createDefaultStore, ensureShape } = require('../src/store');
+const { markInvoicePaid, markInvoiceUnpaid } = require('../src/finance');
+const { __test: server } = require('../src/server');
+const actor = { id: 'promise-admin', username: 'admin', name: 'Admin Uji', role: 'admin' };
+const at = (date, time = '14:00') => new Date(`${date}T${time}:00+08:00`);
+
+function fixture(dueDate = '2026-10-25') {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  Object.assign(data.settings.billing, { paymentPromiseEnabled: true, suspendGraceDays: 1, autoSuspendTime: '13:30', autoTerminateAfterDays: 0 });
+  data.settings.waGateway.enabled = false;
+  data.customers = [{ id: 'promise-customer', code: '10000000001', username: 'janji@isp.test', name: 'Pelanggan Uji', status: 'active',
+    price: 150000, activeDate: '2026-01-01', nextDue: '2026-12-25', dueDay: 25, paymentType: 'postpaid', billingPeriod: 'fixed', firstInvoiceStatus: 'paid' }];
+  data.radiusUsers = [{ id: 'promise-radius', customerId: 'promise-customer', username: 'janji@isp.test', serviceType: 'pppoe', status: 'active' }];
+  data.invoices = [{ id: 'promise-invoice', invoiceNo: '100001', customerId: 'promise-customer', username: 'janji@isp.test', customerName: 'Pelanggan Uji',
+    status: 'pending', period: dueDate.slice(0, 7), dueDate, amount: 150000 }];
+  data.payments = [];
+  return data;
+}
+
+function preview(data, day = '2026-10-26') {
+  return server.billingPaymentPromiseOperation(data, { invoiceId: data.invoices[0].id }, actor, at(day));
+}
+function save(data, date = '2026-10-30', day = '2026-10-26', extra = {}) {
+  return server.billingPaymentPromiseOperation(data, { action: 'save', invoiceId: data.invoices[0].id, date,
+    revision: preview(data, day).revision, ...extra }, actor, at(day));
+}
+function run(data, day, time = '14:00') { return server.standaloneBillingAutomation(data, actor, { now: at(day, time) }); }
+
+test('payment promises default off and old settings saves preserve the existing toggle', () => {
+  assert.equal(createDefaultStore().settings.billing.paymentPromiseEnabled, false);
+  assert.equal(server.sanitizeBillingSettings({}, { paymentPromiseEnabled: true }).paymentPromiseEnabled, true);
+  assert.equal(server.sanitizeBillingSettings({ paymentPromiseEnabled: false }, { paymentPromiseEnabled: true }).paymentPromiseEnabled, false);
+  const data = fixture(); data.settings.billing.paymentPromiseEnabled = false;
+  assert.throws(() => preview(data), /belum diaktifkan/);
+});
+
+test('one calendar month clamps end-of-month and leap dates, not thirty days', () => {
+  for (const [due, max] of [['2026-10-25', '2026-11-25'], ['2026-10-28', '2026-11-28'], ['2026-10-31', '2026-11-30'],
+    ['2026-01-31', '2026-02-28'], ['2028-01-31', '2028-02-29'], ['2026-12-31', '2027-01-31']]) assert.equal(promise.nextMonthDate(due), max);
+  for (const invalid of ['2026-02-30', '2026-13-01', '31/10/2026', '2026-10-30T00:00:00Z', '']) assert.equal(promise.dateKey(invalid), '');
+});
+
+test('promise creation leaves the financial invoice and payment records untouched', () => {
+  const data = fixture(); const before = structuredClone({ invoices: data.invoices, payments: data.payments });
+  const result = save(data, '2026-10-30', '2026-10-26', { note: 'Kesepakatan pelanggan' });
+  assert.equal(result.promise.date, '2026-10-30'); assert.equal(result.maxDate, '2026-11-25');
+  assert.equal(result.promise.status, 'active'); assert.equal(result.activatedUser, null);
+  assert.deepEqual({ invoices: data.invoices, payments: data.payments }, before);
+  assert.equal(data.activity[0].meta.action, 'payment-promise-created');
+  assert.equal(data.activity[0].meta.note, 'Kesepakatan pelanggan');
+  assert.equal(data.customers[0].billingIsolationOverride, undefined);
+});
+
+test('invalid, past, pre-due and over-one-month dates are rejected without mutating data', () => {
+  for (const date of ['2026-10-25', '2026-11-26', '2026-02-30', 'bad']) {
+    const data = fixture(); const before = structuredClone(data);
+    assert.throws(() => save(data, date), /Tanggal janji/); assert.deepEqual(data, before);
+  }
+  const future = fixture('2026-10-28');
+  assert.throws(() => save(future, '2026-10-27', '2026-10-26'), /Tanggal janji/);
+});
+
+test('editing or recreating a promise never rolls the original invoice deadline forward', () => {
+  const data = fixture(); save(data);
+  const id = data.customers[0].paymentPromise.id;
+  save(data, '2026-11-25', '2026-11-01');
+  assert.equal(data.customers[0].paymentPromise.id, id);
+  assert.equal(data.customers[0].paymentPromise.maxDate, '2026-11-25');
+  assert.throws(() => save(data, '2026-12-01', '2026-11-02'), /Tanggal janji/);
+  promise.cancel(data, data.customers[0], actor);
+  assert.throws(() => save(data, '2026-12-01', '2026-11-02'), /Tanggal janji/);
+});
+
+test('oldest unpaid due date determines the cap and the promise covers all bills due by its date', () => {
+  const data = fixture();
+  data.invoices.push({ ...data.invoices[0], id: 'older', invoiceNo: '100000', dueDate: '2026-10-10' },
+    { ...data.invoices[0], id: 'future', invoiceNo: '100002', dueDate: '2026-11-25', period: '2026-11' });
+  assert.equal(preview(data).maxDate, '2026-11-10');
+  save(data);
+  assert.deepEqual(data.customers[0].paymentPromise.invoiceIds.sort(), ['older', 'promise-invoice']);
+  assert.throws(() => save(data, '2026-11-11'), /Tanggal janji/);
+});
+
+test('payment and promise edits invalidate a stale preview and duplicate submissions', () => {
+  const data = fixture(); const revision = preview(data).revision;
+  const payload = { action: 'save', invoiceId: data.invoices[0].id, date: '2026-10-30', revision };
+  server.billingPaymentPromiseOperation(data, payload, actor, at('2026-10-26'));
+  assert.throws(() => server.billingPaymentPromiseOperation(data, payload, actor, at('2026-10-26')), /Data tagihan berubah/);
+  const latest = preview(data).revision;
+  data.invoices[0].amount = 140000;
+  assert.throws(() => server.billingPaymentPromiseOperation(data, { ...payload, revision: latest }, actor, at('2026-10-26')), /Data tagihan berubah/);
+});
+
+test('a promise holds overdue isolation through its chosen day, then isolates at H+1 configured time once', () => {
+  const data = fixture(); save(data);
+  assert.equal(run(data, '2026-10-29').isolatedUsers.length, 0);
+  assert.equal(run(data, '2026-10-30', '23:59').isolatedUsers.length, 0);
+  assert.equal(run(data, '2026-10-31', '13:29').isolatedUsers.length, 0);
+  const expired = run(data, '2026-10-31', '13:30');
+  assert.equal(expired.isolatedUsers.length, 1);
+  assert.equal(data.customers[0].paymentPromise.status, 'broken');
+  assert.equal(data.radiusUsers[0].isolationReason, 'payment-promise-overdue');
+  assert.equal(run(data, '2026-10-31', '14:00').isolatedUsers.length, 0);
+  assert.equal(data.activity.filter(item => item.meta.action === 'payment-promise-broken').length, 1);
+});
+
+test('promise H+1 overrides zero or longer general isolation grace without changing the setting', () => {
+  for (const grace of [0, 30]) {
+    const data = fixture(); data.settings.billing.suspendGraceDays = grace; save(data);
+    assert.equal(run(data, '2026-10-31').isolatedUsers.length, 1);
+    assert.equal(data.settings.billing.suspendGraceDays, grace);
+  }
+});
+
+test('an unrelated newly unpaid invoice still follows normal isolation during a valid promise', () => {
+  const data = fixture(); save(data);
+  data.invoices.push({ ...data.invoices[0], id: 'uncovered-new', dueDate: '2026-10-20' });
+  assert.equal(run(data, '2026-10-28').isolatedUsers.length, 1);
+});
+
+test('a permanent exemption is never replaced by a promise and still wins if enabled afterwards', () => {
+  for (const target of ['customers', 'radiusUsers']) {
+    const data = fixture(); data[target][0].billingIsolationOverride = true;
+    assert.throws(() => save(data), /pengecualian isolir/);
+    data[target][0].billingIsolationOverride = false; save(data);
+    data[target][0].billingIsolationOverride = true;
+    assert.equal(run(data, '2026-10-31').isolatedUsers.length, 0);
+    assert.equal(data[target][0].billingIsolationOverride, true);
+  }
+});
+
+test('billing isolation can be reactivated by a promise, manual isolation and terminated cannot', () => {
+  const data = fixture(); Object.assign(data.customers[0], { status: 'isolir', isolationSource: 'billing', isolatedAt: '2026-10-26' });
+  Object.assign(data.radiusUsers[0], { status: 'isolated', isolationSource: 'billing', isolatedAt: '2026-10-26' });
+  const result = save(data); assert.equal(result.activatedUser.id, 'promise-radius');
+  assert.equal(data.customers[0].status, 'active'); assert.equal(data.radiusUsers[0].status, 'active');
+  for (const status of ['isolated', 'terminated', 'inactive']) {
+    const other = fixture(); other.radiusUsers[0].status = status;
+    assert.throws(() => save(other), /manual|terminated|nonaktif/);
+    assert.equal(other.radiusUsers[0].status, status);
+  }
+});
+
+test('promise reactivation uses the shared Radius sync and CoA path only for a real status change', async () => {
+  const data = fixture();
+  Object.assign(data.customers[0], { status: 'isolir', isolationSource: 'billing' });
+  Object.assign(data.radiusUsers[0], { status: 'isolated', isolationSource: 'billing' });
+  const first = save(data);
+  let syncs = 0, disconnects = 0;
+  const runtime = { sync: async () => { syncs++; }, disconnect: async () => { disconnects++; return { ok: true }; } };
+  await server.finalizePaidInvoiceRadiusActivation(data, { activatedUser: first.activatedUser }, actor, 'promise-test', runtime);
+  const edited = save(data, '2026-10-31');
+  await server.finalizePaidInvoiceRadiusActivation(data, { activatedUser: edited.activatedUser }, actor, 'promise-test', runtime);
+  assert.equal(syncs, 1); assert.equal(disconnects, 1);
+});
+
+test('auto termination respects active promises and permanent exemptions', () => {
+  const data = fixture(); save(data); data.settings.billing.autoTerminateAfterDays = 1;
+  Object.assign(data.customers[0], { status: 'isolir', isolatedAt: '2026-10-01', isolationSource: 'billing' });
+  Object.assign(data.radiusUsers[0], { status: 'isolated', isolatedAt: '2026-10-01', isolationSource: 'billing' });
+  assert.equal(run(data, '2026-10-29').terminatedUsers.length, 0);
+  data.customers[0].billingIsolationOverride = true;
+  assert.equal(run(data, '2026-11-01').terminatedUsers.length, 0);
+});
+
+test('all payment methods complete a promise without altering the original due date', () => {
+  for (const method of ['Tunai', 'Transfer Manual', 'Tunai - Loket', 'Online']) {
+    const data = fixture(); save(data);
+    markInvoicePaid(data, data.invoices[0].id, { method, paidAt: '2026-10-30' });
+    server.reactivateCustomerAfterPaidInvoice(data, data.invoices[0], actor);
+    assert.equal(data.customers[0].paymentPromise.status, 'completed');
+    assert.equal(data.invoices[0].dueDate, '2026-10-25');
+    assert.equal(run(data, '2026-10-31').isolatedUsers.length, 0);
+  }
+});
+
+test('paying only one of several promised invoices does not complete the entire promise', () => {
+  const data = fixture(); data.invoices.push({ ...data.invoices[0], id: 'second', period: '2026-09', dueDate: '2026-10-24' });
+  save(data); markInvoicePaid(data, 'promise-invoice', { method: 'Tunai' });
+  server.reactivateCustomerAfterPaidInvoice(data, data.invoices[0], actor);
+  assert.equal(data.customers[0].paymentPromise.status, 'active');
+  assert.equal(run(data, '2026-10-31').isolatedUsers.length, 1);
+});
+
+test('cancelled invoices close a promise and actual multi-month paid coverage prevents isolation', () => {
+  const cancelled = fixture(); save(cancelled); cancelled.invoices[0].status = 'cancelled';
+  assert.equal(run(cancelled, '2026-10-31').isolatedUsers.length, 0);
+  assert.equal(cancelled.customers[0].paymentPromise.status, 'completed');
+  const paid = fixture(); save(paid);
+  paid.invoices.push({ ...paid.invoices[0], id: 'paid-coverage', status: 'paid', paidAt: '2026-10-27' });
+  assert.equal(run(paid, '2026-10-31').isolatedUsers.length, 0);
+  assert.equal(paid.customers[0].paymentPromise.status, 'completed');
+});
+
+test('rollback after completion does not silently recreate a promise', () => {
+  const data = fixture(); save(data); markInvoicePaid(data, data.invoices[0].id, { method: 'Tunai' });
+  server.reactivateCustomerAfterPaidInvoice(data, data.invoices[0], actor);
+  markInvoiceUnpaid(data, data.invoices[0].id);
+  assert.equal(run(data, '2026-10-29').isolatedUsers.length, 1);
+  assert.equal(data.customers[0].paymentPromise.status, 'completed');
+});
+
+test('disabling the feature cancels the hold, re-enabling cannot resurrect it', () => {
+  const data = fixture(); save(data); data.settings.billing.paymentPromiseEnabled = false;
+  const result = run(data, '2026-10-29');
+  assert.equal(result.paymentPromiseUpdates.length, 1);
+  assert.equal(data.customers[0].paymentPromise.status, 'cancelled');
+  assert.equal(result.isolatedUsers.length, 1);
+  data.settings.billing.paymentPromiseEnabled = true;
+  assert.equal(promise.evaluate(data.customers[0], data.invoices, '2026-10-29'), null);
+});
+
+test('promise data survives normalization and restart; a missed H+1 is caught up on the next run', () => {
+  const data = fixture(); save(data);
+  const restarted = ensureShape(JSON.parse(JSON.stringify(data)));
+  assert.equal(restarted.customers[0].paymentPromise.date, '2026-10-30');
+  assert.equal(run(restarted, '2026-11-02').isolatedUsers.length, 1);
+});
+
+test('scope checks reject out-of-target collectors without touching customer data', () => {
+  const data = fixture(); const before = structuredClone(data);
+  assert.throws(() => server.billingPaymentPromiseOperation(data, { invoiceId: data.invoices[0].id }, { role: 'collector', lockedNasIds: [] }, at('2026-10-26')), /kewenangan/);
+  assert.deepEqual(data, before);
+});
+
+test('date logic is independent of server timezone and uses the application day at midnight', () => {
+  const data = fixture(); save(data);
+  assert.equal(run(data, '2026-10-30', '23:59').isolatedUsers.length, 0);
+  assert.equal(run(data, '2026-10-31', '00:01').isolatedUsers.length, 0);
+  assert.equal(run(data, '2026-10-31', '13:30').isolatedUsers.length, 1);
+});
+
+test('UI toggle stays beside merge, promise actions are feature/permission gated and notes are escaped', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  assert.match(source, /billing-policy-toggles[\s\S]*name="mergeInvoice"[\s\S]*name="paymentPromiseEnabled"/);
+  assert.match(source, /standaloneBilling && paymentPromiseEnabled && can\('invoices:manage'\)/);
+  assert.match(source, /escapeHtml\(active \? payload\.promise\.note/);
+  assert.match(source, /cancelActivePromises = true/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8'), /automation\?\.paymentPromiseUpdates\?\.length/);
+  for (const file of ['install.sh', 'deploy/bin/fakenet-billing-update']) {
+    assert.match(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), /src\/payment-promise\.js/);
+  }
+});

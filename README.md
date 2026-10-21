@@ -218,6 +218,17 @@ Jika batas terminate diisi lebih dari `0`, hanya isolir yang dibuat sistem karen
 
 Pada `Radius > Setting`, field Rate Limit/Group MikroTik/IP Pool Isolir boleh dikosongkan. Jika semua field isolir kosong, akun yang berstatus isolir/terminated akan disinkronkan ke FreeRADIUS sebagai `Auth-Type := Reject` sehingga login ditolak. Jika ingin pelanggan tetap diarahkan ke web isolir, isi Group MikroTik atau IP Pool isolir sesuai profile/router yang sudah disiapkan.
 
+### Janji Bayar
+
+Fitur ini **nonaktif secara default**. Aktifkan `Aktifkan Janji Bayar` di `Radius > Setting > Billing Setting`, di sebelah pengaturan Merge Invoice. Setelah aktif, petugas yang berwenang dapat membuka tindakan Janji Bayar pada invoice belum lunas di Monitoring Tagihan Pelanggan; akses collector tetap mengikuti pelanggan/NAS yang diizinkan.
+
+- Tanggal maksimal adalah satu bulan kalender dari jatuh tempo tunggakan tertua, bukan dari tanggal perubahan janji. Tanggal akhir bulan disesuaikan ke hari terakhir bulan berikutnya jika diperlukan.
+- Contoh: jatuh tempo 25 Oktober, janji bayar 30 Oktober. Tagihan tercakup ditahan sampai akhir 30 Oktober. Jika masih belum dibayar, isolir diproses mulai 31 Oktober pada jam isolir otomatis yang diatur, tanpa tambahan masa tenggang.
+- Tanggal, periode, nominal, dan status pembayaran invoice asli tetap. Invoice lain yang belum dicakup janji tetap mengikuti aturan billing biasa.
+- Pengecualian isolir pelanggan tetap diprioritaskan. Janji tidak mengaktifkan akun terminated atau isolir manual, dan tidak menimpa kebijakan aktivasi sementara tanpa batas.
+- Pembayaran menyelesaikan janji ketika seluruh tagihan tercakup sudah lunas. Pembatalan janji mengembalikan aturan isolir normal. Menonaktifkan fitur saat ada janji aktif memerlukan konfirmasi pembatalan.
+- Riwayat janji tersimpan pada audit internal. Fitur memakai scheduler existing tanpa polling jaringan tambahan.
+
 ## Voucher Hotspot
 
 Voucher Hotspot dirancang untuk operasional jual voucher harian/mingguan/bulanan tanpa input manual berulang. Admin atau reseller dapat membuat voucher satuan maupun batch dari profile Hotspot yang sudah memiliki harga, validity, quota, shared user, NAS, dan expired mode.

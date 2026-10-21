@@ -9068,6 +9068,8 @@ function datePickerControl(options = {}) {
     value = todayInput(),
     required = false,
     disabled = false,
+    min = '',
+    max = '',
     className = ''
   } = options;
   const safeId = id ? ` id="${escapeHtml(id)}"` : '';
@@ -9078,7 +9080,7 @@ function datePickerControl(options = {}) {
   const isoValue = dateIsoInput(value);
   const displayValue = dateDisplayInput(value);
   return `
-    <div class="date-picker-control${safeClass}" data-date-picker>
+    <div class="date-picker-control${safeClass}" data-date-picker${min ? ` data-date-min="${escapeHtml(min)}"` : ''}${max ? ` data-date-max="${escapeHtml(max)}"` : ''}>
       <input${safeId}${safeName} type="hidden" value="${escapeHtml(isoValue)}" data-date-picker-value${requiredAttr}${disabledAttr}>
       <button class="date-picker-trigger" type="button" data-date-picker-toggle aria-expanded="false"${disabledAttr}>
         <span data-date-picker-display>${escapeHtml(displayValue)}</span>
@@ -9141,8 +9143,10 @@ function renderDatePicker(picker) {
     }
     const isSelected = selected.year === viewYear && selected.month === viewMonth + 1 && selected.day === day;
     const isToday = today.year === viewYear && today.month === viewMonth + 1 && today.day === day;
+    const isoDay = formatDateIsoFromParts({ year: viewYear, month: viewMonth + 1, day });
+    const outsideRange = (picker.dataset.dateMin && isoDay < picker.dataset.dateMin) || (picker.dataset.dateMax && isoDay > picker.dataset.dateMax);
     return `
-      <button class="date-picker-day ${isSelected ? 'is-selected' : ''} ${isToday ? 'is-today' : ''}" type="button" data-date-picker-day="${day}">
+      <button class="date-picker-day ${isSelected ? 'is-selected' : ''} ${isToday ? 'is-today' : ''}" type="button" data-date-picker-day="${day}" ${outsideRange ? 'disabled' : ''}>
         ${day}
       </button>
     `;
@@ -9153,7 +9157,9 @@ function setDatePickerValue(picker, parts) {
   const input = picker.querySelector('[data-date-picker-value]');
   const display = picker.querySelector('[data-date-picker-display]');
   if (!input || !display) return;
-  input.value = formatDateIsoFromParts(parts);
+  const value = formatDateIsoFromParts(parts);
+  if ((picker.dataset.dateMin && value < picker.dataset.dateMin) || (picker.dataset.dateMax && value > picker.dataset.dateMax)) return;
+  input.value = value;
   display.textContent = formatDateDisplayFromParts(parts);
   picker.dataset.viewYear = String(parts.year);
   picker.dataset.viewMonth = String(parts.month - 1);
@@ -19396,7 +19402,57 @@ function billingReceiptAllowed(invoice = {}) {
   return Boolean(billingInvoiceNo(invoice) && status === 'paid');
 }
 
-function billingActionButtons(invoice = {}, index = 0, standaloneBilling = true, paymentGatewayEnabled = true) {
+async function openBillingPaymentPromiseModal(invoice) {
+  const invoiceId = invoice.invoiceId || invoice.id;
+  const payload = await api(`/api/monitoring/billing-payment-promise?${queryString({ invoiceId })}`);
+  const active = payload.promise?.status === 'active';
+  const date = active ? payload.promise.date : payload.minDate;
+  const unavailable = payload.excluded || payload.minDate > payload.maxDate;
+  openModal('Janji Bayar', `
+    <div class="form-grid payment-promise-form">
+      <div class="field full"><strong>${escapeHtml(payload.customer.name)}</strong><span class="muted">${escapeHtml(billingInvoiceNo(invoice))}</span></div>
+      <label class="field"><span>Tanggal janji bayar</span>${datePickerControl({ name: 'date', value: date, min: payload.minDate, max: payload.maxDate, required: true, disabled: unavailable })}</label>
+      <label class="field"><span>Batas maksimal</span><input value="${escapeHtml(dateText(payload.maxDate))}" readonly></label>
+      <label class="field full"><span>Catatan</span><textarea name="note" rows="2" maxlength="500" ${unavailable ? 'disabled' : ''}>${escapeHtml(active ? payload.promise.note || '' : '')}</textarea></label>
+      <div class="notice field full" data-promise-deadline></div>
+      ${unavailable ? `<div class="notice warning field full">${payload.excluded ? 'Pelanggan memiliki pengecualian isolir atau aktivasi manual tanpa batas. Atur pengecualian di Payment Pelanggan sebelum memakai janji bayar.' : 'Batas satu bulan dari jatuh tempo tertua sudah terlewat. Janji bayar baru tidak dapat dibuat.'}</div>` : ''}
+      <div class="field full payment-promise-invoices" data-promise-invoices></div>
+      <div class="modal-actions field full">
+        ${active ? '<button class="danger-button" type="button" data-cancel-payment-promise>Batalkan Janji</button>' : ''}
+        <button class="ghost-button" type="button" data-close-modal>Tutup</button>
+        <button class="button" type="submit" ${unavailable ? 'disabled' : ''}>Simpan Janji Bayar</button>
+      </div>
+    </div>
+  `, async values => {
+    const result = await api('/api/monitoring/billing-payment-promise', {
+      method: 'POST', body: JSON.stringify({ ...values, action: 'save', invoiceId, revision: payload.revision })
+    });
+    setToast(result.message);
+    await renderMonitoringBilling({ refresh: true });
+  });
+  const input = modalBody.querySelector('input[name="date"]');
+  const update = () => {
+    const selected = input.value;
+    const next = new Date(`${selected}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    modalBody.querySelector('[data-promise-deadline]').textContent = Number.isFinite(next.getTime())
+      ? `Belum lunas: isolir mulai ${dateText(next.toISOString().slice(0, 10))} pukul ${payload.isolationTime} (${appTimeZoneLabel()}). Pengecualian isolir tetap berlaku.` : 'Pilih tanggal janji bayar.';
+    const covered = payload.invoices.filter(item => item.dueDate <= selected);
+    modalBody.querySelector('[data-promise-invoices]').innerHTML = `<span>Tagihan yang dicakup</span>${covered.map(item => `<div class="payment-promise-invoice"><span><strong>${escapeHtml(item.invoiceNo)}</strong><small>Jatuh tempo ${escapeHtml(dateText(item.dueDate))}</small></span><strong>${rupiah(item.amount)}</strong></div>`).join('') || '<span class="muted">Belum ada tagihan pada tanggal dipilih.</span>'}`;
+  };
+  input.addEventListener('change', update);
+  update();
+  modalBody.querySelector('[data-cancel-payment-promise]')?.addEventListener('click', async event => {
+    if (!window.confirm('Batalkan janji bayar? Aturan isolir normal akan berlaku kembali.')) return;
+    event.currentTarget.disabled = true;
+    try {
+      const result = await api('/api/monitoring/billing-payment-promise', { method: 'POST', body: JSON.stringify({ action: 'cancel', invoiceId, revision: payload.revision }) });
+      modal.close(); setToast(result.message); await renderMonitoringBilling({ refresh: true });
+    } catch (error) { event.currentTarget.disabled = false; setToast(error.message); }
+  });
+}
+
+function billingActionButtons(invoice = {}, index = 0, standaloneBilling = true, paymentGatewayEnabled = true, paymentPromiseEnabled = false) {
   const invoiceLabel = billingInvoiceNo(invoice) || '-';
   const mapUrl = memberLocationUrl(invoice);
   const buttons = [];
@@ -19460,6 +19516,9 @@ function billingActionButtons(invoice = {}, index = 0, standaloneBilling = true,
         <span>Diskon</span>
       </button>
     `);
+  }
+  if (standaloneBilling && paymentPromiseEnabled && can('invoices:manage') && ['unpaid', 'pending', 'overdue'].includes(invoice.status)) {
+    buttons.push(`<button class="billing-action-button pay" type="button" data-billing-payment-promise="${index}" title="Janji Bayar" aria-label="Janji bayar invoice ${escapeHtml(invoiceLabel)}"><span class="billing-action-icon promise" aria-hidden="true"></span><span>Janji Bayar</span></button>`);
   }
   if (invoice.isIsolated && canAny(['radius:write', 'radius:ppp-users:write'])) {
     buttons.push(`
@@ -22609,6 +22668,7 @@ async function renderMonitoringBilling(options = {}) {
             <strong class="cell-title" title="${escapeHtml(invoiceLabel)}">${escapeHtml(invoiceLabel)}</strong>
             <span class="cell-subline billing-mobile-invoice-meta">${escapeHtml(invoiceLabel)} · Jatuh tempo ${escapeHtml(dueDateLabel)} · ${escapeHtml(displayedStatus)}</span>
             ${invoiceItem ? `<span class="cell-subline clamp-2" title="${escapeHtml(invoiceItem)}">${escapeHtml(invoiceItem)}</span>` : '<span class="cell-subline">-</span>'}
+            ${payload.paymentPromiseEnabled && invoice.paymentPromise?.invoiceIds?.includes(invoice.invoiceId || invoice.id) && ['active', 'broken'].includes(invoice.paymentPromise.status) ? `<span class="billing-promise-note ${invoice.paymentPromise.status === 'broken' ? 'negative-text' : ''}" title="${escapeHtml(invoice.paymentPromise.note || '')}">Janji bayar: ${escapeHtml(dateText(invoice.paymentPromise.date))}${invoice.paymentPromise.status === 'broken' ? ' · Terlewat' : ''}</span>` : ''}
           </div>
         </td>
         <td class="nowrap">${escapeHtml(rowDateLabel)}</td>
@@ -22616,7 +22676,7 @@ async function renderMonitoringBilling(options = {}) {
         <td class="amount nowrap">${rupiah(invoice.amount)}</td>
         <td class="billing-status-cell"><span class="badge ${displayedStatusBadge}">${escapeHtml(displayedStatus)}</span></td>
         <td class="billing-action-cell">
-          ${billingActionButtons(invoice, index, standaloneBilling, paymentGatewayEnabled)}
+          ${billingActionButtons(invoice, index, standaloneBilling, paymentGatewayEnabled, payload.paymentPromiseEnabled === true)}
         </td>
       </tr>
     `;
@@ -22988,6 +23048,16 @@ async function renderMonitoringBilling(options = {}) {
         return;
       }
       openBillingRollbackModal(invoice);
+    });
+  });
+  app.querySelectorAll('[data-billing-payment-promise]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const invoice = invoices[Number(button.dataset.billingPaymentPromise)];
+      if (!invoice || button.disabled) return;
+      button.disabled = true;
+      try { await openBillingPaymentPromiseModal(invoice); }
+      catch (error) { setToast(error.message || 'Janji bayar gagal dimuat'); }
+      finally { button.disabled = false; }
     });
   });
   app.querySelectorAll('[data-billing-temporary-activation]').forEach((button) => {
@@ -24216,10 +24286,16 @@ async function renderBillingSettings() {
             <input name="notifyMemberStatus" type="checkbox" value="true" ${settings.notifyMemberStatus !== false ? 'checked' : ''}>
             <span>Kirim notifikasi status member</span>
           </label>
-          <label class="field checkbox-field full">
+          <div class="field full billing-policy-toggles">
+          <label class="field checkbox-field">
             <input name="mergeInvoice" type="checkbox" value="true" ${settings.mergeInvoice ? 'checked' : ''}>
             <span>Merge invoice bulan sebelumnya jika belum dibayar</span>
           </label>
+          <label class="field checkbox-field">
+            <input name="paymentPromiseEnabled" type="checkbox" value="true" ${settings.paymentPromiseEnabled === true ? 'checked' : ''}>
+            <span>Aktifkan Janji Bayar</span>
+          </label>
+          </div>
           <label class="field checkbox-field">
             <input name="bhpUsoEnabled" type="checkbox" value="true" ${settings.bhpUsoEnabled === true ? 'checked' : ''}>
             <span>Aktifkan BHP USO</span>
@@ -24238,9 +24314,14 @@ async function renderBillingSettings() {
   `;
   document.getElementById('billingSettingsForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
+    const values = formData(event.currentTarget);
+    if (settings.paymentPromiseEnabled === true && values.paymentPromiseEnabled !== true && payload.activePaymentPromises > 0) {
+      if (!window.confirm(`Nonaktifkan Janji Bayar? ${displayNumber(payload.activePaymentPromises)} janji aktif akan dibatalkan dan aturan isolir normal berlaku kembali.`)) return;
+      values.cancelActivePromises = true;
+    }
     await api('/api/billing/settings', {
       method: 'PUT',
-      body: JSON.stringify(formData(event.currentTarget))
+      body: JSON.stringify(values)
     });
     setToast('Billing settings tersimpan');
     renderBillingSettings();

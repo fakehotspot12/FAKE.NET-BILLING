@@ -5968,6 +5968,52 @@ body.is-loading-auth .content::before {
   text-align: right;
 }
 
+.billing-policy-toggles.field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.billing-policy-toggles .field {
+  margin: 0;
+  min-width: 0;
+}
+
+.billing-promise-note {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.payment-promise-invoice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.payment-promise-invoice small {
+  display: block;
+  font-weight: 400;
+}
+
+.payment-promise-invoice > strong {
+  white-space: nowrap;
+}
+
+.payment-promise-form .notice {
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .billing-policy-toggles { grid-template-columns: minmax(0, 1fr); }
+  .payment-promise-form .modal-actions { flex-wrap: wrap; }
+}
+
 .billing-status-cell {
   text-align: center;
 }
@@ -6272,6 +6318,13 @@ body.is-loading-auth .content::before {
   background: #fff;
   -webkit-mask: var(--icon-location-sync) center / contain no-repeat;
   mask: var(--icon-location-sync) center / contain no-repeat;
+}
+
+.billing-action-icon.promise { background: var(--blue); }
+.billing-action-icon.promise::before {
+  background: #fff;
+  -webkit-mask: var(--icon-calendar-day) center / contain no-repeat;
+  mask: var(--icon-calendar-day) center / contain no-repeat;
 }
 
 .billing-action-icon.rollback::before {
