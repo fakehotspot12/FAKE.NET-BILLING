@@ -12,6 +12,8 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Menetapkan format jam scheduler 00-23 secara eksplisit agar Node 20/ICU yang menampilkan tengah malam sebagai 24:xx tidak memicu isolir atau jadwal billing lebih awal.
+- Menguji Janji Bayar pada Postpaid Fixed/Cycle dan Prepaid Fixed/Renewal untuk PPPoE/DHCP, melalui Tunai, Transfer Manual, Loket, QRIS, VA, dan gerai. Callback belum lunas tidak menutup janji; pelunasan tetap mempertahankan nilai bersih gateway dan tidak melewati validasi aktivasi terminated manual.
 - Memastikan ringkasan di bawah Catatan Janji Bayar selalu menampilkan jadwal yang sudah tersimpan: jatuh tempo dan isolir normal jika belum ada janji, atau tanggal janji existing jika sudah dibuat. Memilih calon tanggal baru tidak mengganti ringkasan sebelum disimpan.
 - Menghilangkan pengisian otomatis tanggal hari ini pada janji baru dan mengunci Simpan sampai tanggal valid dipilih, tanpa mengubah default date picker pada form lain.
 - Meringkas tanggal ringkasan dengan nama bulan Indonesia dan jam isolir dari Billing Setting, termasuk pergantian bulan/tahun serta kondisi pengecualian atau isolir otomatis nonaktif.

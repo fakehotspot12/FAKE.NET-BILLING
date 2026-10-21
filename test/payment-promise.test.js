@@ -176,17 +176,122 @@ test('auto termination respects active promises and permanent exemptions', () =>
 test('all payment methods complete a promise without altering the original due date', () => {
   for (const method of ['Tunai', 'Transfer Manual', 'Tunai - Loket', 'Online']) {
     const data = fixture(); save(data);
-    markInvoicePaid(data, data.invoices[0].id, { method, paidAt: '2026-10-30' });
+    markInvoicePaid(data, data.invoices[0].id, { paymentMethod: method, paidAt: '2026-10-30' });
     server.reactivateCustomerAfterPaidInvoice(data, data.invoices[0], actor);
+    assert.equal(data.invoices[0].paymentMethod, method);
+    assert.equal(data.payments[0].method, method);
     assert.equal(data.customers[0].paymentPromise.status, 'completed');
     assert.equal(data.invoices[0].dueDate, '2026-10-25');
     assert.equal(run(data, '2026-10-31').isolatedUsers.length, 0);
   }
 });
 
+const billingModes = [['postpaid', 'fixed'], ['postpaid', 'cycle'], ['prepaid', 'fixed'], ['prepaid', 'renewal']];
+const paymentChannels = ['Tunai', 'Transfer Manual', 'Tunai - Loket', 'QRIS', 'BRIVA', 'BCAVA', 'ALFAMART', 'INDOMARET'];
+
+function payByChannel(data, method, invoice = data.invoices[0]) {
+  if (paymentChannels.indexOf(method) < 3) {
+    markInvoicePaid(data, invoice.id, { paymentMethod: method, paidAt: '2026-10-30' });
+    return server.reactivateCustomerAfterPaidInvoice(data, invoice, actor);
+  }
+  Object.assign(data.settings.paymentGateway, { enabled: true, provider: 'tripay', monthlyAdminFee: 5000 });
+  const gatewayAmount = ['ALFAMART', 'INDOMARET'].includes(method) ? 152000 : 155000;
+  return server.fulfillPaymentGatewayCallback(data, {
+    merchant_ref: invoice.invoiceNo, reference: `TEST-${invoice.id}-${method}`, status: 'PAID',
+    total_amount: gatewayAmount, total_fee: 2000, amount_received: gatewayAmount - 2000,
+    payment_method: method, paid_at: '2026-10-30T04:00:00.000Z'
+  }, actor);
+}
+
+for (const [paymentType, billingPeriod] of billingModes) for (const serviceType of ['pppoe', 'dhcp']) {
+  const label = `${paymentType}/${billingPeriod}/${serviceType}`;
+  test(`${label}: every payment channel completes the promise and reactivates only billing isolation`, async () => {
+    for (const method of paymentChannels) for (const overdue of [false, true]) {
+      const data = fixture(); Object.assign(data.customers[0], { paymentType, billingPeriod });
+      data.radiusUsers[0].serviceType = serviceType;
+      save(data);
+      if (overdue) assert.equal(run(data, '2026-10-31', '13:30').isolatedUsers.length, 1, method);
+      const before = { dueDate: data.invoices[0].dueDate, period: data.invoices[0].period, amount: data.invoices[0].amount };
+      const activation = payByChannel(data, method);
+      assert.equal(data.customers[0].paymentPromise.status, 'completed', method);
+      assert.equal(data.invoices[0].status, 'paid', method);
+      assert.equal(data.payments.length, 1, method);
+      assert.equal(data.payments[0].method, data.invoices[0].paymentMethod);
+      if (paymentChannels.indexOf(method) < 3) {
+        assert.equal(data.payments[0].method, method);
+        assert.equal(data.payments[0].amount, 150000);
+      } else {
+        assert.equal(data.payments[0].paymentCategory, 'online');
+        assert.equal(data.payments[0].amount, data.payments[0].gatewayAmount - 2000);
+        assert.equal(data.payments[0].providerFee, 2000);
+      }
+      assert.equal(data.customers[0].status, 'active', method);
+      assert.equal(data.radiusUsers[0].status, 'active', method);
+      assert.deepEqual({ dueDate: data.invoices[0].dueDate, period: data.invoices[0].period, amount: data.invoices[0].amount }, before);
+      assert.equal(data.customers[0].paymentType, paymentType);
+      assert.equal(data.customers[0].billingPeriod, billingPeriod);
+      let syncs = 0, disconnects = 0;
+      await server.finalizePaidInvoiceRadiusActivation(data, activation, actor, 'promise-channel-test', {
+        sync: async () => { syncs++; }, disconnect: async () => { disconnects++; return { ok: true }; }
+      });
+      assert.equal(syncs, overdue ? 1 : 0, method);
+      assert.equal(disconnects, overdue ? 1 : 0, method);
+      payByChannel(data, method);
+      assert.equal(data.payments.length, 1, method);
+      assert.equal(run(data, '2026-10-31').isolatedUsers.length, 0, method);
+    }
+  });
+
+  test(`${label}: holds through the promise date, isolates H+1, and preserves a permanent exemption`, () => {
+    const data = fixture(); Object.assign(data.customers[0], { paymentType, billingPeriod });
+    data.radiusUsers[0].serviceType = serviceType;
+    save(data);
+    assert.equal(run(data, '2026-10-30', '23:59').isolatedUsers.length, 0);
+    assert.equal(run(data, '2026-10-31', '13:29').isolatedUsers.length, 0);
+    const exempt = structuredClone(data); exempt.customers[0].billingIsolationOverride = true;
+    assert.equal(run(exempt, '2026-10-31', '13:30').isolatedUsers.length, 0);
+    assert.equal(run(data, '2026-10-31', '13:30').isolatedUsers.length, 1);
+    assert.equal(data.customers[0].paymentPromise.status, 'broken');
+    assert.equal(data.invoices[0].status, 'pending');
+    assert.equal(data.payments.length, 0);
+  });
+}
+
+test('non-paid gateway callbacks never settle a promise and mixed channels settle only after all bills are paid', () => {
+  for (const status of ['UNPAID', 'PENDING', 'EXPIRED', 'FAILED']) {
+    const data = fixture(); save(data);
+    data.settings.paymentGateway.provider = 'tripay';
+    server.fulfillPaymentGatewayCallback(data, { merchant_ref: '100001', reference: 'TEST-NOT-PAID', status, total_amount: 150000, payment_method: 'QRIS' }, actor);
+    assert.equal(data.customers[0].paymentPromise.status, 'active', status);
+    assert.equal(data.invoices[0].status, 'pending', status);
+    assert.equal(data.payments.length, 0, status);
+  }
+  const data = fixture();
+  data.invoices.push({ ...data.invoices[0], id: 'second', invoiceNo: '100002', period: '2026-09', dueDate: '2026-10-24' });
+  save(data); payByChannel(data, 'QRIS');
+  assert.equal(data.customers[0].paymentPromise.status, 'active');
+  payByChannel(data, 'Transfer Manual', data.invoices[1]);
+  assert.equal(data.customers[0].paymentPromise.status, 'completed');
+  assert.equal(data.payments.length, 2);
+  assert.equal(run(data, '2026-10-31').isolatedUsers.length, 0);
+});
+
+test('settling a promise by any channel never bypasses subsequent manual termination', () => {
+  for (const method of paymentChannels) {
+    const data = fixture(); save(data);
+    Object.assign(data.customers[0], { status: 'terminated', terminationSource: 'manual' });
+    Object.assign(data.radiusUsers[0], { status: 'terminated', terminationSource: 'manual' });
+    const result = payByChannel(data, method);
+    assert.equal(data.customers[0].paymentPromise.status, 'completed');
+    assert.equal(result.activatedUser, null);
+    assert.equal(data.customers[0].status, 'terminated');
+    assert.equal(data.radiusUsers[0].status, 'terminated');
+  }
+});
+
 test('paying only one of several promised invoices does not complete the entire promise', () => {
   const data = fixture(); data.invoices.push({ ...data.invoices[0], id: 'second', period: '2026-09', dueDate: '2026-10-24' });
-  save(data); markInvoicePaid(data, 'promise-invoice', { method: 'Tunai' });
+  save(data); markInvoicePaid(data, 'promise-invoice', { paymentMethod: 'Tunai' });
   server.reactivateCustomerAfterPaidInvoice(data, data.invoices[0], actor);
   assert.equal(data.customers[0].paymentPromise.status, 'active');
   assert.equal(run(data, '2026-10-31').isolatedUsers.length, 1);
@@ -203,7 +308,7 @@ test('cancelled invoices close a promise and actual multi-month paid coverage pr
 });
 
 test('rollback after completion does not silently recreate a promise', () => {
-  const data = fixture(); save(data); markInvoicePaid(data, data.invoices[0].id, { method: 'Tunai' });
+  const data = fixture(); save(data); markInvoicePaid(data, data.invoices[0].id, { paymentMethod: 'Tunai' });
   server.reactivateCustomerAfterPaidInvoice(data, data.invoices[0], actor);
   markInvoiceUnpaid(data, data.invoices[0].id);
   assert.equal(run(data, '2026-10-29').isolatedUsers.length, 1);
@@ -238,6 +343,27 @@ test('date logic is independent of server timezone and uses the application day 
   assert.equal(run(data, '2026-10-30', '23:59').isolatedUsers.length, 0);
   assert.equal(run(data, '2026-10-31', '00:01').isolatedUsers.length, 0);
   assert.equal(run(data, '2026-10-31', '13:30').isolatedUsers.length, 1);
+});
+
+test('billing midnight uses a zero-based hour cycle on supported Node versions', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8');
+  const clock = source.slice(source.indexOf('function localDateParts('), source.indexOf('function localTodayIso('));
+  for (const [zone, instant] of [
+    ['Asia/Jakarta', '2026-10-30T17:01:00Z'],
+    ['Asia/Makassar', '2026-10-30T16:01:00Z'],
+    ['Asia/Jayapura', '2026-10-30T15:01:00Z']
+  ]) {
+    const result = vm.runInNewContext(`${clock}\nlocalDateParts(new Date(instant), zone)`, {
+      instant, zone, DEFAULT_APP_TIME_ZONE: 'Asia/Makassar', activeAppTimeZone: '',
+      normalizeAppTimeZone: value => value,
+      cachedDateTimeFormatter: (locale, options) => {
+        assert.equal(options.hourCycle, 'h23');
+        assert.equal(Object.hasOwn(options, 'hour12'), false);
+        return new Intl.DateTimeFormat(locale, options);
+      }
+    });
+    assert.equal(`${result.year}-${result.month}-${result.day} ${result.hour}:${result.minute}`, '2026-10-31 00:01');
+  }
 });
 
 test('UI toggle stays beside merge, promise actions are feature/permission gated and notes are escaped', () => {
