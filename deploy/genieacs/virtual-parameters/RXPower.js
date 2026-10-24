@@ -21,19 +21,28 @@ const paths = [
 ];
 
 function normalize(value, path) {
-  let number = Number(String(value).replace(",", ".").replace(/[^\d.-]/g, ""));
-  if (!Number.isFinite(number) || [0, -255, 255, 65535, 32767].includes(number)) return null;
-  if (/ZTE/i.test(path) && number > 0 && number < 1000) number = -number / 10;
-  else if (number > 0 && /(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical)/i.test(path)) {
-    number = 30 + (Math.log10(number * Math.pow(10, -7)) * 10);
-  } else if (number < -100 || number > 100) number /= 100;
+  const text = String(value ?? "");
+  let number = Number(text.replace(",", ".").replace(/[^\d.-]/g, ""));
+  if (!Number.isFinite(number) || [0, -255, 65535, 32767].includes(number)) return null;
+  if (/dBm/i.test(text)) { /* Already expressed in engineering units. */ }
+  else if (number > 0 && /(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical|ZTE)/i.test(path)) {
+    // Optical diagnostic counters are in 0.1 uW, not tenths of dBm.
+    number = 10 * Math.log10(number / 10000);
+  } else if (number < -100) number /= 100;
+  else if (number > 0) return null;
   if (!Number.isFinite(number) || number < -60 || number > 10) return null;
   return Math.round(number * 100) / 100;
 }
 
+const knownPaths = paths.map(path => declare(path, { path: 1 }));
+commit();
+const cachedValues = knownPaths.map(rows => Array.from(rows, item => declare(item.path, { value: 1 })));
+commit();
+
 let result = null;
-for (const path of paths) {
-  const values = declare(path, {});
+for (let index = 0; index < paths.length; index++) {
+  const path = paths[index];
+  const values = cachedValues[index];
   for (const item of values) {
     const normalized = normalize(item.value && item.value[0], item.path || path);
     if (normalized !== null) {

@@ -4066,6 +4066,7 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod(), options = 
   const selectedPeriod = normalizePeriod(period);
   const customers = new Map((data.customers || []).map((customer) => [customer.id, customer]));
   const resolver = radiusStatusResolver(data);
+  const radiusLookup = indexedRadiusUserLookup(data);
   const resolveSite = createLocalBillingSiteResolver(data);
   const includeInvoice = typeof options.includeInvoice === 'function'
     ? options.includeInvoice
@@ -4158,6 +4159,8 @@ function localBillingInvoiceRows(data = {}, period = currentPeriod(), options = 
         customerStatus,
         serviceStatus: customerStatus,
         paymentPromise: paymentPromise.summary(customer),
+        billingIsolationOverride: customer.billingIsolationOverride === true
+          || radiusUserForCustomer(data, customer, radiusLookup)?.billingIsolationOverride === true,
         isIsolated: customerStatus === 'isolated',
         dueDate: invoice.dueDate || '',
         invoiceDate: invoice.createdAt || '',
@@ -24877,19 +24880,22 @@ async function handleApi(req, res, url) {
       const scopedSummaryRows = userIsCollector(authContext.user)
         ? billingMonitorRowsForUser(authContext.data, summaryRows, authContext.user)
         : summaryRows;
-      if (status !== 'all') {
-        rows = rows.filter((invoice) => {
-          if (status === 'collectible') return ['unpaid', 'pending', 'overdue'].includes(invoice.status);
-          return invoice.status === status || (status === 'unpaid' && invoice.status === 'pending');
-        });
-      }
-      if (customerStatus !== 'all') {
-        rows = rows.filter((invoice) => invoice.customerStatus === customerStatus);
-      }
       if (!userIsCollector(authContext.user) && site !== 'all') {
         rows = rows.filter((invoice) => invoice.siteId === site || invoice.siteName === site);
       }
       rows = filterPreparedSearch(rows, search);
+      const collectionCounts = { all: 0, isolated: 0, terminate: 0 };
+      rows = rows.filter(invoice => {
+        const collectible = ['unpaid', 'pending', 'overdue'].includes(invoice.status);
+        if (collectible) {
+          collectionCounts.all++;
+          if (invoice.customerStatus === 'isolated') collectionCounts.isolated++;
+          if (invoice.customerStatus === 'terminate') collectionCounts.terminate++;
+        }
+        const matchesStatus = status === 'all' || (status === 'collectible' ? collectible
+          : invoice.status === status || (status === 'unpaid' && invoice.status === 'pending'));
+        return matchesStatus && (customerStatus === 'all' || invoice.customerStatus === customerStatus);
+      });
       const pagination = paginationPayload(page, limit, rows.length);
       const offset = (pagination.page - 1) * limit;
       const summary = billingMonitorSummaryFromRows(
@@ -24904,6 +24910,11 @@ async function handleApi(req, res, url) {
         revision: localBillingRevision(authContext.data, period, { scope }),
         paymentGatewayEnabled: authContext.data.settings?.paymentGateway?.enabled === true,
         paymentPromiseEnabled: authContext.data.settings?.billing?.paymentPromiseEnabled === true,
+        collectionCounts,
+        billingSchedule: {
+          suspendGraceDays: Math.max(0, Number(authContext.data.settings?.billing?.suspendGraceDays || 0)),
+          isolationTime: authContext.data.settings?.billing?.autoSuspendTime || '13:30'
+        },
         sites: billingMonitorSitesForUser(authContext.data, Array.isArray(base.sites) && base.sites.length ? base.sites : billingSites, authContext.user),
         collector: billingMonitorCollectorScopePayload(authContext.data, authContext.user),
         partnerScope: partnerScopeResponse(partnerScope),

@@ -1042,7 +1042,7 @@ test('uses built-in GenieACS parameters and normalizes ZTE RX power', () => {
   });
 
   assert.equal(device.username, 'pelanggan-zte@fake.net');
-  assert.equal(device.rxPowerText, '-23,3 dBm');
+  assert.equal(device.rxPowerText, '-16,33 dBm');
   assert.equal(device.ssid24, 'ZTE-2G');
   assert.equal(device.ssid5, 'ZTE-5G');
   assert.equal(device.wifiClientsTotal, 5);
@@ -1106,8 +1106,8 @@ test('normalizes positive CMCC/CT XPON raw RX power when virtual value is absent
   }, {});
 
   assert.equal(device.rxPower, '60');
-  assert.equal(device.rxPowerValue, -22.21);
-  assert.equal(device.rxPowerText, '-22,21 dBm');
+  assert.equal(device.rxPowerValue, -22.22);
+  assert.equal(device.rxPowerText, '-22,22 dBm');
   assert.equal(device.rxPowerParameter, 'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower');
 });
 

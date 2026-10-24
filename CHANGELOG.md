@@ -12,6 +12,8 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Memperbaiki konversi RX optik ZTE dari counter 0,1 uW menjadi dBm, mempertahankan nilai native dBm, dan menyamakan hasil di billing, Virtual Parameter, serta installer/updater. Pembacaan VP memakai dua tahap cache yang kompatibel dengan GenieACS existing, tanpa polling CPE tambahan atau penghapusan parameter modem.
+- Menambahkan filter mobile Tagihan Aktif, Isolir, dan Terminated beserta jumlah invoice sesuai NAS/pencarian/kewenangan sebelum pagination. Setiap tagihan menampilkan jadwal jatuh tempo atau janji tersimpan beserta tanggal/jam isolir, tanpa query database atau polling tambahan.
 - Menetapkan format jam scheduler 00-23 secara eksplisit agar Node 20/ICU yang menampilkan tengah malam sebagai 24:xx tidak memicu isolir atau jadwal billing lebih awal.
 - Menguji Janji Bayar pada Postpaid Fixed/Cycle dan Prepaid Fixed/Renewal untuk PPPoE/DHCP, melalui Tunai, Transfer Manual, Loket, QRIS, VA, dan gerai. Callback belum lunas tidak menutup janji; pelunasan tetap mempertahankan nilai bersih gateway dan tidak melewati validasi aktivasi terminated manual.
 - Memastikan ringkasan di bawah Catatan Janji Bayar selalu menampilkan jadwal yang sudah tersimpan: jatuh tempo dan isolir normal jika belum ada janji, atau tanggal janji existing jika sudah dibuat. Memilih calon tanggal baru tidak mengganti ringkasan sebelum disimpan.

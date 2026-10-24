@@ -22575,6 +22575,28 @@ function billingPaidMetric(summary = {}) {
   return billingCountAmountMetric(count, amount, summary);
 }
 
+function billingCollectionSchedule(invoice = {}, schedule = {}, promiseEnabled = false) {
+  const unpaid = ['unpaid', 'pending', 'overdue'].includes(String(invoice.status || '').toLowerCase());
+  const saved = unpaid && promiseEnabled && ['active', 'broken'].includes(invoice.paymentPromise?.status)
+    && invoice.paymentPromise.invoiceIds?.includes(invoice.invoiceId || invoice.id);
+  const dateKey = saved ? invoice.paymentPromise.date : invoice.dueDate;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || '')) ? new Date(`${dateKey}T00:00:00Z`) : null;
+  const valid = date && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === dateKey;
+  const shortDate = value => `${value.getUTCDate()} ${MONTH_LABELS[value.getUTCMonth()]}`;
+  const label = saved ? 'Janji Bayar' : 'Jatuh Tempo';
+  const main = `${label} ${valid ? shortDate(date) : '-'}`;
+  let isolation = '';
+  if (unpaid && invoice.billingIsolationOverride === true) isolation = 'Dikecualikan dari isolir';
+  else if (unpaid && valid && schedule.isolationTime) {
+    const grace = Math.max(0, Number(schedule.suspendGraceDays || 0));
+    if (saved || grace > 0) {
+      const next = new Date(date); next.setUTCDate(next.getUTCDate() + (saved ? 1 : grace));
+      isolation = `Isolir ${shortDate(next)} ${schedule.isolationTime}`;
+    } else isolation = 'Isolir otomatis nonaktif';
+  }
+  return { main, isolation, title: `${label} ${dateText(dateKey)}${isolation ? `, ${isolation}` : ''}` };
+}
+
 async function renderMonitoringBilling(options = {}) {
   clearRealtimeTimers();
   if (shouldShowPageLoading(options)) {
@@ -22654,7 +22676,8 @@ async function renderMonitoringBilling(options = {}) {
     const mapUrl = memberLocationUrl(invoice);
     const invoiceItem = invoice.item || invoice.subscribe || '';
     const invoiceLabel = billingInvoiceNo(invoice) || '-';
-    const dueDateLabel = dateText(invoice.dueDate || invoice.invoiceDate) || '-';
+    const dueDateLabel = dateText(invoice.dueDate) || '-';
+    const collectionSchedule = billingCollectionSchedule(invoice, payload.billingSchedule, payload.paymentPromiseEnabled === true);
     const rowDateLabel = partnerPaymentView
       ? (invoice.paidAt ? dateTimeText(invoice.paidAt) : '-')
       : dueDateLabel;
@@ -22681,9 +22704,10 @@ async function renderMonitoringBilling(options = {}) {
         <td>
           <div class="cell-stack">
             <strong class="cell-title" title="${escapeHtml(invoiceLabel)}">${escapeHtml(invoiceLabel)}</strong>
-            <span class="cell-subline billing-mobile-invoice-meta">${escapeHtml(invoiceLabel)} · Jatuh tempo ${escapeHtml(dueDateLabel)} · ${escapeHtml(displayedStatus)}</span>
+            <span class="cell-subline billing-mobile-invoice-meta">${escapeHtml(invoiceLabel)} · ${escapeHtml(displayedStatus)}</span>
+            <span class="billing-mobile-schedule" title="${escapeHtml(collectionSchedule.title)}"><span>${escapeHtml(collectionSchedule.main)}${collectionSchedule.isolation ? ',' : ''}</span>${collectionSchedule.isolation ? `<span>${escapeHtml(collectionSchedule.isolation)}</span>` : ''}</span>
             ${invoiceItem ? `<span class="cell-subline clamp-2" title="${escapeHtml(invoiceItem)}">${escapeHtml(invoiceItem)}</span>` : '<span class="cell-subline">-</span>'}
-            ${payload.paymentPromiseEnabled && invoice.paymentPromise?.invoiceIds?.includes(invoice.invoiceId || invoice.id) && ['active', 'broken'].includes(invoice.paymentPromise.status) ? `<span class="billing-promise-note ${invoice.paymentPromise.status === 'broken' ? 'negative-text' : ''}" title="${escapeHtml(invoice.paymentPromise.note || '')}">Janji bayar: ${escapeHtml(dateText(invoice.paymentPromise.date))}${invoice.paymentPromise.status === 'broken' ? ' · Terlewat' : ''}</span>` : ''}
+            ${payload.paymentPromiseEnabled && invoice.paymentPromise?.invoiceIds?.includes(invoice.invoiceId || invoice.id) && ['active', 'broken'].includes(invoice.paymentPromise.status) ? `<span class="billing-promise-note billing-desktop-promise-note ${invoice.paymentPromise.status === 'broken' ? 'negative-text' : ''}" title="${escapeHtml(invoice.paymentPromise.note || '')}">Janji bayar: ${escapeHtml(dateText(invoice.paymentPromise.date))}${invoice.paymentPromise.status === 'broken' ? ' · Terlewat' : ''}</span>` : ''}
           </div>
         </td>
         <td class="nowrap">${escapeHtml(rowDateLabel)}</td>
@@ -22708,11 +22732,18 @@ async function renderMonitoringBilling(options = {}) {
 
       <section class="billing-mobile-primary" aria-label="Pencarian dan status tagihan">
         <input class="control" id="billingMobileSearchInput" value="${escapeHtml(state.search)}" placeholder="Cari nama, invoice, UID, WA" autocomplete="off">
-        ${partnerPaymentView ? '<div class="notice small positive"><strong>Pembayaran</strong><span>Menampilkan invoice mitra yang sudah lunas saja.</span></div>' : `
+        ${partnerPaymentView ? '<div class="notice small positive"><strong>Pembayaran</strong><span>Menampilkan invoice mitra yang sudah lunas saja.</span></div>' : partnerTagihanView ? `
           <div class="billing-mobile-status-tabs" role="group" aria-label="Status tagihan cepat">
             <button class="${['collectible', 'unpaid'].includes(state.monitoringBillingStatus) ? 'is-active' : ''}" type="button" data-billing-mobile-status="collectible">Terbuka</button>
             <button class="${state.monitoringBillingStatus === 'overdue' ? 'is-active' : ''}" type="button" data-billing-mobile-status="overdue">Terlambat</button>
             <button class="${state.monitoringBillingStatus === 'paid' ? 'is-active' : ''}" type="button" data-billing-mobile-status="paid">Lunas</button>
+          </div>
+        ` : `
+          <div class="billing-mobile-status-tabs" role="group" aria-label="Filter tagihan pelanggan">
+            ${[['all', 'Tagihan Aktif'], ['isolated', 'Isolir'], ['terminate', 'Terminated']].map(([value, label]) => {
+              const selected = state.monitoringBillingStatus === 'collectible' && state.monitoringBillingCustomerStatus === value;
+              return `<button class="${selected ? 'is-active' : ''}" type="button" data-billing-mobile-category="${value}" aria-pressed="${selected}"><span>${label}</span> <span>(${displayNumber(payload.collectionCounts?.[value] || 0)})</span></button>`;
+            }).join('')}
           </div>
         `}
       </section>
@@ -22865,6 +22896,16 @@ async function renderMonitoringBilling(options = {}) {
   app.querySelectorAll('[data-billing-mobile-status]').forEach((button) => {
     button.addEventListener('click', () => {
       state.monitoringBillingStatus = button.dataset.billingMobileStatus || 'collectible';
+      state.monitoringBillingPage = 1;
+      renderMonitoringBilling({ silent: true });
+    });
+  });
+  app.querySelectorAll('[data-billing-mobile-category]').forEach(button => {
+    button.addEventListener('click', () => {
+      const category = button.dataset.billingMobileCategory;
+      if (!['all', 'isolated', 'terminate'].includes(category)) return;
+      state.monitoringBillingStatus = 'collectible';
+      state.monitoringBillingCustomerStatus = category;
       state.monitoringBillingPage = 1;
       renderMonitoringBilling({ silent: true });
     });

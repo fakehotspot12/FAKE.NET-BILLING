@@ -66,12 +66,15 @@ const DEFAULT_RX_POWER_PARAMETERS = [
   'InternetGatewayDevice.WANDevice.1.X_GC_EponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_GC_WANPONInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.1.X_FH_EponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.2.X_ZTE-COM_WANPONInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.X_HW_EponInterfaceConfig.RXPower',
+  'InternetGatewayDevice.WANDevice.1.X_HW_GponInterfaceConfig.RXPower',
   'InternetGatewayDevice.WANDevice.1.WANEthernetInterfaceConfig.X_ZTE-COM_RxPower',
   'InternetGatewayDevice.X_HW_RMS.PonStatus.RXPower',
   'Device.Optical.Interface.1.RXPower'
@@ -660,7 +663,8 @@ function resolveUsernameParameter(device = {}, paths = []) {
 }
 
 function firstValidRxPowerParameter(device = {}, paths = []) {
-  for (const path of paths) {
+  const rawZtePaths = paths.filter(path => /(?:X_ZTE-COM_WANPONInterfaceConfig\.RXPower|WANEthernetInterfaceConfig\.X_ZTE-COM_RxPower)$/i.test(path));
+  for (const path of [...rawZtePaths, ...paths.filter(path => !rawZtePaths.includes(path))]) {
     const value = getPathValue(device, path);
     if (!value || rxPowerNumber(value, path) === null) continue;
     return { path, value };
@@ -748,21 +752,19 @@ function normalizeRxPower(value = '', parameter = '') {
 function rxPowerNumber(value = '', parameter = '') {
   const text = cleanText(value);
   if (!text) return null;
-  const number = Number(text.replace(',', '.').replace(/[^\d.-]/g, ''));
+  let number = Number(text.replace(',', '.').replace(/[^\d.-]/g, ''));
   if (!Number.isFinite(number)) return null;
-  if ([0, -255, 255, 65535, 32767].includes(number)) return null;
+  if ([0, -255, 65535, 32767].includes(number)) return null;
   if (number > 0 && /^VirtualParameters\.RXPower(?:\.|$)/i.test(cleanText(parameter))) return null;
-  if (/ZTE/i.test(parameter) && number > 0) return -number / 10;
-  if (number > 0 && isRawPositiveRxParameter(parameter)) {
-    const normalized = 30 + (Math.log10(number * Math.pow(10, -7)) * 10);
-    return Number.isFinite(normalized) ? Math.ceil(normalized * 100) / 100 : null;
-  }
-  if (number < -100 || number > 100) return number / 100;
-  return number;
+  if (/dBm/i.test(text)) { /* Already expressed in engineering units. */ }
+  else if (number > 0 && isRawPositiveRxParameter(parameter)) number = 10 * Math.log10(number / 10000);
+  else if (number < -100) number /= 100;
+  else if (number > 0) return null;
+  return Number.isFinite(number) && number >= -60 && number <= 10 ? Math.round(number * 100) / 100 : null;
 }
 
 function isRawPositiveRxParameter(parameter = '') {
-  return /(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical).*RXPower|RXPower.*(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical)/i.test(parameter);
+  return /(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical|ZTE).*RXPower|RXPower.*(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical|ZTE)/i.test(parameter);
 }
 
 function rxPowerSummaryText(value) {
