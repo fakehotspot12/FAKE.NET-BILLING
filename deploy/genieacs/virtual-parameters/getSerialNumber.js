@@ -1,50 +1,32 @@
-function hexToText(hex) {
-  let text = "";
-  for (let index = 0; index < hex.length; index += 2) {
-    text += String.fromCharCode(parseInt(hex.substr(index, 2), 16));
-  }
-  return text;
-}
-
 function normalizeSerial(value) {
   const serial = String(value || "").trim();
-  if (!serial || !/^[0-9A-Fa-f]+$/.test(serial) || serial.includes("40ee15")) return serial;
-  const pon = declare("VirtualParameters.getponmode", {});
-  let ponMode = "";
-  for (const row of pon) {
-    if (row.value && row.value[0]) {
-      ponMode = String(row.value[0] || "");
-      break;
-    }
+  if (!/^[0-9a-f]{16}$/i.test(serial)) return serial;
+  let vendor = "";
+  for (let index = 0; index < 8; index += 2) {
+    vendor += String.fromCharCode(parseInt(serial.substr(index, 2), 16));
   }
-  if (ponMode.includes("EPON")) return serial;
-  if (serial.length < 12) return serial;
-  return hexToText(serial.substr(0, 8)) + serial.substr(8);
+  return /^[A-Z]{4}$/.test(vendor) ? vendor + serial.substr(8).toUpperCase() : serial;
 }
 
-let raw = "";
-if (args[1] && args[1].value) {
-  raw = args[1].value[0] || "";
-  declare("DeviceID.SerialNumber", null, { value: raw });
-} else {
-  const paths = [
-    "DeviceID.SerialNumber",
-    "InternetGatewayDevice.DeviceInfo.SerialNumber",
-    "Device.DeviceInfo.SerialNumber",
-    "InternetGatewayDevice.DeviceInfo.XponInterface.SerialNumber",
-    "InternetGatewayDevice.DeviceInfo.XponInterface.PonSerialNumber"
-  ];
-  for (const path of paths) {
-    const rows = declare(path, {});
-    for (const row of rows) {
-      const value = row.value && row.value[0];
-      if (value) {
-        raw = value;
-        break;
-      }
-    }
-    if (raw) break;
-  }
-}
+const paths = [
+  "DeviceID.SerialNumber",
+  "InternetGatewayDevice.DeviceInfo.SerialNumber",
+  "Device.DeviceInfo.SerialNumber",
+  "InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber",
+  "InternetGatewayDevice.DeviceInfo.XponInterface.SerialNumber",
+  "InternetGatewayDevice.DeviceInfo.XponInterface.PonSerialNumber"
+];
+const knownPaths = paths.map(path => declare(path, { path: 1 }));
+commit();
+const cachedValues = knownPaths.map(rows => Array.from(rows, item => declare(item.path, { value: 1 })));
+commit();
 
-return { writable: false, value: [normalizeSerial(raw), "xsd:string"] };
+let result = "";
+for (const rows of cachedValues) {
+  for (const row of rows) {
+    const value = normalizeSerial(row.value && row.value[0]);
+    if (value) { result = value; break; }
+  }
+  if (result) break;
+}
+return { writable: false, value: [result, "xsd:string"] };

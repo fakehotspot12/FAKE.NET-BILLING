@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.16] - 2026-10-26
+
+### Fixed
+
+- Menyamakan tampilan serial GPON berformat heksadesimal ke awalan vendor yang terbaca, termasuk HWTC, pada GenieACS dan billing. ID asli perangkat tetap dipertahankan; pencarian dan tautan member tetap mendukung serial lama maupun yang terbaca.
+- Memulihkan IP WAN/TR069 dari parameter manajemen yang tersimpan dengan pembacaan cache bertahap yang kompatibel dengan GenieACS. Fallback hanya memilih WAN berlabel TR069/CWMP, bukan IP internet pelanggan atau LAN.
+- Memperbaiki backfill installer/updater agar serial yang sudah terbaca tidak kembali menjadi heksadesimal, serta mengisi IP TR069 jika sumbernya tersedia, tanpa menghapus parameter perangkat atau menulis konfigurasi modem.
+
+### Performance
+
+- Menggunakan parameter cache ACS existing tanpa polling CPE berkala baru, perubahan skema, atau dependency tambahan. Pembacaan WAN tambahan dilewati jika alamat manajemen sudah tersedia.
+
 ## [4.3.15] - 2026-10-21
 
 ### Added

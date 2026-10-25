@@ -961,6 +961,7 @@ function deviceListProjection(cfg = normalizeSettings({})) {
     '_lastInform',
     '_deviceId',
     'InternetGatewayDevice.DeviceInfo.SerialNumber',
+    'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber',
     'InternetGatewayDevice.DeviceInfo.ProductClass',
     'InternetGatewayDevice.DeviceInfo.Manufacturer',
     'Device.DeviceInfo.SerialNumber',
@@ -1037,6 +1038,7 @@ function recentPendingProjection(cfg = normalizeSettings({})) {
     '_lastInform',
     '_deviceId',
     'InternetGatewayDevice.DeviceInfo.SerialNumber',
+    'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber',
     'InternetGatewayDevice.DeviceInfo.ProductClass',
     'InternetGatewayDevice.DeviceInfo.Manufacturer',
     'Device.DeviceInfo.SerialNumber',
@@ -1593,6 +1595,13 @@ function safeTags(value = []) {
   return value.map(cleanText).filter(Boolean).slice(0, 8);
 }
 
+function normalizeSerialNumber(value) {
+  const serial = cleanText(value);
+  if (!/^[0-9a-f]{16}$/i.test(serial)) return serial;
+  const vendor = Buffer.from(serial.slice(0, 8), 'hex').toString('latin1');
+  return /^[A-Z]{4}$/.test(vendor) ? vendor + serial.slice(8).toUpperCase() : serial;
+}
+
 function normalizeDevice(device = {}, settings = {}) {
   const cfg = normalizeSettings(settings);
   const username = resolveUsernameParameter(device, cfg.usernameParameters);
@@ -1640,9 +1649,11 @@ function normalizeDevice(device = {}, settings = {}) {
     wifiClients24 + wifiClients5 + lanClients,
     activeWifiClients + lanClients
   );
-  const serial = cleanText(device._deviceId?._SerialNumber)
+  const rawSerial = cleanText(device._deviceId?._SerialNumber)
     || getPathValue(device, 'InternetGatewayDevice.DeviceInfo.SerialNumber')
-    || getPathValue(device, 'Device.DeviceInfo.SerialNumber');
+    || getPathValue(device, 'Device.DeviceInfo.SerialNumber')
+    || getPathValue(device, 'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber');
+  const serial = normalizeSerialNumber(rawSerial);
   const productClass = cleanText(device._deviceId?._ProductClass)
     || getPathValue(device, 'InternetGatewayDevice.DeviceInfo.ProductClass')
     || getPathValue(device, 'Device.DeviceInfo.ProductClass');
@@ -1660,6 +1671,7 @@ function normalizeDevice(device = {}, settings = {}) {
     tags,
     oui: cleanText(device._deviceId?._OUI),
     serialNumber: serial,
+    rawSerialNumber: rawSerial,
     productClass,
     manufacturer,
     username: username.value,
@@ -1840,6 +1852,9 @@ function searchQuery(search = '') {
       { '_deviceId._SerialNumber': matcher },
       { '_deviceId._ProductClass': matcher },
       { 'InternetGatewayDevice.DeviceInfo.SerialNumber._value': matcher },
+      { 'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber._value': matcher },
+      { 'VirtualParameters.getSerialNumber._value': matcher },
+      { 'Device.DeviceInfo.SerialNumber._value': matcher },
       { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID._value': matcher },
       { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID._value': matcher },
       { 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.SSID._value': matcher },
@@ -2380,11 +2395,11 @@ function deviceCandidateScore(row = {}, options = {}) {
     .map(cleanComparable)
     .filter(Boolean);
   const boundSerials = (Array.isArray(options.boundSerialNumbers) ? options.boundSerialNumbers : [])
-    .map(cleanComparable)
+    .map(value => cleanComparable(normalizeSerialNumber(value)))
     .filter(Boolean);
   const nasAliases = Array.isArray(options.nasAliases) ? options.nasAliases : [];
   const rowId = cleanComparable(row.id);
-  const rowSerial = cleanComparable(row.serialNumber);
+  const rowSerial = cleanComparable(normalizeSerialNumber(row.serialNumber));
   const rowUsername = cleanComparable(row.username);
 
   let score = 0;
@@ -3323,6 +3338,7 @@ module.exports = {
     queueClientRefresh,
     clearDeviceListCache,
     deviceListProjection,
+    deviceCandidateScore,
     deviceSummaryProjection,
     mergeProjectedRows,
     projectionChunks,
