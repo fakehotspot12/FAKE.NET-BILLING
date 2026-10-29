@@ -18,6 +18,7 @@ DOWNLOAD_TIMEOUT_SECONDS="${FAKENET_UPDATE_DOWNLOAD_TIMEOUT_SECONDS:-900}"
 DOWNLOAD_RETRIES="${FAKENET_UPDATE_DOWNLOAD_RETRIES:-4}"
 ENV_FILE="${FAKENET_ENV_FILE:-/etc/fakenet-billing.env}"
 WAHA_ENV_FILE="${FAKENET_WAHA_ENV_FILE:-/etc/fakenet-billing-waha.env}"
+TURNSTILE_ENV_FILE="/etc/fakenet-billing-turnstile.env"
 GENIEACS_ENV_FILE="${FAKENET_GENIEACS_ENV_FILE:-/etc/fakenet-billing-genieacs.env}"
 
 mkdir -p "$BACKUP_DIR" "$LOG_DIR"
@@ -134,7 +135,7 @@ load_env_file() {
 
 harden_sensitive_permissions() {
   local file
-  for file in "$ENV_FILE" "$WAHA_ENV_FILE" "$GENIEACS_ENV_FILE"; do
+  for file in "$ENV_FILE" "$WAHA_ENV_FILE" "$GENIEACS_ENV_FILE" "$TURNSTILE_ENV_FILE"; do
     [ ! -f "$file" ] || chmod 600 "$file"
   done
   if [ -d "$APP_DIR/data" ]; then
@@ -277,12 +278,15 @@ verify_update_payload() {
     src/radius-connector-service.js
     src/whatsapp-queue.js
     src/payment-promise.js
+    src/login-turnstile.js
     public/index.html
     public/app.js
+    public/login-verification.js
     public/styles.css
     public/service-worker.js
     public/manifest.webmanifest
     deploy/fakenet-billing.env
+    deploy/fakenet-billing-turnstile.env.example
     deploy/fakenet-billing-waha.env
     deploy/fakenet-billing-genieacs.env
     deploy/genieacs/bootstrap.js
@@ -447,6 +451,7 @@ create_pre_update_backup() {
   safe_copy_if_exists "$APP_DIR/deploy/fakenet-billing-waha.env" "$tmp_backup_dir/app/deploy"
   safe_copy_if_exists "$ENV_FILE" "$tmp_backup_dir/etc"
   safe_copy_if_exists "$WAHA_ENV_FILE" "$tmp_backup_dir/etc"
+  safe_copy_if_exists "$TURNSTILE_ENV_FILE" "$tmp_backup_dir/etc"
   safe_copy_if_exists "$GENIEACS_ENV_FILE" "$tmp_backup_dir/etc"
   snapshot_genieacs_configuration
   write_manifest "$tmp_backup_dir/manifest.txt"
@@ -526,7 +531,7 @@ install_node_dependencies() {
   fi
   rm -rf "$dependency_stage"
   dependency_stage=""
-  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise')" >/dev/null; then
+  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile')" >/dev/null; then
     rm -rf "$APP_DIR/node_modules"
     [ ! -d "$previous_modules" ] || mv "$previous_modules" "$APP_DIR/node_modules"
     echo "Verifikasi dependency baru gagal; dependency lama dipulihkan." >&2

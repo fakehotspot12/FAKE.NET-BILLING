@@ -261,6 +261,34 @@ body.is-loading-auth .content::before {
   object-fit: contain;
 }
 
+.boot-verification-row.is-turnstile {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+}
+
+.boot-verification-image.is-turnstile {
+  display: block;
+  width: 100%;
+  min-height: 65px;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.boot-verification-image.is-turnstile[data-widget-size="compact"] {
+  display: grid;
+  place-items: center;
+}
+
+.boot-verification-row button[hidden],
+.boot-field[hidden] {
+  display: none !important;
+}
+
+.boot-message:empty {
+  display: none;
+}
+
 .boot-message {
   min-height: 18px;
   margin: 0;

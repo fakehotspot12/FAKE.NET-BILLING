@@ -457,6 +457,49 @@ Worker BullMQ Whatsapp berjalan di dalam `fakenet-billing.service`. Billing Sett
 
 BullMQ membantu menjaga urutan, retry, dan laju pengiriman. BullMQ maupun WAHA tidak menjamin akun WhatsApp bebas pembatasan; gunakan nomor yang memiliki persetujuan penerima, hindari pesan berulang, dan pertahankan jeda serta jam kirim yang wajar.
 
+## Verifikasi Login Opsional
+
+Default repository dan instalasi baru memakai kode verifikasi lokal, bukan Cloudflare Turnstile. Pengaktifan Turnstile dilakukan oleh pengembang melalui file konfigurasi backend, tidak melalui menu web. Pengaturan aktif/nonaktif verifikasi login yang sudah ada tetap berlaku.
+
+Untuk menggunakan Turnstile:
+
+1. Buat widget Turnstile mode **Managed** di akun Cloudflare, lalu daftarkan hostname yang digunakan untuk login billing.
+2. Siapkan file konfigurasi privat:
+
+```bash
+sudo install -m 600 /opt/fakenet-billing/deploy/fakenet-billing-turnstile.env.example /etc/fakenet-billing-turnstile.env
+sudo nano /etc/fakenet-billing-turnstile.env
+```
+
+3. Isi konfigurasi berikut dengan key milik instalasi sendiri:
+
+```ini
+LOGIN_TURNSTILE_ENABLED=1
+LOGIN_TURNSTILE_DOMAINS=billing.example.net
+LOGIN_TURNSTILE_SITE_KEY=ISI_SITE_KEY
+LOGIN_TURNSTILE_SECRET_KEY=ISI_SECRET_KEY
+```
+
+4. Muat ulang service utama:
+
+```bash
+sudo chmod 600 /etc/fakenet-billing-turnstile.env
+sudo systemctl restart fakenet-billing
+```
+
+- `LOGIN_TURNSTILE_ENABLED=0`, file tidak ada, atau flag belum diisi: tetap menggunakan kode verifikasi biasa.
+- Hostname yang cocok dengan konfigurasi beserta subdomainnya menggunakan Turnstile. Isi hostname tanpa `https://`, port, atau path. Hostname dapat dipisahkan dengan koma.
+- Akses melalui IP lokal tetap memakai kode verifikasi biasa dan tidak memuat script Cloudflare. Domain di luar daftar juga mempertahankan verifikasi biasa.
+- Jika satu VM melayani beberapa domain dengan widget/key berbeda, tambahkan profil per domain pada file privat yang sama, misalnya:
+
+```ini
+LOGIN_TURNSTILE_ADDITIONAL_SITES='[{"domains":["billing.example.org"],"siteKey":"ISI_SITE_KEY_LAIN","secretKey":"ISI_SECRET_KEY_LAIN"}]'
+```
+
+- Token wajib diverifikasi server dan harus cocok dengan hostname serta aksi login. Token kedaluwarsa atau sudah dipakai ditolak; gangguan Cloudflare tidak otomatis mematikan proteksi pada domain tersebut.
+- Turnstile hanya melindungi login billing, tidak diterapkan pada webhook pembayaran, invoice publik, atau OTP WifiKu. Rate limit login tetap aktif.
+- Secret Key hanya disimpan di backend. Jangan memasukkan file privat atau key asli ke Git. Updater mempertahankan file konfigurasi ini dan menyertakannya dalam backup privat pre-update; uninstall total menghapusnya.
+
 ## Update Aman
 
 Update dari web:

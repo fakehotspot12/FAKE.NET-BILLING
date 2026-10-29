@@ -73,6 +73,7 @@ const {
   upsertMonthlyEarning
 } = require('./finance');
 const auth = require('./auth');
+const loginTurnstile = require('./login-turnstile');
 const mediaServices = require('./media-services');
 const operations = require('./operations');
 const freeradius = require('./freeradius-core');
@@ -2936,6 +2937,14 @@ function publicAppSettings(settings = {}) {
 function loginVerificationEnabled(settings = {}) {
   return settings?.security?.loginVerificationEnabled !== false;
 }
+
+function loginVerificationPolicy(req = {}, settings = {}) {
+  let hostname = '';
+  try { hostname = new URL(requestOrigin(req)).hostname; } catch {}
+  return loginTurnstile.verificationPolicy(hostname, loginVerificationEnabled(settings));
+}
+
+const verifyTurnstileLogin = loginTurnstile.createTurnstileVerifier();
 
 function actorPayload(user = {}) {
   const name = user.name || user.username || '';
@@ -21570,18 +21579,11 @@ async function handleApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/auth/verification-code') {
     const data = await requestStore(req);
-    if (!loginVerificationEnabled(data.settings || {})) {
-      sendJson(res, 200, {
-        ok: true,
-        enabled: false,
-        verification: null
-      });
-      return;
-    }
+    const policy = loginVerificationPolicy(req, data.settings || {});
     sendJson(res, 200, {
       ok: true,
-      enabled: true,
-      verification: createLoginVerificationChallenge()
+      ...policy,
+      verification: policy.provider === 'code' ? createLoginVerificationChallenge() : null
     });
     return;
   }
@@ -21596,11 +21598,22 @@ async function handleApi(req, res, url) {
       return;
     }
     const settingsData = await requestStore(req);
-    if (loginVerificationEnabled(settingsData.settings || {})) {
-      const verification = verifyLoginVerificationChallenge(payload.verificationId, payload.verificationCode);
+    const origin = csrfOriginAllowed(req);
+    if (!origin.ok) {
+      sendJson(res, 403, { error: origin.reason || 'Origin login tidak sesuai aplikasi' });
+      return;
+    }
+    const policy = loginVerificationPolicy(req, settingsData.settings || {});
+    if (policy.enabled) {
+      const verification = policy.provider === 'turnstile'
+        ? await verifyTurnstileLogin(payload.turnstileToken || payload['cf-turnstile-response'], {
+          hostname: new URL(requestOrigin(req)).hostname,
+          ipAddress: requestClientIp(req)
+        })
+        : verifyLoginVerificationChallenge(payload.verificationId, payload.verificationCode);
       if (!verification.ok) {
         recordLoginFailure(req, payload.username);
-        sendJson(res, 400, { error: verification.error || 'Kode verifikasi salah' });
+        sendJson(res, verification.status || 400, { error: verification.error || 'Kode verifikasi salah' });
         return;
       }
     }
@@ -27586,6 +27599,7 @@ module.exports = {
     requestClientIp,
     requestIsHttps,
     requestOrigin,
+    loginVerificationPolicy,
     tripayTransactionHistory,
     applyTripayTransactionHistory,
     syncTripayTransactionHistory,

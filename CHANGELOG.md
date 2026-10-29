@@ -2,6 +2,22 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.17] - 2026-10-29
+
+### Added
+
+- Menambahkan integrasi Turnstile opsional khusus login billing, dengan konfigurasi privat backend per domain/key. Default repository dan instalasi baru tetap nonaktif dan memakai kode verifikasi biasa; akses IP lokal tetap menggunakan verifikasi lokal.
+- Menyamakan penanganan verifikasi pada login awal dan login ulang, dengan pembaruan token otomatis, penanganan kedaluwarsa/gagal, serta ukuran widget responsif untuk mobile dan desktop. Tombol Refresh hanya muncul pada kode lokal, bukan Turnstile.
+
+### Security
+
+- Memvalidasi token di server, termasuk hostname, aksi login, masa berlaku, dan penggunaan ulang, dengan rate limit existing tetap aktif. Kegagalan Cloudflare tidak mengganti proteksi domain menjadi verifikasi yang lebih lemah secara otomatis.
+- Menyimpan Secret Key hanya di konfigurasi privat server dan tidak mengirimkannya ke frontend. Webhook pembayaran, invoice publik, OTP WifiKu, data pelanggan, serta scheduler tidak diubah.
+
+### Operations
+
+- Melengkapi pemeriksaan file installer/updater serta backup, izin akses, dan penghapusan konfigurasi privat saat uninstall. Tidak ada dependency atau polling tambahan; validasi eksternal hanya dijalankan saat submit login Turnstile.
+
 ## [4.3.16] - 2026-10-26
 
 ### Fixed

@@ -264,12 +264,15 @@ verify_repository_payload() {
     src/radius-connector-service.js
     src/whatsapp-queue.js
     src/payment-promise.js
+    src/login-turnstile.js
     public/index.html
     public/app.js
+    public/login-verification.js
     public/styles.css
     public/service-worker.js
     public/manifest.webmanifest
     deploy/fakenet-billing.env
+    deploy/fakenet-billing-turnstile.env.example
     deploy/fakenet-billing-waha.env
     deploy/fakenet-billing-genieacs.env
     deploy/genieacs/bootstrap.js
@@ -362,7 +365,7 @@ install_node_deps() {
     return 1
   fi
   [ "$install_status" -eq 0 ] || return "$install_status"
-  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise')" >/dev/null
+  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile')" >/dev/null
 }
 
 install_genieacs_runtime() {
@@ -530,7 +533,7 @@ ensure_update_env_defaults() {
 
 harden_runtime_permissions() {
   local file directory
-  for file in /etc/fakenet-billing.env /etc/fakenet-billing-waha.env "$GENIEACS_ENV_FILE"; do
+  for file in /etc/fakenet-billing.env /etc/fakenet-billing-waha.env /etc/fakenet-billing-turnstile.env "$GENIEACS_ENV_FILE"; do
     [ ! -f "$file" ] || chmod 600 "$file"
   done
   if [ -d "$APP_DIR/data" ]; then
@@ -1448,6 +1451,8 @@ uninstall_total() {
     /opt/fakenet-billing-genieacs \
     /etc/fakenet-billing.env \
     /etc/fakenet-billing-waha.env \
+    /etc/fakenet-billing-turnstile.env \
+    /etc/systemd/system/fakenet-billing.service.d/60-turnstile.conf \
     "$GENIEACS_ENV_FILE" \
     /var/log/fakenet-billing \
     /var/backups/fakenet-billing \

@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'wa-recipient-marker-20261029';
+  const assetRevision = 'login-turnstile-layout-20261029';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {
@@ -24,6 +24,7 @@
   let loginActive = false;
   let pushCleanupGeneration = 0;
   let loggedOutPushCleaned = false;
+  let verificationController = null;
 
   async function revokeLoggedOutPush() {
     if (!('serviceWorker' in navigator)) return;
@@ -127,6 +128,8 @@
   }
 
   function showDashboardSkeleton(message = 'Menyiapkan dashboard...') {
+    verificationController?.destroy();
+    verificationController = null;
     document.body.classList.add('is-loading-auth');
     document.body.classList.remove('is-bootstrap-login', 'is-login');
     app.innerHTML = loadingMarkup(message);
@@ -138,7 +141,7 @@
       <span>Kode Verifikasi</span>
       <span class="boot-verification-row">
         <span class="boot-verification-image" id="bootVerificationImage">Memuat kode...</span>
-        <button class="boot-secondary-button" id="bootRefreshVerification" type="button">Refresh</button>
+        <button class="boot-secondary-button" id="bootRefreshVerification" type="button" hidden>Refresh</button>
       </span>
       <input name="verificationId" type="hidden">
       <input name="verificationCode" autocomplete="off" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Masukkan kode" required>
@@ -146,6 +149,8 @@
   }
 
   function showLogin(message = '', error = false) {
+    verificationController?.destroy();
+    verificationController = null;
     if (!loggedOutPushCleaned) {
       loggedOutPushCleaned = true;
       revokeLoggedOutPush().catch(() => {});
@@ -179,7 +184,6 @@
       </div>
     </section>`;
 
-    document.getElementById('bootRefreshVerification')?.addEventListener('click', refreshVerification);
     document.getElementById('bootLoginForm')?.addEventListener('submit', submitLogin);
     if (branding.loginVerificationEnabled) refreshVerification();
   }
@@ -192,30 +196,22 @@
   }
 
   async function refreshVerification() {
-    const imageBox = document.getElementById('bootVerificationImage');
-    const hidden = document.querySelector('#bootLoginForm input[name="verificationId"]');
-    const codeInput = document.querySelector('#bootLoginForm input[name="verificationCode"]');
-    if (imageBox) imageBox.textContent = 'Memuat kode...';
-    try {
-      const payload = await request('/api/auth/verification-code');
-      const verification = payload.verification || {};
-      if (hidden) hidden.value = verification.id || '';
-      if (codeInput) codeInput.value = '';
-      if (imageBox) {
-        imageBox.replaceChildren();
-        if (verification.image) {
-          const image = document.createElement('img');
-          image.src = verification.image;
-          image.alt = 'Kode verifikasi';
-          imageBox.appendChild(image);
-        } else {
-          imageBox.textContent = 'Kode tidak tersedia';
-        }
-      }
-    } catch {
-      if (hidden) hidden.value = '';
-      if (imageBox) imageBox.textContent = 'Kode gagal dimuat';
+    const form = document.getElementById('bootLoginForm');
+    if (!form) return;
+    if (!window.BillingLoginVerification) {
+      setLoginMessage('Komponen verifikasi belum dimuat. Muat ulang halaman.', true);
+      return;
     }
+    if (!verificationController) verificationController = window.BillingLoginVerification.create({
+      form,
+      imageBox: document.getElementById('bootVerificationImage'),
+      idInput: form.elements.verificationId,
+      codeInput: form.elements.verificationCode,
+      refreshButton: document.getElementById('bootRefreshVerification'),
+      fetchPayload: () => request('/api/auth/verification-code'),
+      onMessage: setLoginMessage
+    });
+    await verificationController.refresh();
   }
 
   function formPayload(form) {
@@ -226,14 +222,14 @@
     event.preventDefault();
     const form = event.currentTarget;
     const button = form.querySelector('button[type="submit"]');
-    const payload = formPayload(form);
-    if (branding.loginVerificationEnabled && !String(payload.verificationId || '').trim()) {
-      await refreshVerification();
-      setLoginMessage('Kode verifikasi belum siap. Masukkan kode yang baru tampil.', true);
-      return;
-    }
-    if (payload.verificationCode) payload.verificationCode = String(payload.verificationCode).replace(/\s+/g, '');
     try {
+      if (branding.loginVerificationEnabled) {
+        if (!verificationController) await refreshVerification();
+        if (!verificationController) throw new Error('Verifikasi belum tersedia. Muat ulang halaman.');
+        verificationController.assertReady();
+      }
+      const payload = formPayload(form);
+      if (payload.verificationCode) payload.verificationCode = String(payload.verificationCode).replace(/\s+/g, '');
       if (button) {
         button.disabled = true;
         button.textContent = 'Memproses...';

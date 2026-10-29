@@ -5004,6 +5004,8 @@ function applyBranding() {
   }
 }
 
+let loginVerificationController = null;
+
 function loginVerificationPlaceholder(message = 'Memuat kode...') {
   return `
     <div class="login-verification-image is-loading" id="loginVerificationImage">
@@ -5013,38 +5015,27 @@ function loginVerificationPlaceholder(message = 'Memuat kode...') {
 }
 
 async function refreshLoginVerification() {
-  const imageBox = document.getElementById('loginVerificationImage');
-  const hidden = document.querySelector('#loginForm input[name="verificationId"]');
-  const input = document.querySelector('#loginForm input[name="verificationCode"]');
-  if (imageBox) {
-    imageBox.classList.add('is-loading');
-    imageBox.innerHTML = '<span>Memuat kode...</span>';
+  const form = document.getElementById('loginForm');
+  if (!form) return;
+  if (!window.BillingLoginVerification) {
+    setToast('Komponen verifikasi belum dimuat. Muat ulang halaman.');
+    return;
   }
-  try {
-    const payload = await api('/api/auth/verification-code', { skipAuthRedirect: true });
-    const verification = payload.verification || {};
-    state.loginVerification = verification;
-    if (hidden) hidden.value = verification.id || '';
-    if (imageBox) {
-      imageBox.classList.remove('is-loading');
-      imageBox.innerHTML = verification.image
-        ? `<img src="${escapeHtml(verification.image)}" alt="Kode verifikasi">`
-        : '<span>Kode tidak tersedia</span>';
-    }
-    if (input) {
-      input.value = '';
-    }
-  } catch {
-    state.loginVerification = null;
-    if (hidden) hidden.value = '';
-    if (imageBox) {
-      imageBox.classList.add('is-loading');
-      imageBox.innerHTML = '<span>Kode gagal dimuat</span>';
-    }
-  }
+  if (!loginVerificationController) loginVerificationController = window.BillingLoginVerification.create({
+    form,
+    imageBox: document.getElementById('loginVerificationImage'),
+    idInput: form.elements.verificationId,
+    codeInput: form.elements.verificationCode,
+    refreshButton: document.getElementById('refreshLoginVerification'),
+    fetchPayload: () => api('/api/auth/verification-code', { skipAuthRedirect: true }),
+    onMessage: message => { if (message) setToast(message); }
+  });
+  await loginVerificationController.refresh();
 }
 
 function renderLogin() {
+  loginVerificationController?.destroy();
+  loginVerificationController = null;
   suppressPaymentNotifications();
   ensureWebPushRegistration().then(registration => {
     if (!state.auth && registration) return setPushWorkerAuth(registration);
@@ -5081,7 +5072,7 @@ function renderLogin() {
               <span>Kode Verifikasi</span>
               <div class="login-verification-row">
                 ${loginVerificationPlaceholder()}
-                <button class="ghost-button compact" id="refreshLoginVerification" type="button" title="Refresh Verifikasi" aria-label="Refresh Verifikasi">
+                <button class="ghost-button compact" id="refreshLoginVerification" type="button" title="Refresh Verifikasi" aria-label="Refresh Verifikasi" hidden>
                   <i class="fa-solid fa-rotate-right"></i>
                   <span>Refresh Verifikasi</span>
                 </button>
@@ -5103,7 +5094,6 @@ function renderLogin() {
 
   if (verificationEnabled) {
     refreshLoginVerification();
-    document.getElementById('refreshLoginVerification')?.addEventListener('click', () => refreshLoginVerification());
   }
   document.getElementById('loginForm').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -5112,16 +5102,10 @@ function renderLogin() {
     try {
       if (submitButton) submitButton.disabled = true;
       if (verificationEnabled) {
-        const verificationId = String(form.verificationId?.value || '').trim();
-        const verificationCode = String(form.verificationCode?.value || '').trim();
-        if (!verificationId) {
-          await refreshLoginVerification();
-          throw new Error('Kode verifikasi belum siap, masukkan kode yang baru tampil');
-        }
-        if (!verificationCode) {
-          throw new Error('Kode verifikasi wajib diisi');
-        }
-        form.verificationCode.value = verificationCode.replace(/\s+/g, '');
+        if (!loginVerificationController) await refreshLoginVerification();
+        if (!loginVerificationController) throw new Error('Verifikasi belum tersedia. Muat ulang halaman.');
+        loginVerificationController.assertReady();
+        if (form.verificationCode) form.verificationCode.value = form.verificationCode.value.replace(/\s+/g, '');
       }
       const payload = await api('/api/auth/login', {
         method: 'POST',
@@ -5131,6 +5115,8 @@ function renderLogin() {
       state.auth = payload.user;
       state.roles = payload.roles || [];
       state.csrfToken = payload.csrfToken || state.csrfToken || '';
+      loginVerificationController?.destroy();
+      loginVerificationController = null;
       clearRadiusOptionsCache();
       updateBranding(payload);
       takeLoginReturnView();
@@ -5154,6 +5140,8 @@ function renderLogin() {
 }
 
 function renderActivation(licenseStatus = {}) {
+  loginVerificationController?.destroy();
+  loginVerificationController = null;
   configureShell();
   applyBranding();
   const branding = currentBranding();

@@ -5056,6 +5056,30 @@ body.is-login-transition {
   background: rgba(15, 23, 42, 0.72);
 }
 
+.login-verification-row.is-turnstile {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+}
+
+.login-verification-image.is-turnstile {
+  display: block;
+  width: 100%;
+  min-height: 65px;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.login-verification-image.is-turnstile[data-widget-size="compact"] {
+  display: grid;
+  place-items: center;
+}
+
+.login-verification-row button[hidden],
+.login-verification-field[hidden] {
+  display: none !important;
+}
+
 .login-note {
   margin: 0;
   font-size: 13px;
