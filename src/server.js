@@ -16397,10 +16397,19 @@ function wahaBaseUrl(settings = {}) {
 
 async function wahaJson(settings = {}, suffix = '', options = {}) {
   const { timeoutMs = WA_GATEWAY_HTTP_TIMEOUT_MS, ...fetchOptions } = options;
-  return fetchJsonWithTimeout(joinUrl(wahaBaseUrl(settings), suffix), {
-    ...fetchOptions,
-    headers: wahaHeaders(settings, fetchOptions.headers || {})
-  }, timeoutMs);
+  try {
+    return await fetchJsonWithTimeout(joinUrl(wahaBaseUrl(settings), suffix), {
+      ...fetchOptions,
+      headers: wahaHeaders(settings, fetchOptions.headers || {})
+    }, timeoutMs);
+  } catch (error) {
+    const payload = error.payload || {};
+    const detail = [payload.exception?.message, payload.error?.message, payload.error, payload.message]
+      .map(value => Array.isArray(value) ? value.filter(item => typeof item === 'string').join('; ') : value)
+      .find(value => typeof value === 'string' && value.trim());
+    if (detail) error.message = detail.trim().split(/\r?\n/)[0].slice(0, 500);
+    throw error;
+  }
 }
 
 async function wahaSessionStatus(settings = {}, options = {}) {

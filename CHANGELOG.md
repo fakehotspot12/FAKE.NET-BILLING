@@ -6,12 +6,15 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Menambahkan penanda ringkas pada nomor penerima pesan WA yang bermasalah. Status tidak terdaftar hanya ditampilkan untuk hasil pemeriksaan gateway yang cocok dengan nomor pesan; error LID tanpa verifikasi diberi penanda Periksa nomor WA.
+- Menampilkan detail singkat error engine WhatsApp agar penyebabnya tidak tersamarkan sebagai HTTP 500, tanpa mengubah status pesan, algoritma antrean, retry, jeda pengiriman, atau sesi WA.
 - Menyamakan tampilan serial GPON berformat heksadesimal ke awalan vendor yang terbaca, termasuk HWTC, pada GenieACS dan billing. ID asli perangkat tetap dipertahankan; pencarian dan tautan member tetap mendukung serial lama maupun yang terbaca.
 - Memulihkan IP WAN/TR069 dari parameter manajemen yang tersimpan dengan pembacaan cache bertahap yang kompatibel dengan GenieACS. Fallback hanya memilih WAN berlabel TR069/CWMP, bukan IP internet pelanggan atau LAN.
 - Memperbaiki backfill installer/updater agar serial yang sudah terbaca tidak kembali menjadi heksadesimal, serta mengisi IP TR069 jika sumbernya tersedia, tanpa menghapus parameter perangkat atau menulis konfigurasi modem.
 
 ### Performance
 
+- Penanda WA dirender dari data pesan yang sudah ada, tanpa query, polling, pemeriksaan nomor, atau dependency tambahan saat halaman dibuka maupun pada jalur pengiriman normal.
 - Menggunakan parameter cache ACS existing tanpa polling CPE berkala baru, perubahan skema, atau dependency tambahan. Pembacaan WAN tambahan dilewati jika alamat manajemen sudah tersedia.
 
 ## [4.3.15] - 2026-10-21

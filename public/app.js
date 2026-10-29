@@ -24424,6 +24424,21 @@ function waMessageTransientError(message = {}) {
   return error;
 }
 
+function waMessageRecipientMarker(message = {}) {
+  if (!['failed', 'pending', 'queued'].includes(String(message.status || '').toLowerCase())) return null;
+  const phoneKey = value => String(value || '').replace(/\D/g, '').replace(/^0/, '62').replace(/^8/, '628');
+  const check = message.recipientCheck || {};
+  if (check.status === 'not_registered' && check.source === 'gateway'
+    && Number.isFinite(Date.parse(check.checkedAt)) && phoneKey(check.phone)
+    && phoneKey(check.phone) === phoneKey(message.phone)) {
+    return { label: 'Nomor WA tidak terdaftar', detail: `Diperiksa ${dateTimeText(check.checkedAt)}` };
+  }
+  if (/no lid for user|lid is missing in chat table|not registered|invalid (?:wid|recipient|chat|phone)|nomor whatsapp (?:tidak valid|tidak terdaftar)/i.test(String(message.lastError || ''))) {
+    return { label: 'Periksa nomor WA', detail: 'Nomor atau identitas penerima WhatsApp perlu diperiksa.' };
+  }
+  return null;
+}
+
 function waMessageCanSend(message = {}) {
   const status = String(message.status || '').toLowerCase();
   return !['sent', 'delivered', 'read', 'seen'].includes(status);
@@ -24459,6 +24474,7 @@ function openWaMessagePreviewModal(message = {}) {
 function waMessageRows(messages = [], startNo = 1) {
   return messages.map((message, index) => {
     const errorText = waMessageTransientError(message);
+    const recipientMarker = waMessageRecipientMarker(message);
     return `
     <tr>
       <td class="nowrap wa-message-no-cell">
@@ -24468,6 +24484,7 @@ function waMessageRows(messages = [], startNo = 1) {
       <td class="nowrap">${escapeHtml(dateTimeText(message.sentAt || message.updatedAt || message.createdAt || message.scheduledAt))}</td>
       <td>
         <strong>${escapeHtml(message.phone || '-')}</strong>
+        ${recipientMarker ? `<div class="wa-recipient-marker"><span class="badge inactive" title="${escapeHtml(recipientMarker.detail)}">${escapeHtml(recipientMarker.label)}</span></div>` : ''}
       </td>
       <td>${escapeHtml(waMessageSubject(message))}</td>
       <td class="wa-message-text">

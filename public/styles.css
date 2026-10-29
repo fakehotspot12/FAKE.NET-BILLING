@@ -5590,6 +5590,19 @@ body.is-loading-auth .content::before {
   background: #e8e8e8;
 }
 
+.wa-recipient-marker {
+  display: block;
+  max-width: 100%;
+  margin-top: 3px;
+}
+
+.wa-recipient-marker .badge {
+  max-width: 100%;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: normal !important;
+}
+
 .member-status-stack {
   display: grid;
   justify-items: start;

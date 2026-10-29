@@ -20,7 +20,7 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const appSource = publicSource('app.js');
 
   assert.match(indexSource, /href="\/boot\.css\?ui=billing-view-audit-20260822"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=billing-mobile-collection-20261024"/);
+  assert.match(indexSource, /src="\/bootstrap\.js\?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wa-recipient-marker-20261029"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
   assert.match(indexSource, /class="boot-app-pending"/);
