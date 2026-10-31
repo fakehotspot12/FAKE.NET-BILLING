@@ -3,6 +3,7 @@
 const fs = require('fs/promises');
 const http = require('http');
 const path = require('path');
+const net = require('net');
 const { URL } = require('url');
 const packageInfo = require('../package.json');
 
@@ -181,8 +182,31 @@ function sendJson(res, status, payload) {
 }
 
 function requestIsHttps(req = {}) {
-  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const forwardedProto = trustedProxyPeer(req)
+    ? String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() : '';
   return forwardedProto === 'https' || req.socket?.encrypted === true;
+}
+
+function normalizedIp(value = '') {
+  const text = String(value || '').split(',')[0].trim().replace(/^::ffff:/, '');
+  return net.isIP(text) ? text : '';
+}
+
+function trustedProxyPeer(req = {}) {
+  const peer = normalizedIp(req.socket?.remoteAddress);
+  if (peer === '127.0.0.1' || peer === '::1') return true;
+  return String(process.env.SUBWEB_TRUSTED_PROXY_IPS || '').split(/[\s,]+/)
+    .map(normalizedIp).filter(Boolean).includes(peer);
+}
+
+function clientAddress(req = {}) {
+  const peer = normalizedIp(req.socket?.remoteAddress);
+  if (trustedProxyPeer(req)) {
+    const cloudflare = normalizedIp(req.headers?.['cf-connecting-ip']);
+    if (req.headers?.['cf-ray'] && cloudflare) return cloudflare;
+    return normalizedIp(req.headers?.['x-forwarded-for']) || peer;
+  }
+  return peer;
 }
 
 function applySecurityHeaders(req = {}, res = {}) {
@@ -234,8 +258,9 @@ function mappedStaticPath(pathname = '') {
 }
 
 function requestOrigin(req) {
-  const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim() || 'http';
-  const host = String(req.headers['x-forwarded-host'] || req.headers.host || `127.0.0.1:${PORT}`).split(',')[0].trim();
+  const proto = requestIsHttps(req) ? 'https' : 'http';
+  const host = String((trustedProxyPeer(req) ? req.headers['x-forwarded-host'] : '')
+    || req.headers.host || '127.0.0.1:' + PORT).split(',')[0].trim();
   return `${proto}://${host}`;
 }
 
@@ -350,7 +375,8 @@ async function subwebRuntimeBody(ext = '', body = Buffer.alloc(0), req = {}) {
 
 function urlWithPort(req, port, pathname = '/') {
   const url = new URL(requestOrigin(req));
-  url.port = String(port);
+  const local = net.isIP(url.hostname.replace(/^\[|\]$/g, '')) || url.hostname === 'localhost';
+  if (local || url.port || Number(port) !== PORT) url.port = String(port);
   url.pathname = pathname;
   url.search = '';
   return url.toString();
@@ -472,20 +498,21 @@ function proxyTargetUrl(reqUrl = '/') {
 
 function proxyToBilling(req, res) {
   const target = proxyTargetUrl(req.url || '/');
-  const remoteIp = String(req.socket?.remoteAddress || '').trim();
-  const forwardedFor = [req.headers['x-forwarded-for'], remoteIp]
-    .flatMap((value) => String(value || '').split(','))
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .join(', ');
+  const remoteIp = clientAddress(req);
   const headers = {
     ...req.headers,
     host: target.host,
-    ...(forwardedFor ? { 'x-forwarded-for': forwardedFor } : {}),
+    'x-forwarded-for': remoteIp,
     'x-forwarded-host': req.headers.host || '',
-    'x-forwarded-proto': 'http',
+    'x-forwarded-proto': requestIsHttps(req) ? 'https' : 'http',
     'x-forwarded-by': `fakenet-billing-${SUBWEB_KIND}`
   };
+  delete headers['x-real-ip'];
+  delete headers.forwarded;
+  if (!trustedProxyPeer(req)) {
+    delete headers['cf-ray'];
+    delete headers['cf-connecting-ip'];
+  }
   const proxyReq = http.request(target, {
     method: req.method,
     headers
@@ -551,7 +578,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
+if (require.main === module) server.listen(PORT, HOST, () => {
   console.log(`FAKE.NET Billing subweb ${SUBWEB_KIND} berjalan di http://${HOST}:${PORT}`);
   console.log(`Proxy API subweb menuju ${BILLING_BASE_URL}`);
 });
+
+module.exports = { __test: { server, clientAddress, requestOrigin, subwebUrls } };

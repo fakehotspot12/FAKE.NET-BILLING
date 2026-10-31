@@ -291,6 +291,39 @@ Contoh subdomain:
 - `voucher.example.net` -> `SERVER:8893`
 - `wifiku.example.net` -> `SERVER:8894`
 
+## Portal Isolir
+
+- Redirect lokal menggunakan `http://IP-BILLING:8892/isolir`. Nama, nomor invoice, periode, jatuh tempo, total, dan tombol bayar dibaca dari pelanggan pada koneksi tersebut. Pembayaran lokal tetap melalui server lokal.
+- Identifikasi otomatis membutuhkan IP asli pelanggan dan accounting RADIUS yang masih valid. Jangan masquerade koneksi pelanggan ke portal lokal. Aktifkan interim accounting di MikroTik, misalnya `/ppp aaa set accounting=yes interim-update=5m`; jangan menganggap sesi lama yang tidak diperbarui sebagai bukti pelanggan masih terhubung.
+- Untuk portal HTTPS, gunakan panduan isolir mode HTTPS di billing. Router mengenalkan koneksi melalui portal lokal dahulu, lalu `?secure=1` meneruskan pelanggan ke domain menggunakan token invoice bertanda tangan yang berlaku lima menit. Domain langsung di belakang NAT/Cloudflare tidak dapat mengetahui IP PPP privat tanpa langkah ini.
+- Isolir manual tetap meminta konfirmasi admin. Tagihan terakhir akun terminated dapat dibayar, tetapi aktivasi kembali tetap membutuhkan admin.
+
+Alamat publik dan proxy tepercaya dapat diatur melalui file backend privat:
+
+```bash
+sudo cp -n /opt/fakenet-billing/deploy/fakenet-billing-isolir-context.env.example /etc/fakenet-billing-isolir-context.env
+sudo chmod 600 /etc/fakenet-billing-isolir-context.env
+sudo nano /etc/fakenet-billing-isolir-context.env
+```
+
+Aktifkan hanya baris yang diperlukan, dengan alamat instalasi sendiri:
+
+```ini
+ISOLIR_PUBLIC_URL=https://isolir.example.net/isolir
+PAYMENT_PUBLIC_URL=https://billing.example.net/payment-invoice.html
+SUBWEB_TRUSTED_PROXY_IPS=192.0.2.10
+```
+
+`SUBWEB_TRUSTED_PROXY_IPS` berisi IP peer reverse proxy/tunnel yang benar-benar menghubungi subweb, bukan subnet pelanggan atau daftar IP pengguna. Peer loopback sudah dipercaya secara bawaan. Untuk tunnel pada CT/mesin terpisah atau container, masukkan IP peer origin yang sebenarnya; pisahkan beberapa IP dengan koma. Sesuaikan ini sebelum memuat versi baru bila proxy tidak berasal dari loopback, agar header IP dan HTTPS tetap dikenali tanpa mempercayai header buatan klien.
+
+Setelah perubahan konfigurasi, restart billing dan subweb:
+
+```bash
+sudo systemctl restart fakenet-billing fakenet-billing-isolir fakenet-billing-voucher fakenet-billing-wifiku
+```
+
+Contoh konfigurasi repository tidak aktif secara otomatis. Updater mempertahankan dan membackup file privat; uninstall total menghapusnya. Perubahan aplikasi tidak otomatis mengganti rule router atau memutus pelanggan di instalasi lain.
+
 ## Kebutuhan Sistem
 
 Minimal setara Ubuntu 22.04:

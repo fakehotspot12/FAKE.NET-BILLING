@@ -4,6 +4,7 @@
   const MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
   const params = new URLSearchParams(window.location.search);
   const invoiceRef = params.get('invoice') || params.get('id') || params.get('reference') || params.get('no') || '';
+  const contextToken = params.get('context') || '';
   let paymentUrl = '/payment-invoice.html';
   let adminContact = null;
 
@@ -160,7 +161,14 @@
     if (payLink) {
       payLink.hidden = invoice.canPay !== true;
       if (invoice.canPay === true) {
-        const target = new URL(paymentUrl, window.location.href);
+        const host = window.location.hostname;
+        const localAccess = window.location.protocol === 'http:'
+          && (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host === 'localhost' || host.startsWith('['));
+        const target = new URL(localAccess ? '/payment-invoice.html' : invoice.paymentGatewayLink || paymentUrl, window.location.href);
+        if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) {
+          payLink.hidden = true;
+          return;
+        }
         target.searchParams.set('id', invoice.reference || invoiceNo);
         payLink.href = target.toString();
       }
@@ -200,10 +208,16 @@
     updateAdminLink({});
 
     try {
-      const payload = invoiceRef
-        ? await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(invoiceRef)}`)
-        : await api('/api/public/isolir/current-invoice');
+      const payload = contextToken
+        ? await api('/api/public/isolir/current-invoice?context=' + encodeURIComponent(contextToken))
+        : invoiceRef
+          ? await api(`/api/public/payment-gateway/invoices/${encodeURIComponent(invoiceRef)}`)
+          : await api('/api/public/isolir/current-invoice');
       renderInvoice(payload);
+      if (params.get('secure') === '1' && window.location.protocol === 'http:' && payload.securePageUrl) {
+        const target = new URL(payload.securePageUrl);
+        if (target.protocol === 'https:' && !target.username && !target.password) window.location.replace(target.toString());
+      }
     } catch (error) {
       if (!invoiceRef) {
         applyManualIsolationText({});

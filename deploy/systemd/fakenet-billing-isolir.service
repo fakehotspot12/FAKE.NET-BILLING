@@ -8,6 +8,7 @@ After=network-online.target fakenet-billing.service
 Type=simple
 WorkingDirectory=/opt/fakenet-billing
 EnvironmentFile=-/etc/fakenet-billing.env
+EnvironmentFile=-/etc/fakenet-billing-isolir-context.env
 Environment=SUBWEB_KIND=isolir
 ExecStart=/usr/bin/node src/subweb-server.js
 Restart=always

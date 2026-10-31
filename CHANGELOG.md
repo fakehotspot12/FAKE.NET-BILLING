@@ -2,6 +2,24 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.18] - 2026-10-30
+
+### Fixed
+
+- Memperbaiki deteksi invoice isolir: identitas sesi RADIUS aktif diprioritaskan dan kepemilikan IP yang ambigu ditolak agar tagihan tidak tertukar.
+- Membawa identitas invoice dari akses lokal ke portal HTTPS menggunakan token bertanda tangan yang berlaku lima menit. Perubahan status lunas, pembatalan, atau kepemilikan invoice tetap diperiksa pada data terbaru.
+- Menghilangkan port internal dari tautan pembayaran melalui domain, sambil mempertahankan pembayaran melalui port lokal saat portal dibuka menggunakan IP.
+- Menyamakan panduan redirect MikroTik dengan alur bootstrap lokal dan tujuan pembayaran HTTPS, tanpa mengubah kebijakan isolir manual atau aktivasi akun terminated.
+
+### Security
+
+- Membatasi kepercayaan header IP/protokol proxy pada peer lokal atau alamat proxy yang dikonfigurasi secara eksplisit; header buatan klien tidak dipakai untuk membaca invoice pelanggan lain.
+- Menolak konteks kedaluwarsa, tanda tangan palsu, serta konteks dari instalasi lain tanpa menambahkan data tersimpan, polling, atau dependency baru.
+
+### Operations
+
+- Mempertahankan konfigurasi privat portal/proxy pada installer dan updater, termasuk backup serta penghapusan saat uninstall total. Contoh konfigurasi publik tidak berisi alamat, kredensial, atau data instalasi produksi.
+
 ## [4.3.17] - 2026-10-29
 
 ### Added

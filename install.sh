@@ -273,6 +273,7 @@ verify_repository_payload() {
     public/manifest.webmanifest
     deploy/fakenet-billing.env
     deploy/fakenet-billing-turnstile.env.example
+    deploy/fakenet-billing-isolir-context.env.example
     deploy/fakenet-billing-waha.env
     deploy/fakenet-billing-genieacs.env
     deploy/genieacs/bootstrap.js
@@ -533,7 +534,7 @@ ensure_update_env_defaults() {
 
 harden_runtime_permissions() {
   local file directory
-  for file in /etc/fakenet-billing.env /etc/fakenet-billing-waha.env /etc/fakenet-billing-turnstile.env "$GENIEACS_ENV_FILE"; do
+  for file in /etc/fakenet-billing.env /etc/fakenet-billing-waha.env /etc/fakenet-billing-turnstile.env /etc/fakenet-billing-isolir-context.env "$GENIEACS_ENV_FILE"; do
     [ ! -f "$file" ] || chmod 600 "$file"
   done
   if [ -d "$APP_DIR/data" ]; then
@@ -1452,7 +1453,12 @@ uninstall_total() {
     /etc/fakenet-billing.env \
     /etc/fakenet-billing-waha.env \
     /etc/fakenet-billing-turnstile.env \
+    /etc/fakenet-billing-isolir-context.env \
     /etc/systemd/system/fakenet-billing.service.d/60-turnstile.conf \
+    /etc/systemd/system/fakenet-billing.service.d/61-isolir-context.conf \
+    /etc/systemd/system/fakenet-billing-isolir.service.d/61-isolir-context.conf \
+    /etc/systemd/system/fakenet-billing-voucher.service.d/61-isolir-context.conf \
+    /etc/systemd/system/fakenet-billing-wifiku.service.d/61-isolir-context.conf \
     "$GENIEACS_ENV_FILE" \
     /var/log/fakenet-billing \
     /var/backups/fakenet-billing \
@@ -1462,6 +1468,7 @@ uninstall_total() {
 
   purge_dependency_packages "$@"
 
+  systemctl daemon-reload >/dev/null 2>&1 || true
   echo "Uninstall total selesai."
 }
 

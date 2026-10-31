@@ -9,6 +9,7 @@ Type=simple
 WorkingDirectory=/opt/fakenet-billing
 EnvironmentFile=-/etc/fakenet-billing.env
 EnvironmentFile=-/etc/fakenet-billing-turnstile.env
+EnvironmentFile=-/etc/fakenet-billing-isolir-context.env
 ExecStart=/usr/bin/node --max-old-space-size=1536 src/server.js
 Restart=always
 RestartSec=5

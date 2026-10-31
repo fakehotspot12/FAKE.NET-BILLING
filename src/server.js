@@ -18618,17 +18618,78 @@ function latestIsolirInvoiceForCustomer(data = {}, customer = {}, radiusUser = {
 
 function radiusUserForClientIp(data = {}, clientIp = '', sessions = []) {
   const ip = normalizeRequestIp(clientIp);
-  if (!ip) return { radiusUser: {}, session: null };
-  const session = (sessions || []).find((item) => {
+  if (!net.isIP(ip)) return { radiusUser: {}, session: null };
+  const matches = (sessions || []).filter((item) => {
     return normalizeRequestIp(item.framedIpAddress || item.ipAddress || item.framedipaddress || '') === ip;
-  }) || null;
+  });
+  if (new Set(matches.map(item => String(item.username || '').trim().toLowerCase()).filter(Boolean)).size > 1) {
+    return { radiusUser: {}, session: null };
+  }
+  const session = matches[0] || null;
   const username = String(session?.username || '').trim().toLowerCase();
-  const radiusUser = (data.radiusUsers || []).find((user) => {
-    if (username && String(user.username || '').trim().toLowerCase() === username) return true;
+  const users = (data.radiusUsers || []).filter((user) => {
+    if (username) return String(user.username || '').trim().toLowerCase() === username;
     return [user.staticIp, user.ipAddress, user.framedIpAddress]
       .some((value) => normalizeRequestIp(value) === ip);
-  }) || (username ? { username, framedIpAddress: ip } : {});
+  });
+  if (users.length > 1) return { radiusUser: {}, session: null };
+  const radiusUser = users[0] || (username ? { username, framedIpAddress: ip } : {});
   return { radiusUser, session };
+}
+
+const ISOLIR_CONTEXT_TTL_SECONDS = 300;
+const isolirContextFallbackKey = crypto.randomBytes(32);
+
+function isolirContextKey(data = {}) {
+  const key = Buffer.from(String(data.settings?.security?.secretKey || ''), 'base64');
+  return crypto.createHmac('sha256', key.length === 32 ? key : isolirContextFallbackKey)
+    .update('fakenet-isolir-context-v1').digest();
+}
+
+function createIsolirContext(data = {}, invoice = {}, now = Date.now()) {
+  if (!invoice.id) return '';
+  const customer = customerForInvoice(data, invoice);
+  const body = Buffer.from(JSON.stringify({
+    v: 1, invoice: invoice.id, customer: customer.id || '',
+    expires: Math.floor(now / 1000) + ISOLIR_CONTEXT_TTL_SECONDS
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', isolirContextKey(data)).update(body).digest('base64url');
+  return body + '.' + signature;
+}
+
+function invoiceForIsolirContext(data = {}, token = '', now = Date.now()) {
+  if (typeof token !== 'string' || token.length > 2048 || !/^[\w-]+\.[\w-]+$/.test(token)) return null;
+  try {
+    const [body, signature] = token.split('.');
+    const received = Buffer.from(signature, 'base64url');
+    const expected = crypto.createHmac('sha256', isolirContextKey(data)).update(body).digest();
+    if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return null;
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
+    const second = Math.floor(now / 1000);
+    if (payload.v !== 1 || !Number.isInteger(payload.expires) || payload.expires <= second
+      || payload.expires > second + ISOLIR_CONTEXT_TTL_SECONDS) return null;
+    const invoice = (data.invoices || []).find(item => item.id === payload.invoice);
+    if (!invoice || invoiceRuntimeStatus(invoice) === 'cancelled') return null;
+    return (customerForInvoice(data, invoice).id || '') === payload.customer ? invoice : null;
+  } catch {
+    return null;
+  }
+}
+
+function secureIsolirPageUrl(data = {}, invoice = {}, now = Date.now()) {
+  const configured = process.env.ISOLIR_PUBLIC_URL || process.env.PUBLIC_ISOLIR_URL
+    || data.settings?.isolirGuide?.isolirUrl || '';
+  try {
+    const url = new URL(configured);
+    if (url.protocol !== 'https:' || url.username || url.password || !invoice.id) return '';
+    if (url.pathname === '/') url.pathname = '/isolir';
+    url.hash = '';
+    url.search = '';
+    url.searchParams.set('context', createIsolirContext(data, invoice, now));
+    return url.toString();
+  } catch {
+    return '';
+  }
 }
 
 function invoiceManualDiscountAmount(invoice = {}) {
@@ -21058,15 +21119,23 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/public/isolir/current-invoice') {
     if (!enforcePublicInvoiceLookupRateLimit(req, res)) return;
     const data = await requestStore(req);
-    const clientIp = requestClientIp(req);
-    const sessionPayload = await freeradiusSessions.activeSessions({
-      limit: 5000,
-      preferCache: true,
-      maxCacheAgeSeconds: 20
-    }).catch((error) => ({ ok: false, rows: [], error: error.message || 'Session FreeRADIUS tidak bisa dibaca' }));
-    const { radiusUser } = radiusUserForClientIp(data, clientIp, sessionPayload.rows || []);
-    const customer = customerForRadiusUser(data, radiusUser);
-    const invoice = latestIsolirInvoiceForCustomer(data, customer, radiusUser);
+    const context = url.searchParams.get('context') || '';
+    let invoice = context ? invoiceForIsolirContext(data, context) : null;
+    if (context && !invoice) {
+      sendJson(res, 403, { ok: false, error: 'Halaman isolir kedaluwarsa. Buka kembali dari jaringan pelanggan atau hubungi admin.' });
+      return;
+    }
+    if (!context) {
+      const clientIp = requestClientIp(req);
+      const sessionPayload = await freeradiusSessions.activeSessions({
+        limit: 5000,
+        preferCache: true,
+        maxCacheAgeSeconds: 20
+      }).catch((error) => ({ ok: false, rows: [], error: error.message || 'Session FreeRADIUS tidak bisa dibaca' }));
+      const { radiusUser } = radiusUserForClientIp(data, clientIp, sessionPayload.rows || []);
+      const customer = customerForRadiusUser(data, radiusUser);
+      invoice = latestIsolirInvoiceForCustomer(data, customer, radiusUser);
+    }
     if (!invoice) {
       sendJson(res, 404, {
         ok: false,
@@ -21076,7 +21145,8 @@ async function handleApi(req, res, url) {
     }
     sendJson(res, 200, {
       ok: true,
-      invoice: publicPaymentGatewayInvoicePayload(data, invoice, { maskSensitive: true })
+      invoice: publicPaymentGatewayInvoicePayload(data, invoice, { maskSensitive: true }),
+      securePageUrl: context ? '' : secureIsolirPageUrl(data, invoice)
     });
     return;
   }
@@ -27545,6 +27615,10 @@ module.exports = {
     pppImportTemplateBuffer,
     publicHotspotVoucherStorefrontPayload,
     publicPaymentGatewayInvoicePayload,
+    radiusUserForClientIp,
+    createIsolirContext,
+    invoiceForIsolirContext,
+    secureIsolirPageUrl,
     publicMonitoringTarget,
     radiusProfileRowsLocal,
     radiusSummaryInfo,
