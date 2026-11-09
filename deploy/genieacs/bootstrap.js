@@ -52,6 +52,10 @@ const safeSummonButtonParameters = [
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.Enable',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.Status',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.BeaconType',
+  'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.Standard',
+  'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.X_ZTE-COM_OperatingFrequencyBand',
+  'InternetGatewayDevice.X_ZTE-COM_PortBinding.*.LANInterface',
+  'InternetGatewayDevice.X_ZTE-COM_PortBinding.*.WANInterface',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.BasicAuthenticationMode',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.BasicEncryptionModes',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.WPAAuthenticationMode',
@@ -896,6 +900,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  hardenSummonButtonsViaMongo,
+  installVirtualParametersViaMongo,
   destructiveRootClearProvisionNames,
   hardenHuaweiFirewallLevelUiViaMongo,
   hardenInformProvisionScript,

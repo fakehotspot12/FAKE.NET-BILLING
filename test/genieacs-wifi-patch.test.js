@@ -593,12 +593,31 @@ test('queued stale security cannot be used to submit a WiFi write', async t => {
     if (pathname === '/devices/') return Response.json([raw]);
     if (pathname.endsWith('/tasks')) {
       calls.push(JSON.parse(options.body));
-      return Response.json({ _id: 'still-queued-read' });
+      return Response.json({ _id: 'still-queued-read' }, { status: 202 });
     }
     throw new Error(`Unexpected ACS call ${pathname}`);
   });
   await assert.rejects(acs.setWifiCredentials(cfg, raw._id, { ssid: 'New name', ssidParameter: `${base(1)}.SSID`, usePassword: false }), /belum terkonfirmasi/);
   assert.equal(calls.some(call => call.name === 'setParameterValues'), false);
+});
+
+test('completed NBI reads accept the existing CWMP session timestamp rather than falsely rejecting fresh WiFi data', async t => {
+  const raw = device();
+  const old = new Date(Date.now() - 60000).toISOString();
+  for (const config of Object.values(raw.InternetGatewayDevice.LANDevice[1].WLANConfiguration)) {
+    for (const key of ['SSID','Enable','BeaconType']) if (config[key]) config[key]._timestamp = old;
+  }
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const pathname = new URL(url).pathname;
+    if (pathname === '/devices/') return Response.json([raw]);
+    if (pathname.endsWith('/tasks')) {
+      assert.equal(JSON.parse(options.body).name, 'getParameterValues');
+      return Response.json({ _id: 'completed-current-session' }, { status: 200 });
+    }
+    throw new Error(`Unexpected ACS call ${pathname}`);
+  });
+  const result = await acs.getWifiConfiguration(cfg, raw._id, { refresh: true });
+  assert.equal(result.networks.find(row => row.index === 1).ssid, 'Main');
 });
 
 test('WiFi options wait for the current CPE read instead of displaying a stale WPA mode', async t => {
@@ -621,7 +640,7 @@ test('WiFi options wait for the current CPE read instead of displaying a stale W
     if (pathname.endsWith('/tasks')) {
       assert.equal(JSON.parse(options.body).name, 'getParameterValues');
       requested = true;
-      return Response.json({ _id: 'cpe-read' });
+      return Response.json({ _id: 'cpe-read' }, { status: 202 });
     }
     throw new Error(`Unexpected ACS call ${pathname}`);
   });

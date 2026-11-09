@@ -116,19 +116,29 @@ function detectWanVendor(device = {}) {
     return { id: 'fiberhome', label: 'FiberHome', bridgeSupported: true, wanWriteSupported: true };
   }
   if ((text.includes('zte') || text.includes('ztge')) && (hasXponWanPath(device) || text.includes('xpon') || text.includes('epon'))) {
-    return { id: 'zte-xpon', label: 'ZTE XPON', bridgeSupported: false, wanWriteSupported: true };
+    return { id: 'zte-xpon', label: 'ZTE XPON', bridgeSupported: /\bf663\w*\b/i.test(text), wanWriteSupported: true };
   }
   if ((text.includes('zte') || text.includes('zteg')) && /\bf(?:670l?|679l)\b/i.test(text)) {
+    const tableRows = numericEntries(device.InternetGatewayDevice?.['X_ZTE-COM_PortBinding']);
+    const portBindingRows = tableRows
+      .filter(([, row]) => row.LANInterface?._writable === true && row.WANInterface?._writable === true
+        && Object.hasOwn(row.LANInterface, '_value') && Object.hasOwn(row.WANInterface, '_value'))
+      .map(([index, row]) => ({ path: `InternetGatewayDevice.X_ZTE-COM_PortBinding.${index}`,
+        lan: cleanText(rawValue(row.LANInterface)), wan: cleanText(rawValue(row.WANInterface)).replace(/\.$/, '') }));
+    const portBindingCanAdd = device.InternetGatewayDevice?.['X_ZTE-COM_PortBinding']?._writable === true;
+    const ready = portBindingRows.length === tableRows.length && (portBindingRows.length > 0 || portBindingCanAdd);
     return {
       id: 'zte',
       label: 'ZTE F67x',
-      bridgeSupported: true,
-      wanWriteSupported: false,
-      wanWriteNote: 'ZTE F67x memakai tabel PortBinding LANInterface/WANInterface yang harus dibaca dari modem sebelum Set WAN.'
+      bridgeSupported: false,
+      wanWriteSupported: ready,
+      portBindingRows,
+      portBindingCanAdd,
+      wanWriteNote: ready ? '' : 'ZTE F67x memakai tabel PortBinding LANInterface/WANInterface yang harus dibaca dari modem sebelum Set WAN.'
     };
   }
   if (text.includes('zte') || text.includes('zteg') || /\bf(609|660|670)\b/i.test(text)) {
-    return { id: 'zte', label: 'ZTE', bridgeSupported: true, wanWriteSupported: true };
+    return { id: 'zte', label: 'ZTE', bridgeSupported: !/\bf(?:609|660|670l?|679l)\b/i.test(text), wanWriteSupported: true };
   }
   if (text.includes('huawei') || text.includes('00259e') || /\b(?:hg|eg|hs)\d+/i.test(text)) {
     return { id: 'huawei', label: 'Huawei', bridgeSupported: true, wanWriteSupported: true };
@@ -186,13 +196,18 @@ function rawPathBindings(connection = {}) {
 }
 
 function extraPathBindings(connection = {}) {
-  return rawPathBindings(connection).filter((path) => (
-    !/LANEthernetInterfaceConfig\.\d+$/i.test(path)
-    && !/WLANConfiguration\.\d+$/i.test(path)
-  ));
+  return rawPathBindings(connection).filter((path) => {
+    const lan = path.match(/LANEthernetInterfaceConfig\.(\d+)$/i);
+    const wifi = path.match(/WLANConfiguration\.(\d+)$/i);
+    return lan ? !BINDING_KEYS.includes(`LAN${lan[1]}`)
+      : wifi ? !BINDING_KEYS.includes(`SSID${wifi[1]}`) : true;
+  });
 }
 
-function wanBindings(connection = {}, vendor = {}) {
+function wanBindings(connection = {}, vendor = {}, basePath = '') {
+  if (vendor.portBindingRows) {
+    return [...new Set(vendor.portBindingRows.filter(row => row.wan === basePath).flatMap(row => parsePathBindings(row.lan)))];
+  }
   if (connection.X_HW_LANBIND && typeof connection.X_HW_LANBIND === 'object') {
     const bind = connection.X_HW_LANBIND || {};
     return BINDING_KEYS.filter((key) => {
@@ -311,7 +326,7 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
           const connectionType = cleanText(firstValue(connection, ['ConnectionType', 'ConnMode']));
           const username = objectType === 'WANPPPConnection' ? cleanText(firstValue(connection, ['Username'])) : '';
           const status = connectionStatus(connection);
-          const bindings = wanBindings(connection, vendor);
+          const bindings = wanBindings(connection, vendor, basePath);
           const parameterFamily = wanParameterFamily(connection, connectionDevice, vendor);
           const editable = !locked && ['pppoe', 'bridge'].includes(mode);
           const bindingEditable = !locked
@@ -335,7 +350,9 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
             active: truthy(firstValue(connection, ['Enable'])) || /connected|up/i.test(status),
             connected: /connected|up/i.test(status),
             bindings,
-            bindingExtraPaths: extraPathBindings(connection),
+            bindingExtraPaths: vendor.portBindingRows
+              ? vendor.portBindingRows.filter(row => row.wan === basePath).flatMap(row => extraPathBindings({ 'X_ZTE-COM_LanInterface': row.lan }))
+              : extraPathBindings(connection),
             parameterFamily,
             natEnabled: truthy(firstValue(connection, ['NATEnabled'])),
             addressingType: cleanText(firstValue(connection, ['AddressingType'])),
@@ -430,6 +447,21 @@ function bindingPathValue(keys = [], extraPaths = []) {
 
 function bindingParameterValues(basePath = '', vendor = {}, keys = [], extraPaths = []) {
   const selected = new Set(normalizeBindingKeys(keys));
+  if (vendor.portBindingRows) {
+    const existing = vendor.portBindingRows.filter(row => row.wan === basePath);
+    if (existing.length > 1) throw new Error('Binding WAN memiliki beberapa baris; periksa tabel PortBinding modem sebelum menyimpan');
+    if (!selected.size && !existing.length) return [];
+    const target = existing[0] || vendor.portBindingRows.find(row => !row.wan && !row.lan);
+    if (!target) {
+      const error = new Error('Tidak ada baris PortBinding kosong pada modem; tabel binding perlu ditambah sebelum konfigurasi WAN');
+      error.requiresPortBindingAllocation = vendor.portBindingCanAdd === true;
+      throw error;
+    }
+    return [
+      [`${target.path}.LANInterface`, bindingPathValue([...selected], extraPaths), 'xsd:string'],
+      [`${target.path}.WANInterface`, selected.size ? basePath : '', 'xsd:string']
+    ];
+  }
   const family = vendor.parameterFamily || vendor.id;
   if (family === 'huawei') {
     return BINDING_KEYS.map((key) => {
@@ -540,7 +572,7 @@ function connectionParameterValues(plan = {}) {
       [`${basePath}.ConnectionTrigger`, 'AlwaysOn', 'xsd:string']
     );
     if (password) values.push([`${basePath}.Password`, password, 'xsd:string']);
-  } else if (plan.objectType === 'WANIPConnection') {
+  } else if (plan.objectType === 'WANIPConnection' && vendor.id !== 'zte') {
     values.push(
       [`${basePath}.AddressingType`, 'DHCP', 'xsd:string'],
       [`${basePath}.ConnectionTrigger`, 'AlwaysOn', 'xsd:string']
@@ -636,10 +668,13 @@ function prepareWanProvision(device = {}, payload = {}) {
   }
 
   const wanDeviceIndex = existing?.wanDeviceIndex || 1;
-  const connectionIndex = existing?.connectionIndex || nextWanConnectionIndex(device, wanDeviceIndex);
   const objectType = existing?.objectType
     || (mode === 'pppoe' ? 'WANPPPConnection' : preferredBridgeObjectType(device, vendor));
-  const instance = existing?.instance || 1;
+  const sharedParent = !existing && vendor.id === 'zte'
+    ? numericEntries(device.InternetGatewayDevice?.WANDevice?.[wanDeviceIndex]?.WANConnectionDevice)
+      .find(([, row]) => row[objectType]?._writable === true) : null;
+  const connectionIndex = existing?.connectionIndex || (sharedParent ? Number(sharedParent[0]) : nextWanConnectionIndex(device, wanDeviceIndex));
+  const instance = existing?.instance || (sharedParent ? Math.max(0, ...numericEntries(sharedParent[1][objectType]).map(([index]) => Number(index))) + 1 : 1);
   const connectionRootPath = `InternetGatewayDevice.WANDevice.${wanDeviceIndex}.WANConnectionDevice`;
   const connectionBasePath = `${connectionRootPath}.${connectionIndex}`;
   const objectRootPath = `${connectionBasePath}.${objectType}`;
@@ -657,6 +692,7 @@ function prepareWanProvision(device = {}, payload = {}) {
     targetWan,
     existing,
     isNew,
+    createConnectionDevice: isNew && !sharedParent,
     wanDeviceIndex,
     connectionIndex,
     instance,

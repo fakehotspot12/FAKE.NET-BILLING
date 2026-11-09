@@ -226,7 +226,8 @@ Fitur ini **nonaktif secara default**. Aktifkan `Aktifkan Janji Bayar` di `Radiu
 - Contoh: jatuh tempo 25 Oktober, janji bayar 30 Oktober. Tagihan tercakup ditahan sampai akhir 30 Oktober. Jika masih belum dibayar, isolir diproses mulai 31 Oktober pada jam isolir otomatis yang diatur, tanpa tambahan masa tenggang.
 - Tanggal, periode, nominal, dan status pembayaran invoice asli tetap. Invoice lain yang belum dicakup janji tetap mengikuti aturan billing biasa.
 - Ringkasan di bawah Catatan menampilkan jadwal yang sudah tersimpan, bukan tanggal hari ini atau calon janji yang sedang dipilih. Tanpa janji, ringkasan mengikuti jatuh tempo dan masa tenggang normal; perubahan tanggal baru berlaku setelah Simpan.
-- Pengecualian isolir pelanggan tetap diprioritaskan. Janji tidak mengaktifkan akun terminated atau isolir manual, dan tidak menimpa kebijakan aktivasi sementara tanpa batas.
+- Jika pelanggan sudah isolir, simpan tanggal Janji Bayar terlebih dahulu lalu gunakan **Aktifkan Sementara**. Menyimpan janji tidak otomatis membuka isolir. Selama fitur Janji Bayar aktif, aktivasi sementara pelanggan mengikuti janji yang masih berlaku dan tidak membuat pengecualian isolir tanpa batas. Jika belum lunas, isolir kembali H+1 pada jam billing.
+- Pengecualian isolir khusus yang sudah ditetapkan tetap diprioritaskan dan tidak diubah oleh update. Akun terminated/nonaktif memerlukan proses aktivasi tersendiri. Jika fitur Janji Bayar dinonaktifkan, mekanisme aktivasi manual sebelumnya tetap berlaku.
 - Pembayaran menyelesaikan janji ketika seluruh tagihan tercakup sudah lunas. Pembatalan janji mengembalikan aturan isolir normal. Menonaktifkan fitur saat ada janji aktif memerlukan konfirmasi pembatalan.
 - Riwayat janji tersimpan pada audit internal. Fitur memakai scheduler existing tanpa polling jaringan tambahan.
 

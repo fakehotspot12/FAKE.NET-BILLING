@@ -2,6 +2,20 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.19] - 2026-11-09
+
+### Fixed
+
+- Memisahkan penyimpanan Janji Bayar dari pembukaan isolir: pelanggan yang sudah isolir tetap harus diaktifkan melalui Aktifkan Sementara oleh petugas berwenang.
+- Mewajibkan janji yang sudah tersimpan, masih berlaku, dan mencakup tunggakan sebelum aktivasi sementara saat fitur Janji Bayar aktif. Jalur Monitoring Tagihan dan PPP-DHCP memakai aturan backend yang sama, tanpa membuat pengecualian isolir tanpa batas.
+- Mengikuti isolir H+1 pada jam Billing Setting bila janji belum dilunasi, dengan pengecualian isolir khusus, batas satu bulan, nominal invoice, dan kebijakan akun terminated tetap dipertahankan.
+- Menyimpan perubahan status sebelum sinkronisasi RADIUS/CoA dan menampilkan peringatan bila sesi belum terkonfirmasi. Tidak menambah polling, dependency, atau migrasi struktur database.
+- Membatasi setter Virtual Parameter WiFi/PPPoE ke satu parameter native yang benar-benar terdeteksi dan dapat ditulis, bukan seluruh alias/vendor atau seluruh WAN. WAN manajemen dan target PPPoE yang ambigu tidak ditimpa.
+- Mendukung binding WAN ZTE F67x melalui tabel PortBinding yang sudah terbaca lengkap dan dapat ditulis, dengan pemeriksaan konflik/kapasitas sebelum menjalankan perintah. Metadata WiFi yang sudah terdeteksi tetapi belum memiliki nilai ikut dibaca sebelum konfigurasi.
+- Memeriksa fault pada fase parameter, binding, dan pembersihan WAN; Summon tetap memakai pembacaan leaf terbatas tanpa refresh/clear root. Script redaman, Total Active, LAN, dan pemetaan WifiKu dipertahankan.
+- Menambah koneksi ZTE pada wadah WAN existing yang dapat ditulis, serta mengaktifkan tagging sebelum VID agar firmware tidak menolak konfigurasi awal. Bridge F609/F660/F67x dibatasi sementara sesuai kemampuan firmware, tanpa menghapus WAN existing; dukungan F663 tetap tersedia.
+- Memperbaiki penolakan WiFi palsu akibat timestamp awal sesi CWMP: hasil task selesai dibedakan dari task yang masih antre, dan data antre tidak dipakai untuk menulis konfigurasi.
+
 ## [4.3.18] - 2026-10-30
 
 ### Fixed

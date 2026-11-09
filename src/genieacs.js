@@ -190,6 +190,10 @@ const SAFE_DEVICE_REFRESH_PARAMETER_NAMES = Object.freeze([
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.SSID',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.Enable',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.BeaconType',
+  'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.Standard',
+  'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.X_ZTE-COM_OperatingFrequencyBand',
+  'InternetGatewayDevice.X_ZTE-COM_PortBinding.*.LANInterface',
+  'InternetGatewayDevice.X_ZTE-COM_PortBinding.*.WANInterface',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.BasicAuthenticationMode',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.BasicEncryptionModes',
   'InternetGatewayDevice.LANDevice.*.WLANConfiguration.*.WPAAuthenticationMode',
@@ -567,6 +571,7 @@ async function requestJson(settings = {}, pathname, options = {}) {
       body: options.body === undefined ? undefined : JSON.stringify(options.body)
     });
     const text = await response.text();
+    if (options.onResponseStatus) options.onResponseStatus(response.status);
     let payload = null;
     if (text) {
       try {
@@ -876,7 +881,7 @@ function existingWifiDetailParameterNames(device = {}) {
   const names = [];
   const appendLeaves = (value, prefix) => {
     if (!value || typeof value !== 'object') return;
-    if (Object.prototype.hasOwnProperty.call(value, '_value')) {
+    if (Object.prototype.hasOwnProperty.call(value, '_value') || value._object === false) {
       names.push(prefix);
       return;
     }
@@ -921,7 +926,8 @@ async function confirmedWifiState(settings = {}, deviceId = '', raw = {}, base =
   // An acknowledged queued read must finish before cached security is used for a write.
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const fresh = await getRawDevice(settings, deviceId, { refresh: true });
-    if (fresh && (!result?._id || (required.length && required.every(name => {
+    if (fresh && (!result?._id || (result._httpStatus === 200 && required.length && required.every(name => Object.hasOwn(pathNode(fresh, name) || {}, '_value')))
+      || (required.length && required.every(name => {
       const node = pathNode(fresh, name);
       return Object.hasOwn(node || {}, '_value') && Date.parse(node._timestamp) >= started;
     })))) return fresh;
@@ -2581,11 +2587,15 @@ async function findDevice(settings = {}, search = '', options = {}) {
 async function task(settings = {}, deviceId = '', body = {}) {
   const cfg = normalizeSettings(settings);
   const query = cfg.connectionRequest ? { connection_request: 'true' } : {};
-  return requestJson(cfg, `/devices/${encodeURIComponent(cleanText(deviceId))}/tasks`, {
+  let status = 0;
+  const result = await requestJson(cfg, `/devices/${encodeURIComponent(cleanText(deviceId))}/tasks`, {
     method: 'POST',
     query,
-    body
+    body,
+    onResponseStatus: value => { status = value; }
   });
+  if (result && typeof result === 'object') Object.defineProperty(result, '_httpStatus', { value: status });
+  return result;
 }
 
 async function addObject(settings = {}, deviceId = '', objectName = '') {
@@ -2682,20 +2692,51 @@ function wanReadbackVerification(plan = {}, updated = null) {
 async function configureWan(settings = {}, deviceId = '', payload = {}) {
   const cleanId = cleanText(deviceId);
   return withDeviceMutationLock(cleanId, 'Konfigurasi', async () => {
-    const raw = await getRawDevice(settings, cleanId, { refresh: true });
+    let raw = await getRawDevice(settings, cleanId, { refresh: true });
     if (!raw) throw new Error('Perangkat GenieACS tidak ditemukan');
-    const plan = payload.bindingOnly === true
-      ? genieAcsWan.prepareWanBinding(raw, payload)
-      : genieAcsWan.prepareWanProvision(raw, payload);
+    const prepare = device => payload.bindingOnly === true
+      ? genieAcsWan.prepareWanBinding(device, payload)
+      : genieAcsWan.prepareWanProvision(device, payload);
+    let plan;
     const tasks = [];
     try {
+      try { plan = prepare(raw); }
+      catch (error) {
+        if (error.requiresPortBindingAllocation !== true) throw error;
+        const table = 'InternetGatewayDevice.X_ZTE-COM_PortBinding';
+        const before = new Set(Object.keys(raw.InternetGatewayDevice?.['X_ZTE-COM_PortBinding'] || {}).filter(key => /^\d+$/.test(key)));
+        const allocated = await addObject(settings, cleanId, table);
+        tasks.push(allocated);
+        await assertNoTaskFault(settings, cleanId, allocated, 'Tambah baris PortBinding');
+        let confirmed = false;
+        const requestedRows = new Set();
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          raw = await getRawDevice(settings, cleanId, { refresh: true });
+          const rows = genieAcsWan.detectWanVendor(raw).portBindingRows || [];
+          const added = rows.filter(row => !before.has(row.path.split('.').at(-1)) && !row.wan && !row.lan);
+          if (added.length === 1) { confirmed = true; break; }
+          const discovered = Object.keys(raw.InternetGatewayDevice?.['X_ZTE-COM_PortBinding'] || {})
+            .filter(key => /^\d+$/.test(key) && !before.has(key));
+          if (discovered.length === 1 && !requestedRows.has(discovered[0])) {
+            requestedRows.add(discovered[0]);
+            const read = await task(settings, cleanId, { name: 'getParameterValues',
+              parameterNames: [`${table}.${discovered[0]}.LANInterface`, `${table}.${discovered[0]}.WANInterface`], expiry: 120 });
+            tasks.push(read);
+          }
+          if (attempt < 5) await delay(400);
+        }
+        if (!confirmed) throw new Error('Baris PortBinding baru belum terkonfirmasi dari modem. Tunggu inform lalu buka ulang WAN; WAN existing tidak diubah.');
+        plan = prepare(raw);
+      }
       if (plan.isNew) {
-        const connectionTask = await addObject(settings, cleanId, plan.connectionRootPath);
-        tasks.push(connectionTask);
-        await assertNoTaskFault(settings, cleanId, connectionTask, 'Tambah WANConnectionDevice');
-        genieAcsWan.rebaseNewWanPlan(plan, {
-          connectionIndex: Number(connectionTask?.instanceNumber || plan.connectionIndex)
-        });
+        if (plan.createConnectionDevice !== false) {
+          const connectionTask = await addObject(settings, cleanId, plan.connectionRootPath);
+          tasks.push(connectionTask);
+          await assertNoTaskFault(settings, cleanId, connectionTask, 'Tambah WANConnectionDevice');
+          genieAcsWan.rebaseNewWanPlan(plan, {
+            connectionIndex: Number(connectionTask?.instanceNumber || plan.connectionIndex)
+          });
+        }
         const wanObjectTask = await addObject(settings, cleanId, plan.objectRootPath);
         tasks.push(wanObjectTask);
         await assertNoTaskFault(settings, cleanId, wanObjectTask, `Tambah ${plan.objectType}`);
@@ -2704,13 +2745,34 @@ async function configureWan(settings = {}, deviceId = '', payload = {}) {
           instance: Number(wanObjectTask?.instanceNumber || plan.instance)
         });
       }
-      if (plan.parameterValues.length) tasks.push(await setParameterValues(settings, cleanId, plan.parameterValues));
+      const initializationValues = plan.vendor.id === 'zte'
+        ? plan.parameterValues.filter(([name]) => /\.(ConnectionType|X_ZTE-COM_VLANEnable)$/.test(name)) : [];
+      if (initializationValues.length) {
+        const initializationTask = await setParameterValues(settings, cleanId, initializationValues);
+        tasks.push(initializationTask);
+        await assertNoTaskFault(settings, cleanId, initializationTask, 'Mode dan tagging WAN ZTE');
+      }
+      const parameterValues = initializationValues.length
+        ? plan.parameterValues.filter(([name]) => !initializationValues.some(([initialized]) => initialized === name)) : plan.parameterValues;
+      if (parameterValues.length) {
+        const parametersTask = await setParameterValues(settings, cleanId, parameterValues);
+        tasks.push(parametersTask);
+        await assertNoTaskFault(settings, cleanId, parametersTask, 'Parameter WAN');
+      }
       if (plan.enableBindingValues.length) {
         tasks.push(await setParameterValues(settings, cleanId, plan.enableBindingValues));
         await delay(1400);
       }
-      if (plan.bindingValues.length) tasks.push(await setParameterValues(settings, cleanId, plan.bindingValues));
-      if (plan.cleanupValues.length) tasks.push(await setParameterValues(settings, cleanId, plan.cleanupValues));
+      if (plan.bindingValues.length) {
+        const bindingTask = await setParameterValues(settings, cleanId, plan.bindingValues);
+        tasks.push(bindingTask);
+        await assertNoTaskFault(settings, cleanId, bindingTask, 'Binding WAN');
+      }
+      if (plan.cleanupValues.length) {
+        const cleanupTask = await setParameterValues(settings, cleanId, plan.cleanupValues);
+        tasks.push(cleanupTask);
+        await assertNoTaskFault(settings, cleanId, cleanupTask, 'Pembersihan binding WAN lama');
+      }
       if (plan.activationValues.length) {
         const activationTask = await setParameterValues(settings, cleanId, plan.activationValues);
         tasks.push(activationTask);

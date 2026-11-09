@@ -5124,6 +5124,9 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         username: user.username,
         customerId: user.customerId || '',
         customerName: customer.name || user.customerName || '',
+        paymentPromiseEnabled: serviceType !== 'hotspot' && data.settings?.billing?.paymentPromiseEnabled === true,
+        paymentPromise: serviceType !== 'hotspot' ? paymentPromise.summary(customer) : null,
+        promiseIsolationTime: data.settings?.billing?.autoSuspendTime || '13:30',
         owner: customer.name || '',
         profile: profile.name || '',
         profileId: profile.id || user.profileId || '',
@@ -5163,7 +5166,7 @@ function radiusUserRowsLocal(data = {}, serviceType = 'pppoe', sessionsByUsernam
         isolatedByName: user.isolatedByName || '',
         isolatedByUsername: user.isolatedByUsername || '',
         isolatedByRole: user.isolatedByRole || '',
-        billingIsolationOverride: user.billingIsolationOverride === true,
+        billingIsolationOverride: user.billingIsolationOverride === true || customer.billingIsolationOverride === true,
         manualActivatedAt: user.manualActivatedAt || '',
         manualActivatedByName: user.manualActivatedByName || '',
         manualActivatedByUsername: user.manualActivatedByUsername || '',
@@ -12059,9 +12062,6 @@ function billingPaymentPromiseOperation(data, payload, actor, now = new Date()) 
   if (action === 'save') {
     paymentPromise.save(data, invoice, customer, user, payload, actor, today,
       item => invoiceMatchesBillingMonitorScope(data, item, actor));
-    if (radiusStatusForCustomer(user) === 'isolated' || normalizeCustomerStatusLocal(customer.status) === 'isolated') {
-      activatedUser = syncCustomerToRadiusActive(data, customer, actor);
-    }
   } else if (action === 'cancel') {
     if (!payload.revision || payload.revision !== context.revision) throw new Error('Data tagihan berubah. Buka ulang Janji Bayar');
     if (context.invoices.filter(item => customer.paymentPromise?.invoiceIds?.includes(item.id))
@@ -12081,6 +12081,48 @@ function billingPaymentPromiseOperation(data, payload, actor, now = new Date()) 
     invoices: result.invoices.map(item => ({ id: item.id, invoiceNo: displayBillingInvoiceNo(item.externalId || item.invoiceNo || item.id), dueDate: item.dueDate, amount: Number(item.amount || 0) })),
     activatedUser
   };
+}
+
+function applyBillingTemporaryActivation(data, customer, user, actor, policy, now = new Date()) {
+  if (radiusStatusForCustomer(user) !== 'isolated' || normalizeCustomerStatusLocal(customer.status) === 'terminate') {
+    throw new Error('Hanya pelanggan berstatus Isolir yang dapat diaktifkan sementara');
+  }
+  const activatedUser = syncCustomerToRadiusActive(data, customer, actor);
+  if (!activatedUser || activatedUser.id !== user.id) throw new Error('User PPP-DHCP pelanggan tidak sesuai');
+  activatedUser.billingIsolationOverride = policy.unlimited;
+  activatedUser.manualActivatedAt = now.toISOString();
+  activatedUser.manualActivatedByName = actor.name || actor.username || '';
+  activatedUser.manualActivatedByUsername = actor.username || '';
+  activatedUser.manualActivatedByRole = actor.role || '';
+  syncRadiusCustomerStatus(data, activatedUser);
+  const isolationDate = policy.promise ? addDaysIso(policy.promise.date, 1) : '';
+  const isolationTime = data.settings?.billing?.autoSuspendTime || '13:30';
+  addActivity(data, 'monitoring', `${customer.name || customer.username} diaktifkan sementara oleh ${activatedUser.manualActivatedByName}`, {
+    action: 'billing-temporary-activation', customerId: customer.id, radiusUserId: user.id,
+    unlimited: policy.unlimited, promiseId: policy.promise?.id || '', promiseDate: policy.promise?.date || '',
+    isolationDate, isolationTime: isolationDate ? isolationTime : ''
+  });
+  return { customer, user: activatedUser, promise: policy.promise || null, isolationDate, isolationTime, unlimited: policy.unlimited };
+}
+
+function billingTemporaryActivationOperation(data, payload, actor, now = new Date()) {
+  if (!['radius:write', 'radius:ppp-users:write'].some(permission => auth.hasPermission(actor, permission))) {
+    throw new Error('Role user tidak memiliki kewenangan Aktifkan Sementara');
+  }
+  const invoiceId = String(payload.invoiceId || payload.invoiceNo || '').trim();
+  const customerId = String(payload.customerId || '').trim();
+  const invoice = invoiceId ? (data.invoices || []).find(item => [item.id, item.externalId, item.invoiceNo,
+    displayBillingInvoiceNo(item.externalId || item.invoiceNo || item.id)].includes(invoiceId)) : null;
+  if (invoiceId && !invoice) throw new Error('Tagihan tidak ditemukan');
+  if (invoice && customerId && invoice.customerId !== customerId) throw new Error('Tagihan tidak sesuai member pelanggan');
+  const customer = (data.customers || []).find(item => item.id === (invoice?.customerId || customerId));
+  if (!customer) throw new Error('Member pelanggan tidak ditemukan');
+  if (invoice && !invoiceMatchesBillingMonitorScope(data, invoice, actor)) throw new Error('Tagihan di luar kewenangan Anda');
+  const user = radiusUserForCustomer(data, customer);
+  if (!user || user.serviceType === 'hotspot') throw new Error('User PPP-DHCP pelanggan tidak ditemukan');
+  if (!partnerScopedRowVisible(data, user, actor)) throw new Error('Pelanggan di luar kewenangan Anda');
+  const policy = paymentPromise.activationPolicy(data, customer, user, localTodayIso(now), invoice?.id);
+  return applyBillingTemporaryActivation(data, customer, user, actor, policy, now);
 }
 
 function standaloneBillingAutomation(data = {}, actor = { username: 'billing-auto', name: 'Billing Auto' }, runtime = {}) {
@@ -24256,6 +24298,14 @@ async function handleApi(req, res, url) {
           throw new Error('Role user tidak memiliki akses ke voucher Hotspot ini');
         }
         const scopedPayload = method === 'DELETE' ? payload : applyPartnerPppPayloadScope(store, payload, authContext.user);
+        const activatingIsolatedMember = method === 'PUT'
+          && ['isolated', 'isolir', 'suspend', 'suspended'].includes(previousStatus)
+          && scopedPayload.status === 'active' ? findCustomerForRadiusUser(store, existing) : null;
+        if (activatingIsolatedMember && normalizeCustomerStatusLocal(activatingIsolatedMember.status) === 'terminate') {
+          throw new Error('Pelanggan terminated memerlukan validasi aktivasi tersendiri');
+        }
+        const temporaryPolicy = activatingIsolatedMember
+          ? paymentPromise.activationPolicy(store, activatingIsolatedMember, existing, localTodayIso()) : null;
         if (method === 'POST') {
           requireRadiusUserProfile(store, scopedPayload, 'pppoe', 'PPP-DHCP');
         }
@@ -24268,7 +24318,7 @@ async function handleApi(req, res, url) {
           const reactivationFromIsolation = ['isolated', 'isolir', 'suspend', 'suspended'].includes(previousStatus)
             && next.status === 'active';
           if (reactivationFromIsolation) {
-            next.billingIsolationOverride = true;
+            next.billingIsolationOverride = temporaryPolicy ? temporaryPolicy.unlimited : true;
             next.manualActivatedAt = new Date().toISOString();
             next.manualActivatedByName = authContext.user.name || authContext.user.username || '';
             next.manualActivatedByUsername = authContext.user.username || '';
@@ -25298,55 +25348,17 @@ async function handleApi(req, res, url) {
       return;
     }
     const payload = await readBody(req);
-    const invoiceId = String(payload.invoiceId || payload.invoiceNo || '').trim();
-    const customerId = String(payload.customerId || '').trim();
     try {
-      const { result } = await mutate(async (data) => {
-        const invoice = (data.invoices || []).find((item) => (
-          item.id === invoiceId
-          || item.externalId === invoiceId
-          || item.invoiceNo === invoiceId
-          || displayBillingInvoiceNo(item.externalId || item.invoiceNo || item.id) === invoiceId
-        ));
-        const customer = (data.customers || []).find((item) => (
-          item.id === customerId || (invoice?.customerId && item.id === invoice.customerId)
-        ));
-        if (!customer) throw new Error('Member pelanggan tidak ditemukan');
-        if (invoice && !invoiceMatchesBillingMonitorScope(data, invoice, authContext.user)) {
-          throw new Error('Tagihan di luar target collector');
-        }
-        const user = radiusUserForCustomer(data, customer);
-        if (!user) throw new Error('User PPP-DHCP pelanggan tidak ditemukan');
-        if (radiusStatusForCustomer(user) !== 'isolated') {
-          throw new Error('Hanya pelanggan berstatus Isolir yang dapat diaktifkan sementara');
-        }
-        const now = new Date().toISOString();
-        user.status = 'active';
-        user.isolatedAt = '';
-        user.isolationSource = '';
-        user.isolationReason = '';
-        user.isolatedByName = '';
-        user.isolatedByUsername = '';
-        user.isolatedByRole = '';
-        user.billingIsolationOverride = true;
-        user.manualActivatedAt = now;
-        user.manualActivatedByName = authContext.user.name || authContext.user.username || '';
-        user.manualActivatedByUsername = authContext.user.username || '';
-        user.manualActivatedByRole = authContext.user.role || '';
-        user.updatedAt = now;
-        user.updatedBy = user.manualActivatedByName;
-        syncRadiusCustomerStatus(data, user);
-        addActivity(data, 'monitoring', `${customer.name || customer.username} diaktifkan sementara oleh ${user.manualActivatedByName}`, {
-          action: 'billing-temporary-activation',
-          customerId: customer.id,
-          radiusUserId: user.id,
-          invoiceId: invoice?.id || '',
-          unlimited: true
-        });
-        await syncFreeradiusIfNeeded(data, authContext.user, 'billing-temporary-activation');
-        const coa = await freeradiusCoa.disconnectUser(data, user);
-        return { customer, user, invoice: invoice || null, coa };
+      const { data, result } = await mutate(store => billingTemporaryActivationOperation(store, payload, authContext.user), {
+        collections: ['customers', 'radiusUsers', 'activity'], includeCore: true
       });
+      let radius;
+      try {
+        radius = await finalizePaidInvoiceRadiusActivation(data, { activatedUser: result.user }, authContext.user, 'billing-temporary-activation');
+      } catch (error) {
+        console.error(`Sinkron Radius aktivasi sementara belum selesai: ${error.message}`);
+        radius = { pending: true };
+      }
       sendJson(res, 200, {
         ok: true,
         source: 'standalone',
@@ -25362,8 +25374,16 @@ async function handleApi(req, res, url) {
           status: result.user.status,
           billingIsolationOverride: result.user.billingIsolationOverride === true
         },
-        coa: result.coa,
-        message: 'Pelanggan aktif sementara tanpa batas waktu. Invoice dan reminder tetap berjalan.'
+        promise: result.promise,
+        isolationDate: result.isolationDate,
+        isolationTime: result.isolationTime,
+        unlimited: result.unlimited,
+        radius,
+        coa: radius?.disconnects?.[0]?.coa || null,
+        message: radius?.pending || radius?.disconnects?.some(item => !item.ok)
+          ? 'Aktivasi tersimpan. Sinkronisasi sesi Radius belum terkonfirmasi; periksa koneksi pelanggan.'
+          : result.unlimited ? 'Pelanggan aktif sementara tanpa batas waktu. Invoice dan reminder tetap berjalan.'
+            : `Pelanggan aktif sementara sesuai Janji Bayar ${result.promise.date}. Isolir kembali ${result.isolationDate} pukul ${result.isolationTime} jika belum lunas.`
       });
     } catch (error) {
       badRequest(res, error.message || 'Pelanggan gagal diaktifkan sementara');
@@ -27549,6 +27569,7 @@ module.exports = {
   __test: {
     runStandaloneBillingAutomation,
     billingPaymentPromiseOperation,
+    billingTemporaryActivationOperation,
     revokeSessionPushSubscriptions,
     onlinePaymentPushEvent,
     addDaysIso,

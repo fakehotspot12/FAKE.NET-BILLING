@@ -9,7 +9,7 @@ const promise = require('../src/payment-promise');
 const { createDefaultStore, ensureShape } = require('../src/store');
 const { markInvoicePaid, markInvoiceUnpaid } = require('../src/finance');
 const { __test: server } = require('../src/server');
-const actor = { id: 'promise-admin', username: 'admin', name: 'Admin Uji', role: 'admin' };
+const actor = { id: 'promise-admin', username: 'admin', name: 'Admin Uji', role: 'admin', permissions: ['radius:write', 'invoices:manage'] };
 const at = (date, time = '14:00') => new Date(`${date}T${time}:00+08:00`);
 
 function fixture(dueDate = '2026-10-25') {
@@ -139,14 +139,22 @@ test('a permanent exemption is never replaced by a promise and still wins if ena
   }
 });
 
-test('billing isolation can be reactivated by a promise, manual isolation and terminated cannot', () => {
-  const data = fixture(); Object.assign(data.customers[0], { status: 'isolir', isolationSource: 'billing', isolatedAt: '2026-10-26' });
-  Object.assign(data.radiusUsers[0], { status: 'isolated', isolationSource: 'billing', isolatedAt: '2026-10-26' });
-  const result = save(data); assert.equal(result.activatedUser.id, 'promise-radius');
-  assert.equal(data.customers[0].status, 'active'); assert.equal(data.radiusUsers[0].status, 'active');
-  for (const status of ['isolated', 'terminated', 'inactive']) {
+test('saving a promise leaves billing and manual isolation closed until explicit temporary activation', () => {
+  for (const source of ['billing', 'manual']) {
+    const data = fixture(); Object.assign(data.customers[0], { status: 'isolir', isolationSource: source, isolatedAt: '2026-10-26' });
+    Object.assign(data.radiusUsers[0], { status: 'isolated', isolationSource: source, isolatedAt: '2026-10-26' });
+    const result = save(data);
+    assert.equal(result.activatedUser, null);
+    assert.equal(data.customers[0].status, 'isolir'); assert.equal(data.radiusUsers[0].status, 'isolated');
+    const activated = server.billingTemporaryActivationOperation(data, { invoiceId: data.invoices[0].id }, actor, at('2026-10-26'));
+    assert.equal(activated.unlimited, false); assert.equal(activated.isolationDate, '2026-10-31');
+    assert.equal(activated.isolationTime, '13:30');
+    assert.equal(data.customers[0].status, 'active'); assert.equal(data.radiusUsers[0].status, 'active');
+    assert.equal(data.customers[0].billingIsolationOverride, false); assert.equal(data.radiusUsers[0].billingIsolationOverride, false);
+  }
+  for (const status of ['terminated', 'inactive']) {
     const other = fixture(); other.radiusUsers[0].status = status;
-    assert.throws(() => save(other), /manual|terminated|nonaktif/);
+    assert.throws(() => save(other), /terminated|nonaktif/);
     assert.equal(other.radiusUsers[0].status, status);
   }
 });
@@ -155,10 +163,11 @@ test('promise reactivation uses the shared Radius sync and CoA path only for a r
   const data = fixture();
   Object.assign(data.customers[0], { status: 'isolir', isolationSource: 'billing' });
   Object.assign(data.radiusUsers[0], { status: 'isolated', isolationSource: 'billing' });
-  const first = save(data);
+  save(data);
+  const first = server.billingTemporaryActivationOperation(data, { invoiceId: data.invoices[0].id }, actor, at('2026-10-26'));
   let syncs = 0, disconnects = 0;
   const runtime = { sync: async () => { syncs++; }, disconnect: async () => { disconnects++; return { ok: true }; } };
-  await server.finalizePaidInvoiceRadiusActivation(data, { activatedUser: first.activatedUser }, actor, 'promise-test', runtime);
+  await server.finalizePaidInvoiceRadiusActivation(data, { activatedUser: first.user }, actor, 'promise-test', runtime);
   const edited = save(data, '2026-10-31');
   await server.finalizePaidInvoiceRadiusActivation(data, { activatedUser: edited.activatedUser }, actor, 'promise-test', runtime);
   assert.equal(syncs, 1); assert.equal(disconnects, 1);
@@ -171,6 +180,85 @@ test('auto termination respects active promises and permanent exemptions', () =>
   assert.equal(run(data, '2026-10-29').terminatedUsers.length, 0);
   data.customers[0].billingIsolationOverride = true;
   assert.equal(run(data, '2026-11-01').terminatedUsers.length, 0);
+});
+
+test('temporary activation rejects missing, expired, cancelled and stale coverage promises without mutations', () => {
+  for (const scenario of ['missing', 'expired', 'cancelled', 'new-debt']) {
+    const data = fixture();
+    if (scenario !== 'missing') save(data);
+    if (scenario === 'cancelled') promise.cancel(data, data.customers[0], actor);
+    if (scenario === 'new-debt') data.invoices.push({ ...data.invoices[0], id: 'uncovered', dueDate: '2026-10-20' });
+    data.customers[0].status = 'isolir'; data.radiusUsers[0].status = 'isolated';
+    const before = structuredClone(data);
+    assert.throws(() => server.billingTemporaryActivationOperation(data, { invoiceId: data.invoices[0].id }, actor,
+      at(scenario === 'expired' ? '2026-10-31' : '2026-10-26')), /Janji Bayar/);
+    assert.deepEqual(data, before);
+  }
+});
+
+test('temporary activation preserves explicit exemptions and disabled-feature legacy behavior', () => {
+  for (const scenario of ['disabled', 'customer-exempt', 'radius-exempt']) {
+    const data = fixture();
+    if (scenario === 'disabled') data.settings.billing.paymentPromiseEnabled = false;
+    if (scenario === 'customer-exempt') data.customers[0].billingIsolationOverride = true;
+    if (scenario === 'radius-exempt') data.radiusUsers[0].billingIsolationOverride = true;
+    data.customers[0].status = 'isolir'; data.radiusUsers[0].status = 'isolated';
+    const result = server.billingTemporaryActivationOperation(data, { invoiceId: data.invoices[0].id }, actor, at('2026-10-26'));
+    assert.equal(result.unlimited, true);
+    assert.equal(result.isolationDate, '');
+    assert.equal(data.customers[0].billingIsolationOverride, true);
+    assert.equal(data.radiusUsers[0].billingIsolationOverride, true);
+  }
+});
+
+test('temporary activation cannot mix invoice owners, bypass permissions or reactivate terminated members', () => {
+  for (const scenario of ['owner', 'permission', 'terminated', 'missing-invoice']) {
+    const data = fixture(); save(data);
+    data.customers[0].status = scenario === 'terminated' ? 'terminate' : 'isolir'; data.radiusUsers[0].status = 'isolated';
+    const payload = { invoiceId: scenario === 'missing-invoice' ? 'unknown' : data.invoices[0].id,
+      customerId: scenario === 'owner' ? 'different-member' : data.customers[0].id };
+    const before = structuredClone(data);
+    assert.throws(() => server.billingTemporaryActivationOperation(data, payload,
+      scenario === 'permission' ? { role: 'collector', username: 'collector' } : actor, at('2026-10-26')),
+    /sesuai|kewenangan|Isolir|ditemukan/);
+    assert.deepEqual(data, before);
+  }
+});
+
+test('temporary activation survives restart and isolates only at the saved H+1 application time', () => {
+  for (const [paymentType, billingPeriod] of [['postpaid', 'fixed'], ['postpaid', 'cycle'], ['prepaid', 'fixed'], ['prepaid', 'renewal']]) {
+    for (const serviceType of ['pppoe', 'dhcp']) {
+      const data = fixture(); Object.assign(data.customers[0], { paymentType, billingPeriod, status: 'isolir', isolationSource: 'billing' });
+      Object.assign(data.radiusUsers[0], { serviceType, status: 'isolated', isolationSource: 'billing' });
+      const financial = structuredClone({ invoices: data.invoices, payments: data.payments });
+      save(data);
+      server.billingTemporaryActivationOperation(data, { invoiceId: data.invoices[0].id }, actor, at('2026-10-26'));
+      const restarted = ensureShape(JSON.parse(JSON.stringify(data)));
+      assert.equal(run(restarted, '2026-10-30', '23:59').isolatedUsers.length, 0);
+      assert.equal(run(restarted, '2026-10-31', '13:29').isolatedUsers.length, 0);
+      assert.equal(run(restarted, '2026-10-31', '13:30').isolatedUsers.length, 1);
+      assert.equal(run(restarted, '2026-10-31', '13:31').isolatedUsers.length, 0);
+      assert.deepEqual({ invoices: restarted.invoices, payments: restarted.payments }, financial);
+      assert.equal(data.activity.find(item => item.meta.action === 'billing-temporary-activation').meta.unlimited, false);
+    }
+  }
+});
+
+test('temporary activation UI requires a saved valid promise and describes its real expiry', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  const helper = source.slice(source.indexOf('function billingTemporaryActivationConfirmation('), source.indexOf('async function openBillingPaymentPromiseModal('));
+  const confirmation = (row, enabled = true) => vm.runInNewContext(`${helper}\nbillingTemporaryActivationConfirmation(row, enabled, '09:15')`, {
+    row, enabled, todayInput: () => '2026-10-26', dateText: value => value
+  });
+  const row = { customerId: 'customer', customerName: 'Pelanggan', invoiceId: 'bill',
+    paymentPromise: { status: 'active', date: '2026-10-30', invoiceIds: ['bill'] } };
+  assert.match(confirmation(row), /2026-10-30[\s\S]*2026-10-31 pukul 09:15/);
+  for (const paymentPromise of [null, { ...row.paymentPromise, status: 'broken' },
+    { ...row.paymentPromise, date: '2026-10-25' }, { ...row.paymentPromise, invoiceIds: ['other'] }]) {
+    assert.equal(confirmation({ ...row, paymentPromise }), '');
+  }
+  assert.match(confirmation({ ...row, paymentPromise: null }, false), /tanpa batas waktu/);
+  assert.match(confirmation({ ...row, billingIsolationOverride: true }), /tanpa batas waktu/);
 });
 
 test('all payment methods complete a promise without altering the original due date', () => {

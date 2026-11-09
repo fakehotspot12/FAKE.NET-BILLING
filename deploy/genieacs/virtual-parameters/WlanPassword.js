@@ -4,22 +4,25 @@ const paths = [
   "Device.WiFi.AccessPoint.1.Security.KeyPassphrase"
 ];
 
-let result = "";
+const discovered = paths.map(path => declare(path, { path: 1 }));
+commit();
+const rows = [];
+const seen = new Set();
+for (const matches of discovered) for (const item of matches) {
+  if (seen.has(item.path)) continue;
+  seen.add(item.path);
+  rows.push(declare(item.path, { value: 1, writable: 1 }));
+}
+commit();
+
+const target = rows.find(row => row.writable === true && row.value && row.value[0])
+  || rows.find(row => row.writable === true);
+let result = (target || rows.find(row => row.value && row.value[0]))?.value?.[0] || "";
 if (args[1] && args[1].value) {
-  result = args[1].value[0] || "";
-  for (const path of paths) declare(path, null, { value: result });
-} else {
-  for (const path of paths) {
-    const rows = declare(path, {});
-    for (const row of rows) {
-      const value = row.value && row.value[0];
-      if (value) {
-        result = value;
-        break;
-      }
-    }
-    if (result) break;
-  }
+  if (!target) throw new Error("Parameter password WiFi yang dapat ditulis belum terbaca; refresh WLAN terlebih dahulu");
+  result = String(args[1].value[0] || "");
+  if (!/^(?:[\s\S]{8,63}|[0-9a-fA-F]{64})$/.test(result)) throw new Error("Password WPA harus 8-63 karakter atau 64 digit heksadesimal");
+  declare(target.path, null, { value: result });
 }
 
-return { writable: true, value: [result, "xsd:string"] };
+return { writable: Boolean(target), value: [result, "xsd:string"] };

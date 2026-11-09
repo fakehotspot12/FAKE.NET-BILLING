@@ -105,10 +105,6 @@ function save(data, invoice, customer, user, payload, actor, today, canAccessInv
   if (statuses.some(status => ['terminated', 'terminate', 'diberhentikan', 'inactive', 'disabled', 'disable', 'nonaktif', 'removed', 'cabut'].includes(status))) {
     throw new Error('Janji bayar tidak dapat mengaktifkan pelanggan terminated atau nonaktif');
   }
-  if (statuses.some(status => ['isolated', 'isolir', 'suspend', 'suspended'].includes(status))
-    && !['billing', 'overdue', 'system', 'auto'].includes(String(customer.isolationSource || user.isolationSource || '').toLowerCase())) {
-    throw new Error('Isolir manual harus diselesaikan oleh petugas berwenang sebelum membuat janji bayar');
-  }
   const date = dateKey(payload.date);
   if (!date || date < context.minDate || date > context.maxDate) {
     throw new Error(`Tanggal janji harus antara ${context.minDate} dan ${context.maxDate}; maksimal satu bulan dari jatuh tempo tertua`);
@@ -151,4 +147,17 @@ function reconcile(data, actor, today, isolationTimeReady, open = openInvoicesBy
   return changed;
 }
 
-module.exports = { dateKey, nextMonthDate, openInvoicesByCustomer, evaluate, summary, preview, save, cancel, reconcile };
+function activationPolicy(data, customer, user, today, invoiceId = '') {
+  const excluded = customer.billingIsolationOverride === true || user.billingIsolationOverride === true;
+  if (excluded || data.settings?.billing?.paymentPromiseEnabled !== true) return { unlimited: true, excluded };
+  const invoices = openInvoicesByCustomer(data, today).get(customer.id) || [];
+  const state = evaluate(customer, invoices, today);
+  if (!state?.holding) throw new Error('Simpan tanggal Janji Bayar yang masih berlaku sebelum Aktifkan Sementara');
+  if ((invoiceId && !state.coveredIds.has(invoiceId))
+    || invoices.some(invoice => invoice.dueDate <= today && !state.coveredIds.has(invoice.id))) {
+    throw new Error('Perbarui Janji Bayar agar mencakup seluruh tunggakan sebelum Aktifkan Sementara');
+  }
+  return { unlimited: false, excluded: false, promise: summary(customer) };
+}
+
+module.exports = { dateKey, nextMonthDate, openInvoicesByCustomer, evaluate, summary, preview, save, cancel, reconcile, activationPolicy };

@@ -14574,8 +14574,10 @@ async function updateRadiusUserStatus(type = 'ppp', user = {}, nextStatus = 'act
   const currentStatus = String(user.rawStatus || user.status || '').toLowerCase();
   const temporaryActivation = type === 'ppp' && nextStatus === 'active'
     && ['isolated', 'isolir', 'suspend', 'suspended'].includes(currentStatus);
-  if (temporaryActivation && !window.confirm(`Aktifkan sementara ${user.username || 'pelanggan'} tanpa batas waktu? Invoice dan reminder tetap berjalan sampai pelanggan diisolir kembali secara manual.`)) {
-    return;
+  if (temporaryActivation) {
+    const confirmation = billingTemporaryActivationConfirmation(user, user.paymentPromiseEnabled === true, user.promiseIsolationTime);
+    if (!confirmation) { setToast('Simpan tanggal Janji Bayar terlebih dahulu di Tagihan Pelanggan'); return; }
+    if (!window.confirm(confirmation)) return;
   }
   await persistRadiusUserStatus(type, user, nextStatus);
   setToast(nextStatus === 'isolated' ? 'User diisolir' : nextStatus === 'terminated' ? 'User diterminate' : temporaryActivation ? 'User diaktifkan sementara; tagihan tetap berjalan' : 'User diaktifkan');
@@ -18197,7 +18199,7 @@ async function openGenieWanModal(row = {}) {
     </label>
     <div class="genie-wan-mode field full" role="group" aria-label="Mode WAN">
       <label><input name="mode" type="radio" value="pppoe" ${!initialWan || initialWan.mode === 'pppoe' ? 'checked' : ''}><span>PPPoE Routed</span></label>
-      <label class="${bridgeDisabled ? 'is-disabled' : ''}"><input name="mode" type="radio" value="bridge" ${initialWan?.mode === 'bridge' ? 'checked' : ''} ${bridgeDisabled}><span>Bridge</span></label>
+      ${bridgeDisabled && initialWan?.mode !== 'bridge' ? '' : `<label class="${bridgeDisabled ? 'is-disabled' : ''}"><input name="mode" type="radio" value="bridge" ${initialWan?.mode === 'bridge' ? 'checked' : ''} ${bridgeDisabled}><span>Bridge</span></label>`}
       ${editableRows.some((item) => item.mode === 'ip') ? `<label><input name="mode" type="radio" value="ip" ${initialWan?.mode === 'ip' ? 'checked' : ''}><span>IP Routed existing</span></label>` : ''}
     </div>
     <label class="field">
@@ -18232,7 +18234,7 @@ async function openGenieWanModal(row = {}) {
       <input name="moveBindings" type="checkbox" value="true">
       <span>Pindahkan LAN/SSID yang masih terikat ke WAN lain</span>
     </label>
-    <div class="notice field full">
+    <div class="notice field full" ${bridgeDisabled ? 'hidden' : ''}>
       Untuk Bridge, satu WAN dapat mengikat beberapa port sekaligus, misalnya SSID2 dan LAN4. Binding management tidak dapat dipindahkan.
     </div>
     <div class="modal-actions field full">
@@ -19405,6 +19407,21 @@ function billingReceiptAllowed(invoice = {}) {
   return Boolean(billingInvoiceNo(invoice) && status === 'paid');
 }
 
+function billingTemporaryActivationConfirmation(row = {}, enabled = false, isolationTime = '13:30') {
+  const name = row.customerName || row.username || 'pelanggan';
+  if (!enabled || row.billingIsolationOverride === true || row.customerId === '') {
+    return `Aktifkan sementara ${name} tanpa batas waktu? Invoice dan reminder tetap berjalan sampai diisolir kembali secara manual.`;
+  }
+  const promise = row.paymentPromise;
+  const date = new Date(`${promise?.date || ''}T00:00:00Z`);
+  if (promise?.status !== 'active' || !Number.isFinite(date.getTime())
+    || date.toISOString().slice(0, 10) !== promise.date || promise.date < todayInput()
+    || !promise.invoiceIds?.length
+    || (row.invoiceId && !promise.invoiceIds.includes(row.invoiceId))) return '';
+  date.setUTCDate(date.getUTCDate() + 1);
+  return `Aktifkan sementara ${name} sesuai Janji Bayar ${dateText(promise.date)}? Jika belum lunas, isolir kembali ${dateText(date.toISOString().slice(0, 10))} pukul ${isolationTime || '13:30'}.`;
+}
+
 async function openBillingPaymentPromiseModal(invoice) {
   const invoiceId = invoice.invoiceId || invoice.id;
   const payload = await api(`/api/monitoring/billing-payment-promise?${queryString({ invoiceId })}`);
@@ -19419,6 +19436,7 @@ async function openBillingPaymentPromiseModal(invoice) {
       <label class="field"><span>Batas maksimal</span><input value="${escapeHtml(dateText(payload.maxDate))}" readonly></label>
       <label class="field full"><span>Catatan</span><textarea name="note" rows="2" maxlength="500" ${unavailable ? 'disabled' : ''}>${escapeHtml(savedPromise ? payload.promise.note || '' : '')}</textarea></label>
       <div class="notice field full" data-promise-deadline></div>
+      ${payload.customer.status && ['isolir', 'isolated', 'suspend', 'suspended'].includes(payload.customer.status) ? '<div class="notice field full">Menyimpan janji tidak membuka isolir. Gunakan Aktifkan Sementara setelah tanggal janji tersimpan.</div>' : ''}
       ${unavailable ? `<div class="notice warning field full">${payload.excluded ? 'Pelanggan memiliki pengecualian isolir atau aktivasi manual tanpa batas. Atur pengecualian di Payment Pelanggan sebelum memakai janji bayar.' : 'Batas satu bulan dari jatuh tempo tertua sudah terlewat. Janji bayar baru tidak dapat dibuat.'}</div>` : ''}
       <div class="field full payment-promise-invoices" data-promise-invoices></div>
       <div class="modal-actions field full">
@@ -19536,8 +19554,9 @@ function billingActionButtons(invoice = {}, index = 0, standaloneBilling = true,
     buttons.push(`<button class="billing-action-button pay" type="button" data-billing-payment-promise="${index}" title="Janji Bayar" aria-label="Janji bayar invoice ${escapeHtml(invoiceLabel)}"><span class="billing-action-icon promise" aria-hidden="true"></span><span>Janji Bayar</span></button>`);
   }
   if (invoice.isIsolated && canAny(['radius:write', 'radius:ppp-users:write'])) {
+    const activationReady = Boolean(billingTemporaryActivationConfirmation(invoice, paymentPromiseEnabled));
     buttons.push(`
-      <button class="billing-action-button pay" type="button" data-billing-temporary-activation="${index}" title="Aktifkan sementara tanpa menghentikan tagihan" aria-label="Aktifkan sementara pelanggan invoice ${escapeHtml(invoiceLabel)}">
+      <button class="billing-action-button pay" type="button" data-billing-temporary-activation="${index}" ${activationReady ? '' : 'disabled'} title="${activationReady ? 'Aktifkan sementara tanpa menghentikan tagihan' : 'Simpan tanggal Janji Bayar terlebih dahulu'}" aria-label="Aktifkan sementara pelanggan invoice ${escapeHtml(invoiceLabel)}">
         <span>Aktifkan sementara</span>
       </button>
     `);
@@ -23120,7 +23139,9 @@ async function renderMonitoringBilling(options = {}) {
     button.addEventListener('click', async () => {
       const invoice = invoices[Number(button.dataset.billingTemporaryActivation || -1)];
       if (!invoice) return;
-      if (!window.confirm(`Aktifkan sementara ${invoice.customerName || invoice.username || 'pelanggan'} tanpa batas waktu? Invoice dan reminder tetap berjalan sampai diisolir kembali secara manual.`)) return;
+      const confirmation = billingTemporaryActivationConfirmation(invoice, payload.paymentPromiseEnabled === true, payload.billingSchedule?.isolationTime);
+      if (!confirmation) { setToast('Simpan tanggal Janji Bayar terlebih dahulu'); return; }
+      if (!window.confirm(confirmation)) return;
       button.disabled = true;
       try {
         const result = await api('/api/monitoring/billing-temporary-activation', {
