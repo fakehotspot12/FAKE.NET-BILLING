@@ -149,6 +149,7 @@ const ROLE_DEFINITIONS = {
       'genieacs:read',
       'genieacs:write',
       'monitoring:read',
+      'monitoring:fiber:create',
       'monitoring:write',
       'monitoring:check'
     ]
@@ -170,6 +171,7 @@ const ROLE_DEFINITIONS = {
       'genieacs:read',
       'genieacs:write',
       'monitoring:read',
+      'monitoring:fiber:create',
       'monitoring:check'
     ]
   },

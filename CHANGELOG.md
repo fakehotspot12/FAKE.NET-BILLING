@@ -2,6 +2,14 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.3.20] - 2026-11-11
+
+### Fixed
+
+- Mengizinkan Teknisi dan Sekretaris menambah ODC/ODP pada pemetaan melalui tombol maupun titik peta, dengan izin khusus tanpa memperluas hak Teknisi untuk mengubah NAS, pengaturan sistem, atau menghapus node existing.
+- Memperbaiki draf koordinat dari peta yang sebelumnya dianggap sebagai edit node sehingga gagal disimpan. Node baru memakai POST, sedangkan node existing tetap memakai PUT.
+- Mempertahankan validasi koordinat, hubungan ODC/ODP, pencatatan audit, dan proteksi CSRF. Tidak menambah polling, dependency, migrasi database, atau mengubah jadwal billing dan parameter GenieACS.
+
 ## [4.3.19] - 2026-11-09
 
 ### Fixed

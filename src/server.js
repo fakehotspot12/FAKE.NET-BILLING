@@ -23831,7 +23831,9 @@ async function handleApi(req, res, url) {
 
   const fiberCenterMatch = pathname.match(/^\/api\/monitoring\/fiber-network\/odc(?:\/([^/]+))?$/);
   if (fiberCenterMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
-    const authContext = await requirePermission(req, res, 'monitoring:write');
+    const authContext = method === 'POST'
+      ? await requireAnyPermission(req, res, ['monitoring:write', 'monitoring:fiber:create'])
+      : await requirePermission(req, res, 'monitoring:write');
     if (!authContext) return;
     const centerId = fiberCenterMatch[1] ? decodeURIComponent(fiberCenterMatch[1]) : '';
     const payload = await readBody(req);
@@ -23891,7 +23893,9 @@ async function handleApi(req, res, url) {
 
   const fiberPointMatch = pathname.match(/^\/api\/monitoring\/fiber-network\/odp(?:\/([^/]+))?$/);
   if (fiberPointMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
-    const authContext = await requirePermission(req, res, 'monitoring:write');
+    const authContext = method === 'POST'
+      ? await requireAnyPermission(req, res, ['monitoring:write', 'monitoring:fiber:create'])
+      : await requirePermission(req, res, 'monitoring:write');
     if (!authContext) return;
     const pointId = fiberPointMatch[1] ? decodeURIComponent(fiberPointMatch[1]) : '';
     const payload = method === 'DELETE' ? {} : await readBody(req);

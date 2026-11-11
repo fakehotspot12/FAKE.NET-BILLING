@@ -16862,7 +16862,7 @@ async function mountMonitoringFiberMap(payload = {}) {
     'Peta siap. Tekan GPS Perangkat jika ingin memusatkan ke lokasi perangkat.',
     bounds.length ? '' : 'ok'
   );
-  if (can('monitoring:write')) {
+  if (can('monitoring:write') || can('monitoring:fiber:create')) {
     map.doubleClickZoom.disable();
     map.on('dblclick', (event) => {
       const lat = Number(event.latlng?.lat || 0).toFixed(7);
@@ -17046,24 +17046,26 @@ async function mountFiberNodeCoordinatePicker(row = {}) {
 }
 
 function openFiberOdcModal(row = null, payload = {}) {
-  openModal(row ? 'Edit ODC' : 'Tambah ODC', monitoringFiberFormBody('odc', row || {}, payload), async (formPayload) => {
-    await api(row ? `/api/monitoring/fiber-network/odc/${encodeURIComponent(row.id)}` : '/api/monitoring/fiber-network/odc', {
-      method: row ? 'PUT' : 'POST',
+  const editing = Boolean(row?.id);
+  openModal(editing ? 'Edit ODC' : 'Tambah ODC', monitoringFiberFormBody('odc', row || {}, payload), async (formPayload) => {
+    await api(editing ? `/api/monitoring/fiber-network/odc/${encodeURIComponent(row.id)}` : '/api/monitoring/fiber-network/odc', {
+      method: editing ? 'PUT' : 'POST',
       body: JSON.stringify(formPayload)
     });
-    setToast(row ? 'ODC diperbarui' : 'ODC ditambahkan');
+    setToast(editing ? 'ODC diperbarui' : 'ODC ditambahkan');
     await renderMonitoringFiberNetwork({ silent: true });
   });
   mountFiberNodeCoordinatePicker(row || {}).catch(() => {});
 }
 
 function openFiberOdpModal(row = null, payload = {}) {
-  openModal(row ? 'Edit ODP' : 'Tambah ODP', monitoringFiberFormBody('odp', row || {}, payload), async (formPayload) => {
-    await api(row ? `/api/monitoring/fiber-network/odp/${encodeURIComponent(row.id)}` : '/api/monitoring/fiber-network/odp', {
-      method: row ? 'PUT' : 'POST',
+  const editing = Boolean(row?.id);
+  openModal(editing ? 'Edit ODP' : 'Tambah ODP', monitoringFiberFormBody('odp', row || {}, payload), async (formPayload) => {
+    await api(editing ? `/api/monitoring/fiber-network/odp/${encodeURIComponent(row.id)}` : '/api/monitoring/fiber-network/odp', {
+      method: editing ? 'PUT' : 'POST',
       body: JSON.stringify(formPayload)
     });
-    setToast(row ? 'ODP diperbarui' : 'ODP ditambahkan');
+    setToast(editing ? 'ODP diperbarui' : 'ODP ditambahkan');
     await renderMonitoringFiberNetwork({ silent: true });
   });
   mountFiberNodeCoordinatePicker(row || {}).catch(() => {});
@@ -17149,6 +17151,7 @@ async function renderMonitoringFiberNetwork(options = {}) {
   const payload = await api(`/api/monitoring/fiber-network?${params}`);
   if (renderIsStale(options.renderToken)) return;
   const writeAllowed = can('monitoring:write');
+  const createAllowed = writeAllowed || can('monitoring:fiber:create');
   const summary = payload.summary || {};
   app.innerHTML = `
     <div class="stack monitoring-map-page">
@@ -17171,8 +17174,8 @@ async function renderMonitoringFiberNetwork(options = {}) {
         <div class="row-actions">
           <button class="ghost-button" id="fiberNetworkUseGps" type="button">Fokus GPS</button>
           <button class="ghost-button" id="refreshFiberNetwork" type="button">Refresh</button>
-          ${writeAllowed ? '<button class="ghost-button" id="addFiberOdc" type="button">Tambah ODC</button>' : ''}
-          ${writeAllowed ? '<button class="button" id="addFiberOdp" type="button">Tambah ODP</button>' : ''}
+          ${createAllowed ? '<button class="ghost-button" id="addFiberOdc" type="button">Tambah ODC</button>' : ''}
+          ${createAllowed ? '<button class="button" id="addFiberOdp" type="button">Tambah ODP</button>' : ''}
         </div>
       </div>
 
