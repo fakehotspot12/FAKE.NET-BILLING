@@ -8070,12 +8070,12 @@ test('auth creates default admin and protects admin role', () => {
   assert.equal(hasPermission(publicUser(secretary), 'genieacs:read'), true);
   assert.equal(hasPermission(publicUser(secretary), 'genieacs:write'), true);
   assert.equal(hasPermission(publicUser(secretary), 'monitoring:write'), true);
-  assert.equal(hasPermission(publicUser(secretary), 'settings:write'), false);
-  assert.equal(hasPermission(publicUser(secretary), 'users:manage'), false);
-  assert.equal(hasPermission(publicUser(secretary), 'payment-gateway:manage'), false);
-  assert.equal(hasPermission(publicUser(secretary), 'wa-gateway:manage'), false);
-  assert.equal(hasPermission(publicUser(secretary), 'xendit:balance'), false);
-  assert.equal(hasPermission(publicUser(secretary), 'xendit:withdraw'), false);
+  assert.equal(hasPermission(publicUser(secretary), 'settings:write'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'users:manage'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'payment-gateway:manage'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'wa-gateway:manage'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'xendit:balance'), true);
+  assert.equal(hasPermission(publicUser(secretary), 'xendit:withdraw'), true);
   assert.throws(() => updateUser(data, data.users[0].id, { active: false }), /admin aktif/);
   assert.throws(() => deleteUser(data, data.users[0].id, data.users[1].id), /admin aktif/);
 });

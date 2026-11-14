@@ -23,12 +23,12 @@ test('payment push requires a live bound session and leaves other sessions intac
     ...bindings, { userId: 'admin', sessionKey: auth.sessionFingerprint(extra), enabled: true },
     { userId: 'admin', enabled: true }, { userId: 'owner', sessionKey: 'invalid', enabled: true }
   ] };
-  assert.equal(server.eligibleWebPushSubscriptions(data).length, 4);
+  assert.equal(server.eligibleWebPushSubscriptions(data).length, 5);
   auth.destroySession(sessionIds[0]);
-  assert.equal(server.eligibleWebPushSubscriptions(data).length, 3);
+  assert.equal(server.eligibleWebPushSubscriptions(data).length, 4);
   assert.equal(server.revokeSessionPushSubscriptions(data, bindings[0].sessionKey, 'admin'), 2);
   assert.equal(auth.sessionBindingActive(auth.sessionFingerprint(extra), 'admin'), true);
-  assert.equal(server.eligibleWebPushSubscriptions(data).length, 3);
+  assert.equal(server.eligibleWebPushSubscriptions(data).length, 4);
   for (const id of [...sessionIds, extra]) auth.destroySession(id);
 });
 

@@ -225,6 +225,7 @@ function createDefaultStore() {
         terms: '',
         packages: {}
       },
+      networkIntegrationEnabled: false,
       security: {
         secretKey: '',
         loginVerificationEnabled: true
@@ -278,6 +279,8 @@ function createDefaultStore() {
     stockMovements: [],
     networkAssets: [],
     monitoringTargets: [],
+    oltDevices: [],
+    oltTickets: [],
     fiberCenters: [],
     fiberPoints: [],
     payments: [],
@@ -629,6 +632,7 @@ function ensureShape(data) {
     settings: {
       ...base.settings,
       ...settings,
+      networkIntegrationEnabled: settings.networkIntegrationEnabled === true,
       collectorDailyBonusTiers: Array.isArray(settings.collectorDailyBonusTiers)
         ? settings.collectorDailyBonusTiers
         : base.settings.collectorDailyBonusTiers.map((tier) => ({ ...tier })),
@@ -747,6 +751,8 @@ function ensureShape(data) {
     stockMovements: Array.isArray(safe.stockMovements) ? safe.stockMovements : [],
     networkAssets: Array.isArray(safe.networkAssets) ? safe.networkAssets : [],
     monitoringTargets: Array.isArray(safe.monitoringTargets) ? safe.monitoringTargets : [],
+    oltDevices: Array.isArray(safe.oltDevices) ? safe.oltDevices : [],
+    oltTickets: Array.isArray(safe.oltTickets) ? safe.oltTickets : [],
     fiberCenters: Array.isArray(safe.fiberCenters) ? safe.fiberCenters : [],
     fiberPoints: Array.isArray(safe.fiberPoints) ? safe.fiberPoints : [],
     payments: Array.isArray(safe.payments) ? safe.payments : [],
@@ -1419,6 +1425,7 @@ function publicSettings(settings) {
 
   return {
     ...safeSettings,
+    networkIntegrationEnabled: rawSettings.networkIntegrationEnabled === true,
     oltManager,
     mediaServices,
     genieAcs: publicGenieAcs,

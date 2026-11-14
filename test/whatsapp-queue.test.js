@@ -46,6 +46,9 @@ test('WifiKu OTP has the highest Whatsapp queue priority', () => {
   assert.ok(messagePriority('wifiku-otp') < messagePriority('paymentPaid'));
   assert.ok(messagePriority('paymentPaid') < messagePriority('broadcast'));
 });
+test('fault tickets precede reminder and broadcast queues without outranking OTP or payment receipts',()=>{
+ assert(messagePriority('wifiku-otp')<messagePriority('oltTicket'));assert(messagePriority('paymentPaid')<messagePriority('oltTicket'));assert(messagePriority('oltTicket')<messagePriority('paymentReminder'));assert(messagePriority('oltTicket')<messagePriority('invoiceIssued'));assert(messagePriority('oltTicket')<messagePriority('broadcast'));
+});
 
 test('Whatsapp outbox never drops queued messages above history limit', () => {
   const data = createDefaultStore();

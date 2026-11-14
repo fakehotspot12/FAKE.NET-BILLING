@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'login-turnstile-layout-20261029';
+  const assetRevision = 'integration-switch-20261114';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {
@@ -25,6 +25,13 @@
   let pushCleanupGeneration = 0;
   let loggedOutPushCleaned = false;
   let verificationController = null;
+
+  window.openOltTicketAfterLogin = () => {
+    const id = new URLSearchParams(location.search).get('oltTicket') || '';
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) return false;
+    location.replace('/olt-ticket.html?id=' + encodeURIComponent(id));
+    return true;
+  };
 
   async function revokeLoggedOutPush() {
     if (!('serviceWorker' in navigator)) return;
@@ -304,6 +311,7 @@
     if (applicationLoading) return;
     loginActive = Boolean(authPayload?.user);
     if (loginActive) pushCleanupGeneration++;
+    if (loginActive && window.openOltTicketAfterLogin()) return;
     applicationLoading = true;
     if (authPayload?.user) window.__FAKENET_BOOTSTRAP_AUTH__ = authPayload;
     showDashboardSkeleton(authPayload?.user ? 'Menyiapkan dashboard...' : 'Memuat aplikasi...');

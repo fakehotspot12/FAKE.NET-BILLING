@@ -2,6 +2,31 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.4.0] - 2026-11-14
+
+### Added
+
+- Monitoring OLT CDATA dengan konfigurasi manual, ringkasan PON/ONU, status Online/LOS/Dying Gasp/Other, redaman, jarak, description, pencarian, pagination, dan terakhir aktif. Edit description, reboot, dan hapus ONU memakai pemeriksaan SN serta posisi OLT/PON/ONU yang dipilih.
+- Tiket Layanan terpisah untuk gangguan, permintaan dan PSB, termasuk laporan pelanggan melalui WifiKu, percakapan/foto privat, pengambilan tiket melalui tautan login, progres pelanggan, riwayat petugas, serta penutupan LOS setelah pemulihan terkonfirmasi.
+- Pemetaan otomatis SN OLT ke SN/akun ACS lalu member/NAS, dengan kontak, alamat, koordinat dan ODP dari member. Konflik identitas, SN ganda, modem pengganti dan riwayat pemilik dilindungi; description tidak dijadikan bukti kepemilikan.
+- Sakelar Integrasi dan sinkron otomatis di Pengaturan Sistem, langsung tersimpan dan default nonaktif. Monitoring, tiket manual/WifiKu dan deteksi LOS tetap bekerja ketika pencocokan otomatis dimatikan. Belum mencakup penghapusan berantai atau provisioning pasang baru.
+
+### Fixed
+
+- Menyamakan Sekretaris sebagai administrator kedua sesuai kebijakan aplikasi, termasuk pengaturan dan pengelolaan pengguna, tanpa mengubah identitas role/audit maupun perlindungan admin terakhir.
+- Memperbaiki pembacaan description CDATA kosong/berawalan lokasi dan konfirmasi hasil penghapusan pada ONU yang sudah tidak terdaftar. SN ganda tidak memilih posisi pertama atau menyentuh ONU aktif di posisi lain.
+- Membatasi notifikasi WA tiket pada gangguan baru dan penyelesaian untuk petugas yang mengambilnya; deduplikasi, pembatalan antrean, batas pengiriman, dan template memakai gateway billing existing. Pesan progres tidak membanjiri penerima.
+
+### Security
+
+- Mempertahankan otorisasi role/NAS, CSRF dan pemeriksaan identitas sebelum perintah OLT. Kredensial OLT terenkripsi; foto tiket privat divalidasi, dikompresi dan tidak tersedia sebagai berkas publik.
+- Memisahkan laporan pelanggan dari catatan internal petugas; kepemilikan tiket, foto, progres dan sesi tetap diperiksa. Kontak/peta hanya tersedia melalui jalur yang berwenang.
+
+### Performance And Operations
+
+- Menggunakan snapshot OLT, cache terbatas dan pembacaan identitas ACS ringkas secara batch; tanpa request ACS per baris, summon massal, pembacaan password/WiFi/host atau perubahan parameter modem. Tiket dan billing tetap dapat dipakai tanpa OLT/ACS.
+- Melengkapi klien Telnet/SNMP, pemeriksaan modul dan aset OLT/tiket pada installer/updater, serta kebutuhan uninstall. Data pelanggan, invoice, pembayaran, konfigurasi privat dan data ACS existing tidak disertakan dalam rilis.
+
 ## [4.3.20] - 2026-11-11
 
 ### Fixed

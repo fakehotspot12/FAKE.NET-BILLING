@@ -58,7 +58,7 @@ async function api(path, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || 'Request gagal');
+    const error=new Error(payload.error || 'Request gagal');error.status=response.status;throw error;
   }
   return payload;
 }
@@ -69,7 +69,121 @@ function setLoading(form, loading) {
   });
 }
 
+const supportState={mode:'list',closed:false,page:1,id:'',revision:0,list:null,ticket:null,urls:[],busy:false,photo:'',unread:0};
+const supportTime=value=>{if(!value)return '-';const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat('id-ID',{timeZone:state.settings.timeZone||'Asia/Makassar',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}).format(date):'-';};
+function setSupportUnread(value) {
+  supportState.unread=Math.max(0,Number(value)||0);
+  const el=byId('supportUnread');el.hidden=!value;el.textContent=value>9?'9+':String(value||'');
+}
+function clearSupportPhotos() {supportState.urls.forEach(url=>URL.revokeObjectURL(url));supportState.urls=[];}
+function closeSupport() {
+  supportState.revision++;supportState.photo='';supportState.id='';supportState.ticket=null;
+  byId('supportDialog').close();byId('supportBody').replaceChildren();clearSupportPhotos();
+}
+function supportError(message='',success=false) {const el=byId('supportError');if(el){el.textContent=message;el.hidden=!message;el.classList.toggle('support-success',success);el.setAttribute('role',success?'status':'alert');}}
+function supportLayout(title,body,back=true) {
+  clearSupportPhotos();byId('supportTitle').textContent=title;byId('supportBack').hidden=!back;
+  byId('supportBody').classList.toggle('is-thread',supportState.mode==='thread');
+  byId('supportBody').innerHTML=body+'<p id="supportError" class="support-error" role="alert" hidden></p>';
+}
+async function supportList() {
+  const revision=++supportState.revision,token=state.token;supportState.mode='list';supportState.photo='';
+  const result=await api('/api/public/wifiku/tickets?'+new URLSearchParams({closed:supportState.closed?'1':'0',page:supportState.page}));
+  if(revision!==supportState.revision||state.token!==token||!byId('supportDialog').open)return;
+  supportState.list=result;supportState.page=result.page;setSupportUnread(result.unread);
+  supportLayout('Laporan Saya',`<div class="support-list-tools"><div class="support-tabs"><button type="button" data-support-closed="0" aria-pressed="${!supportState.closed}">Aktif</button><button type="button" data-support-closed="1" aria-pressed="${supportState.closed}">Selesai</button></div><button type="button" data-support-new>+ Buat Laporan</button></div><div class="support-ticket-list">${result.tickets.length?result.tickets.map(row=>`<button type="button" class="support-ticket" data-support-ticket="${escapeHtml(row.id)}"><span class="support-ticket-top"><small>${escapeHtml(row.number)}</small>${row.unread?'<i class="support-unread-dot" aria-label="Pembaruan belum dibaca"></i>':''}</span><strong>${escapeHtml(row.title)}</strong><span class="support-ticket-foot"><span class="support-status ${escapeHtml(row.status)}">${escapeHtml(row.statusLabel)}</span><small>${escapeHtml(supportTime(row.updatedAt))}</small></span></button>`).join(''):'<p class="support-empty">'+(supportState.closed?'Belum ada laporan selesai.':'Belum ada laporan aktif.')+'</p>'}</div><div class="support-pagination"><span>${result.total} laporan</span>${result.pages>1?`<button type="button" data-support-page="-1" aria-label="Halaman sebelumnya" ${result.page<=1?'disabled':''}>&lsaquo;</button><span>${result.page} / ${result.pages}</span><button type="button" data-support-page="1" aria-label="Halaman berikutnya" ${result.page>=result.pages?'disabled':''}>&rsaquo;</button>`:''}</div>`,false);
+}
+function supportNew(selected='') {
+  supportState.revision++;supportState.mode='new';supportState.photo='';supportState.id='';supportState.ticket=null;
+  const categories=['fault','request'].map(kind=>`<optgroup label="${kind==='fault'?'Gangguan':'Permintaan'}">${(supportState.list?.categories||[]).filter(row=>row.kind===kind).map(row=>`<option value="${escapeHtml(row.id)}">${escapeHtml(row.label)}</option>`).join('')}</optgroup>`).join('');
+  supportLayout('Buat Laporan',`<form id="supportForm" class="support-form"><label>Keluhan / Permintaan<select name="category" id="supportCategory" required><option value="">Pilih kebutuhan Anda</option>${categories}</select></label><label>Keterangan<textarea name="text" maxlength="1500" rows="4" required></textarea></label>${supportPhotoField()}<button type="submit">Kirim Laporan</button></form>`);
+  if(selected&&[...byId('supportCategory').options].some(row=>row.value===selected))byId('supportCategory').value=selected;
+  bindSupportPhoto();
+  byId('supportForm').addEventListener('submit',event=>sendSupport(event,false));
+}
+function supportPhotoField(compact=false) {const field='<div class="support-photo"><label>'+ (compact?'Pilih foto':'Foto (opsional)')+'<input id="supportPhoto" type="file" accept="image/jpeg,image/png,image/webp"></label><span id="supportPhotoName"></span><button type="button" id="supportPhotoRemove" class="secondary" hidden>Hapus foto</button></div>';return compact?'<details class="support-attachment"><summary>Lampirkan foto</summary>'+field+'</details>':field;}
+function bindSupportPhoto() {
+  byId('supportPhotoRemove').addEventListener('click',()=>{supportState.photo='';byId('supportPhoto').value='';byId('supportPhotoName').textContent='';byId('supportPhotoRemove').hidden=true;});
+  byId('supportPhoto').addEventListener('change',async event=>{
+    const file=event.target.files[0],revision=supportState.revision;supportState.photo='';if(!file)return;
+    const submit=byId('supportForm').querySelector('[type="submit"]');submit.disabled=true;
+    try {
+      if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size>12*1024*1024)throw new Error('Pilih foto JPG, PNG atau WebP maksimal 12 MB');
+      const bitmap=await createImageBitmap(file);try{const scale=Math.min(1,1200/Math.max(bitmap.width,bitmap.height)),canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);
+        const photo=canvas.toDataURL('image/jpeg',0.72);if(photo.length>1000000)throw new Error('Foto terlalu besar. Pilih foto dengan ukuran lebih kecil.');
+        if(revision!==supportState.revision)return;supportState.photo=photo;byId('supportPhotoName').textContent=file.name;byId('supportPhotoRemove').hidden=false;supportError();
+      }finally{bitmap.close();}
+    }catch(error){supportError(error.message);}finally{if(submit.isConnected)submit.disabled=false;}
+  });
+}
+function supportMessages(ticket,expanded=false) {
+  const messages=ticket.messages||[],older=messages.slice(0,-5);
+  const render=rows=>rows.map(row=>`<article class="support-message ${row.role==='staff'?'staff':'customer'}"><strong>${escapeHtml(row.role==='customer'?'Anda':row.name||'Petugas')}</strong><p>${escapeHtml(row.text)}</p>${(row.photos||[]).map(photo=>`<img class="support-message-photo" alt="Foto lampiran laporan" data-support-photo="${escapeHtml(photo.id)}" hidden>`).join('')}<small>${escapeHtml(supportTime(row.at))}</small></article>`).join('');
+  return (older.length?`<details class="support-earlier" ${expanded?'open':''}><summary>Pesan sebelumnya (${older.length})</summary><div>${render(older)}</div></details>`:'')+render(messages.slice(-5));
+}
+function supportProgress(ticket,expanded=false){
+  const rows=ticket.progress||[],latest=rows.at(-1)||{label:ticket.statusLabel,at:ticket.updatedAt},past=rows.slice(0,-1);
+  return `<div class="support-current${latest.stage==='waiting-customer'?' needs-response':''}"><span id="supportThreadStatus" class="support-status ${escapeHtml(ticket.status)}">${escapeHtml(latest.label)}</span>${latest.note?`<p>${escapeHtml(latest.note)}</p>`:''}<small>Diperbarui ${escapeHtml(supportTime(latest.at))}</small><small id="supportStaff" ${ticket.staffName?'':'hidden'}>Ditangani oleh ${escapeHtml(ticket.staffName||'')}</small></div>${past.length?`<details class="support-history" ${expanded?'open':''}><summary>Riwayat penanganan</summary><ol class="support-timeline">${past.map(row=>`<li><strong>${escapeHtml(row.label)}</strong><small>${escapeHtml(supportTime(row.at))}</small>${row.customNote&&row.note?`<p>${escapeHtml(row.note)}</p>`:''}</li>`).join('')}</ol></details>`:''}`;
+}
+async function markSupportSeen(ticket,revision){
+  if(!ticket.unread)return;
+  const token=state.token,result=await api('/api/public/wifiku/tickets/'+encodeURIComponent(ticket.id)+'/read',{method:'POST',body:JSON.stringify({seenAt:ticket.updatedAt})});
+  if(revision===supportState.revision&&state.token===token&&!result.ticket.unread)setSupportUnread(supportState.unread-1);
+}
+function supportReplyLabel(ticket){return ticket.progress?.at(-1)?.stage==='waiting-customer'?'Konfirmasi kepada petugas':'Balas petugas';}
+async function loadSupportPhotos(ticket,revision) {
+  const token=state.token;
+  for(const el of byId('supportBody').querySelectorAll('[data-support-photo]')){
+    try{const response=await fetch(`/api/public/wifiku/tickets/${encodeURIComponent(ticket.id)}/photos/${encodeURIComponent(el.dataset.supportPhoto)}`,{headers:{Authorization:'Bearer '+token},cache:'no-store'});if(!response.ok)continue;const blob=await response.blob();if(revision!==supportState.revision||state.token!==token||!el.isConnected)return;const url=URL.createObjectURL(blob);supportState.urls.push(url);el.src=url;el.hidden=false;}catch{}
+  }
+}
+async function supportThread(id) {
+  const revision=++supportState.revision,token=state.token;supportState.mode='thread';supportState.id=id;supportState.photo='';
+  const {ticket}=await api('/api/public/wifiku/tickets/'+encodeURIComponent(id));
+  if(revision!==supportState.revision||state.token!==token||!byId('supportDialog').open)return;
+  supportState.ticket=ticket;
+  supportLayout('Detail Laporan',`<div class="support-thread-scroll" id="supportThreadScroll"><div class="support-thread-title"><strong>${escapeHtml(ticket.title)}</strong><small class="support-reference">${escapeHtml(ticket.number)}</small></div><section id="supportProgress" class="support-progress" aria-live="polite">${supportProgress(ticket)}</section><h3 class="support-chat-title">Percakapan</h3><div id="supportMessages" class="support-messages" role="log" aria-live="polite">${supportMessages(ticket)}</div></div><form id="supportForm" class="support-form support-composer" ${ticket.status==='resolved'?'hidden':''}><label><span id="supportReplyLabel">${supportReplyLabel(ticket)}</span><textarea name="text" rows="2" maxlength="1500" required></textarea></label><div class="support-compose-tools">${supportPhotoField(true)}<button type="submit">Kirim</button></div></form><div id="supportClosed" class="support-closed" ${ticket.status==='resolved'?'':'hidden'}><span>Masih ada kendala?</span><button type="button" class="secondary" data-support-again>Buat laporan lanjutan</button></div>`);
+  bindSupportPhoto();byId('supportForm').addEventListener('submit',event=>sendSupport(event,true));
+  await loadSupportPhotos(ticket,revision);if(revision!==supportState.revision)return;
+  await markSupportSeen(ticket,revision);
+}
+async function sendSupport(event,reply) {
+  event.preventDefault();if(supportState.busy)return;
+  const form=event.currentTarget,revision=supportState.revision,token=state.token,data=Object.fromEntries(new FormData(form));supportState.busy=true;
+  form.querySelectorAll('button,input,textarea,select').forEach(el=>el.disabled=true);supportError();
+  try {
+    const body={text:data.text,...(!reply?{category:data.category}:{}),...(supportState.photo?{photo:supportState.photo}:{})};
+    const result=await api('/api/public/wifiku/tickets'+(reply?'/'+encodeURIComponent(supportState.id)+'/messages':''),{method:'POST',body:JSON.stringify(body)});
+    if(revision!==supportState.revision||state.token!==token)return;await supportThread(result.ticket.id);if(!reply&&!result.created&&supportState.id===result.ticket.id&&byId('supportDialog').open)supportError('Pesan ditambahkan ke laporan Anda yang masih aktif.',true);
+  }catch(error){if(revision===supportState.revision)supportError(error.message);}finally{supportState.busy=false;if(form.isConnected)form.querySelectorAll('button,input,textarea,select').forEach(el=>el.disabled=false);}
+}
+async function refreshSupportOnTick() {
+  if(!byId('supportDialog').open||supportState.busy||!state.token)return;
+  if(supportState.mode==='list'){await supportList();return;}if(supportState.mode!=='thread')return;
+  const revision=supportState.revision,token=state.token,{ticket}=await api('/api/public/wifiku/tickets/'+encodeURIComponent(supportState.id));
+  if(revision!==supportState.revision||state.token!==token||supportState.mode!=='thread')return;
+  if(JSON.stringify(ticket.messages)!==JSON.stringify(supportState.ticket?.messages)){const expanded=Boolean(byId('supportMessages').querySelector('details')?.open);clearSupportPhotos();byId('supportMessages').innerHTML=supportMessages(ticket,expanded);await loadSupportPhotos(ticket,revision);if(revision!==supportState.revision)return;}
+  if(JSON.stringify(ticket.progress)!==JSON.stringify(supportState.ticket?.progress)||ticket.staffName!==supportState.ticket?.staffName){const expanded=Boolean(byId('supportProgress').querySelector('details')?.open);byId('supportProgress').innerHTML=supportProgress(ticket,expanded);}
+  supportState.ticket=ticket;byId('supportReplyLabel').textContent=supportReplyLabel(ticket);
+  byId('supportForm').hidden=ticket.status==='resolved';byId('supportClosed').hidden=ticket.status!=='resolved';
+  await markSupportSeen(ticket,revision);
+}
+byId('supportButton').addEventListener('click',()=>{supportState.page=1;supportState.closed=false;supportState.mode='list';byId('supportDialog').showModal();supportLayout('Laporan Saya','');supportList().catch(error=>supportError(error.message));});
+byId('supportClose').addEventListener('click',closeSupport);
+byId('supportDialog').addEventListener('cancel',event=>{event.preventDefault();closeSupport();});
+byId('supportBack').addEventListener('click',()=>supportList().catch(error=>supportError(error.message)));
+byId('supportBody').addEventListener('click',event=>{
+  const target=event.target.closest('button');if(!target||supportState.busy)return;
+  let task;if(target.hasAttribute('data-support-new')){supportNew();return;}
+  if(target.hasAttribute('data-support-again')){supportNew(supportState.ticket?.category||'');return;}
+  if(target.dataset.supportTicket)task=supportThread(target.dataset.supportTicket);
+  if(target.dataset.supportClosed!==undefined){supportState.closed=target.dataset.supportClosed==='1';supportState.page=1;task=supportList();}
+  if(target.dataset.supportPage){supportState.page+=Number(target.dataset.supportPage);task=supportList();}
+  task?.catch(error=>supportError(error.message));
+});
+
 function showLogin() {
+  closeSupport();byId('supportButton').hidden=true;
   byId('loginView').hidden = false;
   byId('portalView').hidden = true;
   byId('accountMenuWrap').hidden = true;
@@ -79,6 +193,7 @@ function showLogin() {
 }
 
 function showPortal() {
+  byId('supportButton').hidden=false;
   byId('loginView').hidden = true;
   byId('portalView').hidden = false;
   byId('accountMenuWrap').hidden = false;
@@ -628,13 +743,12 @@ function renderPortal(payload) {
   setText('usageTotal', usage.totalUsageText || '0 B');
   setText('usageDetail', `U ${usage.upload || '0 B'} / D ${usage.download || '0 B'}`);
   setText('rxPower', device.rxPowerText || '-');
-  const deviceStatusText = device.id ? (device.online ? 'Online' : 'Offline') : (payload.genieAcs?.error || 'Device belum ditemukan');
+  const modem=payload.modemStatus||{},deviceStatusText=modem.label||(device.id?(device.online?'Modem terhubung':'Modem belum terhubung'):'Status belum tersedia');
   setText('deviceStatus', deviceStatusText);
-  byId('deviceStatus')?.classList.remove('online', 'offline');
-  byId('deviceStatus')?.classList.add(device.online ? 'online' : 'offline');
-  setText('modemStatusLabel', device.id ? (device.online ? 'Online' : 'Offline') : '-');
-  byId('modemStatusLabel').className = `modem-status-pill ${device.online ? 'online' : 'offline'}`;
-  setText('modemStatusHint', device.id ? (device.online ? 'Modem sedang aktif' : 'Kontak terakhir belum aktif') : deviceStatusText);
+  byId('deviceStatus').className='modem-status-pill '+(modem.code|| (device.online?'online':'offline'));
+  setText('modemStatusLabel',deviceStatusText);
+  byId('modemStatusLabel').className='modem-status-pill '+(modem.code|| (device.online?'online':'offline'));
+  setText('modemStatusHint',modem.hint||'');setText('homeModemHint',modem.hint||'');setSupportUnread(payload.supportUnread||0);
   setText('modemSerialNumber', device.serialNumber || device.sn || '-');
   setText('homeModemSerialNumber', device.serialNumber || device.sn || '-');
   setText('wifiRxPower', device.rxPowerText || '-');
@@ -669,6 +783,7 @@ function renderPortal(payload) {
   renderBillingSummary(payload.billing || {});
   renderBillingHistory(payload.billingHistory || []);
   showPortal();
+  refreshSupportOnTick().catch(()=>{});
 }
 
 function openAccountDialog() {

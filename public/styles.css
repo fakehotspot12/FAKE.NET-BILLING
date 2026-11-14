@@ -2078,6 +2078,10 @@ input[type="checkbox"] {
   --menu-icon: var(--icon-site);
 }
 
+[data-view="monitoringOlt"] { --menu-icon: var(--icon-site); }
+[data-view="monitoringTickets"] { --menu-icon: var(--icon-ticket); }
+.fiber-map-pin-olt { background: #0f766e; color: #fff; border-color: #0f766e; }
+
 [data-view="monitoringCustomerMap"] {
   --menu-icon: var(--icon-location-sync);
 }

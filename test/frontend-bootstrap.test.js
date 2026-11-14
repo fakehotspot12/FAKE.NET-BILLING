@@ -20,7 +20,9 @@ test('loads the lightweight bootstrap before the full authenticated application'
   const appSource = publicSource('app.js');
 
   assert.match(indexSource, /href="\/boot\.css\?ui=login-turnstile-layout-20261029"/);
-  assert.match(indexSource, /src="\/bootstrap\.js\?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=login-turnstile-layout-20261029"/);
+  const bootstrapEntry = indexSource.match(/src="(\/bootstrap\.js\?[^"]+)"/);
+  assert(bootstrapEntry, 'A versioned bootstrap must load before the application');
+  assert.equal(new URL(bootstrapEntry[1], 'https://billing.example.test').searchParams.get('ui'), bootstrapSource.match(/const assetRevision = '([^']+)'/)[1]);
   assert.match(indexSource, /src="\/login-verification\.js\?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=login-turnstile-layout-20261029"/);
   assert.doesNotMatch(indexSource, /<script[^>]+src="\/app\.js/);
   assert.doesNotMatch(indexSource, /<link[^>]+href="\/styles\.css/);
@@ -55,6 +57,10 @@ test('versions the bootstrap entry point and matches fresh application asset rev
   assert.equal(query.get('ui'), revision);
   assert.match(bootstrap, /const appScriptUrl = `\/app\.js\?v=fakenet-billing-\$\{appVersion\}&ui=\$\{assetRevision\}`/);
   assert.match(bootstrap, /const appStyleUrl = `\/styles\.css\?v=fakenet-billing-\$\{appVersion\}&ui=\$\{assetRevision\}`/);
+});
+test('ticket center has its own role-gated navigation and reuses the lazy OLT workflow',()=>{
+ const html=publicSource('index.html'),app=publicSource('app.js'),olt=publicSource('olt.js'),style=publicSource('styles.css');
+ assert.match(html,/data-view="monitoringTickets">Tiket Layanan/);assert.match(app,/monitoringTickets: 'olt:tickets:read'/);assert.match(app,/state.view === 'monitoringTickets'\) await renderMonitoringOlt\('tickets'\)/);assert.match(style,/\[data-view="monitoringTickets"\]/);assert.doesNotMatch(olt,/\['tickets','Tiket Gangguan'\]|open-ticket-center|openTicketCenter|Lihat Tiket/);assert.match(olt,/ticketFilters/);assert.match(olt,/loadTicketRows/);
 });
 
 test('keeps the login viewport dark through bootstrap and authenticated app handoff', () => {

@@ -114,6 +114,7 @@ const SUBWEB_CONFIG = {
       '/wifiku.html',
       '/wifiku.css',
       '/wifiku.js',
+      '/support-chat.svg',
       ...PAYMENT_FILES,
       ...COMMON_FILES
     ])
@@ -149,6 +150,7 @@ const ALL_PUBLIC_FILES = new Set([
   '/wifiku.html',
   '/wifiku.css',
   '/wifiku.js',
+  '/support-chat.svg',
   '/payment-invoice.html',
   '/payment-invoice.css',
   '/payment-invoice.js',

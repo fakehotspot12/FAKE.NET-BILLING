@@ -166,10 +166,10 @@ test('remote gateways and credential URLs cannot trigger a local service restart
   assert.equal(calls, 0);
 });
 
-test('secretary gains only recovery access while financial and admin roles retain management', () => {
+test('secretary shares admin management and recovery while other role boundaries remain unchanged', () => {
   const roles = Object.fromEntries(auth.publicRoles().map(role => [role.value, role.permissions]));
   for (const role of ['admin', 'owner', 'finance', 'secretary']) assert.ok(roles[role].includes('wa-gateway:recover'));
-  assert.equal(roles.secretary.includes('wa-gateway:manage'), false);
+  assert.equal(roles.secretary.includes('wa-gateway:manage'), true);
   for (const role of ['technician', 'collector', 'reseller_voucher', 'viewer']) assert.equal(roles[role].includes('wa-gateway:recover'), false);
   const server = fs.readFileSync(path.join(__dirname, '..', 'src/server.js'), 'utf8');
   const section = server.slice(server.indexOf("if (pathname.startsWith('/api/wa-gateway/waha/'))"), server.indexOf("if (method === 'GET' && pathname === '/api/payment-gateway')"));

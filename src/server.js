@@ -81,11 +81,18 @@ const freeradiusCoa = require('./freeradius-coa');
 const freeradiusSessions = require('./freeradius-sessions');
 const freeradiusSql = require('./freeradius-sql');
 const genieAcs = require('./genieacs');
+const oltMonitor = require('./olt-monitor');
+const oltTicketing = require('./olt-ticketing');
+const serviceTickets = require('./service-tickets');
+const wifiKuModemStatus = require('./wifiku-modem-status');
+const networkIdentity = require('./network-identity');
+const ticketNetwork = require('./ticket-network');
+const oltAutoIdentity = require('./olt-auto-identity');
 const license = require('./license');
 const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
 const { BoundedJsonCache } = require('./bounded-json-cache');
-const { WhatsAppQueue } = require('./whatsapp-queue');
+const { WhatsAppQueue, messagePriority } = require('./whatsapp-queue');
 const { createGatewayRecovery, restartLocalGateway } = require('./whatsapp-recovery');
 const paymentPromise = require('./payment-promise');
 const { CACHE_MODE, DEFAULT_COLLECTOR_DAILY_BONUS_TIERS, createId, ensureShape, loadStore, peekStore, publicSettings, queryNormalizedPage, queryNormalizedRows, redisStatus, saveStore, STORAGE_MODE, STORE_PATH } = require('./store');
@@ -133,7 +140,7 @@ const KTP_UPLOAD_ROOT = path.join(PRIVATE_ROOT, 'member-ktp');
 const WEB_PUSH_VAPID_PATH = path.join(APP_ROOT, 'data', 'webpush-vapid.json');
 const APP_VERSION = String(process.env.APP_VERSION || packageInfo.version || '1.0.0');
 const APP_BUILD_VERSION = String(process.env.APP_BUILD_VERSION || packageInfo.buildVersion || APP_VERSION);
-const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || '2026-08-26');
+const APP_RELEASE_DATE = String(process.env.APP_RELEASE_DATE || packageInfo.releaseDate || '2026-08-26');
 const RADBOOX_AUTO_SYNC_MIN_SECONDS = 60;
 const RADBOOX_AUTO_SYNC_MAX_SECONDS = 5 * 60;
 const BILLING_AUTOMATION_INTERVAL_MS = Math.max(60_000, Number(process.env.BILLING_AUTOMATION_INTERVAL_MS || 300_000) || 300_000);
@@ -2687,6 +2694,7 @@ async function cleanupOrphanUploads(data = {}, options = {}) {
     if (!stat || stat.mtimeMs > cutoff) continue;
     await fs.unlink(targetPath).then(() => { removed += 1; }).catch(() => {});
   }
+  removed += await serviceTickets.cleanupPhotos(data);
   return { removed, referenced: references.size + ktpReferences.size };
 }
 
@@ -2964,7 +2972,7 @@ function actorPayload(user = {}) {
 }
 
 function invoiceCancelAllowedUser(user = {}) {
-  return ['admin', 'owner', 'finance'].includes(String(user.role || '').toLowerCase());
+  return ['admin', 'secretary', 'owner', 'finance'].includes(String(user.role || '').toLowerCase());
 }
 
 const RADBOOX_STALE_MS = 10 * 60 * 1000;
@@ -3707,16 +3715,9 @@ function wifiCredentialNetworkPayload(network = {}) {
   };
 }
 
-async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPeriod()) {
-  const radiusUser = radiusUserForCustomer(data, customer) || {};
+async function wifiKuDeviceContext(data = {}, customer = {}, options = {}) {
+  const radiusUser = networkIdentity.directory(data).userForCustomer(customer) || {};
   const username = radiusUser.username || customer.username || '';
-  const [usage, dailyUsage] = await Promise.all([
-    radiusUsageDetailForUsername(username, period, 40),
-    radiusUsageDailyHistoryForUsername(username, localTodayIso(), 7)
-  ]);
-  usage.dailyRows = dailyUsage.rows || [];
-  usage.dailyError = dailyUsage.error || '';
-  usage.dailyReferenceDate = dailyUsage.referenceDate || localTodayIso();
   let device = null;
   let genieError = '';
   if (genieAcs.configured(data.settings || {})) {
@@ -3738,12 +3739,27 @@ async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPer
         username,
         boundDeviceIds,
         boundSerialNumbers,
+        strictIdentity:true,
+        refresh:options.refresh===true,
+        knownNasAliases:radiusNasRowsLocal(data).flatMap(nas=>[nas.id,nas.name,nas.address,nas.site]).filter(Boolean),
         nasAliases: wifiKuGenieAcsNasAliases(data, customer, radiusUser)
       });
     } catch (error) {
       genieError = error.message || 'GenieACS tidak bisa dibaca';
     }
   }
+  if(device)networkIdentity.observeAcs(data,[device]);
+  return {device,genieError,radiusUser,customer:publicWifiKuCustomer(data,customer,radiusUser)};
+}
+async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPeriod()) {
+  const radiusUser=networkIdentity.directory(data).userForCustomer(customer)||{},username=radiusUser.username||customer.username||'';
+  const [usage,dailyUsage,modem]=await Promise.all([
+    radiusUsageDetailForUsername(username,period,40),
+    radiusUsageDailyHistoryForUsername(username,localTodayIso(),7),
+    wifiKuDeviceContext(data,customer)
+  ]);
+  usage.dailyRows=dailyUsage.rows||[];usage.dailyError=dailyUsage.error||'';usage.dailyReferenceDate=dailyUsage.referenceDate||localTodayIso();
+  const {device,genieError}=modem;
   return {
     ok: true,
     period: normalizePeriod(period),
@@ -3752,6 +3768,8 @@ async function wifiKuPortalPayload(data = {}, customer = {}, period = currentPer
     billingHistory: wifiKuBillingHistory(data, customer, radiusUser, 24),
     usage,
     device: genieAcsDeviceWithoutWifiPasswords(device),
+    modemStatus:await wifiKuModemStatus.modemStatus(data,customer,device,wifiKuGenieAcsNasAliases(data,customer,radiusUser)),
+    supportUnread:serviceTickets.customerTickets(data,customer).filter(ticket=>(Date.parse(ticket.lastStaffMessageAt||'')||0)>(Date.parse(ticket.customerReadAt||'')||0)).length,
     genieAcs: {
       enabled: genieAcs.normalizeSettings(data.settings || {}).enabled,
       configured: genieAcs.configured(data.settings || {}),
@@ -3781,16 +3799,17 @@ function resolveGenieAcsNas(data = {}, row = {}, radiusUser = {}) {
 
 async function enrichGenieAcsRowsWithLocalData(data = {}, rows = [], period = currentPeriod()) {
   void period;
-  const customers = radiusCustomerDirectory(data);
-  const usersByUsername = radiusUserByUsername(data);
+  networkIdentity.observeAcs(data,rows);
+  const identities=networkIdentity.directory(data);
   return rows.map((row) => {
-    const radiusUser = usersByUsername.get(radiusSessionUsername(row.username)) || {};
-    const customer = customers.get(radiusUser.customerId) || findCustomerForRadiusUser(data, radiusUser) || {};
+    const customer = identities.customerForAcs(row) || {};
+    const radiusUser = identities.userForCustomer(customer) || {};
     const nas = resolveGenieAcsNas(data, row, radiusUser);
     const acsIpAddress = row.ipAddress || row.pppoeIpAddress || '';
     return {
       ...row,
       customerId: customer.id || '',
+      memberIdentityKnown: identities.referencesAcs(row),
       customerName: customer.name || customer.customerName || radiusUser.customerName || '',
       phone: normalizeLocalPhone(customer.phone || customer.whatsapp || ''),
       address: customer.address || '',
@@ -3836,7 +3855,8 @@ function genieAcsRowHasUsableStatus(row = {}) {
 
 function genieAcsRowLinkedToMember(row = {}) {
   return Boolean(
-    String(row.customerId || '').trim()
+    row.memberIdentityKnown===true
+    || String(row.customerId || '').trim()
     || String(row.customerName || '').trim()
   );
 }
@@ -7024,7 +7044,7 @@ function xenditSensitiveAllowed(authContext = {}, credentials = {}, permission =
   if (!auth.hasPermission(user, permission)) {
     return false;
   }
-  if (['admin', 'owner'].includes(String(user.role || '').toLowerCase())) {
+  if (['admin', 'secretary', 'owner'].includes(String(user.role || '').toLowerCase())) {
     return true;
   }
   const allowed = xenditSensitiveUsers(authContext.data || {});
@@ -16898,6 +16918,10 @@ async function processWaGatewayQueueJob(job) {
   if (message.status !== 'queued') {
     return { skipped: true, reason: `message-${message.status || 'unknown'}` };
   }
+  if (message.type === 'oltTicket' && !oltTicketing.deliveryAllowed(data, message)) {
+    await mutate(store => oltTicketing.cancelQueued(store), { collections: ['waMessages'], includeCore: false });
+    return { skipped: true, reason: 'olt-ticket-notification-disabled' };
+  }
   if (message.expiresAt && new Date(message.expiresAt).getTime() <= Date.now()) {
     const expiredAt = new Date().toISOString();
     await mutate((store) => {
@@ -16931,11 +16955,18 @@ async function processWaGatewayQueueJob(job) {
 
   try {
     await waitForWaGatewayDeliverySlot(settings, message);
+    if (message.type === 'oltTicket') {
+      const currentData = await loadStore(), current = (currentData.waMessages || []).find(row => row.id === messageId);
+      if (!current || current.status !== 'queued' || Number(current.queueRevision || 0) !== revision || !oltTicketing.deliveryAllowed(currentData, current) || currentData.settings?.waGateway?.enabled !== true) {
+        await mutate(store => oltTicketing.cancelQueued(store), { collections: ['waMessages'], includeCore: false });
+        return { skipped: true, reason: 'olt-ticket-notification-disabled' };
+      }
+    }
     const delivery = await deliverWaMessage(settings, message);
     const sentAt = new Date().toISOString();
     await mutate((store) => {
       const current = (store.waMessages || []).find((item) => item.id === messageId);
-      if (!current || Math.max(0, Number(current.queueRevision) || 0) !== revision) return;
+      if (!current || (Math.max(0, Number(current.queueRevision) || 0) !== revision && message.type !== 'oltTicket')) return;
       Object.assign(current, {
         provider,
         status: 'sent',
@@ -16944,6 +16975,7 @@ async function processWaGatewayQueueJob(job) {
         updatedAt: sentAt,
         lastError: ''
       });
+      if(current.type==='oltTicket')oltTicketing.recordDelivery(store,current,sentAt);
       if (String(current.type || '') === 'wifiku-otp') {
         current.text = 'Kode OTP WifiKu telah dikirim.';
       }
@@ -16952,7 +16984,7 @@ async function processWaGatewayQueueJob(job) {
         messageId: current.id,
         queueJobId: job.id
       });
-    }, { collections: ['waMessages', 'activity'], includeCore: false });
+    }, { collections: ['waMessages', 'activity'], includeCore: message.type==='oltTicket' });
     return {
       sent: true,
       providerMessageId: delivery.providerMessageId || ''
@@ -17153,6 +17185,10 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
     let data = await loadStore();
     let settings = data.settings?.waGateway || {};
     let provider = normalizeWaProvider(settings.provider || 'waha');
+    if((data.waMessages||[]).some(message=>message.type==='oltTicket'&&message.status==='queued')){
+      const normalized=await mutate(store=>oltTicketing.normalizeQueuedTicketMessages(store),{collections:['waMessages'],includeCore:true,shouldPersist:result=>result.changed});
+      if(normalized.result.changed)data=normalized.data;
+    }
     if (!settings.enabled || provider !== 'waha' || (!options.ignoreWindow && !withinWaSendWindow(settings, now))) {
       return { queued: 0, skipped: true };
     }
@@ -17192,6 +17228,7 @@ async function runWaGatewaySender(reason = 'interval', options = {}) {
         if (options.messageId) return true;
         return !message.scheduledAt || new Date(message.scheduledAt).getTime() <= now.getTime();
       })
+      .sort((a,b)=>(Number(a.priority)||messagePriority(a.type))-(Number(b.priority)||messagePriority(b.type)))
       .slice(0, maxPerBatch);
     if (!dueMessages.length) return { queued: 0 };
 
@@ -17691,6 +17728,7 @@ async function mutate(mutator, saveOptions = {}) {
     delete persistOptions.persistCollections;
     configureAppTimeZone(data.settings || {});
     const saved = await saveStore(data, persistOptions);
+    networkIdentity.invalidate();
     configureAppTimeZone(saved.settings || {});
     return { data: saved, result };
   };
@@ -17813,7 +17851,7 @@ async function markOnlinePaymentPushAttempt(payload = {}, result = {}) {
 }
 
 function eligibleWebPushSubscriptions(data = {}, bindings = auth.activeSessionBindings()) {
-  const paymentNotificationRoles = new Set(['admin', 'owner', 'finance']);
+  const paymentNotificationRoles = new Set(['admin', 'secretary', 'owner', 'finance']);
   const users = new Map((data.users || []).map((user) => [String(user.id || ''), user]));
   return (data.webPushSubscriptions || []).filter((item) => {
     const user = users.get(String(item.userId || ''));
@@ -19971,6 +20009,62 @@ async function warmRouterDashboardCache(reason = 'interval') {
   }
 }
 
+let oltBackgroundTimer = null;
+let oltWaDispatchTimer = null;
+function dispatchOltNotificationsSoon(count) {
+  if(MIGRATION_MODE||!count||oltWaDispatchTimer)return;
+  oltWaDispatchTimer=setTimeout(()=>{oltWaDispatchTimer=null;runWaGatewaySender('olt-ticket').catch(error=>console.error('Antrean notifikasi tiket: '+error.message));},100);
+  oltWaDispatchTimer.unref?.();
+}
+const oltTicketObservations = new Map();
+function queueOltTicketNotifications(data, ticket, kind, actor = {}) {
+  if (MIGRATION_MODE) return { queued: 0, isolated: true };
+  // Ticket/event receipts, rather than template text, own notification deduplication.
+  return oltTicketing.enqueueNotifications(data, ticket, kind, paymentGatewayOrigin(data.settings),
+    (store, payload) => queueWaGatewayMessage(store, payload, { queuedDuplicateMap: new Map() }), actor);
+}
+async function syncOltLosTickets() {
+  const data=await loadStore(),observations=[];
+  for(const device of oltMonitor.deviceRows(data).filter(row=>row.enabled)) {
+    const snapshot=await oltMonitor.snapshotFor(device);
+    const token=JSON.stringify([device.updatedAt,snapshot?.checkedAt,snapshot?.status,snapshot?.stale,snapshot?.pendingRefresh]);
+    if(oltTicketObservations.get(device.id)===token)continue;
+    observations.push({deviceId:device.id,deviceUpdatedAt:device.updatedAt,snapshot,token});
+  }
+  if(!observations.length)return {changed:false,created:[],observed:0};
+  const plan=oltMonitor.losTicketPlan(data,observations);
+  let result={changed:false,created:[],observed:0};
+  if(plan.changes.length) {
+    ({result}=await mutate(store=>{
+      const currentPlan=oltMonitor.losTicketPlan(store,observations),result=oltMonitor.applyLosTicketPlan(store,currentPlan);
+      for(const ticket of result.created){
+        addActivity(store,'monitoring',`Tiket LOS ${ticket.number} otomatis dibuat untuk ${oltMonitor.TICKET_SCOPE_LABELS[ticket.scope]||'ONU'} ${ticket.serialNumber||ticket.pon}`,{action:'olt-los-ticket-auto',oltId:ticket.oltId,ticketId:ticket.id,serialNumber:ticket.serialNumber,scope:ticket.scope});
+        try{result.queuedNotifications=(result.queuedNotifications||0)+queueOltTicketNotifications(store,ticket,'detected').queued;}catch(error){ticket.notificationError=error.message;}
+      }
+      for(const ticket of result.resolved){
+        addActivity(store,'monitoring',`Tiket ${ticket.number} otomatis selesai: ONU terdampak terkonfirmasi online`,{action:'olt-los-ticket-recovered',oltId:ticket.oltId,ticketId:ticket.id});
+        try{result.queuedNotifications=(result.queuedNotifications||0)+queueOltTicketNotifications(store,ticket,'resolved').queued;}catch(error){ticket.notificationError=error.message;}
+      }
+      result.cancelledNotifications=oltTicketing.cancelQueued(store);
+      return result;
+    },{collections:['activity','waMessages'],includeCore:true,shouldPersist:result=>result.changed}));
+  }
+  if(!plan.deferred)for(const observation of observations)oltTicketObservations.set(observation.deviceId,observation.token);
+  dispatchOltNotificationsSoon(result.queuedNotifications);
+  while(oltTicketObservations.size>oltMonitor.MAX_DEVICES*2)oltTicketObservations.delete(oltTicketObservations.keys().next().value);
+  return result;
+}
+function startOltMonitoring() {
+  if (MIGRATION_MODE) return;
+  let running=false;
+  const run=async()=>{if(running)return;running=true;try{const data=await loadStore();await oltMonitor.pollNext(data);if(oltAutoIdentity.available(data)){const observations=await Promise.all(oltMonitor.deviceRows(data).filter(device=>device.enabled).map(async device=>({device,snapshot:await oltMonitor.snapshotFor(device)})));await oltAutoIdentity.refresh(data,observations);}await syncOltLosTickets();}finally{running=false;}};
+  const report=error=>console.error(`Monitoring OLT gagal: ${error.message||error}`);
+  const first = setTimeout(() => run().catch(report), 12000);
+  first.unref?.();
+  oltBackgroundTimer = setInterval(() => run().catch(report), 15000);
+  oltBackgroundTimer.unref?.();
+}
+
 function startRouterDashboardBackgroundPolling() {
   const run = (reason) => {
     warmRouterDashboardCache(reason).catch((error) => {
@@ -21294,6 +21388,7 @@ async function handleApi(req, res, url) {
         requireOtp: settings.requireOtp,
         publicPath: settings.publicPath,
         otpTtlMinutes: settings.otpTtlMinutes,
+        timeZone: appTimeZone(data.settings||{}),
         businessName: data.settings?.businessName || 'WifiKu',
         logoUrl: sanitizeLogoUrl(data.settings?.logoUrl || '/fakenet-logo.png')
       }
@@ -21495,11 +21590,41 @@ async function handleApi(req, res, url) {
     sendJson(res, 200, await wifiKuPortalPayload(authContext.data, authContext.customer, url.searchParams.get('period') || currentPeriod()));
     return;
   }
+  const customerTicketRoute=pathname.match(/^\/api\/public\/wifiku\/tickets(?:\/([a-f0-9-]{36})(?:\/(messages|read|photos)(?:\/([a-f0-9-]{36}))?)?)?$/i);
+  if(customerTicketRoute&&['GET','POST'].includes(method)) {
+    const context=await requireWifiKuSession(req,res);if(!context)return;
+    if(method==='POST'&&!csrfOriginAllowed(req).ok){forbidden(res);return;}
+    const [,id,action,photoId]=customerTicketRoute;
+    const current=id?serviceTickets.customerTickets(context.data,context.customer).find(ticket=>ticket.id===id):null;
+    if(id&&!current){notFound(res);return;}
+    try{
+      if(method==='GET'&&action==='photos'){
+        if(!photoId||!(current.messages||[]).some(message=>(message.photos||[]).some(photo=>photo.id===photoId))){notFound(res);return;}
+        const body=await fs.readFile(path.join(serviceTickets.PHOTO_ROOT,photoId+'.webp'));res.writeHead(200,{'Content-Type':'image/webp','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});res.end(body);return;
+      }
+      if(method==='GET'&&!action){sendJson(res,200,id?{ticket:serviceTickets.publicTicket(context.data,current,true)}:serviceTickets.customerList(context.data,context.customer,Object.fromEntries(url.searchParams)));return;}
+      if(method!=='POST'||action==='photos'){notFound(res);return;}
+      const payload=await readBody(req);
+      const {data,result}=await mutate(async store=>{
+        const customer=store.customers.find(row=>row.id===context.customer.id);if(!customer)throw serviceTickets.error('Sesi pelanggan tidak tersedia',401);
+        const ticket=id?serviceTickets.customerTickets(store,customer).find(row=>row.id===id):null;if(id&&!ticket)throw serviceTickets.error('Tiket tidak ditemukan',404);
+        if(action==='read')return{ticket,changed:serviceTickets.markRead(ticket,payload.seenAt)};
+        if(action==='messages')return serviceTickets.appendMessage(store,ticket,payload,customer,{customer:true});
+        if(id)throw serviceTickets.error('Aksi tiket tidak tersedia');
+        const radiusUser=radiusUserForCustomer(store,customer)||{},nas=radiusFindNas(store,radiusUser.nasId||customer.nasId||customer.nas||customer.site);
+        const created=await serviceTickets.create(store,customer,payload,{nasId:nas?.id||'',nasName:nas?.name||''});
+        if(created.created){addActivity(store,'monitoring',`Tiket layanan ${created.ticket.number} diajukan melalui WifiKu`,{action:'service-ticket-customer',ticketId:created.ticket.id,customerId:customer.id});try{created.queuedNotifications=queueOltTicketNotifications(store,created.ticket,'detected').queued;}catch(error){created.ticket.notificationError=error.message;}}
+        return created;
+      },{collections:['activity','waMessages'],includeCore:true,shouldPersist:result=>result.changed});
+      dispatchOltNotificationsSoon(result.queuedNotifications);
+      sendJson(res,result.created?201:200,{ok:true,ticket:serviceTickets.publicTicket(data,result.ticket,true),created:Boolean(result.created)});
+    }catch(error){sendJson(res,error.status||400,{error:error.message||'Tiket tidak dapat diproses'});}return;
+  }
 
   if (method === 'GET' && pathname === '/api/public/wifiku/clients') {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
-    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    const portal = await wifiKuDeviceContext(authContext.data, authContext.customer);
     if (!portal.device?.id) {
       sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
       return;
@@ -21529,7 +21654,7 @@ async function handleApi(req, res, url) {
   if (method === 'POST' && pathname === '/api/public/wifiku/reboot') {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
-    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    const portal = await wifiKuDeviceContext(authContext.data, authContext.customer,{refresh:true});
     if (!portal.device?.id) {
       sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
       return;
@@ -21546,7 +21671,7 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/public/wifiku/wifi-options') {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
-    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    const portal = await wifiKuDeviceContext(authContext.data, authContext.customer);
     if (!portal.device?.id) {
       sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
       return;
@@ -21571,7 +21696,7 @@ async function handleApi(req, res, url) {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
     const payload = await readBody(req);
-    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    const portal = await wifiKuDeviceContext(authContext.data, authContext.customer,{refresh:true});
     if (!portal.device?.id) {
       sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
       return;
@@ -21607,7 +21732,7 @@ async function handleApi(req, res, url) {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
     const payload = await readBody(req);
-    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    const portal = await wifiKuDeviceContext(authContext.data, authContext.customer,{refresh:true});
     if (!portal.device?.id) {
       sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
       return;
@@ -21625,7 +21750,7 @@ async function handleApi(req, res, url) {
     const authContext = await requireWifiKuSession(req, res);
     if (!authContext) return;
     const payload = await readBody(req);
-    const portal = await wifiKuPortalPayload(authContext.data, authContext.customer, currentPeriod());
+    const portal = await wifiKuDeviceContext(authContext.data, authContext.customer,{refresh:true});
     if (!portal.device?.id) {
       sendJson(res, 404, { ok: false, error: 'Perangkat GenieACS pelanggan belum ditemukan' });
       return;
@@ -21924,7 +22049,7 @@ async function handleApi(req, res, url) {
     const data = await requestStore(req);
     const user = auth.requestUser(req, data, { refresh: false });
     if (!user) { unauthorized(res); return; }
-    if (!['admin', 'owner', 'finance'].includes(String(user.role || '').toLowerCase())
+    if (!['admin', 'secretary', 'owner', 'finance'].includes(String(user.role || '').toLowerCase())
       || !auth.hasPermission(user, 'payment-gateway:manage')) { forbidden(res); return; }
     const authContext = { data, user };
     const sessionKey = auth.sessionFingerprint(auth.getSessionId(req));
@@ -23809,23 +23934,249 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/monitoring/customer-map') {
     const authContext = await requireAnyPermission(req, res, ['monitoring:read', 'billing-monitor:read', 'members:read']);
     if (!authContext) return;
-    sendJson(res, 200, customerMapPayload(authContext.data, {
+    const mapPayload = customerMapPayload(authContext.data, {
       search: url.searchParams.get('search') || '',
       status: url.searchParams.get('status') || 'all',
       accessState: url.searchParams.get('accessState') || url.searchParams.get('access_state') || 'all',
       plan: url.searchParams.get('plan') || url.searchParams.get('servicePlan') || 'all',
       location: url.searchParams.get('location') || 'all'
-    }));
+    });
+    if (auth.hasPermission(authContext.user,'olt:read')) mapPayload.infrastructureNodes.push(...oltMonitor.mappingNodes(authContext.data,oltMonitor.visibleDevices(authContext.data,authContext.user)));
+    sendJson(res, 200, mapPayload);
     return;
+  }
+
+  if (pathname === '/api/monitoring/olt' && method === 'GET') {
+    const context = await requirePermission(req, res, 'olt:read'); if (!context) return;
+    const devices = oltMonitor.visibleDevices(context.data, context.user);
+    const manage = auth.hasPermission(context.user, 'olt:manage');
+    const rows = await Promise.all(devices.map(async device => ({ ...oltMonitor.publicDevice(device, await oltMonitor.snapshotFor(device), { management: manage }),
+      nasName: radiusNasRowsLocal(context.data).find(nas => nas.id === device.nasId)?.name || '',
+      openTickets: (context.data.oltTickets || []).filter(ticket => ticket.oltId === device.id && ticket.status !== 'resolved').length })));
+    sendJson(res, 200, { devices: rows, tickets: [],
+      nasOptions: manage ? radiusNasRowsLocal(context.data).map(nas => ({ id: nas.id, name: nas.name })) : [],
+      technicians: (context.data.users || []).filter(user => user.active !== false && ['admin','owner','noc','technician','secretary'].includes(user.role)).map(user => ({ id: user.id, name: user.name || user.username })),
+      notificationEnabled: oltTicketing.settingsFor(context.data).whatsappEnabled, ticketAutomation: {enabled:true,cause:'los',whatsappEnabled:oltTicketing.settingsFor(context.data).whatsappEnabled}, ticketTemplates:oltMonitor.ticketTemplates(context.data),
+      ...(manage?{ticketSettings:{...oltTicketing.settingsFor(context.data),gatewayEnabled:context.data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(context.data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.eligibleUsers(context.data).map(user=>({id:user.id,name:user.name||user.username,role:user.role,phone:oltTicketing.phoneFor(user)}))}:{}) });
+    return;
+  }
+  const oltOnuDescription=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/onus\/([A-Za-z0-9]+)\/description$/);
+  if(oltOnuDescription&&['GET','PUT'].includes(method)){
+    const context=await requirePermission(req,res,'olt:onu:reboot');if(!context)return;
+    const device=oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===oltOnuDescription[1]);if(!device){notFound(res);return;}
+    if(method==='GET'){
+      try{sendJson(res,200,await oltMonitor.readOnuDescription(context.data,device,oltOnuDescription[2],{onuIndex:url.searchParams.get('onuIndex')||''}));}catch(error){badRequest(res,error.message);}return;
+    }
+    if(MIGRATION_MODE){badRequest(res,'Mode dev terisolasi: perubahan ONU asli dinonaktifkan');return;}
+    const payload=await readBody(req);try{const result=await oltMonitor.renameOnu(context.data,device,oltOnuDescription[2],payload);
+      await mutate(store=>addActivity(store,'monitoring',`Description ONU ${result.serialNumber} di ${device.name} diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-onu-description',oltId:device.id,serialNumber:result.serialNumber,previousDescription:payload.previousDescription,description:result.description,userId:context.user.id}),{collections:['activity'],includeCore:false});
+      sendJson(res,200,{ok:true,...result});
+    }catch(error){badRequest(res,error.message);}return;
+  }
+  const oltOnuDeleteMatch=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/onus\/([A-Za-z0-9]+)(\/reboot)?$/);
+  if(oltOnuDeleteMatch&&((!oltOnuDeleteMatch[3]&&method==='DELETE')||(oltOnuDeleteMatch[3]&&method==='POST'))) {
+    const reboot=Boolean(oltOnuDeleteMatch[3]),action=reboot?'reboot':'delete',label=reboot?'reboot':'hapus',confirmation=reboot?'confirmReboot':'confirmDelete';
+    const context=await requirePermission(req,res,'olt:onu:'+action);if(!context)return;
+    const device=oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===oltOnuDeleteMatch[1]);if(!device){notFound(res);return;}
+    if(MIGRATION_MODE){badRequest(res,'Mode dev terisolasi: aksi ke ONU asli dinonaktifkan');return;}
+    const payload=await readBody(req),serial=oltOnuDeleteMatch[2];
+    try {
+      if(!oltMonitor.normalizeSerial(serial)||oltMonitor.normalizeSerial(payload.serialNumber)!==oltMonitor.normalizeSerial(serial)||payload[confirmation]!==true)throw new Error(`Konfirmasi serial ONU dan persetujuan ${label} wajib diisi`);
+      await mutate(store=>addActivity(store,'monitoring',`Permintaan ${label} ONU ${serial} dari ${device.name} oleh ${context.user.name||context.user.username}`,{action:`olt-onu-${action}-request`,oltId:device.id,serialNumber:serial,onuIndex:payload.onuIndex,userId:context.user.id}),{collections:['activity'],includeCore:false});
+      const result=await (reboot?oltMonitor.rebootOnu:oltMonitor.removeOnu)(context.data,device,serial,payload);
+      await mutate(store=>addActivity(store,'monitoring',result.message,{action:`olt-onu-${action}-result`,oltId:device.id,serialNumber:serial,onuIndex:result.onuIndex||payload.onuIndex,ponKey:result.ponKey,userId:context.user.id,confirmed:result.confirmed}),{collections:['activity'],includeCore:false});
+      sendJson(res,reboot||result.confirmed?200:202,{ok:true,...result});
+    }catch(error){badRequest(res,error.message);}return;
+  }
+  if (pathname === '/api/monitoring/olt/onus' && method === 'GET') {
+    const context = await requirePermission(req,res,'olt:read'); if (!context) return;
+    sendJson(res,200,await oltMonitor.onuPage(context.data,oltMonitor.visibleDevices(context.data,context.user),Object.fromEntries(url.searchParams),auth.hasPermission(context.user,'olt:manage')));return;
+  }
+  if(pathname==='/api/monitoring/olt/ticket-templates'&&method==='PUT') {
+    const context=await requirePermission(req,res,'olt:manage');if(!context)return;const payload=await readBody(req);
+    try{const templates=oltMonitor.validateTicketTemplates(payload);await mutate(store=>{store.settings.oltTicketing={...(store.settings.oltTicketing||{}),templates:{...oltMonitor.ticketTemplates(store),...templates}};addActivity(store,'monitoring',`Template tiket OLT diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-template'});},{collections:['activity'],includeCore:true});sendJson(res,200,{ok:true,whatsappEnabled:false});}catch(error){badRequest(res,error.message);}return;
+  }
+  if(pathname==='/api/monitoring/olt/tickets'&&method==='GET') {
+    const context=await requirePermission(req,res,'olt:tickets:read');if(!context)return;
+    try {
+      const data=context.data,manage=auth.hasPermission(context.user,'olt:manage'),page=oltTicketing.ticketPage(data,context.user,Object.fromEntries(url.searchParams));
+      const nasRows=radiusNasRowsLocal(data),nasIds=new Set(page.nasIds);
+      sendJson(res,200,{...page,devices:page.devices.map(device=>({...device,nasName:nasRows.find(nas=>nas.id===device.nasId)?.name||''})),
+        nasOptions:nasRows.filter(nas=>nasIds.has(nas.id)).map(nas=>({id:nas.id,name:nas.name})),
+        technicians:oltTicketing.eligibleUsers(data).map(user=>({id:user.id,name:user.name||user.username})),categories:serviceTickets.CATEGORIES,ticketTemplates:oltMonitor.ticketTemplates(data),
+        ...(manage?{ticketSettings:{...oltTicketing.settingsFor(data),gatewayEnabled:data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.eligibleUsers(data).map(user=>({id:user.id,name:user.name||user.username,role:user.role,phone:oltTicketing.phoneFor(user)}))}:{})});
+    }catch(error){badRequest(res,error.message);}return;
+  }
+  if(pathname==='/api/monitoring/olt/service-options'&&method==='GET'){
+    const context=await requirePermission(req,res,'olt:tickets:write');if(!context)return;
+    const needle=String(url.searchParams.get('search')||'').trim().toLowerCase().slice(0,100),identities=networkIdentity.directory(context.data);
+    const customers=(context.data.customers||[]).filter(customer=>{const account=identities.userForCustomer(customer)||{},nas=radiusFindNas(context.data,account.nasId||customer.nasId||customer.nas||customer.site);
+      return serviceTickets.visible(context.data,context.user,{source:'staff-service',scope:'service',customerId:customer.id,nasId:nas?.id||''})&&(!needle||[customer.name,customer.username,customer.code].some(value=>String(value||'').toLowerCase().includes(needle)));
+    }).slice(0,25).map(customer=>({id:customer.id,name:customer.name||customer.username,username:customer.username||'',phone:normalizeLocalPhone(customer.phone||customer.whatsapp||''),address:customer.address||'',coordinates:serviceTickets.coordinates(customer.latitude,customer.longitude)}));
+    sendJson(res,200,{customers});return;
+  }
+  if(pathname==='/api/monitoring/olt/ticket-settings'&&method==='PUT') {
+    const context=await requirePermission(req,res,'olt:manage');if(!context)return;const payload=await readBody(req);
+    try{await mutate(store=>{
+      const settings=oltTicketing.validateSettings(store,payload),templates=oltMonitor.validateTicketTemplates(payload.templates||{});
+      if(settings.whatsappEnabled&&!oltTicketing.ticketLink(paymentGatewayOrigin(store.settings),{id:'example'}))throw new Error('Atur URL publik billing di Payment Gateway terlebih dahulu');
+      store.settings.oltTicketing={...(store.settings.oltTicketing||{}),...settings,templates:{...oltMonitor.ticketTemplates(store),...templates}};
+      const cancelled=oltTicketing.cancelQueued(store);
+      addActivity(store,'monitoring',`Pengaturan tiket OLT diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-settings',whatsappEnabled:settings.whatsappEnabled,cancelled});
+    },{collections:['activity','waMessages'],includeCore:true});sendJson(res,200,{ok:true});}catch(error){badRequest(res,error.message);}return;
+  }
+  const oltTicketNetwork=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([^/]+)\/network$/);
+  if(oltTicketNetwork&&method==='GET'){
+    const context=await requirePermission(req,res,'olt:tickets:read');if(!context)return;
+    const ticket=(context.data.oltTickets||[]).find(row=>row.id===oltTicketNetwork[1]);
+    if(!ticket||!serviceTickets.visible(context.data,context.user,ticket)){notFound(res);return;}
+    try{sendJson(res,200,{context:await ticketNetwork.context(context.data,ticket,oltMonitor.visibleDevices(context.data,context.user))});}catch{sendJson(res,503,{error:'Identitas jaringan belum dapat dibaca'});}return;
+  }
+  const oltTicketRead=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([^/]+)$/);
+  if(oltTicketRead&&method==='GET') {
+    const context=await requirePermission(req,res,'olt:tickets:read');if(!context)return;
+    const ticket=(context.data.oltTickets||[]).find(row=>row.id===oltTicketRead[1]),device=ticket&&oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===ticket.oltId);
+    if(!ticket||!serviceTickets.visible(context.data,context.user,ticket)){notFound(res);return;}
+    const {waNotifications,notificationError,...publicTicket}=ticket;
+    const location=serviceTickets.ticketLocation(context.data,ticket);
+    const writable=auth.hasPermission(context.user,'olt:tickets:write');
+    sendJson(res,200,{ticket:{...publicTicket,customerName:location.name,contactPhone:normalizeLocalPhone(location.phone),contactAddress:location.address,locationUrl:location.locationUrl,coordinates:location.coordinates,...(serviceTickets.isServiceTicket(ticket)?{progress:serviceTickets.publicProgress(ticket)}:{})},device:{name:device?.name||ticket.nasName||'Layanan Pelanggan'},assignee:(context.data.users||[]).find(row=>row.id===ticket.assignedTo)?.name||'',canClaim:writable&&ticket.status!=='resolved'&&!ticket.assignedTo,canProgress:writable&&ticket.status!=='resolved'&&Boolean(ticket.assignedTo)&&(context.user.role!=='technician'||ticket.assignedTo===context.user.id)});return;
+  }
+  const serviceStaffRoute=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([a-f0-9-]{36})\/(messages|photos)(?:\/([a-f0-9-]{36}))?$/i);
+  if(serviceStaffRoute&&((method==='POST'&&serviceStaffRoute[2]==='messages')||(method==='GET'&&serviceStaffRoute[2]==='photos'))){
+    const context=await requirePermission(req,res,method==='GET'?'olt:tickets:read':'olt:tickets:write');if(!context)return;const [,id,action,photoId]=serviceStaffRoute;
+    const ticket=(context.data.oltTickets||[]).find(row=>row.id===id&&serviceTickets.isServiceTicket(row));if(!ticket||!serviceTickets.visible(context.data,context.user,ticket)){notFound(res);return;}
+    try{
+      if(action==='photos'){if(!photoId||!(ticket.messages||[]).some(message=>(message.photos||[]).some(photo=>photo.id===photoId))){notFound(res);return;}const body=await fs.readFile(path.join(serviceTickets.PHOTO_ROOT,photoId+'.webp'));res.writeHead(200,{'Content-Type':'image/webp','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});res.end(body);return;}
+      const payload=await readBody(req);const {result}=await mutate(async store=>{
+        const current=(store.oltTickets||[]).find(row=>row.id===id&&serviceTickets.isServiceTicket(row));if(!current||!serviceTickets.visible(store,context.user,current))throw serviceTickets.error('Tiket tidak ditemukan',404);
+        oltMonitor.requireTicketEditor(current,{},context.user);if(!current.assignedTo)throw serviceTickets.error('Ambil tiket sebelum membalas',409);
+        const result=await serviceTickets.appendMessage(store,current,payload,context.user);if(result.changed)addActivity(store,'monitoring',`Balasan tiket ${current.number} oleh ${context.user.name||context.user.username}`,{action:'service-ticket-reply',ticketId:id,userId:context.user.id});return result;
+      },{collections:['activity'],includeCore:true,shouldPersist:result=>result.changed});sendJson(res,200,{ok:true,ticket:result.ticket});
+    }catch(error){sendJson(res,error.status||400,{error:error.message});}return;
+  }
+  const oltTicketAction=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([^/]+)\/(claim|progress|message|notify)$/);
+  if(oltTicketAction&&((method==='POST'&&oltTicketAction[2]!=='message')||(method==='GET'&&oltTicketAction[2]==='message'))) {
+    const context=await requirePermission(req,res,method==='GET'?'olt:tickets:read':oltTicketAction[2]==='notify'?'olt:manage':'olt:tickets:write');if(!context)return;
+    const ticket=(context.data.oltTickets||[]).find(row=>row.id===oltTicketAction[1]);
+    if(!ticket||!serviceTickets.visible(context.data,context.user,ticket)){notFound(res);return;}
+    try {
+      if(method==='GET'){const kind=url.searchParams.get('kind')||'detected',origin=paymentGatewayOrigin(context.data.settings);sendJson(res,200,{message:oltTicketing.ticketLink(origin,ticket)?oltTicketing.messageText(context.data,ticket,kind,origin):oltMonitor.renderTicketTemplate(context.data,ticket,kind),whatsappEnabled:oltTicketing.settingsFor(context.data).whatsappEnabled});return;}
+      const payload=await readBody(req),action=oltTicketAction[2];
+      const {result}=await mutate(store=>{
+        const index=(store.oltTickets||[]).findIndex(row=>row.id===ticket.id);if(index<0)throw new Error('Tiket tidak ditemukan');const current=store.oltTickets[index];
+        if(!serviceTickets.visible(store,context.user,current))throw new Error('Tiket di luar kewenangan');
+        if(action==='notify'){
+          if(MIGRATION_MODE)throw new Error('Mode dev terisolasi: pengiriman WhatsApp nyata dinonaktifkan');
+          if(!oltTicketing.settingsFor(store).whatsappEnabled)throw new Error('Notifikasi WhatsApp tiket belum diaktifkan');
+          if(store.settings?.waGateway?.enabled!==true)throw new Error('Whatsapp Gateway billing belum aktif');
+          if(current.status==='resolved'&&payload.kind!=='resolved')throw new Error('Tiket sudah selesai. Pilih pesan Penanganan Selesai');
+          const result=queueOltTicketNotifications(store,current,payload.kind||'detected',context.user);
+          if(!result.queued)return{ticket:current,changed:false,queued:0,reason:result.reason};
+          addActivity(store,'monitoring',`Pesan tiket ${current.number} diantrikan oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-notify',ticketId:current.id,queued:result.queued});return{ticket:current,changed:true,queued:result.queued};
+        }
+        const next=action==='claim'?oltMonitor.claimTicket(current,context.user):serviceTickets.isServiceTicket(current)?serviceTickets.progress(current,payload,context.user):oltMonitor.progressTicket(current,payload,context.user);
+        if(next!==current&&serviceTickets.isServiceTicket(next))next.lastStaffMessageAt=next.updatedAt;
+        if(next===current)return{ticket:current,changed:false};store.oltTickets[index]=next;
+        let queuedNotifications=0;try{queuedNotifications=queueOltTicketNotifications(store,next,action==='claim'?'claimed':next.status==='resolved'?'resolved':'progress',context.user).queued;}catch(error){next.notificationError=error.message;}
+        oltTicketing.cancelQueued(store);
+        addActivity(store,'monitoring',`Tiket ${current.number} ${action==='claim'?'diambil':'diperbarui progresnya'} oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-'+action,ticketId:ticket.id,userId:context.user.id,status:next.status});return{ticket:next,changed:true,queuedNotifications};
+      },{collections:['activity','waMessages'],includeCore:true,shouldPersist:result=>result.changed});dispatchOltNotificationsSoon(result.queuedNotifications||result.queued);sendJson(res,200,{ok:true,ticket:result.ticket,queued:result.queued||0,reason:result.reason||'',whatsappEnabled:oltTicketing.settingsFor(context.data).whatsappEnabled});
+    }catch(error){if(error.status)sendJson(res,error.status,{error:error.message});else badRequest(res,error.message);}return;
+  }
+  const oltTicketMatch = pathname.match(/^\/api\/monitoring\/olt\/tickets(?:\/([^/]+))?$/);
+  if (oltTicketMatch && ['POST','PUT'].includes(method)) {
+    const context = await requirePermission(req, res, 'olt:tickets:write'); if (!context) return;
+    const payload = await readBody(req), ticketId = oltTicketMatch[1] || '';
+    let queuedNotifications=0;
+    try {
+      const { result } = await mutate(async store => {
+        const previous = ticketId ? (store.oltTickets || []).find(row => row.id === ticketId) : {};
+        if (!previous) throw new Error('Tiket tidak ditemukan');
+        if(!ticketId&&payload.category){
+          const ticket=await serviceTickets.createStaff(store,payload,context.user);
+          try{queuedNotifications=queueOltTicketNotifications(store,ticket,'detected',context.user).queued;}catch(error){ticket.notificationError=error.message;}
+          addActivity(store,'monitoring',`Permintaan ${ticket.number} dibuat oleh ${context.user.name||context.user.username}`,{action:'service-ticket-created',ticketId:ticket.id,category:ticket.category,userId:context.user.id});return ticket;
+        }
+        oltMonitor.requireTicketEditor(previous,payload,context.user);
+        if (previous.id && !serviceTickets.visible(store, context.user,previous)) throw new Error('Tiket di luar kewenangan');
+        if (!serviceTickets.isServiceTicket(previous)&&!oltMonitor.visibleDevices(store, context.user).some(row => row.id === (payload.oltId || previous.oltId))) throw new Error('OLT di luar kewenangan');
+        const ticket = serviceTickets.isServiceTicket(previous)?serviceTickets.update(store,payload,context.user,previous):oltMonitor.saveTicket(store, payload, context.user, previous);
+        store.oltTickets = oltMonitor.pruneTickets([...(store.oltTickets || []).filter(row => row.id !== ticket.id), ticket]);
+        const notificationKind=!previous.id?'detected':previous.status!=='resolved'&&ticket.status==='resolved'?'resolved':previous.assignedTo!==ticket.assignedTo&&ticket.assignedTo?'claimed':'';
+        if(notificationKind)try{queuedNotifications=queueOltTicketNotifications(store,ticket,notificationKind,context.user).queued;}catch(error){ticket.notificationError=error.message;}
+        oltTicketing.cancelQueued(store);
+        addActivity(store, 'monitoring', `Tiket ${ticket.number} ${ticketId ? 'diperbarui' : 'dibuat'} oleh ${context.user.name || context.user.username}`, { action: 'olt-ticket', ticketId: ticket.id });
+        return ticket;
+      },{collections:['activity','waMessages'],includeCore:true});
+      dispatchOltNotificationsSoon(queuedNotifications);
+      sendJson(res, ticketId ? 200 : 201, { ok: true, ticket: result, message: oltMonitor.ticketMessage(context.data, result) });
+    } catch (error) { if(error.status)sendJson(res,error.status,{error:error.message});else badRequest(res, error.message); }
+    return;
+  }
+  const oltDeviceMatch = pathname.match(/^\/api\/monitoring\/olt(?:\/([^/]+))?(?:\/(refresh|links|link-options))?$/);
+  if (oltDeviceMatch && ['GET','POST','PUT','DELETE'].includes(method)) {
+    const id = oltDeviceMatch[1] || '', action = oltDeviceMatch[2] || '';
+    const permission = method === 'GET' || action === 'refresh' ? 'olt:read' : action === 'links' ? 'olt:tickets:write' : 'olt:manage';
+    const context = await requirePermission(req, res, permission); if (!context) return;
+    const device = oltMonitor.visibleDevices(context.data, context.user).find(row => row.id === id);
+    if (id && !device) { notFound(res); return; }
+    if (action === 'refresh' && method === 'POST') {
+      if (MIGRATION_MODE) { badRequest(res, 'Mode dev terisolasi: pembacaan OLT asli dinonaktifkan'); return; }
+      sendJson(res, 202, { ok: true, queued: oltMonitor.requestRefresh(context.data, device) }); return;
+    }
+    if (action === 'link-options' && method === 'GET') {
+      const search = String(url.searchParams.get('search') || '').slice(0,100).toLowerCase();
+      const customers = (context.data.customers || []).filter(customer => !device.nasId || radiusFindNas(context.data, customer.nasId || customer.nas || customer.site)?.id === device.nasId);
+      sendJson(res, 200, { customers: customers.filter(customer => [customer.name,customer.username,customer.code].some(value => String(value || '').toLowerCase().includes(search))).slice(0,50).map(customer => ({ id: customer.id, name: customer.name, username: customer.username })),
+        points: (context.data.fiberPoints || []).slice(0,500).map(point => ({ id: point.id, name: [point.code,point.name].filter(Boolean).join(' - ') })) }); return;
+    }
+    if (method === 'GET' && device && !action) {
+      const snapshot = await oltMonitor.snapshotFor(device);
+      const rows = oltMonitor.linkedOnus(context.data, device, snapshot?.onus || [],snapshot);
+      const search = String(url.searchParams.get('search') || '').slice(0,100).toLowerCase(), status = url.searchParams.get('status') || '', pon = url.searchParams.get('pon') || '';
+      const filtered = rows.filter(row => oltMonitor.matchesState(row,status) && (!pon || row.ponKey === pon) && [row.name,row.serialNumber,row.model,row.customerName,row.customerUsername,row.fiberPointName,row.downCause].some(value => String(value || '').toLowerCase().includes(search)));
+      const limit = [10,25,50,100].includes(Number(url.searchParams.get('limit'))) ? Number(url.searchParams.get('limit')) : 25;
+      const page = Math.max(1,Math.min(Math.max(1,Math.ceil(filtered.length/limit)),Number.parseInt(url.searchParams.get('page'),10)||1));
+      sendJson(res, 200, { device: oltMonitor.publicDevice(device, snapshot, { management: auth.hasPermission(context.user,'olt:manage') }),
+        ports: snapshot?.ports || [], onus: filtered.slice((page-1)*limit,page*limit), page, limit, total: filtered.length, pages: Math.max(1,Math.ceil(filtered.length/limit)) }); return;
+    }
+    if ((method === 'POST' && !id) || (method === 'PUT' && id && !action) || (method === 'DELETE' && id && !action) || (method === 'PUT' && action === 'links')) {
+      const payload = await readBody(req);
+      try {
+        const { result } = await mutate(store => {
+          store.oltDevices = Array.isArray(store.oltDevices) ? store.oltDevices : [];
+          const index = store.oltDevices.findIndex(row => row.id === id);
+          if (id && index < 0) throw new Error('OLT tidak ditemukan');
+          if (method === 'DELETE') {
+            if ((store.oltTickets || []).some(ticket => ticket.oltId === id)) throw new Error('OLT memiliki riwayat tiket. Nonaktifkan monitoring untuk mempertahankan riwayat.');
+            addActivity(store,'monitoring',`Integrasi OLT ${store.oltDevices[index].name} dihapus oleh ${context.user.name || context.user.username}`,{ action: 'olt-integration-delete',oltId: id });
+            store.oltDevices.splice(index,1); return { id };
+          }
+          if (action === 'links' && payload.customerId && store.oltDevices[index].nasId) {
+            const customer = (store.customers || []).find(row => row.id === payload.customerId);
+            if (radiusFindNas(store,customer?.nasId || customer?.nas || customer?.site)?.id !== store.oltDevices[index].nasId) throw new Error('Pelanggan tidak termasuk NAS OLT ini');
+          }
+          const row = action === 'links' ? oltMonitor.linkCustomer(store,store.oltDevices[index],payload.serialNumber,payload)
+            : oltMonitor.validateDevice(store,payload,index >= 0 ? store.oltDevices[index] : {});
+          if (index >= 0) store.oltDevices[index] = row; else store.oltDevices.push(row);
+          addActivity(store,'monitoring',`Integrasi OLT ${row.name} ${index >= 0 ? 'diperbarui' : 'ditambahkan'} oleh ${context.user.name || context.user.username}`,{ action: 'olt-integration',oltId: row.id });
+          return { ...oltMonitor.publicDevice(row,null,{ management: auth.hasPermission(context.user,'olt:manage') }), ...(action === 'links' ? { linked: true } : {}) };
+        });
+        sendJson(res, method === 'POST' ? 201 : 200, { ok: true, device: result });
+      } catch(error) { badRequest(res,error.message); }
+      return;
+    }
+    notFound(res); return;
   }
 
   if (method === 'GET' && pathname === '/api/monitoring/fiber-network') {
     const authContext = await requirePermission(req, res, 'monitoring:read');
     if (!authContext) return;
-    sendJson(res, 200, fiberNetworkPayload(authContext.data, {
+    sendJson(res, 200, { ...fiberNetworkPayload(authContext.data, {
       area: url.searchParams.get('area') || 'all',
       search: url.searchParams.get('search') || ''
-    }));
+    }), olts: auth.hasPermission(authContext.user,'olt:read') ? oltMonitor.mappingNodes(authContext.data,oltMonitor.visibleDevices(authContext.data,authContext.user)) : [] });
     return;
   }
 
@@ -26674,6 +27025,7 @@ async function handleApi(req, res, url) {
         const now = new Date().toISOString();
         for (const message of store.waMessages || []) {
           if (!idSet.has(message.id)) continue;
+          if(message.type==='oltTicket'&&(message.status==='cancelled'||message.sentAt||['sent','delivered','read','seen'].includes(message.status)))continue;
           message.status = 'queued';
           message.scheduledAt = now;
           message.lastError = '';
@@ -26754,6 +27106,7 @@ async function handleApi(req, res, url) {
       const { result } = await mutate((store) => {
         const message = (store.waMessages || []).find((item) => item.id === messageId);
         if (!message) throw new Error('Pesan WA tidak ditemukan');
+        if(message.type==='oltTicket'&&(message.status==='cancelled'||message.sentAt||['sent','delivered','read','seen'].includes(message.status)))throw new Error('Pesan tiket dibatalkan atau sudah terkirim; pengiriman ulang diblokir');
         if (message.status === 'sent') return message;
         message.status = 'queued';
         message.scheduledAt = new Date().toISOString();
@@ -27165,7 +27518,14 @@ async function handleApi(req, res, url) {
     const authContext = await requirePermission(req, res, 'settings:write');
     if (!authContext) return;
     const payload = await readBody(req);
+    const hasNetworkIntegration = Object.prototype.hasOwnProperty.call(payload, 'networkIntegrationEnabled');
+    if (hasNetworkIntegration && typeof payload.networkIntegrationEnabled !== 'boolean') {
+      badRequest(res, 'Status integrasi dan sinkron otomatis harus aktif atau nonaktif');
+      return;
+    }
     const previousWifiKuRequireOtp = wifiKuSettings(authContext.data).requireOtp;
+    let networkIntegrationChanged = false;
+    const integrationOnly = hasNetworkIntegration && Object.keys(payload).length === 1;
     let uploadedLogoUrl = '';
     if (typeof payload.logoUrl === 'string' && /^data:image\//i.test(payload.logoUrl.trim())) {
       try {
@@ -27180,6 +27540,15 @@ async function handleApi(req, res, url) {
       }
     }
     const { data } = await mutate((store) => {
+      if (hasNetworkIntegration) {
+        const changed = (store.settings.networkIntegrationEnabled === true) !== payload.networkIntegrationEnabled;
+        networkIntegrationChanged = changed;
+        store.settings.networkIntegrationEnabled = payload.networkIntegrationEnabled;
+        if (changed) addActivity(store, 'settings', `Integrasi dan sinkron otomatis ${payload.networkIntegrationEnabled ? 'diaktifkan' : 'dinonaktifkan'} oleh ${authContext.user.name || authContext.user.username}`, {
+          action: 'network-integration-setting', enabled: payload.networkIntegrationEnabled, userId: authContext.user.id, role: authContext.user.role
+        });
+      }
+      if (integrationOnly) return;
       if (typeof payload.businessName === 'string') {
         store.settings.businessName = payload.businessName.trim() || store.settings.businessName;
       }
@@ -27258,7 +27627,8 @@ async function handleApi(req, res, url) {
       if (payload.radius && typeof payload.radius === 'object') {
         store.settings.radius = sanitizeRadiusSettings(payload.radius, store.settings.radius || {});
       }
-    });
+    }, integrationOnly ? { collections: ['activity'], includeCore: true, shouldPersist: () => networkIntegrationChanged } : {});
+    if (networkIntegrationChanged) oltAutoIdentity.invalidate();
     if (previousWifiKuRequireOtp !== wifiKuSettings(data).requireOtp) {
       resetWifiKuOtpState();
     }
@@ -27534,6 +27904,7 @@ if (require.main === module) {
       startWaGatewaySender();
       startPaymentGatewayHistorySync();
       startRouterDashboardBackgroundPolling();
+      startOltMonitoring();
       startCustomerSummaryBackgroundPolling();
       startGenieAcsStaleReplacedCleanup();
       imageCleanupTimer = setInterval(() => {
@@ -27556,6 +27927,7 @@ if (require.main === module) {
     if (billingAutomationTimer) clearInterval(billingAutomationTimer);
     if (paymentGatewayHistorySyncTimer) clearInterval(paymentGatewayHistorySyncTimer);
     if (routerDashboardBackgroundTimer) clearInterval(routerDashboardBackgroundTimer);
+    if (oltBackgroundTimer) clearInterval(oltBackgroundTimer);
     if (customerSummaryBackgroundTimer) clearInterval(customerSummaryBackgroundTimer);
     if (genieAcsStaleReplacedCleanupTimer) clearInterval(genieAcsStaleReplacedCleanupTimer);
     if (imageCleanupTimer) clearInterval(imageCleanupTimer);

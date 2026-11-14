@@ -44,7 +44,7 @@ const CUSTOMER_PAGE_SIZE = 10;
 const RADIUS_PAGE_SIZE = 10;
 const PAGER_LIMIT_OPTIONS = [10, 25, 50, 100];
 const MOBILE_FULL_MENU_GROUPS = new Set(['partners', 'monitoring', 'settings-menu', 'admin']);
-const MOBILE_FULL_MENU_VIEWS = new Set(['monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'billingSettings', 'paymentGateway', 'waGateway', 'inventory', 'users', 'settings', 'logDetection', 'activity']);
+const MOBILE_FULL_MENU_VIEWS = new Set(['monitoringTickets', 'monitoringOlt', 'monitoringSite', 'monitoringCustomerMap', 'monitoringFiberNetwork', 'monitoringServices', 'genieAcs', 'billingSettings', 'paymentGateway', 'waGateway', 'inventory', 'users', 'settings', 'logDetection', 'activity']);
 const DEFAULT_APP_TIME_ZONE = 'Asia/Makassar';
 const APP_TIME_ZONE_LABELS = {
   'Asia/Jakarta': 'WIB',
@@ -107,6 +107,8 @@ const titles = {
   radiusSettings: 'Pengaturan Radius',
   genieAcs: 'GenieACS',
   monitoringSite: 'Pemantauan NAS',
+  monitoringOlt: 'OLT',
+  monitoringTickets: 'Tiket Layanan',
   monitoringCustomerMap: 'Peta Pelanggan',
   monitoringFiberNetwork: 'ODP/ODC',
   monitoringMembers: 'Member',
@@ -171,6 +173,8 @@ const viewPermissions = {
   radiusSettings: 'radius:read',
   genieAcs: 'genieacs:read',
   monitoringSite: 'monitoring:read',
+  monitoringOlt: 'olt:read',
+  monitoringTickets: 'olt:tickets:read',
   monitoringCustomerMap: ['monitoring:read', 'billing-monitor:read', 'members:read'],
   monitoringFiberNetwork: 'monitoring:read',
   monitoringMembers: ['billing-monitor:read', 'members:read'],
@@ -355,6 +359,7 @@ const state = {
     appSubtitle: DEFAULT_APP_SUBTITLE,
     logoUrl: DEFAULT_LOGO_URL,
     timeZone: DEFAULT_APP_TIME_ZONE,
+    networkIntegrationEnabled: false,
     security: {
       loginVerificationEnabled: true
     },
@@ -1802,7 +1807,7 @@ function webPushSupported() {
 
 function paymentNotificationsAllowed() {
   return Boolean(state.auth && !paymentNotificationsSuppressed
-    && ['admin', 'owner', 'finance'].includes(String(state.auth.role || '').toLowerCase())
+    && ['admin', 'secretary', 'owner', 'finance'].includes(String(state.auth.role || '').toLowerCase())
     && can('payment-gateway:manage'));
 }
 
@@ -2300,7 +2305,7 @@ function canView(view) {
     return ['dashboard', 'radiusHotspot', 'reportsVoucherDaily', 'reportsVoucherMonthly'].includes(view) && can(viewPermissions[view]);
   }
   if (role === 'collector') {
-    return ['dashboard', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringIsolatedMembers', 'monitoringTerminatedMembers', 'monitoringBilling', 'reportsDaily', 'reportsMonthlyBilling'].includes(view) && can(viewPermissions[view]);
+    return ['dashboard', 'monitoringOlt', 'monitoringMembers', 'monitoringNewCustomers', 'monitoringIsolatedMembers', 'monitoringTerminatedMembers', 'monitoringBilling', 'reportsDaily', 'reportsMonthlyBilling'].includes(view) && can(viewPermissions[view]);
   }
   if (role === 'partner') {
     return ['partnerCustomers', 'partnerPackages', 'partnerInvoices', 'partnerPayments', 'partnerPppoe', 'partnerRadius', 'partnerReports', 'partnerSettlement'].includes(view) && can(viewPermissions[view]);
@@ -5119,6 +5124,7 @@ function renderLogin() {
       loginVerificationController = null;
       clearRadiusOptionsCache();
       updateBranding(payload);
+      if (window.openOltTicketAfterLogin?.()) return;
       takeLoginReturnView();
       state.view = canView('dashboard') ? 'dashboard' : firstAvailableView();
       showLoginTransition('Menyiapkan dashboard...');
@@ -16078,7 +16084,7 @@ function monitoringFiberNodeLabel(row = {}) {
 
 function monitoringMapMarkerIcon(kind = 'customer', tone = 'active') {
   if (!window.L) return undefined;
-  const safeKind = ['customer', 'noc', 'odc', 'odp'].includes(kind) ? kind : 'customer';
+  const safeKind = ['customer', 'noc', 'odc', 'odp', 'olt'].includes(kind) ? kind : 'customer';
   const safeTone = ['active', 'isolated', 'inactive', 'maintenance'].includes(tone) ? tone : 'active';
   const infraLabel = safeKind === 'noc' ? 'SITE' : safeKind.toUpperCase();
   const html = safeKind === 'customer'
@@ -16273,14 +16279,14 @@ function monitoringCustomerPopup(row = {}) {
 function monitoringFiberPopup(row = {}) {
   const coordinate = monitoringCoordinate(row);
   const coordinateLink = coordinate ? `<a href="${monitoringMapGoogleMapsUrl(coordinate[0], coordinate[1])}" target="_blank" rel="noopener">Rute Google Maps</a>` : '';
-  const typeLabel = row.type === 'noc' ? 'Site' : row.type === 'odc' ? 'ODC' : 'ODP';
+  const typeLabel = row.type === 'noc' ? 'Site' : row.type === 'olt' ? 'OLT' : row.type === 'odc' ? 'ODC' : 'ODP';
   return `
     <div class="monitoring-map-popup">
       <strong>${escapeHtml(typeLabel)} ${escapeHtml(monitoringFiberNodeLabel(row))}</strong>
       ${row.type === 'noc' && row.isPrimary ? '<span><strong>Acuan server/site utama</strong></span>' : ''}
       <span>Area: ${escapeHtml(row.area || '-')}</span>
       <span>Status: ${escapeHtml(row.statusLabel || '-')}</span>
-      ${row.type === 'noc' ? '' : `<span>Port: ${monitoringFiberPortText(row.usedPorts)} dipakai / ${monitoringFiberPortText(row.capacityPorts)} kapasitas</span>`}
+      ${['noc','olt'].includes(row.type) ? '' : `<span>Port: ${monitoringFiberPortText(row.usedPorts)} dipakai / ${monitoringFiberPortText(row.capacityPorts)} kapasitas</span>`}
       ${row.availablePorts !== null && row.availablePorts !== undefined ? `<span>Sisa port: ${monitoringFiberPortText(row.availablePorts)}</span>` : ''}
       ${row.centerName ? `<span>ODC: ${escapeHtml(row.centerName)}</span>` : ''}
       ${coordinateLink}
@@ -16440,7 +16446,7 @@ async function mountMonitoringCustomerMap(payload = {}) {
     const coordinate = monitoringCoordinate(node);
     if (!coordinate) return;
     bounds.push(coordinate);
-    const nodeKind = ['noc', 'odc', 'odp'].includes(node.type) ? node.type : 'odp';
+    const nodeKind = ['noc', 'odc', 'odp', 'olt'].includes(node.type) ? node.type : 'odp';
     bindMonitoringMapPopup(window.L.marker(coordinate, {
       icon: monitoringMapMarkerIcon(nodeKind, node.tone || node.status || 'active'),
       zIndexOffset: monitoringMapMarkerZIndex(nodeKind)
@@ -16768,7 +16774,7 @@ async function mountMonitoringFiberMap(payload = {}) {
     return;
   }
   if (!document.body.contains(mapEl)) return;
-  const nocs = Array.isArray(payload.nocs) ? payload.nocs : [];
+  const nocs = [...(Array.isArray(payload.nocs) ? payload.nocs : []), ...(payload.olts || [])];
   const centers = Array.isArray(payload.centers) ? payload.centers : [];
   const points = Array.isArray(payload.points) ? payload.points : [];
   const lightweightMap = monitoringMapUseLightweightMode(nocs.length + centers.length + points.length);
@@ -16803,7 +16809,7 @@ async function mountMonitoringFiberMap(payload = {}) {
     if (!coordinate) return;
     bounds.push(coordinate);
     bindMonitoringMapPopup(window.L.marker(coordinate, {
-      icon: monitoringMapMarkerIcon('noc', noc.tone || noc.status || 'active'),
+      icon: monitoringMapMarkerIcon(noc.type === 'olt' ? 'olt' : 'noc', noc.tone || noc.status || 'active'),
       zIndexOffset: monitoringMapMarkerZIndex('noc')
     }).addTo(map), monitoringFiberPopup(noc));
   }, { isCancelled, chunkSize: 60 });
@@ -19380,7 +19386,7 @@ function billingCancelAllowed(invoice = {}) {
   const status = String(invoice.status || '').toLowerCase();
   const role = String(state.auth?.role || '').toLowerCase();
   return Boolean(can('invoices:manage')
-    && ['admin', 'owner', 'finance'].includes(role)
+    && ['admin', 'secretary', 'owner', 'finance'].includes(role)
     && billingInvoiceNo(invoice)
     && ['unpaid', 'pending', 'overdue'].includes(status));
 }
@@ -22681,7 +22687,7 @@ async function renderMonitoringBilling(options = {}) {
     : (customerStatusLabels[state.monitoringBillingCustomerStatus] || 'Tagihan sesuai filter');
   const batchReminderAllowed = !partnerPaymentView && can('billing-monitor:read');
   const batchPayAllowed = !partnerPaymentView && can('invoices:manage');
-  const batchCancelAllowed = !partnerPaymentView && can('invoices:manage') && ['admin', 'owner', 'finance'].includes(String(state.auth?.role || '').toLowerCase());
+  const batchCancelAllowed = !partnerPaymentView && can('invoices:manage') && ['admin', 'secretary', 'owner', 'finance'].includes(String(state.auth?.role || '').toLowerCase());
 
   const rows = invoices.length ? invoices.map((invoice, index) => {
     const customerName = invoice.customerName || invoice.accountId || invoice.username || '-';
@@ -24417,6 +24423,7 @@ function waMessageStatusLabel(status = '') {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'queued') return 'Dalam Antrean';
   if (normalized === 'draft') return 'Draft';
+  if (normalized === 'cancelled') return 'Dibatalkan';
   if (['failed', 'pending'].includes(normalized)) return 'Pending';
   if (normalized === 'sent') return 'Terkirim';
   if (normalized === 'delivered') return 'Diterima';
@@ -24431,6 +24438,7 @@ function waMessageStatusIcon(status = '') {
   if (normalized === 'sent') return '<span class="wa-status-icon sent" title="Terkirim" aria-label="Terkirim"></span>';
   if (normalized === 'queued') return '<span class="badge pending">Antrean</span>';
   if (normalized === 'draft') return '<span class="badge">Draft</span>';
+  if (normalized === 'cancelled') return '<span class="badge">Dibatalkan</span>';
   return '<span class="badge pending">Pending</span>';
 }
 
@@ -24465,6 +24473,7 @@ function waMessageRecipientMarker(message = {}) {
 
 function waMessageCanSend(message = {}) {
   const status = String(message.status || '').toLowerCase();
+  if(message.type==='oltTicket'&&(status==='cancelled'||message.sentAt))return false;
   return !['sent', 'delivered', 'read', 'seen'].includes(status);
 }
 
@@ -26303,6 +26312,13 @@ async function renderSettings(options = {}) {
             <span>Tier bonus collector default</span>
             <textarea rows="5" readonly>${escapeHtml(collectorBonusTierText)}</textarea>
           </label>
+          <div class="field full">
+            <span>Integrasi Pelanggan, ACS &amp; OLT</span>
+            <label class="check-row" for="networkIntegrationEnabled">
+              <input id="networkIntegrationEnabled" name="networkIntegrationEnabled" type="checkbox" role="switch" ${settings.networkIntegrationEnabled === true ? 'checked' : ''}>
+              <span>Aktifkan integrasi dan sinkron otomatis</span>
+            </label>
+          </div>
           <label class="field">
             <span>Upload logo</span>
             <input id="logoUploadInput" type="file" accept="image/png,image/jpeg,image/webp">
@@ -26398,6 +26414,21 @@ async function renderSettings(options = {}) {
     openPublicInfoSettingsModal(settings.publicInfo || {});
   });
 
+  document.getElementById('networkIntegrationEnabled').addEventListener('change', async (event) => {
+    const input = event.currentTarget, previous = settings.networkIntegrationEnabled === true;
+    input.disabled = true;
+    try {
+      const result = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ networkIntegrationEnabled: input.checked }) });
+      settings.networkIntegrationEnabled = result.settings.networkIntegrationEnabled === true;
+      state.settings = { ...state.settings, ...result.settings };
+      input.checked = settings.networkIntegrationEnabled;
+      setToast(`Integrasi dan sinkron otomatis ${input.checked ? 'diaktifkan' : 'dinonaktifkan'}`);
+    } catch (error) {
+      input.checked = previous;
+      setToast(error.message || 'Pengaturan integrasi gagal disimpan');
+    } finally { input.disabled = false; }
+  });
+
   document.getElementById('settingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -26409,6 +26440,7 @@ async function renderSettings(options = {}) {
       receiptBusinessCode: form.receiptBusinessCode.value,
       voucherRevenueSharePercent: form.voucherRevenueSharePercent.value,
       collectorDailyBonusEnabled: form.collectorDailyBonusEnabled.checked,
+      networkIntegrationEnabled: form.networkIntegrationEnabled.checked,
       security: {
         loginVerificationEnabled: form.loginVerificationEnabled.checked
       }
@@ -26767,6 +26799,23 @@ async function renderPartnerReport(kind = 'report', options = {}) {
   document.getElementById('partnerReportRefresh')?.addEventListener('click', () => renderPartnerReport(kind, { refresh: true }));
 }
 
+let oltUiLoadPromise = null;
+async function renderMonitoringOlt(mode = 'olt') {
+  const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
+  if (!window.FakenetOltUI) {
+    if (!oltUiLoadPromise) oltUiLoadPromise = new Promise((resolve,reject) => {
+      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/olt.css?ui=olt-actions-20261114'; document.head.appendChild(style);
+      const script = document.createElement('script'); script.src = '/olt.js?ui=olt-auto-identity-20261114';
+      script.onload = resolve; script.onerror = () => { oltUiLoadPromise = null; script.remove(); reject(new Error('Tampilan OLT belum dapat dimuat')); };
+      document.head.appendChild(script);
+    });
+    await oltUiLoadPromise;
+  }
+  if (state.view !== currentView) return;
+  return window.FakenetOltUI.render({ app, api, can, openModal, setToast, escapeHtml, copyTextToClipboard, user:state.auth,
+    mode,timeZone:appTimeZone(),navigate:view=>setView(view),isCurrent: () => state.view === currentView && Boolean(state.auth) });
+}
+
 async function render(options = {}) {
   if (!state.auth) {
     renderLogin();
@@ -26795,6 +26844,8 @@ async function render(options = {}) {
     else if (state.view === 'radiusSettings') await renderRadiusSettings(renderOptions);
     else if (state.view === 'genieAcs') await renderGenieAcs(renderOptions);
     else if (state.view === 'monitoringSite') await renderMonitoringSite();
+    else if (state.view === 'monitoringOlt') await renderMonitoringOlt();
+    else if (state.view === 'monitoringTickets') await renderMonitoringOlt('tickets');
     else if (state.view === 'monitoringCustomerMap') await renderMonitoringCustomerMap(renderOptions);
     else if (state.view === 'monitoringFiberNetwork') await renderMonitoringFiberNetwork(renderOptions);
     else if (state.view === 'monitoringMembers') await renderMonitoringMembers(renderOptions);

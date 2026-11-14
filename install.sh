@@ -91,7 +91,7 @@ install_packages() {
         ca-certificates curl git rsync tar gzip gnupg openssl procps iproute2 \
         postgresql postgresql-client redis-server \
         freeradius freeradius-postgresql freeradius-utils \
-        snmp docker.io tesseract-ocr \
+        snmp telnet docker.io tesseract-ocr \
         build-essential python3 make g++ netcat-openbsd
       ;;
     *)
@@ -118,9 +118,16 @@ install_ocr_runtime() {
   esac
 }
 
+install_olt_cli_runtime() {
+  command -v telnet >/dev/null 2>&1 && return 0
+  echo "Instal klien CLI untuk monitoring/pengelolaan OLT..."
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y telnet
+}
+
 ensure_required_commands() {
   local missing=() cmd
-  for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker pgrep snmpwalk snmpget radclient tesseract; do
+  for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker pgrep snmpwalk snmpget snmpbulkwalk telnet radclient tesseract; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   if ! command -v freeradius >/dev/null 2>&1 && ! command -v radiusd >/dev/null 2>&1; then
@@ -265,12 +272,29 @@ verify_repository_payload() {
     src/whatsapp-queue.js
     src/payment-promise.js
     src/login-turnstile.js
+    src/network-identity.js
+    src/olt-auto-identity.js
+    src/olt-cli.js
+    src/olt-monitor.js
+    src/olt-ticketing.js
+    src/service-tickets.js
+    src/ticket-network.js
+    src/wifiku-modem-status.js
     public/index.html
     public/app.js
     public/login-verification.js
     public/styles.css
     public/service-worker.js
     public/manifest.webmanifest
+    public/olt.js
+    public/olt.css
+    public/olt-ticket.html
+    public/olt-ticket.js
+    public/olt-ticket.css
+    public/olt-trash.svg
+    public/olt-reboot.svg
+    public/olt-icons-license.txt
+    public/support-chat.svg
     deploy/fakenet-billing.env
     deploy/fakenet-billing-turnstile.env.example
     deploy/fakenet-billing-isolir-context.env.example
@@ -366,7 +390,7 @@ install_node_deps() {
     return 1
   fi
   [ "$install_status" -eq 0 ] || return "$install_status"
-  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile')" >/dev/null
+  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status')" >/dev/null
 }
 
 install_genieacs_runtime() {
@@ -1284,6 +1308,7 @@ repair_install() {
     cleanup_fakenet_genieacs_services
   fi
   install_ocr_runtime
+  install_olt_cli_runtime
   install_env
 
   if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
@@ -1401,7 +1426,7 @@ purge_dependency_packages() {
   case "$pm" in
     apt)
       DEBIAN_FRONTEND=noninteractive apt-get purge -y \
-        postgresql postgresql-client redis-server freeradius freeradius-postgresql freeradius-utils snmp docker.io tesseract-ocr nodejs npm \
+        postgresql postgresql-client redis-server freeradius freeradius-postgresql freeradius-utils snmp telnet docker.io tesseract-ocr nodejs npm \
         >/dev/null 2>&1 || true
       DEBIAN_FRONTEND=noninteractive apt-get autoremove -y >/dev/null 2>&1 || true
       ;;

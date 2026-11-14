@@ -57,6 +57,11 @@ const ROLE_DEFINITIONS = {
       'radius:write',
       'genieacs:read',
       'genieacs:write',
+      'olt:read',
+      'olt:manage',
+      'olt:onu:delete',
+      'olt:onu:reboot',
+      'olt:tickets:write',
       'monitoring:read',
       'monitoring:write',
       'monitoring:check'
@@ -93,6 +98,11 @@ const ROLE_DEFINITIONS = {
       'radius:write',
       'genieacs:read',
       'genieacs:write',
+      'olt:read',
+      'olt:manage',
+      'olt:onu:delete',
+      'olt:onu:reboot',
+      'olt:tickets:write',
       'monitoring:read',
       'monitoring:write',
       'monitoring:check'
@@ -124,35 +134,8 @@ const ROLE_DEFINITIONS = {
   },
   secretary: {
     label: 'Sekretaris',
-    description: 'Akses operasional lintas menu seperti owner terbatas, tanpa kewenangan admin, pengaturan, atau transaksi sensitif.',
-    permissions: [
-      'dashboard:read',
-      'activity:read',
-      'diagnostics:read',
-      'wa-gateway:recover',
-      'external-incomes:read',
-      'external-incomes:write',
-      'expenses:read',
-      'expenses:write',
-      'reports:daily:read',
-      'reports:voucher:read',
-      'billing-monitor:read',
-      'customers:manage',
-      'invoices:manage',
-      'xendit:read',
-      'inventory:read',
-      'inventory:write',
-      'network-assets:read',
-      'network-assets:write',
-      'radius:read',
-      'radius:write',
-      'genieacs:read',
-      'genieacs:write',
-      'monitoring:read',
-      'monitoring:fiber:create',
-      'monitoring:write',
-      'monitoring:check'
-    ]
+    description: 'Administrator kedua dengan kewenangan setara Admin, termasuk pengguna, pengaturan, billing, dan operasional.',
+    permissions: []
   },
   technician: {
     label: 'Teknisi',
@@ -170,6 +153,10 @@ const ROLE_DEFINITIONS = {
       'members:contact:write',
       'genieacs:read',
       'genieacs:write',
+      'olt:read',
+      'olt:onu:delete',
+      'olt:onu:reboot',
+      'olt:tickets:write',
       'monitoring:read',
       'monitoring:fiber:create',
       'monitoring:check'
@@ -188,6 +175,11 @@ const ROLE_DEFINITIONS = {
       'radius:write',
       'genieacs:read',
       'genieacs:write',
+      'olt:read',
+      'olt:manage',
+      'olt:onu:delete',
+      'olt:onu:reboot',
+      'olt:tickets:write',
       'monitoring:read',
       'monitoring:write',
       'monitoring:check'
@@ -228,12 +220,21 @@ const ROLE_DEFINITIONS = {
   },
   viewer: {
     label: 'Viewer',
-    description: 'Lihat dashboard tanpa akses buku kas, laporan tagihan, atau pengaturan.',
+    description: 'Lihat dashboard, monitoring OLT dan tiket tanpa buku kas, pengaturan, atau aksi teknis.',
     permissions: [
       'dashboard:read'
     ]
   }
 };
+
+// Menu visibility does not grant ONU writes or ticket handling to read-only roles.
+for (const [role, definition] of Object.entries(ROLE_DEFINITIONS)) {
+  const reseller = ['partner', 'reseller_voucher'].includes(role);
+  if (!reseller && role !== 'finance' && !definition.permissions.includes('olt:read')) definition.permissions.push('olt:read');
+  if (!reseller && role !== 'collector' && !definition.permissions.includes('olt:tickets:read')) definition.permissions.push('olt:tickets:read');
+}
+// Keep the role/audit identity distinct while inheriting every administrator permission.
+ROLE_DEFINITIONS.secretary.permissions = [...ROLE_DEFINITIONS.admin.permissions];
 
 const sessions = new Map();
 let sessionsLoaded = false;

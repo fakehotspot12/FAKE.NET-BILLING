@@ -2,6 +2,7 @@
 
 const genieAcsWan = require('./genieacs-wan');
 const genieAcsWifi = require('./genieacs-wifi');
+const networkIdentity = require('./network-identity');
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:7557';
 const HTTP_TIMEOUT_MS = Math.max(3000, Number(process.env.GENIEACS_HTTP_TIMEOUT_MS || 10000) || 10000);
@@ -25,6 +26,7 @@ const deviceListCache = new Map();
 const deviceListInflight = new Map();
 const deviceMutationLocks = new Map();
 const bestDeviceCache = new Map();
+const bestDeviceInflight = new Map();
 const clientDetailRefreshes = new Map();
 const clientCountCache = new Map();
 const virtualParameterRefreshCooldown = new Map();
@@ -557,7 +559,7 @@ async function requestJson(settings = {}, pathname, options = {}) {
     throw new Error('GenieACS belum aktif atau base URL belum diisi');
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), Math.max(1000, Math.min(HTTP_TIMEOUT_MS, Number(options.timeoutMs)||HTTP_TIMEOUT_MS)));
   try {
     const url = urlFor(cfg, pathname, options.query || {});
     const response = await fetch(url, {
@@ -570,7 +572,13 @@ async function requestJson(settings = {}, pathname, options = {}) {
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body)
     });
-    const text = await response.text();
+    let text;
+    if(options.maxResponseBytes&&response.body?.getReader){
+      if(Number(response.headers.get('content-length'))>options.maxResponseBytes){controller.abort();throw new Error('Respons GenieACS melebihi batas aman');}
+      const reader=response.body.getReader(),chunks=[];let bytes=0;
+      try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>options.maxResponseBytes){await reader.cancel();throw new Error('Respons GenieACS melebihi batas aman');}chunks.push(Buffer.from(value));}}finally{reader.releaseLock();}
+      text=Buffer.concat(chunks,bytes).toString('utf8');
+    }else{text=await response.text();if(options.maxResponseBytes&&Buffer.byteLength(text)>options.maxResponseBytes)throw new Error('Respons GenieACS melebihi batas aman');}
     if (options.onResponseStatus) options.onResponseStatus(response.status);
     let payload = null;
     if (text) {
@@ -1034,6 +1042,19 @@ function deviceSummaryProjection(cfg = normalizeSettings({})) {
   (cfg.rxPowerParameters || []).forEach((path) => cleanText(path) && paths.add(cleanText(path)));
   (cfg.wanVlanParameters || []).forEach((path) => cleanText(path) && paths.add(cleanText(path)));
   return [...paths].join(',');
+}
+
+async function identityDevices(settings = {}) {
+  const cfg=normalizeSettings(settings);
+  if(!configured(cfg))return [];
+  const projection=['_id','_deviceId','_lastInform','_registered','_tags',
+    'InternetGatewayDevice.DeviceInfo.SerialNumber','InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber','Device.DeviceInfo.SerialNumber',...cfg.usernameParameters].join(',');
+  // Background-only read: no CWMP refresh, WiFi/host scan or credentials projection.
+  const raw=await requestJson(cfg,'/devices/',{timeoutMs:4000,maxResponseBytes:8*1024*1024,query:{query:JSON.stringify(usernameSuffixExclusionQuery(cfg)),projection,limit:'10001'}});
+  if(!Array.isArray(raw)||raw.length>10000)throw new Error('Daftar identitas ACS melebihi batas aman');
+  return raw.map(device=>({id:cleanText(device._id),serialNumber:normalizeSerialNumber(cleanText(device._deviceId?._SerialNumber)||getPathValue(device,'InternetGatewayDevice.DeviceInfo.SerialNumber')||getPathValue(device,'Device.DeviceInfo.SerialNumber')||getPathValue(device,'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber')),
+    username:resolveUsernameParameter(device,cfg.usernameParameters).value,productClass:cleanText(device._deviceId?._ProductClass),lastInform:cleanText(device._lastInform),registered:cleanText(device._registered),tags:safeTags(device._tags)}))
+    .filter(row=>row.id&&row.serialNumber&&row.username&&!rowExcludedByUsernameSuffix(row,cfg.excludeUsernameSuffixes));
 }
 
 function recentPendingProjection(cfg = normalizeSettings({})) {
@@ -1946,7 +1967,7 @@ function pruneVirtualParameterRefreshCooldown(now = Date.now()) {
 }
 
 function queueVirtualParameterAutoRefresh(settings = {}, rows = [], options = {}) {
-  if (options.refresh !== true) return { queued: 0, eligible: 0 };
+  if (options.refresh !== true || options.identityRead===true) return { queued: 0, eligible: 0 };
   const now = Date.now();
   pruneVirtualParameterRefreshCooldown(now);
   const candidates = (Array.isArray(rows) ? rows : [])
@@ -2479,7 +2500,9 @@ function bestDeviceCacheKey(cfg = {}, searchTerms = [], options = {}) {
     (Array.isArray(options.boundSerialNumbers) ? options.boundSerialNumbers : []).map(cleanComparable).sort().join(','),
     (Array.isArray(options.nasAliases) ? options.nasAliases : []).map(cleanComparable).sort().join(','),
     searchTerms.map(cleanComparable).sort().join(','),
-    options.compact === true ? 'compact' : 'full'
+    options.compact === true ? 'compact' : 'full',
+    options.strictIdentity === true ? 'strict' : 'legacy',
+    (options.knownNasAliases||[]).map(cleanComparable).sort().join(',')
   ].join('|');
 }
 
@@ -2524,6 +2547,13 @@ function confidentDeviceCandidate(row = null) {
 }
 
 async function findBestDevice(settings = {}, searches = [], options = {}) {
+  const cfg=normalizeSettings(settings),key=bestDeviceCacheKey(cfg,orderedDeviceSearchTerms(searches,options),options)+(options.refresh===true?'|refresh':'|cached');
+  if(bestDeviceInflight.has(key))return cloneJson(await bestDeviceInflight.get(key));
+  if(bestDeviceInflight.size>=BEST_DEVICE_CACHE_MAX)throw new Error('Pembacaan modem sedang penuh. Coba kembali.');
+  const promise=resolveBestDevice(settings,searches,options);bestDeviceInflight.set(key,promise);
+  try{return cloneJson(await promise);}finally{if(bestDeviceInflight.get(key)===promise)bestDeviceInflight.delete(key);}
+}
+async function resolveBestDevice(settings = {}, searches = [], options = {}) {
   const cfg = normalizeSettings(settings);
   const searchRows = [];
   const searchTerms = orderedDeviceSearchTerms(searches, options);
@@ -2541,16 +2571,17 @@ async function findBestDevice(settings = {}, searches = [], options = {}) {
       search,
       page: 1,
       limit: 20,
+      identityRead:true,
       refresh: options.refresh === true
     });
     searchRows.push(...(result.rows || []));
     const rankedAfterSearch = rankedDeviceCandidates(searchRows, options);
-    if (confidentDeviceCandidate(rankedAfterSearch[0])) {
+    if (options.strictIdentity!==true && confidentDeviceCandidate(rankedAfterSearch[0])) {
       break;
     }
   }
   const rankedRows = rankedDeviceCandidates(searchRows, options);
-  const best = rankedRows[0] || null;
+  const best = options.strictIdentity===true ? networkIdentity.strictDeviceCandidate(rankedRows,options) : rankedRows[0] || null;
   if (!best || options.compact === true) {
     if (options.refresh !== true) {
       bestDeviceCache.set(cacheKey, { expiresAt: Date.now() + BEST_DEVICE_CACHE_TTL_MS, result: best });
@@ -2560,6 +2591,7 @@ async function findBestDevice(settings = {}, searches = [], options = {}) {
   }
   try {
     const full = await getDevice(settings, best.id, { refresh: options.refresh === true });
+    if(options.strictIdentity===true&&full&&!networkIdentity.strictDeviceCandidate([full],options))return null;
     const payload = full ? {
       ...full,
       matchScore: best._matchScore,
@@ -3381,6 +3413,7 @@ module.exports = {
   getWanConfiguration,
   getWifiConfiguration,
   listDevices,
+  identityDevices,
   normalizeDevice,
   normalizeSettings,
   recentPendingDevices,

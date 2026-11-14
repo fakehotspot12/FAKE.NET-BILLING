@@ -116,7 +116,10 @@ Installer juga menyiapkan Tesseract OCR untuk pembacaan Nomor KTP dari foto pela
   - Voucher untuk pembelian voucher Hotspot.
   - WifiKu untuk pelanggan melihat usage bulanan, redaman, ganti SSID/password, dan reboot ONU jika GenieACS aktif.
 - Manajemen aset, inventaris, stok, mutasi stok, notifikasi stok/aset bermasalah.
-- Role user: admin, owner, finance, teknisi, NOC, collector, reseller voucher, viewer.
+- Role user: admin, sekretaris, owner, finance, teknisi, NOC, collector, reseller voucher, viewer.
+  Sekretaris adalah administrator kedua dengan seluruh izin Admin, termasuk
+  pengelolaan pengguna, pengaturan, pembayaran, dan perangkat. Nama role dan
+  identitas pelaku di audit tetap Sekretaris, bukan diganti menjadi Admin.
 - Backup/restore dan update aplikasi dari menu Pengaturan.
 
 ## Tampilan Aplikasi
@@ -259,6 +262,262 @@ Voucher batch untuk operasional loket/reseller dapat dicetak langsung dari aplik
 Untuk role reseller voucher, data dibuat terpisah berdasarkan pembuat voucher dan NAS yang dikunci pada user tersebut. Reseller hanya melihat, mencetak, dan mengelola voucher yang dibuat olehnya sendiri, sehingga stok voucher, transaksi, dan pendapatan reseller tidak tercampur dengan reseller lain. Admin dan role yang diberi kewenangan lebih tinggi tetap dapat melakukan audit sesuai kebutuhan operasional.
 
 Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Record`, `Notice`, dan `Notice & Record`. Mode `Remove & Record` akan menghapus user voucher setelah masa aktif habis tetapi tetap menyimpan record laporan, sedangkan mode notice mempertahankan data user dengan status yang sesuai.
+
+## Monitoring OLT CDATA
+
+- Menu **Monitoring > OLT** menyediakan tambah/edit OLT secara manual: nama,
+  IP manajemen, port, community SNMP baca, NAS, dan koordinat opsional.
+- Tahap awal mendukung CDATA GPON dengan MIB enterprise `17409`. Monitoring dasar
+  memakai SNMP v2c GETBULK tanpa SET. Paket `snmp` menyediakan `snmpbulkwalk`.
+- Status ONU dibedakan menjadi Online, LOS, Dying Gasp, dan Other. Akun CLI opsional
+  di form OLT membaca satu daftar `show ont status-count` per siklus, bukan per ONU.
+  LOS/Dying Gasp hanya ditampilkan jika dilaporkan OLT. Penyebab yang tidak tersedia
+  masuk Other dengan penanda belum terbaca, bukan ditebak dari redaman.
+- Dashboard menampilkan ringkasan status, filter NAS, kesehatan tiap OLT, dan port
+  PON yang dapat diklik. Daftar ONU memakai pencarian dan pagination server-side;
+  tidak ada polling SNMP/CLI baru setiap kali membuka halaman atau mengganti filter.
+- Status PON/ONU, serial, model, redaman RX, dan jarak dibaca di latar belakang.
+  Cache diperbarui bergilir sekitar tiga menit; halaman tidak memicu walk baru.
+  Kegagalan pembacaan ditandai dan data terakhir dipertahankan, bukan dianggap nol.
+  Field yang memang tidak tersedia ditampilkan `-`.
+- Admin, sekretaris, owner, dan NOC mengelola koneksi OLT. Teknisi dapat melihat
+  monitoring, menautkan ONU ke pelanggan/ODP, dan menangani tiket gangguan.
+  Admin/owner/NOC, teknisi, dan sekretaris dapat reboot atau hapus satu ONU lewat CLI jika
+  akun CLI diaktifkan admin. Batas NAS teknisi tetap berlaku. Community/password
+  CLI tersimpan terenkripsi dan tidak dikembalikan melalui API. Menu OLT tersedia
+  untuk semua role selain finance dan reseller (termasuk Mitra/Reseller). Collector
+  dan viewer hanya melihat monitoring. Sekretaris memiliki izin setara Admin;
+  seluruh aksi perangkat tetap memerlukan konfirmasi dan verifikasi yang sama.
+  Menu tiket tersedia untuk semua role selain collector dan reseller. Finance dan
+  viewer hanya membaca tiket; penanganan tetap mengikuti izin petugas yang ada.
+- Hapus ONU membutuhkan konfirmasi serial dan persetujuan dampak layanan. Server
+  memeriksa serial terbaru melalui SNMP dan sekali lagi lewat CLI sebelum aksi.
+  Tidak ada hapus massal, perintah bebas, auto-delete, atau reboot saat polling.
+  Jika SN sama muncul di beberapa PON, aksi dikunci pada posisi OLT/PON/ID ONU
+  dari baris yang dipilih, bukan seluruh ONU dengan SN tersebut. Permintaan lama
+  tanpa posisi ditolak bila ambigu. Peringatan ranging pada ONU offline tidak
+  dianggap kegagalan identitas jika SN masih terbaca dan terverifikasi. ONU yang
+  terbukti sudah tidak terdaftar ditandai demikian tanpa mengirim hapus ulang.
+  Member, invoice, pembayaran, dan riwayat tiket tidak ikut dihapus. Tidak ada
+  perintah save/write konfigurasi global otomatis. Aksi masuk audit internal.
+  Installer/update menyertakan klien `telnet`, bukan service tambahan. Batasi akses
+  manajemen OLT ke LAN/VPN karena Telnet tidak mengenkripsi jalur koneksi.
+- Koordinat yang diisi muncul pada peta pelanggan dan jaringan fiber. Penautan ONU
+  ke pelanggan/ODP dilakukan eksplisit, tidak menebak identitas dari nama ONU.
+- ONU yang dilaporkan LOS otomatis dibuatkan tiket di **Monitoring > Tiket Layanan**,
+  terhubung ke OLT/PON/serial dan pelanggan/ODP bila sudah ditautkan. Dying Gasp,
+  Other, data lama, dan pembacaan gagal tidak membuat tiket LOS. Satu gangguan
+  yang belum pulih tidak membuat tiket berulang, termasuk setelah restart.
+  Tiket aktif yang sudah ada digunakan kembali, bukan digandakan.
+- Saat ONU terkonfirmasi online kembali, tiket LOS otomatis **ditutup otomatis**,
+  dengan catatan pemulihan dan riwayat petugas tetap tersimpan. Untuk PON/ODP,
+  seluruh ONU yang tercatat terdampak harus online; data kosong, timeout, dan
+  Dying Gasp bukan bukti pemulihan. Tiket manual tetap ditutup oleh petugas.
+  Jika tiket sudah selesai dan kemudian terjadi
+  LOS baru setelah pemulihan, sistem dapat membuat tiket kejadian berikutnya.
+  Pemeriksaan mengikuti cache/polling OLT yang sudah ada, tanpa polling tambahan.
+- Gangguan dikelompokkan menurut **port PON sebenarnya**, bukan kapasitas splitter
+  8/16 ONU. Indikasi gangguan **PON / Area ODC** muncul jika sedikitnya 3 ONU dan
+  50% ONU pada PON yang sama terpantau LOS, atau port PON dilaporkan down dengan
+  ONU LOS. Ini indikasi gangguan bersama, bukan kepastian kerusakan fisik ODC.
+  ODP hanya dikelompokkan jika sudah dipetakan, dengan sedikitnya 2 ONU dan 50%
+  ONU pada ODP terpantau LOS. Tanpa pemetaan, gangguan tetap dicatat per ONU.
+- Teknisi dapat **Ambil** tiket yang belum ditugaskan, menambahkan **Progres**, lalu
+  menandai selesai. Pengambilan serentak dilindungi agar satu tiket tidak diambil
+  dua petugas; teknisi tidak dapat mengubah pekerjaan petugas lain. Riwayat progres
+  dibatasi 50 catatan per tiket. Koordinator dapat mengatur penugasan.
+- Template pesan gangguan baru dan penyelesaian tersedia melalui
+  tombol pengaturan di menu tiket, beserta checkbox **Aktifkan notifikasi WhatsApp**
+  dan pilihan penerima user berwenang, termasuk teknisi dan sekretaris.
+  Default nonaktif. Mengaktifkannya tidak mengirim ulang semua tiket lama;
+  pratinjau menyediakan tombol kirim untuk mencoba tiket yang dipilih.
+  Pengiriman memakai gateway WhatsApp billing yang sudah tertaut dan antrean
+  yang sama, tanpa service/dependency tambahan. Mematikannya membatalkan pesan
+  tiket yang belum terkirim, bukan pesan invoice/pembayaran. Pesan yang sudah
+  dikirim tidak dapat ditarik kembali oleh checkbox ini.
+- WA gangguan baru dikirim hanya ke penerima terpilih. Pengambilan tiket dan
+  catatan progres tidak mengirim WA. Pesan selesai/pulih hanya ke petugas yang
+  mengambil/ditugaskan pada tiket, dengan validasi role, nomor WA dan akses NAS;
+  jika belum ada petugas, selesai cukup tercatat di web. Notifikasi ONU/gangguan
+  yang sama dibatasi sekali per penerima selama 30 menit, termasuk ketika LOS
+  berulang membuat tiket kejadian baru. Tidak ada perubahan pada mekanisme
+  pengelompokan atau siklus penutupan tiket.
+- Antrean tiket disaring sebelum kirim: pesan pengambilan/progres lama,
+  penyelesaian bukan untuk petugas, gangguan yang sudah ditangani/pulih, dan
+  pesan berulang dibatalkan dengan status **Dibatalkan** pada riwayat WA Gateway.
+  Isi/riwayat tidak dihapus oleh pembersihan ini; pengiriman ulang pesan tiket
+  yang dibatalkan atau sudah terkirim diblokir. Batas histori WA yang sudah ada
+  tetap berlaku. Pesan invoice, pembayaran, OTP dan broadcast tidak dibatalkan.
+- Notifikasi gangguan memiliki prioritas di atas reminder/invoice massal dan
+  broadcast, tetapi OTP dan bukti pembayaran tetap lebih tinggi. Tiket tidak
+  mengikuti tanggal antrean broadcast yang sudah panjang. Pengiriman tetap satu
+  worker, dengan jeda minimal 15 detik atau nilai jeda WA yang lebih besar, serta
+  tambahan 90 detik per batch 20 pesan tiket saat antrean menumpuk. Dispatcher dipicu setelah tiket tersimpan;
+  konfigurasi jam kirim gateway tetap dihormati. Upgrade hanya menyesuaikan job
+  tiket lama yang belum terkirim, bukan jadwal/isi pesan invoice atau pembayaran.
+- Pesan menyertakan link `/olt-ticket.html?id=...`. Halaman ini hanya memuat
+  detail setelah autentikasi dan pemeriksaan role/akses NAS. Jika belum login,
+  verifikasi login billing tetap berlaku, lalu kembali langsung ke tiket,
+  bukan dashboard. Teknisi/sekretaris dapat mengambil tiket dan mengisi progres
+  dari halaman ringkas tersebut. Membuka link atau pratinjau WA tidak otomatis
+  mengambil tiket; tombol **Ambil Tiket** tetap harus ditekan dengan sesi/CSRF valid.
+  Link memakai URL publik billing di pengaturan Payment Gateway, bukan token
+  login, password, maupun alamat yang diambil dari header permintaan.
+- Menu **Tiket Layanan** terpisah dari monitoring OLT, dengan dua tab **Aktif** dan
+  **Selesai**. Status Baru/Diambil/Dikerjakan tersedia pada filter status, ditambah
+  filter jenis Gangguan/Permintaan, NAS/OLT/lingkup dan pencarian langsung.
+  Pagination 10/25/50/100 diproses server-side; daftar tidak memuat seluruh riwayat
+  progres atau memicu polling SNMP. Riwayat lengkap dimuat saat dibuka. Akses daftar
+  tiket hanya melalui submenu tersebut, tanpa tombol/tautan tiket di halaman OLT.
+  Tidak ada salinan dataset, service, database, atau instalasi tambahan.
+- Tiket memiliki petugas, catatan, status, lihat ONU, dan salin pesan. Tiket otomatis
+  awalnya belum ditugaskan. Tidak ada pengiriman WhatsApp ke pelanggan dari fitur ini.
+  Riwayat tiket selesai dibatasi 180 hari
+  dan maksimum 1.000; tiket aktif tidak dibuang otomatis.
+- Maksimum awal 32 OLT. Snapshot tidak membuat riwayat per polling di database.
+  Menghapus integrasi hanya menghapus metadata billing; OLT dengan riwayat tiket
+  cukup dinonaktifkan agar riwayat tetap terjaga. Lingkungan demo/dev tetap memakai
+  data simulasi tanpa koneksi OLT produksi.
+
+### Bantuan Pelanggan WifiKu
+
+- Ikon bantuan di bagian atas membuka tiket layanan tanpa menambah navigasi bawah.
+  Pelanggan dapat melaporkan gangguan internet/WiFi atau mengajukan perubahan paket,
+  tambahan layanan, pindah alamat, koreksi data, dan pertanyaan pembayaran.
+- Permintaan tidak otomatis mengubah paket, harga, invoice, maupun status layanan.
+  Petugas memeriksa dan memprosesnya melalui kewenangan billing yang sudah ada.
+- Pelanggan hanya dapat membaca tiket dan percakapannya sendiri. Balasan pelanggan
+  terpisah dari catatan penanganan internal; petugas mengambil tiket sebelum membalas.
+  Notifikasi WA tiket mengikuti penerima, prioritas, dan jeda aman yang sama, tanpa
+  mengirim ulang WA untuk setiap balasan percakapan.
+- Foto opsional dikompresi WebP maksimal 256 KB, disimpan di folder privat, bukan
+  base64 database atau upload publik. Akses foto memerlukan sesi dan hak atas tiket.
+  Maksimum 5 foto/100 pesan per tiket dan 5 tiket aktif per pelanggan; pengiriman
+  dibatasi dan kategori aktif yang sama menggunakan percakapan yang sudah tersedia.
+  Riwayat selesai mengikuti retensi tiket, dan foto yatim dibersihkan setelah 7 hari.
+- Status modem menggunakan cache OLT yang telah tersedia, tanpa polling tambahan.
+  LOS ditampilkan sebagai **Sinyal fiber terputus**, dying gasp sebagai **Modem
+  kehilangan daya**. Identitas yang tidak cocok, ambigu, atau data lama tidak dianggap
+  LOS. Tiket pelanggan tidak otomatis ditutup hanya karena modem terpantau online.
+
+### Pemetaan PPPoE, OLT dan ACS
+
+| Data | Sumber utama |
+| --- | --- |
+| Pelanggan, paket, pembayaran, invoice dan isolir | Billing |
+| Sesi PPPoE/DHCP dan penggunaan | RADIUS |
+| WiFi, WAN, suhu dan perangkat terkoneksi | ACS |
+| PON/ONU, LOS, kehilangan daya dan kondisi optik | OLT |
+
+OLT dan ACS opsional dan tidak saling mensyaratkan. Jika salah satunya tidak
+tersedia, informasi yang masih dapat dibaca tetap digunakan. Jika keduanya belum
+terhubung, billing/RADIUS tetap berjalan; status modem tidak dipalsukan menjadi
+offline atau nol. Data OLT lama tidak menutupi ACS yang masih tersedia.
+
+Pemetaan baca memakai ID pelanggan/akun, NAS dan SN yang dinormalisasi, bukan
+kemiripan nama atau IP dinamis. Hasil ambigu tidak dipakai sebagai target konfigurasi
+WifiKu. Observasi ACS yang cocok dapat membantu mengenali pelanggan di OLT melalui
+cache terbatas, tanpa menulis ulang identitas pelanggan atau SN permanen. Menu
+WiFi/reboot tidak perlu membaca ulang riwayat invoice dan usage hanya untuk
+menentukan modem. Lookup bersamaan digabung, cache hasil konfigurasi tetap
+diinvalidasi, dan pembacaan identitas tidak melakukan summon massal.
+
+Pencocokan otomatis memakai **SN OLT -> SN ACS -> akun internet -> member/NAS**.
+Izin diatur melalui **Pengaturan Sistem > Integrasi Pelanggan, ACS & OLT >
+Aktifkan integrasi dan sinkron otomatis**. Sakelar langsung tersimpan, default
+instalasi baru **nonaktif**. Menonaktifkannya menghentikan pencocokan otomatis
+dan penggunaan cache otomatis, bukan monitoring biasa, tiket manual atau billing.
+Tiket LOS tetap dapat dibuat dari OLT yang terhubung; data pelanggan/ODP mengikuti
+pemetaan manual bila sinkron otomatis nonaktif. Laporan WifiKu tetap tersedia.
+Sakelar ini belum mengaktifkan penghapusan berantai pelanggan/ACS/OLT maupun
+provisioning pasang baru; aksi tersebut tidak dijalankan oleh integrasi saat ini.
+Teknisi cukup memperbaiki data asli ACS/OLT; tidak wajib menautkan ONU satu per
+satu. Khusus pencocokan otomatis ini, kedua integrasi harus aktif dan dapat dibaca.
+Tanpa salah satunya, tiket manual, laporan WifiKu dan pemetaan manual tetap bisa
+digunakan. Nama, kontak, alamat, koordinat dan ODP berasal dari member, bukan
+description OLT. SN/akun ambigu, NAS berbeda, modem pengganti dan pemetaan yang
+bertentangan tidak ditebak. Pemilik tiket yang sudah tercatat tidak dipindahkan
+ke pelanggan baru ketika modem digunakan kembali.
+
+Identitas ACS dibaca satu batch ringkas paling cepat setiap 3 menit, memakai loop
+OLT yang sudah ada. Cache otomatis kedaluwarsa setelah 5 menit; sumber gagal
+tidak dipakai untuk membuka data pelanggan. Maksimal 10.000 identitas, respons
+8 MiB dan timeout 4 detik. Daftar ONU tidak melakukan request ACS per baris,
+tidak membaca password/host/WiFi dan tidak mengubah parameter, jadwal billing,
+invoice maupun konfigurasi modem. Cache ini tidak menambah riwayat database.
+
+Di OLT, kolom **Pelanggan / Description** mengutamakan nama member terverifikasi.
+Description asli CDATA ditampilkan terpisah, beserta SN dan ikon pensil untuk
+mengedit description tersebut. Awalan lokasi otomatis `gpon ... onu ...` tidak
+ditampilkan sebagai description. Form edit membaca nilai asli melalui CLI hanya
+saat dibuka, bukan per ONU saat daftar dimuat; SN dan description lama diperiksa
+kembali sebelum menyimpan. Description bukan bukti kepemilikan pelanggan;
+identitas yang belum cocok ditampilkan `-`. Kolom ODP menggunakan pemetaan
+yang tersedia, tanpa menambah kolom akun internet. Serial dan description lama
+diverifikasi sebelum perintah dikirim; keberhasilan memerlukan pembacaan balik.
+Perubahan ini tidak mengganti nama member, akun PPPoE atau WiFi. Perintah tidak
+melakukan reboot/hapus ONU maupun global save konfigurasi OLT.
+
+Di status setiap ONU, **Terakhir aktif** menunjukkan waktu terakhir terpantau
+online oleh billing, bukan waktu polling saat ONU offline. Waktu disimpan dalam
+snapshot/cache OLT yang sudah ada dan dipertahankan selama pemantauan berjalan.
+Pencocokan riwayat memakai SN, bukan nomor ONU yang dapat dipakai ulang. Data
+yang belum pernah terpantau online tetap `-`; riwayat sebelum fitur aktif tidak
+dibuat-buat. Tidak ada tambahan polling SNMP, jadwal, atau tabel riwayat per sesi.
+
+Form **Buat Tiket** mencakup gangguan, permintaan dan **Pasang baru (PSB)**, tanpa
+pilihan NAS/OLT yang wajib. Pelanggan terdaftar dapat dicari untuk mengambil NAS
+dari data akun secara otomatis; pemohon baru tetap bisa dibuat tanpa pemetaan.
+Tiket yang belum dipetakan tidak memberi akses ke konfigurasi NAS/OLT. Teknisi
+berwenang mengambil tiket melalui tautan WhatsApp, lalu mencatat progres. PSB
+tidak otomatis membuat member, akun atau invoice dan tidak langsung menambah
+statistik pelanggan baru. Pesan gangguan mengutamakan nama pelanggan/description
+dan lokasi; OLT/PON hanya menjadi referensi ringkas. Kebijakan jeda dan deduplikasi
+WhatsApp tetap berlaku.
+
+Pesan WhatsApp permintaan menampilkan nama, kontak, alamat lengkap dan tautan
+arah pelanggan dari koordinat member, tanpa baris NAS. Pemetaan dan filter NAS
+di aplikasi tetap tersedia. Data kontak tiket lama juga dibaca dari member
+yang tertaut; koordinat kosong atau `0,0` tidak dibuat menjadi petunjuk arah.
+Pemohon baru dapat diberi koordinat opsional saat tiket dibuat oleh petugas.
+
+Di WifiKu, satu pilihan kategori sudah menentukan gangguan atau permintaan.
+Pelanggan melihat perkembangan layanan dari laporan diterima, petugas ditugaskan,
+menuju lokasi, pemeriksaan, penanganan sampai selesai. Petugas dapat langsung
+memilih tahap yang sesuai tanpa wajib melewati semua tahap atau mengisi catatan.
+Keterangan progres/alasan untuk pelanggan tersedia langsung pada form progres
+dan edit tiket, lalu tampil pada perkembangan layanan di WifiKu. Jika belum ada
+keterangan khusus, tahap penanganan tetap disertai penjelasan singkat. Catatan
+privat petugas dipisahkan dan tidak otomatis dipublikasikan. Pembaruan memakai refresh tiket yang
+sudah ada, tanpa polling modem atau pesan WhatsApp progres tambahan.
+
+Detail tiket menyediakan ringkasan pelanggan/ID member, akun internet dan status
+layanan, modem/SN, serta jaringan **OLT, PON, ODP** tanpa nomor ONU. Pencocokan
+menggunakan SN dan akun RADIUS yang tepat; identitas ambigu atau berbeda NAS
+tidak dipaksakan. Jika ACS/OLT/ODP belum tersedia, kolom terkait tetap `-`.
+Pembacaan jaringan dimuat terpisah saat detail dibuka, memakai cache dan snapshot
+OLT yang sudah ada. Tidak ada summon massal, pengubahan binding pelanggan,
+parameter modem, atau tambahan polling OLT. Description asli tidak otomatis
+diganti mengikuti nama member.
+
+Di WifiKu, bantuan pelanggan memakai daftar **Laporan Saya**, dengan dua tab
+**Aktif / Selesai**. Detail mengutamakan status aktual, keterangan terbaru dan
+petugas yang menangani. Riwayat penanganan serta pesan lama dapat dibuka bila
+diperlukan; kolom balasan tetap terjangkau tanpa scroll percakapan berlapis.
+Status **Menunggu konfirmasi Anda** menandakan pelanggan perlu membalas petugas.
+Setelah pelanggan membalas, **Balasan Anda diterima** ditampilkan sambil menunggu
+tinjauan petugas, bukan menganggap kunjungan atau perbaikan otomatis selesai.
+Laporan selesai tetap menjadi riwayat; laporan lanjutan dibuat melalui form baru,
+bukan membuka ulang tiket lama secara otomatis. Pengajuan kategori yang masih
+aktif diteruskan ke laporan yang sama, tanpa membuat tiket atau notifikasi ganda.
+
+Tanda dibaca dibatasi hingga versi laporan yang sudah ditampilkan. Pembaruan
+petugas yang masuk bersamaan tetap ditandai belum dibaca. Di sisi petugas,
+keterangan laporan tampil sebelum pembaruan status; detail modem/jaringan dan
+riwayat privat disimpan dalam bagian yang dapat dibuka. Status perjalanan hanya
+dipilih secara sengaja, bukan menjadi pilihan otomatis setelah mengambil tiket.
+Alur ini tidak mengubah jadwal billing, antrean WhatsApp, penutupan LOS otomatis,
+pemetaan pelanggan, atau konfigurasi modem.
 
 ## Manajemen Aset
 

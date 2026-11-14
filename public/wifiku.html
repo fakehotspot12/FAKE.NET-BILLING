@@ -7,7 +7,7 @@
     <title>WifiKu - __FAKENET_META_TITLE__</title>
     __FAKENET_META_TAGS__
     <link id="appFavicon" rel="icon" href="__FAKENET_META_ICON__">
-    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-bottom-tabs-v5-layout-20260810">
+    <link rel="stylesheet" href="/wifiku.css?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=ticket-ux-20261114">
   </head>
   <body>
     <main class="wifiku-shell">
@@ -19,6 +19,8 @@
             <span>Portal Pelanggan</span>
           </div>
         </div>
+        <div class="wifiku-head-actions">
+          <button id="supportButton" class="support-icon-button" type="button" title="Bantuan" aria-label="Bantuan" hidden><img src="/support-chat.svg" alt=""><span id="supportUnread" hidden></span></button>
         <div class="account-menu" hidden id="accountMenuWrap">
           <button id="accountMenuButton" class="account-menu-button" type="button" aria-expanded="false">
             <span id="accountMenuName">Akun</span>
@@ -28,6 +30,7 @@
             <button id="accountButton" type="button">Akun Saya</button>
             <button id="logoutButton" type="button">Logout</button>
           </div>
+        </div>
         </div>
       </header>
 
@@ -183,6 +186,7 @@
               <strong id="homeModemClients">0 user</strong>
             </div>
           </div>
+          <p id="homeModemHint" class="section-helper modem-status-hint"></p>
         </section>
 
         <section class="panel compact wifi-panel" data-wifiku-panel="wifi" hidden>
@@ -342,7 +346,11 @@
       </form>
     </dialog>
 
+    <dialog id="supportDialog" class="support-dialog" aria-labelledby="supportTitle">
+      <div class="support-head"><button id="supportBack" type="button" class="secondary" hidden>Kembali</button><h2 id="supportTitle">Bantuan</h2><button id="supportClose" type="button" class="secondary" aria-label="Tutup bantuan">&times;</button></div>
+      <div id="supportBody" class="support-body"></div>
+    </dialog>
     <div id="toast" class="toast"></div>
-    <script src="/wifiku.js?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=wifiku-auth-client-bands-20260823" defer></script>
+    <script src="/wifiku.js?v=fakenet-billing-__FAKENET_APP_VERSION__&ui=ticket-ux-20261114" defer></script>
   </body>
 </html>
