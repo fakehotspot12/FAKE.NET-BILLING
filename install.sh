@@ -294,6 +294,7 @@ verify_repository_payload() {
     public/olt-ticket.css
     public/olt-trash.svg
     public/olt-reboot.svg
+    public/olt-save.svg
     public/olt-icons-license.txt
     public/support-chat.svg
     deploy/fakenet-billing.env

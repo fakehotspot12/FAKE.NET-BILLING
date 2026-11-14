@@ -23966,6 +23966,15 @@ async function handleApi(req, res, url) {
     const context=await requirePermission(req,res,'olt:read');if(!context)return;
     try{sendJson(res,202,{ok:true,...oltMonitor.requestRefreshAll(context.data,oltMonitor.visibleDevices(context.data,context.user))});}catch(error){badRequest(res,error.message);}return;
   }
+  const oltSaveConfig=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/save-config$/);
+  if(oltSaveConfig&&method==='POST'){
+    const context=await requirePermission(req,res,'olt:manage');if(!context)return;
+    const device=oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===oltSaveConfig[1]);if(!device){notFound(res);return;}
+    if(MIGRATION_MODE){badRequest(res,'Mode dev terisolasi: Save Config OLT asli dinonaktifkan');return;}
+    try{const payload=await readBody(req,4096),result=await oltMonitor.saveConfig(context.data,device,payload);
+      await mutate(store=>addActivity(store,'monitoring',`Save Config OLT ${device.name}: ${result.message}`,{action:'olt-save-config',oltId:device.id,userId:context.user.id,confirmed:result.confirmed}),{collections:['activity'],includeCore:false});sendJson(res,result.confirmed?200:207,{ok:result.confirmed,...result});
+    }catch(error){sendJson(res,error.status||400,{error:error.message});}return;
+  }
   const oltConnectionTest=pathname.match(/^\/api\/monitoring\/olt(?:\/([^/]+))?\/connection-test$/);
   if(oltConnectionTest&&method==='POST'){
     const context=await requirePermission(req,res,'olt:manage');if(!context)return;

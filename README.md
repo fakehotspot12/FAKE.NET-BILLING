@@ -94,7 +94,7 @@ Hal yang perlu diatur setelah install:
 - Aktivasi aplikasi melalui halaman aktivasi jika diminta.
 - Ubah password admin.
 - Isi data usaha, logo, dan subdomain publik jika dipakai.
-- Tambahkan Site/NAS, secret Radius, SNMP community, dan profile layanan.
+- Tambahkan NAS, secret Radius, SNMP community, dan profile layanan.
 - Atur Payment Gateway.
 - Aktifkan dan scan Whatsapp Gateway dari menu aplikasi jika ingin memakai pengiriman WA. Pada instalasi baru, gateway WA sengaja default `disable` sampai owner mengaktifkannya.
 - Buat rule MikroTik untuk Radius, isolir, dan redirect web isolir sesuai kebutuhan jaringan.
@@ -109,7 +109,7 @@ Installer juga menyiapkan Tesseract OCR untuk pembacaan Nomor KTP dari foto pela
 - Voucher Hotspot online: order dari login page, pembayaran QRIS, generate voucher otomatis setelah paid, dan cetak voucher batch.
 - Payment Gateway terpusat untuk paket bulanan dan voucher. Provider awal: Tripay, struktur siap untuk provider lain.
 - Whatsapp Gateway API memakai WAHA lokal: template, pesan terkirim, resend, broadcast, dan notifikasi tagihan/voucher.
-- Monitoring: Site/NAS, pelanggan online, tagihan pelanggan, member, dan GenieACS.
+- Monitoring: NAS, pelanggan online, tagihan pelanggan, member, dan GenieACS.
 - GenieACS lokal: manajemen ONU, redaman, suhu, status perangkat, provisioning WAN, binding LAN/SSID, pengaturan WiFi, reboot, dan portal WifiKu.
 - Portal publik:
   - Isolir untuk pelanggan yang ditangguhkan.
@@ -248,14 +248,14 @@ Alur voucher online:
 6. Voucher dapat dikirim melalui Whatsapp Gateway jika notifikasi voucher diaktifkan.
 7. Transaksi voucher paid masuk ke laporan voucher harian/bulanan dan pendapatan reseller sesuai role pembuat voucher.
 
-Pada instalasi multi-site, tautan beli voucher di setiap captive portal wajib membawa NAS tujuan agar paket dan voucher tidak bercampur antar-site. Nilainya dapat memakai ID, nama, atau alamat NAS yang terdaftar, misalnya:
+Pada instalasi dengan beberapa NAS, tautan beli voucher di setiap captive portal wajib membawa NAS tujuan agar paket dan voucher tidak bercampur antar-NAS. Nilainya dapat memakai ID, nama, atau alamat NAS yang terdaftar, misalnya:
 
 ```text
 http://IP-SERVER:8893/voucher?nas=FAKE.NET
-http://IP-SERVER:8893/voucher?nas=KAMPUNG.NET
+http://IP-SERVER:8893/voucher?nas=NAS-CABANG
 ```
 
-Portal mengunci paket dan order ke NAS tersebut. Jika parameter `nas` tidak ada, portal tidak menampilkan paket global dan meminta pelanggan memilih site sebagai fallback.
+Portal mengunci paket dan order ke NAS tersebut. Jika parameter `nas` tidak ada, portal tidak menampilkan paket global dan meminta pelanggan memilih NAS sebagai fallback.
 
 Voucher batch untuk operasional loket/reseller dapat dicetak langsung dari aplikasi. Format print dibuat ringkas agar satu kertas A4 dapat memuat banyak voucher, lengkap dengan nama usaha, paket, harga, tanggal, jam, QR code, dan link login Hotspot.
 
@@ -437,6 +437,14 @@ server billing. Kredensial tersimpan tetap terenkripsi dan tidak ditampilkan
 di hasil tes. Tombol **Baca OLT** menyegarkan satu OLT; **Baca ulang semua OLT**
 memasukkan OLT berizin ke antrean worker secara bergiliran dengan pembatasan
 klik, tanpa summon ACS atau scan SNMP serentak.
+
+**Simpan Config OLT** merupakan aksi pengelola untuk menyimpan seluruh
+konfigurasi berjalan ke penyimpanan permanen perangkat, tanpa reboot. Periksa
+semua perubahan OLT terlebih dahulu, lalu konfirmasikan nama perangkat. Aksi
+ini tidak berjalan otomatis saat refresh atau tes koneksi. Save dibatasi satu
+menit per OLT, sesi CLI dikunci, dan respons sukses perangkat wajib terbaca.
+Jika hasil belum pasti, periksa OLT sebelum mengulang. Konfigurasi koneksi
+billing yang diedit pada form disimpan terpisah dan bukan Save Config OLT.
 
 Jika integrasi aktif, tombol **Hapus** pada ONU memeriksa OLT dan ACS berdasarkan
 SN yang sama. OLT dihapus lebih dahulu; ACS hanya dihapus setelah keberhasilan
@@ -627,7 +635,7 @@ Spesifikasi berikut adalah acuan praktis agar aplikasi nyaman dipakai. Angka seb
 | Produksi kecil tanpa GenieACS lokal | 2 vCPU | 4 GB | 40 GB SSD | Cocok untuk billing, FreeRADIUS, PostgreSQL, Redis, WAHA, laporan, voucher, dan payment gateway ringan. |
 | Produksi sampai sekitar 1.000 PPP-DHCP + 50 Hotspot aktif tanpa GenieACS lokal | 2-4 vCPU | 4 GB | 60 GB SSD | Disarankan memakai SSD, Redis aktif, dan tidak menjalankan service lain yang berat di mesin yang sama. |
 | Produksi dengan GenieACS lokal sampai sekitar 1.000 ONU/CPE | 4 vCPU | 8 GB | 100 GB SSD | GenieACS memakai MongoDB dan proses tambahan. Lebih aman dipisah atau RAM dinaikkan jika data perangkat besar. |
-| Produksi lebih besar atau multi-site padat | 4-8 vCPU | 8-16 GB | 150 GB+ SSD/NVMe | Pertimbangkan pisah database/GenieACS, backup terjadwal, dan monitoring resource. |
+| Produksi lebih besar atau beberapa NAS padat | 4-8 vCPU | 8-16 GB | 150 GB+ SSD/NVMe | Pertimbangkan pisah database/GenieACS, backup terjadwal, dan monitoring resource. |
 
 RAM 1 GB tidak direkomendasikan untuk instalasi penuh. Billing core mungkin masih bisa berjalan untuk uji coba kecil, tetapi kombinasi PostgreSQL, FreeRADIUS, Redis, WAHA, Docker, GenieACS, dan MongoDB dapat membuat VM kehabisan memori, load tinggi, service lambat, atau browser menampilkan `Failed to fetch`. Untuk mesin kecil, jalankan instalasi ringan:
 
@@ -679,7 +687,7 @@ Yang dikerjakan otomatis oleh `install.sh`:
 - Membuat password random untuk database aplikasi, database Radius, dan WAHA.
 - Membuat database PostgreSQL `fakenet_billing` dan `radius`.
 - Membuat schema FreeRADIUS dasar: `nas`, `radcheck`, `radreply`, `radusergroup`, `radgroupcheck`, `radgroupreply`, dan `radacct`.
-- Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS, termasuk `read_clients = yes` agar Site/NAS dari aplikasi dibaca sebagai client Radius.
+- Mengaktifkan konfigurasi SQL PostgreSQL FreeRADIUS, termasuk `read_clients = yes` agar NAS dari aplikasi dibaca sebagai client Radius.
 - Memasang service Billing, Isolir, Voucher, WifiKu, Radius Connector, dan WAHA.
 - Memasang GenieACS CWMP/NBI/FS/UI, MongoDB persisten, akun awal, autentikasi Inform, serta Virtual Parameters redaman dan suhu jika belum ada GenieACS existing yang terdeteksi. Pada Ubuntu/Debian, installer mencoba paket apt `genieacs` lebih dulu jika tersedia, lalu fallback ke npm jika tidak tersedia.
 - Mengunci GenieACS NBI dan MongoDB ke localhost agar API/database tidak terbuka ke jaringan.
@@ -695,7 +703,7 @@ Yang tetap perlu diatur setelah install:
 - HTTPS wajib untuk notifikasi pembayaran pada Chrome/mobile. Pada iPhone/iPad, portal perlu ditambahkan ke Home Screen agar Web Push tersedia.
 - Payment gateway merchant key, private key, dan callback domain.
 - Scan Whatsapp API Gateway dari menu aplikasi.
-- Site/NAS, secret Radius, SNMP community, profile PPP-DHCP/Hotspot, dan rule MikroTik.
+- NAS, secret Radius, SNMP community, profile PPP-DHCP/Hotspot, dan rule MikroTik.
 
 Env utama:
 

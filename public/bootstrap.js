@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'olt-diagnostics-20261114';
+  const assetRevision = 'olt-config-guard-20261114';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {

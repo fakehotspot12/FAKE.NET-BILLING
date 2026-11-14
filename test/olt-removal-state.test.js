@@ -14,3 +14,6 @@ test('native absence is distinguished from timeout and serial conflict',async()=
 test('real device reads remain blocked in isolated dev mode',async()=>{
  const f=setup();process.env.MIGRATION_MODE='1';await assert.rejects(olt.readRemovalState(f.data,f.device,SN,{onuIndex:INDEX},{inspect:async()=>{assert.fail('no real CLI');}}),/Mode dev terisolasi/);
 });
+test('native absence permits cleanup without a cached snapshot and without a delete command',async()=>{
+ const f=setup(),before=structuredClone(f.data);process.env.MIGRATION_MODE='0';const result=await olt.removeOnu(f.data,f.device,SN,{serialNumber:SN,onuIndex:INDEX,confirmDelete:true},{allowMissing:true,requireOffline:true,serial:async()=>'',inspect:async()=>{const error=Error('absent');error.code='ONU_NOT_FOUND';throw error;},delete:async()=>assert.fail('already absent')});assert(result.confirmed);assert(result.alreadyAbsent);assert.deepEqual(f.data,before);
+});

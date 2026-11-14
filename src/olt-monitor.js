@@ -27,6 +27,8 @@ const lastAttempt = new Map();
 const refreshTimes = new Map();
 const refreshQueue = new Map();
 const diagnosticPending = new Set(),diagnosticTimes = new Map();
+const causePositions = new WeakMap();
+const saveTimes = new Map();
 function remember(map, key, value) {
   map.set(key, value);
   while (map.size > MAX_DEVICES * 2) map.delete(map.keys().next().value);
@@ -105,13 +107,17 @@ function summarizeOnus(rows) {
   }
   return summary;
 }
+function causePosition(row){const address=position(row.id)||row;return address.ponKey&&Number.isSafeInteger(Number(address.onuId))?`${address.ponKey}:${Number(address.onuId)}:${normalizeSerial(row.serialNumber)}`:'';}
+function preservedCauses(rows){const causes=new Map(),positions=new Map();for(const row of rows)if(row.downCause){const key=causePosition(row);if(key)positions.set(key,row.downCause);}causePositions.set(causes,positions);return causes;}
 function applyCauses(snapshot, causes = new Map()) {
+  const positions=causePositions.get(causes),counts=new Map();if(!positions)for(const row of snapshot.onus)counts.set(row.serialNumber,(counts.get(row.serialNumber)||0)+1);
   snapshot.onus = snapshot.onus.map(row => {
-    const cause = row.status === 'offline' ? causes.get(row.serialNumber) : null;
+    const cause = row.status === 'offline' ? positions?.get(causePosition(row))||(!positions&&counts.get(row.serialNumber)===1?causes.get(row.serialNumber):null) : null;
     return { ...row, condition: row.status === 'offline' ? classifyCause(cause) : row.status, downCause: cause || '', causeKnown: Boolean(cause) };
   });
   snapshot.summary = summarizeOnus(snapshot.onus);
-  for (const port of snapshot.ports) if (port.kind === 'pon') Object.assign(port, summarizeOnus(snapshot.onus.filter(row => row.ponKey === port.ponKey)));
+  snapshot.causeSchema = 2;
+  for (const port of snapshot.ports||[]) if (port.kind === 'pon') Object.assign(port, summarizeOnus(snapshot.onus.filter(row => row.ponKey === port.ponKey)));
   return snapshot;
 }
 function matchesState(row, state) {
@@ -210,7 +216,7 @@ function publicDevice(device, snapshot = null, options = {}) {
   const simulated=process.env.MIGRATION_MODE==='1'&&/^demo-olt-\d{1,2}$/.test(device.id)&&snapshot?.simulated===true;
   return { id: device.id, name: device.name, vendor: device.vendor, nasId: device.nasId, enabled: device.enabled,
     simulated,
-    ...(options.management ? { host: device.host, port: device.port, communityConfigured: Boolean(device.communityEnc), cliEnabled: Boolean(device.cliEnabled), cliUsername: device.cliUsername || '', cliPort: device.cliPort || 23, cliPasswordConfigured: Boolean(device.cliPasswordEnc) } : {}),
+    ...(options.management ? { host: device.host, port: device.port, revision:device.updatedAt||'', communityConfigured: Boolean(device.communityEnc), cliEnabled: Boolean(device.cliEnabled), cliUsername: device.cliUsername || '', cliPort: device.cliPort || 23, cliPasswordConfigured: Boolean(device.cliPasswordEnc) } : {}),
     onuDeleteAvailable: Boolean(device.enabled && device.cliEnabled && device.cliPasswordEnc),
     refreshPending: pending.has(cacheKey(device)) || refreshQueue.has(device.id),
     latitude: device.latitude, longitude: device.longitude,
@@ -228,7 +234,7 @@ async function snapshotFor(device) {
   const key = cacheKey(device);
   if (cache.has(key)) return cache.get(key);
   if (redis.enabled()) {
-    try { const raw = await redis.get(key); if (raw && raw.length <= 4 * 1024 * 1024) { const value = JSON.parse(raw); if (value && (Array.isArray(value.onus) || (value.status === 'unreachable' && value.onus === undefined && Number.isFinite(Date.parse(value.checkedAt))))) return remember(cache, key, value); } } catch {}
+    try { const raw = await redis.get(key); if (raw && raw.length <= 4 * 1024 * 1024) { const value = JSON.parse(raw); if (value && (Array.isArray(value.onus) || (value.status === 'unreachable' && value.onus === undefined && Number.isFinite(Date.parse(value.checkedAt))))){if(Array.isArray(value.onus)&&value.causeSchema!==2){const counts=new Map();for(const row of value.onus)counts.set(row.serialNumber,(counts.get(row.serialNumber)||0)+1);value.onus=value.onus.map(row=>counts.get(row.serialNumber)>1?{...row,downCause:'',causeKnown:false}:row);value.ports=Array.isArray(value.ports)?value.ports:[];applyCauses(value,preservedCauses(value.onus));value.pendingRefresh=true;}return remember(cache, key, value);} } } catch {}
   }
   return null;
 }
@@ -255,15 +261,21 @@ async function collect(data, device, transport = executeTable, causeTransport = 
   result.warnings = warnings; return result;
 }
 function parseCauseRows(stdout = '') {
-  const causes = new Map();
+  const causes = new Map(),positions = new Map(),serialPositions = new Map();
   for (const line of String(stdout).split(/\r?\n/)) {
-    const match = line.trim().match(/^\d+\/\d+\s+\d+\s+\d+\s+([A-Za-z0-9]{12}|[A-Fa-f0-9]{16})\s+\d+\s+(.+)$/);
+    const match = line.trim().match(/^(\d+)\/(\d+)\s+(\d+)\s+(\d+)\s+([A-Za-z0-9]{12}|[A-Fa-f0-9]{16})\s+\d+\s+(.+)$/);
     if (!match) continue;
-    const serial = normalizeSerial(match[1]), cause = match[2].trim();
-    if (serial && cause.length <= 160 && !/^-+$|^(?:null|unknown|offline)$/i.test(cause)) causes.set(serial,cause);
-    if (causes.size > MAX_ONUS) throw new Error('Tabel penyebab putus terlalu besar');
+    const serial = normalizeSerial(match[5]), cause = match[6].trim(),frame=Number(match[1]),slot=Number(match[2]),port=Number(match[3]),onu=Number(match[4]);
+    if(frame!==0||slot>31||port<1||port>16||onu<1||onu>1024)continue;
+    if (serial && cause.length <= 160 && !/^-+$|^(?:null|unknown|offline)$/i.test(cause)) {
+      const key=`${frame}/${slot}/${port}:${onu}:${serial}`;
+      if(positions.has(key)&&positions.get(key)!==cause)positions.set(key,null);else if(!positions.has(key))positions.set(key,cause);
+      const keys=serialPositions.get(serial)||new Set();keys.add(key);serialPositions.set(serial,keys);if(keys.size===1&&positions.get(key))causes.set(serial,cause);else causes.delete(serial);
+    }
+    if (positions.size > MAX_ONUS) throw new Error('Tabel penyebab putus terlalu besar');
   }
   if (!/Offline\s*:\s*\d+|F\/S\s+Port\s+(?:ONT|ONU)/i.test(stdout)) throw new Error('Format status OLT belum didukung');
+  causePositions.set(causes,positions);
   return causes;
 }
 async function onuPage(data, devices, options = {}, management = false) {
@@ -314,7 +326,7 @@ async function removeOnu(data,device,serial,payload,transport={serial:liveSerial
     if(!result)throw new Error('Serial ONU di OLT berubah atau tidak cocok. Penghapusan dibatalkan.');
   }else result=await transport.delete(data,device,{...onu,...(transport.requireOffline===true?{requireOffline:true}:{})});
   const key=cacheKey(device),next={...snapshot,pendingRefresh:true};
-  if(result.deleteConfirmed){next.onus=(snapshot?.onus||[]).filter(row=>String(row.id)!==String(onu.id));applyCauses(next,new Map(next.onus.filter(row=>row.downCause).map(row=>[row.serialNumber,row.downCause])));}
+  if(result.deleteConfirmed){next.onus=(snapshot?.onus||[]).filter(row=>String(row.id)!==String(onu.id));applyCauses(next,preservedCauses(next.onus));}
   remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}
   lastAttempt.delete(key);
   return {serialNumber:sn,onuIndex:String(onu.id),ponKey:onu.ponKey,onuId:onu.onuId,oltId:device.id,confirmed:Boolean(result.deleteConfirmed),alreadyAbsent:result.alreadyAbsent===true,message:result.alreadyAbsent?'ONU sudah tidak terdaftar di posisi ini. Daftar billing telah diperbarui.':result.deleteConfirmed?'ONU telah dihapus dari OLT. Data billing tetap tersimpan.':'Perintah hapus terkirim. Menunggu pembacaan ulang OLT; jangan mengulang sebelum status diperiksa.'};
@@ -410,6 +422,15 @@ async function testConnection(data,device,kind,transport={}) {
     return{ok:true,kind,elapsedMs:Date.now()-started,message:kind==='snmp'?'SNMP v2c merespons. Community dan jalur pembacaan terverifikasi.':'Telnet berhasil login dan membaca versi OLT.'};
   }catch(error){return{ok:false,kind,elapsedMs:Date.now()-started,message:kind==='snmp'?'SNMP belum merespons. Periksa layanan SNMP di OLT, UDP 161/port terpilih, community dan izin IP server billing.':/ditolak/.test(error.message)?'Login Telnet ditolak. Periksa username/password CLI.':'Telnet belum berhasil. Periksa layanan, port, akun CLI dan izin akses OLT.'};}
   finally{diagnosticPending.delete(key);}
+}
+async function saveConfig(data,device,payload,transport=cli.saveConfig) {
+  if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: Save Config OLT asli dinonaktifkan');
+  if(payload.confirmSave!==true||payload.confirmId!==device.id||String(payload.confirmName||'').trim()!==device.name)throw new Error('Konfirmasi nama OLT dan persetujuan Save Config wajib sesuai');
+  if(!payload.revision||payload.revision!==device.updatedAt){const error=new Error('Pengaturan OLT berubah. Buka ulang sebelum menyimpan konfigurasi.');error.status=409;throw error;}
+  if(!device.enabled||!device.cliEnabled||!device.cliUsername||!device.cliPasswordEnc)throw new Error('Aktifkan monitoring dan akses CLI OLT terlebih dahulu');
+  const key=[device.id,device.host,device.cliPort].join(':'),now=Date.now();if(now-(saveTimes.get(key)||0)<60000){const error=new Error('Save Config baru diproses. Tunggu setidaknya satu menit dan periksa hasil sebelumnya.');error.status=429;throw error;}remember(saveTimes,key,now);
+  try{const result=await transport(data,device);return{confirmed:result.saveConfirmed===true,message:result.saveConfirmed?'Konfigurasi OLT berhasil disimpan ke penyimpanan permanen.':'Perintah Save Config sudah diproses, tetapi keberhasilannya belum terkonfirmasi. Periksa di OLT sebelum mengulang.'};}
+  catch{return{confirmed:false,message:'Hasil Save Config belum dapat dipastikan. Periksa status di OLT sebelum mencoba lagi.'};}
 }
 function visibleDevices(data, user = {}) {
   const locks = [...(Array.isArray(user.lockedNasIds) ? user.lockedNasIds : []), user.lockedNasId].filter(Boolean);
@@ -628,5 +649,5 @@ function pruneTickets(rows) {
 
 module.exports = { OIDS, CACHE_MS, MAX_DEVICES, parseRows, normalizeSerial, normalizeSnapshot, position, optical, validateDevice,
   classifyCause, summarizeOnus, applyCauses, matchesState, lastOnlineAt, preserveLastOnline, parseCauseRows, onuPage, removeOnu, rebootOnu, renameOnu, readOnuDescription, readRemovalState,
-  deviceRows, publicDevice, snapshotFor, collect, poll, pollNext, requestRefresh, requestRefreshAll, testConnection, visibleDevices, mappingNodes, linkCustomer, linkedOnus,
+  deviceRows, publicDevice, snapshotFor, collect, poll, pollNext, requestRefresh, requestRefreshAll, testConnection, saveConfig, visibleDevices, mappingNodes, linkCustomer, linkedOnus,
   saveTicket, pruneTickets, ticketMessage, TICKET_STATUSES, losTicketPlan, applyLosTicketPlan, TICKET_SCOPE_LABELS, claimTicket, progressTicket, requireTicketEditor, ticketTemplates, validateTicketTemplates, renderTicketTemplate };

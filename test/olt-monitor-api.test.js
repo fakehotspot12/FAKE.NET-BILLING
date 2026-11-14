@@ -116,6 +116,13 @@ test('all-OLT refresh keeps role, CSRF, dev and visible NAS boundaries without s
  t.mock.method(require('../src/olt-monitor'),'requestRefreshAll',(data,devices)=>{calls++;assert.equal(devices.length,0);return{queued:0,skipped:0,pending:0};});const saved=saves;
  assert.equal((await request('technician','POST','/refresh',{},false)).status,419);assert.equal((await request('finance','POST','/refresh')).status,403);assert.equal((await request('technician','POST','/refresh')).status,202);assert.equal(calls,1);assert.equal(saves,saved);
 });
+test('Save Config API enforces management role and CSRF and audits only the confirmed result',async t=>{
+ reset();const created=await request('admin','POST','',{name:'Save Unit',host:'192.0.2.185',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit'}),id=created.body.device.id,path='/'+id+'/save-config',before=structuredClone({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,settings:fixture.settings,oltDevices:fixture.oltDevices});let calls=0;
+ t.mock.method(require('../src/olt-monitor'),'saveConfig',async()=>{calls++;return{confirmed:true,message:'Saved'};});
+ try{process.env.MIGRATION_MODE='0';const live=new Module(serverPath,module);live.filename=serverPath;live.paths=serverModule.paths;live.require=serverModule.require;live._compile(fs.readFileSync(serverPath,'utf8')+'\nmodule.exports.__test.api=handleApi;',serverPath);const handler=live.exports.__test.api;
+  assert.equal((await request('admin','POST',path,{},false,handler)).status,419);for(const role of ['technician','finance','collector','viewer','reseller_voucher'])assert.equal((await request(role,'POST',path,{},true,handler)).status,403);assert.equal(calls,0);assert.equal((await request('secretary','POST',path,{},true,handler)).status,200);assert.equal(calls,1);assert.equal(fixture.activity[0].meta.action,'olt-save-config');assert.equal(fixture.activity[0].meta.userId,'secretary');assert.equal(lastSaveOptions.includeCore,false);assert.deepEqual({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,settings:fixture.settings,oltDevices:fixture.oltDevices},before);
+ }finally{process.env.MIGRATION_MODE='1';}
+});
 test('background LOS reconciliation persists tickets once, audits creation and never enqueues WhatsApp',async()=>{
  reset();const created=await request('admin','POST','',{name:'Unit',host:'192.0.2.90',community:'unit'}),olt=require('../src/olt-monitor'),original=olt.snapshotFor;
  const before=structuredClone({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages}),savesBefore=saves;
