@@ -429,6 +429,15 @@ instalasi baru **nonaktif**. Menonaktifkannya menghentikan pencocokan otomatis
 dan penggunaan cache otomatis, bukan monitoring biasa, tiket manual atau billing.
 Tiket LOS tetap dapat dibuat dari OLT yang terhubung; data pelanggan/ODP mengikuti
 pemetaan manual bila sinkron otomatis nonaktif. Laporan WifiKu tetap tersedia.
+Form tambah/edit OLT menyediakan **Tes SNMP** dan **Tes Telnet** tanpa harus
+menyimpan perubahan. Tes SNMP memeriksa identitas sistem melalui v2c; Telnet
+memeriksa login dan pembacaan versi, bukan konfigurasi ONU. Jika ping berhasil
+tetapi SNMP timeout, periksa layanan SNMP di OLT, port, community dan ACL IP
+server billing. Kredensial tersimpan tetap terenkripsi dan tidak ditampilkan
+di hasil tes. Tombol **Baca OLT** menyegarkan satu OLT; **Baca ulang semua OLT**
+memasukkan OLT berizin ke antrean worker secara bergiliran dengan pembatasan
+klik, tanpa summon ACS atau scan SNMP serentak.
+
 Jika integrasi aktif, tombol **Hapus** pada ONU memeriksa OLT dan ACS berdasarkan
 SN yang sama. OLT dihapus lebih dahulu; ACS hanya dihapus setelah keberhasilan
 OLT terverifikasi. Record yang terbukti sudah tidak ada dilewati, tetapi timeout

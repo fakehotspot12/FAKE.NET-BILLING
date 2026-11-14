@@ -25,6 +25,8 @@ const cache = new Map();
 const pending = new Map();
 const lastAttempt = new Map();
 const refreshTimes = new Map();
+const refreshQueue = new Map();
+const diagnosticPending = new Set(),diagnosticTimes = new Map();
 function remember(map, key, value) {
   map.set(key, value);
   while (map.size > MAX_DEVICES * 2) map.delete(map.keys().next().value);
@@ -210,6 +212,7 @@ function publicDevice(device, snapshot = null, options = {}) {
     simulated,
     ...(options.management ? { host: device.host, port: device.port, communityConfigured: Boolean(device.communityEnc), cliEnabled: Boolean(device.cliEnabled), cliUsername: device.cliUsername || '', cliPort: device.cliPort || 23, cliPasswordConfigured: Boolean(device.cliPasswordEnc) } : {}),
     onuDeleteAvailable: Boolean(device.enabled && device.cliEnabled && device.cliPasswordEnc),
+    refreshPending: pending.has(cacheKey(device)) || refreshQueue.has(device.id),
     latitude: device.latitude, longitude: device.longitude,
     status: !device.enabled ? 'disabled' : snapshot?.status || 'checking', checkedAt: snapshot?.checkedAt || '',
     lastSuccessAt: snapshot?.lastSuccessAt || (snapshot?.status === 'online' ? snapshot.checkedAt : ''), stale: !simulated&&Boolean(snapshot?.stale || (snapshot?.checkedAt && Date.now() - Date.parse(snapshot.checkedAt) > CACHE_MS * 2)),
@@ -225,7 +228,7 @@ async function snapshotFor(device) {
   const key = cacheKey(device);
   if (cache.has(key)) return cache.get(key);
   if (redis.enabled()) {
-    try { const raw = await redis.get(key); if (raw && raw.length <= 4 * 1024 * 1024) { const value = JSON.parse(raw); if (Array.isArray(value.onus)) return remember(cache, key, value); } } catch {}
+    try { const raw = await redis.get(key); if (raw && raw.length <= 4 * 1024 * 1024) { const value = JSON.parse(raw); if (value && (Array.isArray(value.onus) || (value.status === 'unreachable' && value.onus === undefined && Number.isFinite(Date.parse(value.checkedAt))))) return remember(cache, key, value); } } catch {}
   }
   return null;
 }
@@ -374,6 +377,7 @@ async function poll(data, device, transport) {
 }
 async function pollNext(data) {
   if (pending.size) return { skipped: true };
+  for(const [id,request] of refreshQueue){const device=deviceRows(data).find(row=>row.id===id);refreshQueue.delete(id);if(!device?.enabled||cacheKey(device)!==request.key)continue;await poll(data,device);return{id:device.id,manual:true};}
   const candidates = [];
   for (const device of deviceRows(data).filter(row => row.enabled)) {
     const key = cacheKey(device), snapshot = await snapshotFor(device), tried = lastAttempt.get(key) || Date.parse(snapshot?.checkedAt || '') || 0;
@@ -386,7 +390,26 @@ async function pollNext(data) {
 function requestRefresh(data, device) {
   const key = cacheKey(device), now = Date.now();
   if (!device.enabled || pending.has(key) || pending.size >= 2 || now - (refreshTimes.get(key) || 0) < 30000) return false;
-  remember(refreshTimes, key, now); poll(data, device).catch(() => {}); return true;
+  remember(refreshTimes, key, now);refreshQueue.delete(device.id); poll(data, device).catch(() => {}); return true;
+}
+function requestRefreshAll(data,devices) {
+  if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
+  const now=Date.now();let queued=0,skipped=0;for(const device of devices){const key=cacheKey(device);if(!device.enabled||pending.has(key)||refreshQueue.has(device.id)||now-(refreshTimes.get(key)||0)<30000||refreshQueue.size>=MAX_DEVICES){skipped++;continue;}remember(refreshTimes,key,now);refreshQueue.set(device.id,{key});queued++;}return {queued,skipped,pending:refreshQueue.size};
+}
+async function testConnection(data,device,kind,transport={}) {
+  if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: tes perangkat asli dinonaktifkan');
+  if(!['snmp','telnet'].includes(kind))throw new Error('Jenis tes tidak valid');
+  if(kind==='telnet'&&(!device.cliEnabled||!device.cliUsername||!device.cliPasswordEnc))throw new Error('Isi akun CLI dan aktifkan akses CLI untuk mengetes Telnet');
+  const key=cacheKey(device)+':'+kind,now=Date.now();if(diagnosticPending.has(key)||diagnosticPending.size>=2||now-(diagnosticTimes.get(key)||0)<5000){const error=new Error('Tes koneksi sedang berjalan atau baru dijalankan. Coba lagi beberapa detik.');error.status=429;throw error;}
+  diagnosticPending.add(key);remember(diagnosticTimes,key,now);const started=Date.now();
+  try{
+    if(kind==='telnet')await (transport.telnet||cli.testConnection)(data,device);
+    else{const address=net.isIP(device.host)===6?`udp6:[${device.host}]:${device.port}`:`${device.host}:${device.port}`,community=secrets.decryptSecret(data,device.communityEnc);
+      const {stdout}=await (transport.exec||exec)('snmpget',['-v2c','-c',community,'-t','2','-r','0','-On',address,'1.3.6.1.2.1.1.2.0','1.3.6.1.2.1.1.3.0'],{timeout:4000,maxBuffer:16384,windowsHide:true});const rows=parseRows(stdout);if(!rows.some(row=>row.oid==='1.3.6.1.2.1.1.2.0'))throw new Error('SNMP tidak mengembalikan identitas sistem');
+    }
+    return{ok:true,kind,elapsedMs:Date.now()-started,message:kind==='snmp'?'SNMP v2c merespons. Community dan jalur pembacaan terverifikasi.':'Telnet berhasil login dan membaca versi OLT.'};
+  }catch(error){return{ok:false,kind,elapsedMs:Date.now()-started,message:kind==='snmp'?'SNMP belum merespons. Periksa layanan SNMP di OLT, UDP 161/port terpilih, community dan izin IP server billing.':/ditolak/.test(error.message)?'Login Telnet ditolak. Periksa username/password CLI.':'Telnet belum berhasil. Periksa layanan, port, akun CLI dan izin akses OLT.'};}
+  finally{diagnosticPending.delete(key);}
 }
 function visibleDevices(data, user = {}) {
   const locks = [...(Array.isArray(user.lockedNasIds) ? user.lockedNasIds : []), user.lockedNasId].filter(Boolean);
@@ -605,5 +628,5 @@ function pruneTickets(rows) {
 
 module.exports = { OIDS, CACHE_MS, MAX_DEVICES, parseRows, normalizeSerial, normalizeSnapshot, position, optical, validateDevice,
   classifyCause, summarizeOnus, applyCauses, matchesState, lastOnlineAt, preserveLastOnline, parseCauseRows, onuPage, removeOnu, rebootOnu, renameOnu, readOnuDescription, readRemovalState,
-  deviceRows, publicDevice, snapshotFor, collect, poll, pollNext, requestRefresh, visibleDevices, mappingNodes, linkCustomer, linkedOnus,
+  deviceRows, publicDevice, snapshotFor, collect, poll, pollNext, requestRefresh, requestRefreshAll, testConnection, visibleDevices, mappingNodes, linkCustomer, linkedOnus,
   saveTicket, pruneTickets, ticketMessage, TICKET_STATUSES, losTicketPlan, applyLosTicketPlan, TICKET_SCOPE_LABELS, claimTicket, progressTicket, requireTicketEditor, ticketTemplates, validateTicketTemplates, renderTicketTemplate };

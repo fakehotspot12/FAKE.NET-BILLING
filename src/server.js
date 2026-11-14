@@ -23962,6 +23962,17 @@ async function handleApi(req, res, url) {
       ...(manage?{ticketSettings:{...oltTicketing.settingsFor(context.data),gatewayEnabled:context.data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(context.data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.eligibleUsers(context.data).map(user=>({id:user.id,name:user.name||user.username,role:user.role,phone:oltTicketing.phoneFor(user)}))}:{}) });
     return;
   }
+  if(pathname==='/api/monitoring/olt/refresh'&&method==='POST'){
+    const context=await requirePermission(req,res,'olt:read');if(!context)return;
+    try{sendJson(res,202,{ok:true,...oltMonitor.requestRefreshAll(context.data,oltMonitor.visibleDevices(context.data,context.user))});}catch(error){badRequest(res,error.message);}return;
+  }
+  const oltConnectionTest=pathname.match(/^\/api\/monitoring\/olt(?:\/([^/]+))?\/connection-test$/);
+  if(oltConnectionTest&&method==='POST'){
+    const context=await requirePermission(req,res,'olt:manage');if(!context)return;
+    if(MIGRATION_MODE){badRequest(res,'Mode dev terisolasi: tes perangkat asli dinonaktifkan');return;}
+    const previous=oltConnectionTest[1]?oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===oltConnectionTest[1]):undefined;if(oltConnectionTest[1]&&!previous){notFound(res);return;}
+    try{const payload=await readBody(req,8192),device=oltMonitor.validateDevice(context.data,payload,previous||{});sendJson(res,200,await oltMonitor.testConnection(context.data,device,payload.kind));}catch(error){sendJson(res,error.status||400,{error:error.message});}return;
+  }
   const oltOnuDescription=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/onus\/([A-Za-z0-9]+)\/description$/);
   if(oltOnuDescription&&['GET','PUT'].includes(method)){
     const context=await requirePermission(req,res,'olt:onu:reboot');if(!context)return;

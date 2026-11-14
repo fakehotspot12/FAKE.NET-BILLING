@@ -17,13 +17,13 @@ function onuAbsent(output=''){
   return /(?:^|\n)[ \t]*(?:%[ \t]*)?(?:(?:error|failure|failed)[ \t]*:[ \t]*)?(?:(?:the[ \t]+)?(?:ont|onu)[ \t]+(?:does[ \t]+not[ \t]+exist|not[ \t]+(?:exist|found)|is[ \t]+not[ \t]+(?:configured|registered|found))\b|there[ \t]+is[ \t]+no[ \t]+(?:ont|onu)[ \t]+available[.!]?[ \t]*(?:\r?$))/im.test(output);
 }
 
-function run(data, device, target = null, spawnProcess = spawn) {
+function run(data, device, target = null, spawnProcess = spawn, options = {}) {
   if (!device.cliEnabled || !device.cliUsername || !device.cliPasswordEnc) return Promise.reject(new Error('Akses CLI OLT belum dikonfigurasi'));
   if (busy.has(device.id)) return Promise.reject(new Error('Akses OLT sedang digunakan, coba kembali'));
   if (target && (![target.slot,target.pon,target.onuId].every(Number.isSafeInteger) || target.slot < 0 || target.slot > 31 || target.pon < 1 || target.pon > 16 || target.onuId < 1 || target.onuId > 1024 || !/^[A-Z0-9]{12}$/.test(target.serialNumber) || !['delete','reboot','describe','inspect'].includes(target.action||'delete'))) return Promise.reject(new Error('Alamat ONU tidak valid'));
   const rename=target?.action==='describe',deleting=Boolean(target&&(target.action||'delete')==='delete');if(rename){try{description(target.description);}catch(error){return Promise.reject(error);}}
   const password = secrets.decryptSecret(data,device.cliPasswordEnc);
-  const commands = target ? ['enable','config',`interface gpon 0/${target.slot}`,`show ont info ${target.pon} ${target.onuId}`,...(target.action==='inspect'?[]:[rename?`ont description ${target.pon} ${target.onuId} ${description(target.description)}`:`ont ${target.action||'delete'} ${target.pon} ${target.onuId}`,...(target.action==='reboot'?[]:[`show ont info ${target.pon} ${target.onuId}`])])] : ['enable','show ont status-count'];
+  const commands = options.connectionTest===true ? ['enable','show version'] : target ? ['enable','config',`interface gpon 0/${target.slot}`,`show ont info ${target.pon} ${target.onuId}`,...(target.action==='inspect'?[]:[rename?`ont description ${target.pon} ${target.onuId} ${description(target.description)}`:`ont ${target.action||'delete'} ${target.pon} ${target.onuId}`,...(target.action==='reboot'?[]:[`show ont info ${target.pon} ${target.onuId}`])])] : ['enable','show ont status-count'];
   busy.add(device.id);
   return new Promise((resolve,reject) => {
     let process,deadline,inactivity,settled=false,stage='login',buffer='',output='',bytes=0,index=-1,enablePassword=false,confirmation=false,alreadyAbsent=false;
@@ -82,4 +82,5 @@ async function deleteOnu(data,device,target) {return run(data,device,target);}
 async function rebootOnu(data,device,target) {return run(data,device,{...target,action:'reboot'});}
 async function renameOnu(data,device,target) {return run(data,device,{...target,action:'describe'});}
 async function inspectOnu(data,device,target) {return run(data,device,{...target,action:'inspect'});}
-module.exports={readCauses,deleteOnu,rebootOnu,renameOnu,inspectOnu,description,readDescription,readRunState,onuDescription,onuAbsent,run};
+async function testConnection(data,device) {return run(data,device,null,spawn,{connectionTest:true});}
+module.exports={readCauses,deleteOnu,rebootOnu,renameOnu,inspectOnu,testConnection,description,readDescription,readRunState,onuDescription,onuAbsent,run};

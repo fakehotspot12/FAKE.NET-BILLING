@@ -9,11 +9,11 @@ serverModule.require=name=>name==='./store'?{...storeModule,loadStore:async()=>f
 serverModule._compile(fs.readFileSync(serverPath,'utf8')+'\nmodule.exports.__test.oltApi=handleApi;module.exports.__test.createWifiKuSession=createWifiKuSession;module.exports.__test.syncOltLosTickets=syncOltLosTickets;module.exports.__test.oltQueueJob=processWaGatewayQueueJob;module.exports.__test.stubOltTransport=(deliver,wait=async()=>{})=>{const savedDeliver=deliverWaMessage,savedWait=waitForWaGatewayDeliverySlot;deliverWaMessage=deliver;waitForWaGatewayDeliverySlot=wait;return()=>{deliverWaMessage=savedDeliver;waitForWaGatewayDeliverySlot=savedWait;};};',serverPath);
 const handle=serverModule.exports.__test.oltApi,sessions=new Map();
 function reset(){fixture=storeModule.createDefaultStore();fixture.users=auth.publicRoles().map(({value})=>({id:value,username:value,name:'Unit '+value,role:value,active:true}));fixture.monitoringTargets=[{id:'nas-a',name:'NAS-A',host:'192.0.2.10'},{id:'nas-b',name:'NAS-B',host:'192.0.2.11'}];saves=0;}
-async function request(role,method='GET',suffix='',body={},validCsrf=true){
+async function request(role,method='GET',suffix='',body={},validCsrf=true,handler=handle){
  if(role&&!sessions.has(role))sessions.set(role,auth.createSession(fixture.users.find(row=>row.role===role)));
  const id=sessions.get(role),uri=suffix.startsWith('/api/')?suffix:'/api/monitoring/olt'+suffix,req=Readable.from([Buffer.from(JSON.stringify(body))]);req.method=method;req.url=uri;req.socket={remoteAddress:'127.0.0.1'};
  req.headers={host:'localhost:8891',origin:'http://localhost:8891','content-type':'application/json',...(id?{cookie:auth.SESSION_COOKIE+'='+id}:{}),'x-csrf-token':validCsrf?auth.csrfTokenForSessionId(id):'bad'};
- const res=apiResponse();await handle(req,res,new URL(uri,'http://localhost:8891'));return res;
+ const res=apiResponse();await handler(req,res,new URL(uri,'http://localhost:8891'));return res;
 }
 function apiResponse(){return{writeHead(status,headers={}){this.status=status;this.headers=headers;},end(data){this.body=Buffer.isBuffer(data)?data:JSON.parse(data);}};}
 test.after(()=>{for(const id of sessions.values())auth.destroySession(id);fs.rmSync(directory,{recursive:true,force:true});});
@@ -102,6 +102,19 @@ test('DELETE uses the guarded cascade service and records separate stage results
   const invoke=async(validCsrf=true)=>{const id=sessions.get('admin'),req=Readable.from([Buffer.from(JSON.stringify(payload))]);req.method='DELETE';req.url='/api/monitoring/olt'+suffix;req.socket={remoteAddress:'127.0.0.1'};req.headers={host:'localhost:8891',origin:'http://localhost:8891','content-type':'application/json',cookie:auth.SESSION_COOKIE+'='+id,'x-csrf-token':validCsrf?auth.csrfTokenForSessionId(id):'bad'};const response=apiResponse();await liveModule.exports.__test.oltApi(req,response,new URL(req.url,'http://localhost:8891'));return response;};
   assert.equal((await invoke(false)).status,419);assert.equal(calls,0);const partial=await invoke();assert.equal(partial.status,207,JSON.stringify(partial.body));assert.equal(partial.body.acs.state,'failed');assert.equal(fixture.activity[0].meta.acsState,'failed');complete=true;assert.equal((await invoke()).status,200);assert.equal(fixture.activity[0].meta.oltState,'deleted');assert.deepEqual({invoices:fixture.invoices,payments:fixture.payments,customers:fixture.customers,radiusUsers:fixture.radiusUsers},before);}
  finally{process.env.MIGRATION_MODE='1';}
+});
+test('connection diagnostics use unsaved form values without saving; only management roles and valid CSRF allowed',async t=>{
+ reset();const created=await request('admin','POST','',{name:'Diagnostics',host:'192.0.2.160',community:'StoredSecret',cliEnabled:true,cliUsername:'unit',cliPassword:'StoredCli'}),path='/'+created.body.device.id+'/connection-test',before=structuredClone(fixture),saved=saves;let calls=0;
+ t.mock.method(require('../src/olt-monitor'),'testConnection',async(data,device,kind)=>{calls++;assert.equal(kind,'snmp');assert.equal(device.host,'192.0.2.161');assert.equal(require('../src/secure-secrets').decryptSecret(data,device.communityEnc),'StoredSecret');return{ok:true,kind,elapsedMs:2,message:'Connected'};});
+ try{process.env.MIGRATION_MODE='0';const live=new Module(serverPath,module);live.filename=serverPath;live.paths=serverModule.paths;live.require=serverModule.require;live._compile(fs.readFileSync(serverPath,'utf8')+'\nmodule.exports.__test.api=handleApi;',serverPath);const handler=live.exports.__test.api,body={kind:'snmp',host:'192.0.2.161',community:''};
+  assert.equal((await request('admin','POST',path,body,false,handler)).status,419);for(const role of ['technician','finance','collector','viewer','reseller_voucher'])assert.equal((await request(role,'POST',path,body,true,handler)).status,403);
+  for(const role of ['admin','secretary'])assert.equal((await request(role,'POST',path,body,true,handler)).status,200);assert.equal(calls,2);assert.equal((await request('admin','POST',path,{...body,host:'127.0.0.1'},true,handler)).status,400);assert.equal((await request('admin','POST','/missing/connection-test',body,true,handler)).status,404);assert.equal(saves,saved);assert.deepEqual(fixture,before);
+ }finally{process.env.MIGRATION_MODE='1';}
+});
+test('all-OLT refresh keeps role, CSRF, dev and visible NAS boundaries without saving',async t=>{
+ reset();await request('admin','POST','',{name:'Refresh',host:'192.0.2.162',community:'Unit',nasId:'nas-a'});fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-b'];let calls=0;
+ t.mock.method(require('../src/olt-monitor'),'requestRefreshAll',(data,devices)=>{calls++;assert.equal(devices.length,0);return{queued:0,skipped:0,pending:0};});const saved=saves;
+ assert.equal((await request('technician','POST','/refresh',{},false)).status,419);assert.equal((await request('finance','POST','/refresh')).status,403);assert.equal((await request('technician','POST','/refresh')).status,202);assert.equal(calls,1);assert.equal(saves,saved);
 });
 test('background LOS reconciliation persists tickets once, audits creation and never enqueues WhatsApp',async()=>{
  reset();const created=await request('admin','POST','',{name:'Unit',host:'192.0.2.90',community:'unit'}),olt=require('../src/olt-monitor'),original=olt.snapshotFor;

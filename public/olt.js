@@ -4,7 +4,7 @@
   const view = { tab: 'devices', deviceId: 'all', nasId: '', search: '', status: '', pon: '', limit: 25, page: 1 };
   const ticketView = { oltId:'', nasId:'', scope:'', pon:'', search:'', bucket:'open', status:'', kind:'', limit:25, page:1 };
   const ticketStates = [['open','Aktif'],['resolved','Selesai']];
-  let context, payload = {}, generation = 0, detailGeneration = 0, latestDetails = null;
+  let context, payload = {}, generation = 0, detailGeneration = 0, latestDetails = null, refreshTimer;
   const $ = id => document.getElementById(id);
   const esc = value => context.escapeHtml(value ?? '');
   const labels = { online:'Online',simulated:'Simulasi',offline:'Semua Offline',los:'LOS','dying-gasp':'Dying Gasp',other:'Other','high-rx':'Redaman Tinggi',unreachable:'Tidak terjangkau',checking:'Belum dibaca',disabled:'Nonaktif',unknown:'Belum terbaca',new:'Baru',assigned:'Diambil',working:'Dikerjakan',resolved:'Selesai' };
@@ -40,7 +40,7 @@
     const sum=key=>fresh.length?fresh.reduce((value,row)=>value+(row.summary?.[key]||0),0):null;
     const nasOptions=[...new Map(payload.devices.filter(row=>row.nasId).map(row=>[row.nasId,{id:row.nasId,name:row.nasName||row.nasId}])).values()];
     context.app.innerHTML=`<section class="olt-ui" id="oltRoot">
-      <div class="olt-heading"><div><h2>OLT <span class="olt-badge">CDATA GPON</span></h2><p class="olt-sync"><span class="olt-dot ${fresh.length?'online':'unknown'}"></span>${devices.some(row=>row.simulated)?'Data simulasi':`${fresh.length} / ${devices.length} OLT terjangkau`}${fresh.length?`<span>Dicek ${time(fresh.map(row=>row.checkedAt).sort().at(-1))}</span>`:''}</p></div><div class="olt-actions"><select class="olt-nas" id="oltNasFilter" aria-label="Filter NAS">${options(nasOptions,view.nasId,'Semua NAS')}</select>${button('reload','','Segarkan tampilan','rollback')}${context.can('olt:manage')?'<button type="button" class="olt-add" id="oltAdd">+ Tambah OLT</button>':''}</div></div>
+      <div class="olt-heading"><div><h2>OLT <span class="olt-badge">CDATA GPON</span></h2><p class="olt-sync"><span class="olt-dot ${fresh.length?'online':'unknown'}"></span>${devices.some(row=>row.simulated)?'Data simulasi':`${fresh.length} / ${devices.length} OLT terjangkau`}${fresh.length?`<span>Dicek ${time(fresh.map(row=>row.checkedAt).sort().at(-1))}</span>`:''}</p></div><div class="olt-actions"><select class="olt-nas" id="oltNasFilter" aria-label="Filter NAS">${options(nasOptions,view.nasId,'Semua NAS')}</select>${button('reload','','Segarkan tampilan','eye')}${button('refresh-all','','Baca ulang semua OLT','rollback')}${context.can('olt:manage')?'<button type="button" class="olt-add" id="oltAdd">+ Tambah OLT</button>':''}</div></div>
       <div class="olt-summary">${states.map(([state,label,key])=>`<button type="button" class="olt-metric ${state||'total'}" data-olt-state="${state}" title="${esc(label)}"><span><i class="olt-dot ${state||'total'}"></i>${label}</span><strong>${count(sum(key))}</strong><small>${state==='high-rx'?'RX ≤ -26,5 dBm':'ONU'}</small></button>`).join('')}</div>
       <div class="olt-tabs" role="tablist" aria-label="Monitoring OLT">${[['devices','Ringkasan'],['onus','PON / ONU']].map(([key,label])=>`<button type="button" role="tab" aria-selected="${view.tab===key}" data-olt-tab="${key}">${label}</button>`).join('')}</div>
       <p class="olt-notice" id="oltNotice" role="status" hidden></p><div id="oltContent"></div>
@@ -81,6 +81,7 @@
     }catch(error){if(token===detailGeneration&&active())notice(error.message);}
   }
   function notice(message) { if($('oltNotice')){$('oltNotice').textContent=message;$('oltNotice').hidden=!message;} }
+  function followRefresh(attempt=0){clearTimeout(refreshTimer);if(attempt>=40)return;refreshTimer=setTimeout(async()=>{if(!active()||context.mode==='tickets')return;try{await render();if(payload.devices?.some(row=>row.refreshPending))followRefresh(attempt+1);}catch(error){notice(error.message);}},3500);}
   function deviceList() {
     const devices=payload.devices.filter(row=>!view.nasId||row.nasId===view.nasId);
     $('oltContent').innerHTML=devices.length?`<div class="olt-device-list">${devices.map(row=>{
@@ -99,8 +100,14 @@
       `<label>NAS<select name="nasId">${options(payload.nasOptions || [],row.nasId,'Belum ditautkan')}</select></label>`+
       field('Latitude','latitude',row.latitude??'','type="number" step="any" min="-90" max="90"')+field('Longitude','longitude',row.longitude??'','type="number" step="any" min="-180" max="180"')+
       `<details class="full olt-cli-settings" ${row.cliEnabled?'open':''}><summary>Akses CLI OLT</summary><div class="olt-form"><label class="full olt-check"><input type="checkbox" name="cliEnabled" ${row.cliEnabled?'checked':''}>Aktifkan pembacaan penyebab putus dan pengelolaan ONU</label>${field('Username CLI','cliUsername',row.cliUsername||'','maxlength="64" autocomplete="off"')}${field('Port Telnet','cliPort',row.cliPort||23,'type="number" min="1" max="65535"')}${field('Password CLI','cliPassword','','type="password" maxlength="128" autocomplete="new-password" '+(row.cliPasswordConfigured?'placeholder="Tersimpan; kosongkan jika tetap"':''))}</div></details>`+
-      `<label class="full olt-check"><input type="checkbox" name="enabled" ${row.enabled!==false?'checked':''}>Aktifkan monitoring</label>`+modalActions(),
+      `<label class="full olt-check"><input type="checkbox" name="enabled" ${row.enabled!==false?'checked':''}>Aktifkan monitoring</label><div class="full olt-connection-tests"><div class="olt-actions"><button type="button" class="ghost-button" data-olt-test="snmp">${glyph('site')}Tes SNMP</button><button type="button" class="ghost-button" data-olt-test="telnet">${glyph('settings')}Tes Telnet</button></div><p id="oltConnectionResult" role="status" aria-live="polite"></p></div>`+modalActions(),
       async(data,form)=>{await context.api('/api/monitoring/olt'+(row.id?'/'+encodeURIComponent(row.id):''),{method:row.id?'PUT':'POST',body:JSON.stringify({...data,enabled:form.elements.enabled.checked,cliEnabled:form.elements.cliEnabled.checked})});await render();context.setToast('Integrasi OLT tersimpan');});
+    for(const button of document.querySelectorAll('#modal [data-olt-test]'))button.addEventListener('click',async()=>{
+      const form=button.closest('form');if(!form.reportValidity())return;const result=form.querySelector('#oltConnectionResult'),buttons=[...form.querySelectorAll('[data-olt-test]')];buttons.forEach(item=>item.disabled=true);result.className='';result.textContent='Menguji koneksi...';
+      try{const response=await context.api('/api/monitoring/olt'+(row.id?'/'+encodeURIComponent(row.id):'')+'/connection-test',{method:'POST',timeoutMs:20000,body:JSON.stringify({...Object.fromEntries(new FormData(form)),enabled:form.elements.enabled.checked,cliEnabled:form.elements.cliEnabled.checked,kind:button.dataset.oltTest})});if(result.isConnected){result.textContent=response.message+(response.ok?` (${response.elapsedMs} ms)`:'');result.className=response.ok?'olt-test-ok':'olt-test-failed';}}
+      catch(error){if(result.isConnected){result.textContent=error.message;result.className='olt-test-failed';}}
+      finally{buttons.forEach(item=>{if(item.isConnected)item.disabled=false;});}
+    });
   }
   async function onuView() {
     if(!payload.devices.length){$('oltContent').innerHTML='<div class="olt-state">Belum ada OLT terdaftar.</div>';return;}
@@ -281,12 +288,13 @@
     const action=buttonEl.dataset.oltAction,id=buttonEl.dataset.id,row=payload.devices.find(row=>row.id===id);
     try {
       if(action==='reload')return context.mode==='tickets'?loadTicketRows():render();
+      if(action==='refresh-all'){buttonEl.disabled=true;const reply=await context.api('/api/monitoring/olt/refresh',{method:'POST',body:'{}'});notice(reply.queued?`${reply.queued} OLT dijadwalkan untuk dibaca bergiliran.`:'Pembacaan sedang berjalan atau baru diperbarui.');followRefresh();return;}
       if(action==='detail'){view.deviceId=id;view.tab='onus';view.pon='';view.page=1;return render();}
       if(action==='edit')return deviceForm(row);
       if(action==='delete')return openForm('Hapus Integrasi OLT',`<p class="full"><strong>${esc(row.name)}</strong></p><p class="full olt-delete-warning">Hanya menghapus koneksi monitoring OLT ini dari billing. ONU di perangkat OLT, ACS, member, invoice dan pembayaran tidak dihapus. OLT yang memiliki riwayat tiket tidak dapat dihapus; nonaktifkan monitoring saja.</p>${field('Ketik nama OLT untuk konfirmasi','confirmName','','required autocomplete="off" maxlength="100"')}<label class="full olt-check"><input type="checkbox" name="confirmDelete" required>Hapus integrasi monitoring OLT ini</label>`+modalActions('Hapus'),async(data,form)=>{await context.api('/api/monitoring/olt/'+encodeURIComponent(id),{method:'DELETE',body:JSON.stringify({confirmId:id,confirmName:data.confirmName,confirmDelete:form.elements.confirmDelete.checked})});view.deviceId='all';await render();context.setToast('Integrasi OLT dihapus; data pelanggan tetap tersimpan');});
       if(action==='refresh'){
         buttonEl.disabled=true;const reply=await context.api('/api/monitoring/olt/'+encodeURIComponent(id)+'/refresh',{method:'POST',body:'{}'});notice(reply.queued?'Pembacaan SNMP dijadwalkan.':'Pembacaan sedang berjalan atau baru diperbarui.');
-        setTimeout(()=>{if(active())render().catch(error=>notice(error.message));},3500);return;
+        followRefresh();return;
       }
       if(action==='edit-ticket'){const detail=await context.api('/api/monitoring/olt/tickets/'+encodeURIComponent(id));if(active()&&context.mode==='tickets'){ticketForm(detail.ticket);attachTicketNetwork(detail.ticket);}return;}
       if(action==='templates')return templatesForm();

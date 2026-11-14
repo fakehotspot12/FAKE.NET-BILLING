@@ -11,12 +11,14 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 - Pemetaan otomatis SN OLT ke SN/akun ACS lalu member/NAS, dengan kontak, alamat, koordinat dan ODP dari member. Konflik identitas, SN ganda, modem pengganti dan riwayat pemilik dilindungi; description tidak dijadikan bukti kepemilikan.
 - Sakelar Integrasi dan sinkron otomatis di Pengaturan Sistem, langsung tersimpan dan default nonaktif. Monitoring, tiket manual/WifiKu dan deteksi LOS tetap bekerja ketika pencocokan otomatis dimatikan. Tidak menjalankan provisioning pasang baru.
 - Penghapusan ONU dari OLT dilanjutkan ke record ACS berserial sama bila integrasi aktif, dengan pratinjau per tahap, konfirmasi SN, pemeriksaan status offline dan hasil terverifikasi. Record yang memang tidak ada dilewati; kegagalan ACS dapat dilanjutkan tanpa mengulang penghapusan OLT. Member, RADIUS, invoice, transaksi dan tiket tidak dihapus.
+- Tombol Tes SNMP/Telnet di form OLT memakai isian terbaru tanpa menyimpan atau mengubah perangkat, dengan batas waktu, pembatasan permintaan dan hasil di popup. Pembacaan ulang tersedia per OLT dan semua OLT secara bergiliran melalui worker existing, tanpa menambah scheduler atau scan serentak.
 
 ### Fixed
 
 - Menyamakan Sekretaris sebagai administrator kedua sesuai kebijakan aplikasi, termasuk pengaturan dan pengelolaan pengguna, tanpa mengubah identitas role/audit maupun perlindungan admin terakhir.
 - Memperbaiki pembacaan description CDATA kosong/berawalan lokasi dan konfirmasi hasil penghapusan pada ONU yang sudah tidak terdaftar. SN ganda tidak memilih posisi pertama atau menyentuh ONU aktif di posisi lain.
 - Menampilkan tombol Edit/Hapus integrasi di pilihan OLT pada tab PON/ONU selain Ringkasan. Penghapusan integrasi memerlukan nama OLT dan persetujuan; riwayat tiket dilindungi dan tidak ada perintah hapus perangkat fisik dari aksi ini.
+- Mempertahankan status kegagalan SNMP pertama ketika snapshot dibaca kembali dari Redis, agar timeout terlihat sebagai tidak terjangkau beserta penjelasannya, bukan terus belum dibaca atau menampilkan total ONU nol palsu. Tidak menambah polling atau mengubah konfigurasi SNMP perangkat.
 - Membatasi notifikasi WA tiket pada gangguan baru dan penyelesaian untuk petugas yang mengambilnya; deduplikasi, pembatalan antrean, batas pengiriman, dan template memakai gateway billing existing. Pesan progres tidak membanjiri penerima.
 
 ### Security
