@@ -27,6 +27,7 @@
     try { return (await save(data,form)) !== false; } catch(error) { if($('oltModalError'))$('oltModalError').textContent=error.message; return false; }
   });
   const active = () => context?.isCurrent() && Boolean($('oltRoot'));
+  const selectedDeviceActions=()=>context.can('olt:manage')&&view.deviceId!=='all'?button('edit',view.deviceId,'Edit OLT','edit')+button('delete',view.deviceId,'Hapus integrasi OLT','delete'):'';
   async function render(ctx = context) {
     context=ctx; const token=++generation;
     if(context.mode==='tickets')return renderTicketCenter(token);
@@ -104,7 +105,8 @@
   async function onuView() {
     if(!payload.devices.length){$('oltContent').innerHTML='<div class="olt-state">Belum ada OLT terdaftar.</div>';return;}
     $('oltContent').innerHTML=`<div class="olt-toolbar"><label>OLT<select id="oltSelected"><option value="all">Semua OLT</option>${payload.devices.filter(row=>!view.nasId||row.nasId===view.nasId).map(row=>`<option value="${esc(row.id)}" ${row.id===view.deviceId?'selected':''}>${esc(row.name)}</option>`).join('')}</select></label><label>Status<select id="oltStatus">${[['','Semua status'],...states.slice(1).map(([key,label])=>[key,label]),['offline','Semua Offline'],['unknown','Belum terbaca']].map(([key,label])=>`<option value="${key}" ${view.status===key?'selected':''}>${label}</option>`).join('')}</select></label><label>Tampil<select id="oltLimit">${[10,25,50,100].map(value=>`<option ${value===view.limit?'selected':''}>${value}</option>`).join('')}</select></label><label class="olt-search">Cari<input id="oltSearch" type="search" value="${esc(view.search)}" maxlength="100" placeholder="Nama / serial / pelanggan" autocomplete="off"></label></div><div class="olt-ports" id="oltPorts"></div><div id="oltOnuResults"></div>`;
-    $('oltSelected').addEventListener('change',event=>{view.deviceId=event.target.value;view.pon='';view.page=1;loadDetails();});
+    const deviceActions=document.createElement('div');deviceActions.id='oltSelectedActions';deviceActions.className='olt-actions olt-selected-actions';deviceActions.innerHTML=selectedDeviceActions();$('oltSelected').closest('label').append(deviceActions);
+    $('oltSelected').addEventListener('change',event=>{view.deviceId=event.target.value;view.pon='';view.page=1;deviceActions.innerHTML=selectedDeviceActions();loadDetails();});
     $('oltStatus').addEventListener('change',event=>{view.status=event.target.value;view.page=1;loadDetails();});
     $('oltLimit').addEventListener('change',event=>{view.limit=Number(event.target.value);view.page=1;loadDetails();});
     let timer;$('oltSearch').addEventListener('input',event=>{view.search=event.target.value;view.page=1;clearTimeout(timer);timer=setTimeout(()=>{if(active())loadDetails();},250);});
@@ -233,6 +235,40 @@
     $('oltCopyMessage').addEventListener('click',async()=>{try{await context.copyTextToClipboard($('oltMessageText').value);context.setToast('Pesan tiket disalin');}catch(error){$('oltModalError').textContent=error.message;}});
     $('oltSendMessage')?.addEventListener('click',async event=>{const button=event.currentTarget;button.disabled=true;try{const response=await context.api('/api/monitoring/olt/tickets/'+encodeURIComponent(ticket.id)+'/notify',{method:'POST',body:JSON.stringify({kind:$('oltMessageKind').value})});$('oltModalError').textContent='';context.setToast(response.queued?response.queued+' pesan tiket diantrikan':response.reason||'Tidak ada pesan baru untuk diantrikan');}catch(error){if($('oltModalError'))$('oltModalError').textContent=error.message;}finally{if(button.isConnected)button.disabled=!sendAllowed($('oltMessageKind').value);}});
   }
+  function deleteOnuForm(onu) {
+    const endpoint=`/api/monitoring/olt/${encodeURIComponent(onu.oltId)}/onus/${encodeURIComponent(onu.serialNumber)}`;
+    let preview=null,busy=false,finished=false,sequence=0;
+    openForm('Hapus ONU',`<section class="full olt-delete-panel" id="oltDeletePanel"><div class="olt-delete-info"><strong>${esc(onu.serialNumber)}</strong><span>${esc(onu.name||'-')} · ${esc(onu.oltName)}</span><span>PON ${esc(onu.ponKey)} · ONU ${esc(onu.onuId)}</span></div><p class="olt-delete-warning" id="oltDeleteMode">Memeriksa OLT dan pengaturan integrasi...</p><div class="olt-delete-stages" id="oltDeleteStages" aria-live="polite"></div><p class="olt-delete-message" id="oltDeleteMessage" role="status"></p><label>Ketik serial ONU untuk konfirmasi<input name="serialNumber" required autocomplete="off" maxlength="16"></label><label class="olt-check"><input type="checkbox" name="confirmDelete" required>Saya memahami dampak penghapusan perangkat ini.</label><p class="olt-modal-error" id="oltModalError" role="alert"></p><div class="modal-actions"><button type="button" class="ghost-button" data-close-modal>Tutup</button><button type="button" class="ghost-button" id="oltDeleteRefresh">Periksa Ulang</button><button type="button" class="button danger" id="oltDeleteConfirm" disabled>Hapus</button></div></section>`,async()=>false);
+    const panel=$('oltDeletePanel'),form=panel.closest('form'),confirm=panel.querySelector('#oltDeleteConfirm'),refresh=panel.querySelector('#oltDeleteRefresh');
+    const present=()=>panel.isConnected&&panel.closest('dialog')?.open&&active();
+    const sync=()=>{confirm.disabled=busy||finished||!preview?.canSubmit;confirm.hidden=finished;refresh.disabled=busy;refresh.hidden=finished;for(const label of panel.querySelectorAll(':scope > label'))label.hidden=finished;panel.setAttribute('aria-busy',String(busy));};
+    const show=reply=>{
+      panel.querySelector('#oltDeleteStages').innerHTML=[['OLT',reply.olt],['ACS',reply.acs]].map(([name,item])=>`<div class="olt-delete-stage"><strong>${name}</strong><span class="olt-delete-state ${esc(item?.state||'unknown')}">${esc(item?.label||'Belum diperiksa')}</span>${item?.reason?`<small>${esc(item.reason)}</small>`:''}</div>`).join('');
+      panel.querySelector('#oltDeleteMode').textContent=reply.cascade?'OLT → ACS. Data member, invoice, pembayaran dan tiket tetap tersimpan.':'OLT saja. Integrasi otomatis nonaktif; data ACS dan billing tetap tersimpan.';
+    };
+    const check=async()=>{
+      if(busy||!present())return;const token=++sequence;busy=true;preview=null;sync();panel.querySelector('#oltModalError').textContent='';
+      panel.querySelector('#oltDeleteMessage').textContent='Memeriksa status perangkat...';
+      try{
+        const reply=await context.api(endpoint+'/deletion?'+new URLSearchParams({onuIndex:onu.id}),{timeoutMs:60000});
+        if(!present()||token!==sequence)return;preview=reply;show(reply);confirm.textContent=reply.olt?.state==='missing'&&reply.acs?.state==='ready'?'Hapus ACS':'Hapus';
+        panel.querySelector('#oltDeleteMessage').textContent=reply.simulated?'Mode simulasi: tidak ada penghapusan perangkat asli.':reply.canSubmit?'Periksa SN sebelum melanjutkan.':reply.olt?.reason||reply.acs?.reason||'Tidak ada data yang dapat dihapus.';
+      }catch(error){if(present())panel.querySelector('#oltModalError').textContent=error.message;}
+      finally{busy=false;if(present())sync();}
+    };
+    refresh.addEventListener('click',check);
+    confirm.addEventListener('click',async()=>{
+      if(busy||finished||!preview?.canSubmit||!present()||!form.reportValidity())return;
+      busy=true;sync();panel.querySelector('#oltModalError').textContent='';panel.querySelector('#oltDeleteMessage').textContent='Memproses OLT, lalu memverifikasi ACS...';
+      try{
+        const reply=await context.api(endpoint,{method:'DELETE',timeoutMs:90000,body:JSON.stringify({serialNumber:form.elements.serialNumber.value,onuIndex:onu.id,confirmDelete:form.elements.confirmDelete.checked,token:preview.token})});
+        if(!present())return;show(reply);preview=null;finished=reply.complete&&!reply.canRetry;panel.querySelector('#oltDeleteMessage').textContent=reply.message;
+        await loadDetails();
+      }catch(error){if(present()){preview=null;panel.querySelector('#oltModalError').textContent=error.message;panel.querySelector('#oltDeleteMessage').textContent='Periksa ulang status sebelum melanjutkan. Jangan mengulang tanpa verifikasi.';}}
+      finally{busy=false;if(present())sync();}
+    });
+    check();
+  }
   async function onClick(event) {
     const ticketState=event.target.closest('[data-ticket-bucket]'),ticketPage=event.target.closest('[data-ticket-page]');
     if(ticketState){ticketView.bucket=ticketState.dataset.ticketBucket;ticketView.status='';$('ticketStatus').value='';ticketView.page=1;return loadTicketRows();}
@@ -247,7 +283,7 @@
       if(action==='reload')return context.mode==='tickets'?loadTicketRows():render();
       if(action==='detail'){view.deviceId=id;view.tab='onus';view.pon='';view.page=1;return render();}
       if(action==='edit')return deviceForm(row);
-      if(action==='delete')return openForm('Hapus Integrasi OLT',`<p class="full">${esc(row.name)}</p>`+modalActions('Hapus'),async()=>{await context.api('/api/monitoring/olt/'+encodeURIComponent(id),{method:'DELETE'});await render();context.setToast('Integrasi OLT dihapus');});
+      if(action==='delete')return openForm('Hapus Integrasi OLT',`<p class="full"><strong>${esc(row.name)}</strong></p><p class="full olt-delete-warning">Hanya menghapus koneksi monitoring OLT ini dari billing. ONU di perangkat OLT, ACS, member, invoice dan pembayaran tidak dihapus. OLT yang memiliki riwayat tiket tidak dapat dihapus; nonaktifkan monitoring saja.</p>${field('Ketik nama OLT untuk konfirmasi','confirmName','','required autocomplete="off" maxlength="100"')}<label class="full olt-check"><input type="checkbox" name="confirmDelete" required>Hapus integrasi monitoring OLT ini</label>`+modalActions('Hapus'),async(data,form)=>{await context.api('/api/monitoring/olt/'+encodeURIComponent(id),{method:'DELETE',body:JSON.stringify({confirmId:id,confirmName:data.confirmName,confirmDelete:form.elements.confirmDelete.checked})});view.deviceId='all';await render();context.setToast('Integrasi OLT dihapus; data pelanggan tetap tersimpan');});
       if(action==='refresh'){
         buttonEl.disabled=true;const reply=await context.api('/api/monitoring/olt/'+encodeURIComponent(id)+'/refresh',{method:'POST',body:'{}'});notice(reply.queued?'Pembacaan SNMP dijadwalkan.':'Pembacaan sedang berjalan atau baru diperbarui.');
         setTimeout(()=>{if(active())render().catch(error=>notice(error.message));},3500);return;
@@ -273,7 +309,7 @@
       });}
       if(action==='link'&&onu)return linkForm(onu);
       if(action==='reboot-onu'&&onu)return openForm('Reboot ONU',`<div class="full olt-delete-info"><strong>${esc(onu.serialNumber)}</strong><span>${esc(onu.name||'-')} · ${esc(onu.oltName)}</span><span>PON ${esc(onu.ponKey)} · ONU ${esc(onu.onuId)}</span></div><p class="full">Koneksi pelanggan akan terputus sementara. Konfigurasi ONU dan data billing tidak dihapus.</p><label class="full olt-check"><input type="checkbox" name="confirmReboot" required>Konfirmasi reboot perangkat ini</label>`+modalActions('Reboot'),async(data,form)=>{const reply=await context.api(`/api/monitoring/olt/${encodeURIComponent(onu.oltId)}/onus/${encodeURIComponent(onu.serialNumber)}/reboot`,{method:'POST',body:JSON.stringify({serialNumber:onu.serialNumber,onuIndex:onu.id,confirmReboot:form.elements.confirmReboot.checked})});await loadDetails();context.setToast(reply.message);});
-      if(action==='delete-onu'&&onu){const device=payload.devices.find(row=>row.id===onu.oltId);if(!device?.onuDeleteAvailable)return notice('Akses CLI untuk penghapusan ONU belum diaktifkan oleh admin.');return openForm('Hapus ONU dari OLT',`<div class="full olt-delete-info"><strong>${esc(onu.serialNumber)}</strong><span>${esc(onu.name||'-')} · ${esc(onu.oltName)}</span><span>PON ${esc(onu.ponKey)} · ONU ${esc(onu.onuId)}</span></div><p class="full olt-delete-warning">Konfigurasi ONU akan dihapus dari OLT dan layanan perangkat terputus. Data member, invoice, dan transaksi billing tetap tersimpan.</p>${field('Ketik Serial ONU untuk konfirmasi','serialNumber','','required autocomplete="off" maxlength="16"')}<label class="full olt-check"><input type="checkbox" name="confirmDelete" required>Saya memahami dampak penghapusan ONU ini.</label>`+modalActions('Hapus ONU'),async(data,form)=>{const reply=await context.api(`/api/monitoring/olt/${encodeURIComponent(onu.oltId)}/onus/${encodeURIComponent(onu.serialNumber)}`,{method:'DELETE',body:JSON.stringify({...data,onuIndex:onu.id,confirmDelete:form.elements.confirmDelete.checked})});await loadDetails();context.setToast(reply.message);});}
+      if(action==='delete-onu'&&onu){const device=payload.devices.find(row=>row.id===onu.oltId);if(!device?.onuDeleteAvailable)return notice('Akses CLI untuk penghapusan ONU belum diaktifkan oleh admin.');return deleteOnuForm(onu);}
     }catch(error){notice(error.message);}finally{if(buttonEl.isConnected)buttonEl.disabled=false;}
   }
   window.FakenetOltUI={render};

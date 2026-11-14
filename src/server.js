@@ -88,6 +88,7 @@ const wifiKuModemStatus = require('./wifiku-modem-status');
 const networkIdentity = require('./network-identity');
 const ticketNetwork = require('./ticket-network');
 const oltAutoIdentity = require('./olt-auto-identity');
+const oltDeviceRemoval = require('./olt-device-removal');
 const license = require('./license');
 const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
@@ -23956,6 +23957,7 @@ async function handleApi(req, res, url) {
     sendJson(res, 200, { devices: rows, tickets: [],
       nasOptions: manage ? radiusNasRowsLocal(context.data).map(nas => ({ id: nas.id, name: nas.name })) : [],
       technicians: (context.data.users || []).filter(user => user.active !== false && ['admin','owner','noc','technician','secretary'].includes(user.role)).map(user => ({ id: user.id, name: user.name || user.username })),
+      integrationEnabled: context.data.settings?.networkIntegrationEnabled === true,
       notificationEnabled: oltTicketing.settingsFor(context.data).whatsappEnabled, ticketAutomation: {enabled:true,cause:'los',whatsappEnabled:oltTicketing.settingsFor(context.data).whatsappEnabled}, ticketTemplates:oltMonitor.ticketTemplates(context.data),
       ...(manage?{ticketSettings:{...oltTicketing.settingsFor(context.data),gatewayEnabled:context.data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(context.data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.eligibleUsers(context.data).map(user=>({id:user.id,name:user.name||user.username,role:user.role,phone:oltTicketing.phoneFor(user)}))}:{}) });
     return;
@@ -23973,6 +23975,12 @@ async function handleApi(req, res, url) {
       sendJson(res,200,{ok:true,...result});
     }catch(error){badRequest(res,error.message);}return;
   }
+  const oltRemovalPreview=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/onus\/([A-Za-z0-9]+)\/deletion$/);
+  if(oltRemovalPreview&&method==='GET'){
+    const context=await requirePermission(req,res,'olt:onu:delete');if(!context)return;
+    const device=oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===oltRemovalPreview[1]);if(!device){notFound(res);return;}
+    try{sendJson(res,200,await oltDeviceRemoval.preview(context.data,device,oltRemovalPreview[2],{onuIndex:url.searchParams.get('onuIndex')||''},context.user));}catch(error){sendJson(res,error.status||400,{error:error.message});}return;
+  }
   const oltOnuDeleteMatch=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/onus\/([A-Za-z0-9]+)(\/reboot)?$/);
   if(oltOnuDeleteMatch&&((!oltOnuDeleteMatch[3]&&method==='DELETE')||(oltOnuDeleteMatch[3]&&method==='POST'))) {
     const reboot=Boolean(oltOnuDeleteMatch[3]),action=reboot?'reboot':'delete',label=reboot?'reboot':'hapus',confirmation=reboot?'confirmReboot':'confirmDelete';
@@ -23983,10 +23991,10 @@ async function handleApi(req, res, url) {
     try {
       if(!oltMonitor.normalizeSerial(serial)||oltMonitor.normalizeSerial(payload.serialNumber)!==oltMonitor.normalizeSerial(serial)||payload[confirmation]!==true)throw new Error(`Konfirmasi serial ONU dan persetujuan ${label} wajib diisi`);
       await mutate(store=>addActivity(store,'monitoring',`Permintaan ${label} ONU ${serial} dari ${device.name} oleh ${context.user.name||context.user.username}`,{action:`olt-onu-${action}-request`,oltId:device.id,serialNumber:serial,onuIndex:payload.onuIndex,userId:context.user.id}),{collections:['activity'],includeCore:false});
-      const result=await (reboot?oltMonitor.rebootOnu:oltMonitor.removeOnu)(context.data,device,serial,payload);
-      await mutate(store=>addActivity(store,'monitoring',result.message,{action:`olt-onu-${action}-result`,oltId:device.id,serialNumber:serial,onuIndex:result.onuIndex||payload.onuIndex,ponKey:result.ponKey,userId:context.user.id,confirmed:result.confirmed}),{collections:['activity'],includeCore:false});
-      sendJson(res,reboot||result.confirmed?200:202,{ok:true,...result});
-    }catch(error){badRequest(res,error.message);}return;
+      const result=await (reboot?oltMonitor.rebootOnu(context.data,device,serial,payload):oltDeviceRemoval.remove(context.data,device,serial,payload,context.user,{getData:loadStore}));
+      await mutate(store=>addActivity(store,'monitoring',result.message,{action:`olt-onu-${action}-result`,oltId:device.id,serialNumber:serial,onuIndex:result.onuIndex||payload.onuIndex,ponKey:result.ponKey,userId:context.user.id,confirmed:reboot?result.confirmed:result.complete,cascade:result.cascade,oltState:result.olt?.state,acsState:result.acs?.state}),{collections:['activity'],includeCore:false});
+      sendJson(res,reboot||result.complete?200:207,{ok:reboot||result.complete,...result});
+    }catch(error){sendJson(res,error.status||400,{error:error.message});}return;
   }
   if (pathname === '/api/monitoring/olt/onus' && method === 'GET') {
     const context = await requirePermission(req,res,'olt:read'); if (!context) return;
@@ -24149,6 +24157,7 @@ async function handleApi(req, res, url) {
           const index = store.oltDevices.findIndex(row => row.id === id);
           if (id && index < 0) throw new Error('OLT tidak ditemukan');
           if (method === 'DELETE') {
+            if(payload.confirmDelete!==true||payload.confirmId!==id||String(payload.confirmName||'').trim()!==store.oltDevices[index].name)throw new Error('Konfirmasi nama OLT dan persetujuan hapus integrasi wajib sesuai');
             if ((store.oltTickets || []).some(ticket => ticket.oltId === id)) throw new Error('OLT memiliki riwayat tiket. Nonaktifkan monitoring untuk mempertahankan riwayat.');
             addActivity(store,'monitoring',`Integrasi OLT ${store.oltDevices[index].name} dihapus oleh ${context.user.name || context.user.username}`,{ action: 'olt-integration-delete',oltId: id });
             store.oltDevices.splice(index,1); return { id };

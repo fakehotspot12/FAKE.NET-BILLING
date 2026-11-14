@@ -429,8 +429,16 @@ instalasi baru **nonaktif**. Menonaktifkannya menghentikan pencocokan otomatis
 dan penggunaan cache otomatis, bukan monitoring biasa, tiket manual atau billing.
 Tiket LOS tetap dapat dibuat dari OLT yang terhubung; data pelanggan/ODP mengikuti
 pemetaan manual bila sinkron otomatis nonaktif. Laporan WifiKu tetap tersedia.
-Sakelar ini belum mengaktifkan penghapusan berantai pelanggan/ACS/OLT maupun
-provisioning pasang baru; aksi tersebut tidak dijalankan oleh integrasi saat ini.
+Jika integrasi aktif, tombol **Hapus** pada ONU memeriksa OLT dan ACS berdasarkan
+SN yang sama. OLT dihapus lebih dahulu; ACS hanya dihapus setelah keberhasilan
+OLT terverifikasi. Record yang terbukti sudah tidak ada dilewati, tetapi timeout
+bukan bukti data tidak ada. ONU masih online atau identitas ambigu ditahan;
+ACS yang masih menerima inform atau terdeteksi digunakan di posisi lain tetap
+dipertahankan. Hasil kedua tahap ditampilkan di popup. Jika ACS belum berhasil,
+gunakan **Periksa Ulang** untuk melanjutkan tahap yang belum selesai.
+Integrasi nonaktif berarti penghapusan hanya di OLT. Aksi ini tidak menghapus
+member, akun RADIUS, invoice, pembayaran atau tiket, tidak mereset modem dan
+tidak menjalankan provisioning pasang baru. Mode dev terisolasi tetap simulasi.
 Teknisi cukup memperbaiki data asli ACS/OLT; tidak wajib menautkan ONU satu per
 satu. Khusus pencocokan otomatis ini, kedua integrasi harus aktif dan dapat dibaca.
 Tanpa salah satunya, tiket manual, laporan WifiKu dan pemetaan manual tetap bisa

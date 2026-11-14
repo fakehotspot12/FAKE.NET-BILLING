@@ -283,26 +283,35 @@ async function liveSerial(data,device,onu) {
   const {stdout}=await exec('snmpget',['-v2c','-c',secrets.decryptSecret(data,device.communityEnc),'-t','2','-r','0','-On','-Ox',address,oid],{timeout:3500,maxBuffer:16384});
   const row=parseRows(stdout).find(row=>row.oid===oid);return normalizeSerial(row?.type==='Hex-STRING'?row.value.replace(/\s/g,''):string(row));
 }
-function selectedOnu(snapshot,serial,selector={}) {
+function selectedOnu(snapshot,serial,selector={},allowMissing=false) {
   const raw=selector.onuIndex,index=raw===undefined||raw===''?'':String(raw);
   if(index&&(!/^[0-9]+$/.test(index)||!position(index)))throw new Error('Posisi ONU tidak valid');
   const matches=(snapshot?.onus||[]).filter(row=>row.serialNumber===serial&&(!index||String(row.id)===index));
   if(matches.length>1)throw new Error('SN digunakan pada beberapa PON. Buka aksi dari baris ONU yang ingin dituju.');
-  const onu=matches[0];if(!onu||!position(onu.id))throw new Error('ONU tidak ada pada posisi yang dipilih. Segarkan data terlebih dahulu.');
+  const onu=matches[0]||(allowMissing&&index?{id:index,serialNumber:serial,...position(index)}:null);if(!onu||!position(onu.id))throw new Error('ONU tidak ada pada posisi yang dipilih. Segarkan data terlebih dahulu.');
   return onu;
 }
+async function readRemovalState(data,device,serial,selector={},transport={}){
+  const sn=normalizeSerial(serial);if(!sn)throw new Error('Serial ONU tidak valid');
+  const snapshot=await snapshotFor(device),target=selectedOnu(snapshot,sn,selector,true);
+  if(process.env.MIGRATION_MODE==='1'){if(snapshot?.simulated===true&&/^demo-olt-\d{1,2}$/.test(device.id))return {target,state:target.status||'unknown',simulated:true};throw new Error('Mode dev terisolasi: pembacaan ONU asli dinonaktifkan');}
+  if(!device.enabled||!device.cliEnabled||!device.cliPasswordEnc)throw new Error('Akses CLI OLT belum diaktifkan');
+  const result=await (transport.inspect||cli.inspectOnu)(data,device,target).catch(error=>{if(error.code==='ONU_NOT_FOUND')return {absent:true};throw error;});
+  return {target,state:result.absent?'missing':cli.readRunState(result.outputs?.at(-1)?.stdout)};
+}
 async function removeOnu(data,device,serial,payload,transport={serial:liveSerial,delete:cli.deleteOnu,inspect:cli.inspectOnu}) {
+  transport={serial:liveSerial,delete:cli.deleteOnu,inspect:cli.inspectOnu,...transport};
   const sn=normalizeSerial(serial);
   if(!sn||normalizeSerial(payload.serialNumber)!==sn||payload.confirmDelete!==true)throw new Error('Konfirmasi serial dan persetujuan hapus ONU wajib sesuai');
   if(!device.enabled||!device.cliEnabled||!device.cliPasswordEnc)throw new Error('Akses pengelolaan ONU belum diaktifkan');
-  const snapshot=await snapshotFor(device),onu=selectedOnu(snapshot,sn,payload);
+  const snapshot=await snapshotFor(device),onu=selectedOnu(snapshot,sn,payload,transport.allowMissing===true);
   const live=await transport.serial(data,device,onu);let result;
   if(live!==sn){
     if(!live&&transport.inspect)try{await transport.inspect(data,device,onu);}catch(error){if(error.code==='ONU_NOT_FOUND')result={deleteConfirmed:true,alreadyAbsent:true};else throw error;}
     if(!result)throw new Error('Serial ONU di OLT berubah atau tidak cocok. Penghapusan dibatalkan.');
-  }else result=await transport.delete(data,device,onu);
+  }else result=await transport.delete(data,device,{...onu,...(transport.requireOffline===true?{requireOffline:true}:{})});
   const key=cacheKey(device),next={...snapshot,pendingRefresh:true};
-  if(result.deleteConfirmed){next.onus=snapshot.onus.filter(row=>String(row.id)!==String(onu.id));applyCauses(next,new Map(next.onus.filter(row=>row.downCause).map(row=>[row.serialNumber,row.downCause])));}
+  if(result.deleteConfirmed){next.onus=(snapshot?.onus||[]).filter(row=>String(row.id)!==String(onu.id));applyCauses(next,new Map(next.onus.filter(row=>row.downCause).map(row=>[row.serialNumber,row.downCause])));}
   remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}
   lastAttempt.delete(key);
   return {serialNumber:sn,onuIndex:String(onu.id),ponKey:onu.ponKey,onuId:onu.onuId,oltId:device.id,confirmed:Boolean(result.deleteConfirmed),alreadyAbsent:result.alreadyAbsent===true,message:result.alreadyAbsent?'ONU sudah tidak terdaftar di posisi ini. Daftar billing telah diperbarui.':result.deleteConfirmed?'ONU telah dihapus dari OLT. Data billing tetap tersimpan.':'Perintah hapus terkirim. Menunggu pembacaan ulang OLT; jangan mengulang sebelum status diperiksa.'};
@@ -595,6 +604,6 @@ function pruneTickets(rows) {
 }
 
 module.exports = { OIDS, CACHE_MS, MAX_DEVICES, parseRows, normalizeSerial, normalizeSnapshot, position, optical, validateDevice,
-  classifyCause, summarizeOnus, applyCauses, matchesState, lastOnlineAt, preserveLastOnline, parseCauseRows, onuPage, removeOnu, rebootOnu, renameOnu, readOnuDescription,
+  classifyCause, summarizeOnus, applyCauses, matchesState, lastOnlineAt, preserveLastOnline, parseCauseRows, onuPage, removeOnu, rebootOnu, renameOnu, readOnuDescription, readRemovalState,
   deviceRows, publicDevice, snapshotFor, collect, poll, pollNext, requestRefresh, visibleDevices, mappingNodes, linkCustomer, linkedOnus,
   saveTicket, pruneTickets, ticketMessage, TICKET_STATUSES, losTicketPlan, applyLosTicketPlan, TICKET_SCOPE_LABELS, claimTicket, progressTicket, requireTicketEditor, ticketTemplates, validateTicketTemplates, renderTicketTemplate };

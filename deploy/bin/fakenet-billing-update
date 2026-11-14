@@ -282,6 +282,7 @@ verify_update_payload() {
     src/login-turnstile.js
     src/network-identity.js
     src/olt-auto-identity.js
+    src/olt-device-removal.js
     src/olt-cli.js
     src/olt-monitor.js
     src/olt-ticketing.js
@@ -551,7 +552,7 @@ install_node_dependencies() {
   fi
   rm -rf "$dependency_stage"
   dependency_stage=""
-  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status')" >/dev/null; then
+  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status')" >/dev/null; then
     rm -rf "$APP_DIR/node_modules"
     [ ! -d "$previous_modules" ] || mv "$previous_modules" "$APP_DIR/node_modules"
     echo "Verifikasi dependency baru gagal; dependency lama dipulihkan." >&2

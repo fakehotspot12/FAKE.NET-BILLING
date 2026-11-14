@@ -5,6 +5,7 @@ const secrets = require('./secure-secrets');
 const busy = new Set();
 function description(value){if(typeof value!=='string'||!value.trim()||value.length>64||!/^[A-Za-z0-9 ._@()+,:\/-]+$/.test(value))throw new Error('Nama ONU harus 1-64 karakter huruf, angka, spasi atau . _ @ ( ) + , : / -');return value.trim();}
 function readDescription(output=''){return String(output).match(/(?:^|\n)[ \t]*Description[ \t]*:[ \t]*([^\r\n]*)/i)?.[1]?.trim()??null;}
+function readRunState(output=''){const value=String(output).match(/(?:^|\n)[ \t]*(?:Run[ \t]+state|Run[ \t]+status|Operational[ \t]+state)[ \t]*:[ \t]*(online|offline|up|down)\b/i)?.[1]?.toLowerCase();return value==='online'||value==='up'?'online':value==='offline'||value==='down'?'offline':'unknown';}
 function onuDescription(value='',target={}){
   const name=String(value||'').trim(),match=name.match(/^gpon[ \t]+(\d+\/\d+\/\d+)[ \t]+onu[ \t]+(\d+)(?:[ \t]+(.*))?$/i);
   const ponKey=target.ponKey||`0/${target.slot}/${target.pon}`;
@@ -38,6 +39,7 @@ function run(data, device, target = null, spawnProcess = spawn) {
         const sn=outputs.at(-1)?.stdout.match(/\bSN\s*:\s*([A-Za-z0-9]{12}|[A-Fa-f0-9]{16})\b/i)?.[1];
         let normalized=String(sn || '').toUpperCase();if (/^[A-F0-9]{16}$/.test(normalized)) {const raw=Buffer.from(normalized,'hex');normalized=raw.subarray(0,4).toString('ascii')+raw.subarray(4).toString('hex').toUpperCase();}
         if (normalized !== target.serialNumber) return finish(new Error('Serial ONU di OLT berubah atau tidak cocok. Aksi dibatalkan.'));
+        if(deleting&&target.requireOffline===true&&readRunState(outputs.at(-1)?.stdout)!=='offline')return finish(new Error('ONU masih online atau status belum terverifikasi. Penghapusan ditahan.'));
         if(rename&&readDescription(outputs.at(-1)?.stdout)!==target.previousDescription)return finish(new Error('Description ONU berubah atau belum terbaca. Buka ulang sebelum menyimpan.'));
       }
       if (index >= commands.length) return finish();
@@ -80,4 +82,4 @@ async function deleteOnu(data,device,target) {return run(data,device,target);}
 async function rebootOnu(data,device,target) {return run(data,device,{...target,action:'reboot'});}
 async function renameOnu(data,device,target) {return run(data,device,{...target,action:'describe'});}
 async function inspectOnu(data,device,target) {return run(data,device,{...target,action:'inspect'});}
-module.exports={readCauses,deleteOnu,rebootOnu,renameOnu,inspectOnu,description,readDescription,onuDescription,onuAbsent,run};
+module.exports={readCauses,deleteOnu,rebootOnu,renameOnu,inspectOnu,description,readDescription,readRunState,onuDescription,onuAbsent,run};

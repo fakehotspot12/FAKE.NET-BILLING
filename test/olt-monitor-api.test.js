@@ -45,7 +45,8 @@ test('admin manually adds edits and removes integration without touching invoice
  assert(fixture.oltDevices[0].communityEnc.startsWith('v1:'));const secret=fixture.oltDevices[0].communityEnc;
  const edited=await request('admin','PUT','/'+id,{name:'Changed',community:'',latitude:-0.5,longitude:117.1});assert.equal(edited.status,200);assert.equal(fixture.oltDevices[0].communityEnc,secret);
  const list=await request('admin');assert.equal(list.body.devices[0].name,'Changed');assert(!JSON.stringify(list.body).includes('communityEnc'));assert.equal(list.body.notificationEnabled,false);
- assert.equal((await request('admin','DELETE','/'+id)).status,200);assert.equal(fixture.oltDevices.length,0);
+ assert.equal((await request('admin','DELETE','/'+id)).status,400);assert.equal((await request('admin','DELETE','/'+id,{confirmId:id,confirmName:'Unit',confirmDelete:true})).status,400);
+ assert.equal((await request('admin','DELETE','/'+id,{confirmId:id,confirmName:'Changed',confirmDelete:true})).status,200);assert.equal(fixture.oltDevices.length,0);
  assert.deepEqual({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages},before);
 });
 test('device mutations keep CSRF and input checks; technical readers cannot edit credentials',async()=>{
@@ -65,7 +66,7 @@ test('manual ticket is auditable, cannot duplicate fault, and dispatches no What
  assert.equal((await request('secretary','POST','/tickets',{oltId:id,title:'Duplicate',pon:'0/0/1'})).status,400);
  const done=await request('secretary','PUT','/tickets/'+created.body.ticket.id,{status:'resolved',description:'Recovered'});assert.equal(done.status,200);assert.equal(done.body.ticket.status,'resolved');
  assert.equal(fixture.waMessages.length,0);assert(fixture.activity.some(row=>row.meta?.action==='olt-ticket'));
- assert.equal((await request('admin','DELETE','/'+id)).status,400);assert.equal(fixture.oltTickets.length,1);
+ assert.equal((await request('admin','DELETE','/'+id,{confirmId:id,confirmName:'Unit',confirmDelete:true})).status,400);assert.equal(fixture.oltTickets.length,1);
 });
 test('aggregate ONU list keeps authentication and technician NAS boundaries',async()=>{
  reset();const a=await request('admin','POST','',{name:'A',host:'192.0.2.1',community:'Unit',nasId:'nas-a'}),b=await request('admin','POST','',{name:'B',host:'192.0.2.2',community:'Unit',nasId:'nas-b'});
@@ -85,6 +86,22 @@ test('ONU actions preserve CSRF, roles, NAS scopes and isolated-dev restrictions
  assert.equal((await request('technician','POST',suffix+'/reboot',{serialNumber:'HWTCAABBCCDD',confirmReboot:true})).status,400);
  fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-b'];assert.equal((await request('technician','DELETE',suffix,{serialNumber:'HWTCAABBCCDD',confirmDelete:true})).status,404);
  assert.equal(fixture.waMessages.length,0);
+});
+test('deletion preview requires authenticated role and NAS scope and never writes business data',async t=>{
+ reset();const created=await request('admin','POST','',{name:'Preview',host:'192.0.2.120',community:'unit',nasId:'nas-a'}),suffix='/'+created.body.device.id+'/onus/HWTCAABBCCDD/deletion?onuIndex=4718593',removal=require('../src/olt-device-removal');let calls=0;
+ t.mock.method(removal,'preview',async(data,device,sn,selector,actor)=>{calls++;assert.equal(selector.onuIndex,'4718593');assert.equal(sn,'HWTCAABBCCDD');assert(actor.id);return{canSubmit:false,olt:{state:'simulated'},acs:{state:'simulated'}};});
+ assert.equal((await request('','GET',suffix)).status,401);for(const role of ['collector','viewer','finance','reseller_voucher'])assert.equal((await request(role,'GET',suffix)).status,403);
+ const before=saves;for(const role of ['admin','secretary','technician'])assert.equal((await request(role,'GET',suffix)).status,200);assert.equal(saves,before);assert.equal(calls,3);
+ fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-b'];assert.equal((await request('technician','GET',suffix)).status,404);assert.equal(calls,3);
+});
+test('DELETE uses the guarded cascade service and records separate stage results without altering finance',async t=>{
+ reset();const created=await request('admin','POST','',{name:'Removal',host:'192.0.2.121',community:'unit',nasId:'nas-a'}),suffix='/'+created.body.device.id+'/onus/HWTCAABBCCDD',removal=require('../src/olt-device-removal'),before=structuredClone({invoices:fixture.invoices,payments:fixture.payments,customers:fixture.customers,radiusUsers:fixture.radiusUsers});
+ let complete=false,calls=0;t.mock.method(removal,'remove',async(data,device,sn,payload,actor,options)=>{calls++;assert.equal(payload.token,'opaque');assert.equal(actor.id,'admin');assert.equal(await options.getData(),fixture);return{complete,cascade:true,message:'Stage result',olt:{state:'deleted'},acs:{state:complete?'deleted':'failed'}};});
+ const payload={serialNumber:'HWTCAABBCCDD',onuIndex:'4718593',confirmDelete:true,token:'opaque'};
+ try{process.env.MIGRATION_MODE='0';const liveModule=new Module(serverPath,module);liveModule.filename=serverPath;liveModule.paths=serverModule.paths;liveModule.require=serverModule.require;liveModule._compile(fs.readFileSync(serverPath,'utf8')+'\nmodule.exports.__test.oltApi=handleApi;',serverPath);
+  const invoke=async(validCsrf=true)=>{const id=sessions.get('admin'),req=Readable.from([Buffer.from(JSON.stringify(payload))]);req.method='DELETE';req.url='/api/monitoring/olt'+suffix;req.socket={remoteAddress:'127.0.0.1'};req.headers={host:'localhost:8891',origin:'http://localhost:8891','content-type':'application/json',cookie:auth.SESSION_COOKIE+'='+id,'x-csrf-token':validCsrf?auth.csrfTokenForSessionId(id):'bad'};const response=apiResponse();await liveModule.exports.__test.oltApi(req,response,new URL(req.url,'http://localhost:8891'));return response;};
+  assert.equal((await invoke(false)).status,419);assert.equal(calls,0);const partial=await invoke();assert.equal(partial.status,207,JSON.stringify(partial.body));assert.equal(partial.body.acs.state,'failed');assert.equal(fixture.activity[0].meta.acsState,'failed');complete=true;assert.equal((await invoke()).status,200);assert.equal(fixture.activity[0].meta.oltState,'deleted');assert.deepEqual({invoices:fixture.invoices,payments:fixture.payments,customers:fixture.customers,radiusUsers:fixture.radiusUsers},before);}
+ finally{process.env.MIGRATION_MODE='1';}
 });
 test('background LOS reconciliation persists tickets once, audits creation and never enqueues WhatsApp',async()=>{
  reset();const created=await request('admin','POST','',{name:'Unit',host:'192.0.2.90',community:'unit'}),olt=require('../src/olt-monitor'),original=olt.snapshotFor;
@@ -378,7 +395,7 @@ test('secretary has admin user and OLT integration access while metadata changes
  const users=await request('secretary','GET','/api/users');assert.equal(users.status,200);assert.deepEqual(users.body.roles.find(row=>row.value==='secretary').permissions,users.body.roles.find(row=>row.value==='admin').permissions);
  assert.equal((await request('secretary','POST','',{name:'Unit',host:'192.0.2.94',community:'unit'},false)).status,419);
  const created=await request('secretary','POST','',{name:'Secretariat OLT',host:'192.0.2.94',community:'unit'});assert.equal(created.status,201);
- assert.equal((await request('secretary','PUT','/'+created.body.device.id,{name:'Updated OLT'})).status,200);assert.equal((await request('secretary','DELETE','/'+created.body.device.id)).status,200);
+ assert.equal((await request('secretary','PUT','/'+created.body.device.id,{name:'Updated OLT'})).status,200);assert.equal((await request('secretary','DELETE','/'+created.body.device.id,{confirmId:created.body.device.id,confirmName:'Updated OLT',confirmDelete:true})).status,200);
  assert(fixture.activity.some(row=>row.meta?.userId==='secretary'||row.message?.includes('Unit secretary')));
  assert.deepEqual({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages},before);
 });

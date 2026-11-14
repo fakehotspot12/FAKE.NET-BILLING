@@ -26804,8 +26804,8 @@ async function renderMonitoringOlt(mode = 'olt') {
   const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
   if (!window.FakenetOltUI) {
     if (!oltUiLoadPromise) oltUiLoadPromise = new Promise((resolve,reject) => {
-      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/olt.css?ui=olt-actions-20261114'; document.head.appendChild(style);
-      const script = document.createElement('script'); script.src = '/olt.js?ui=olt-auto-identity-20261114';
+      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/olt.css?ui=olt-cascade-20261114'; document.head.appendChild(style);
+      const script = document.createElement('script'); script.src = '/olt.js?ui=olt-cascade-20261114';
       script.onload = resolve; script.onerror = () => { oltUiLoadPromise = null; script.remove(); reject(new Error('Tampilan OLT belum dapat dimuat')); };
       document.head.appendChild(script);
     });

@@ -1057,6 +1057,21 @@ async function identityDevices(settings = {}) {
     .filter(row=>row.id&&row.serialNumber&&row.username&&!rowExcludedByUsernameSuffix(row,cfg.excludeUsernameSuffixes));
 }
 
+async function removalDevicesBySerial(settings={},serialNumber=''){
+  const cfg=normalizeSettings(settings),sn=normalizeSerialNumber(serialNumber);
+  if(!configured(cfg))throw new Error('Koneksi ACS belum aktif');
+  if(!/^[A-Z0-9]{12}$/.test(sn))throw new Error('Serial modem tidak valid');
+  const values=[sn];if(/^[A-Z]{4}[A-F0-9]{8}$/.test(sn))values.push(Buffer.from(sn.slice(0,4),'ascii').toString('hex').toUpperCase()+sn.slice(4));
+  const paths=['_deviceId._SerialNumber','InternetGatewayDevice.DeviceInfo.SerialNumber._value','InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber._value','Device.DeviceInfo.SerialNumber._value','VirtualParameters.getSerialNumber._value'];
+  const projection=['_id','_deviceId','_lastInform','_registered','_tags',...paths.filter(path=>path!=='_deviceId._SerialNumber').map(path=>path.replace(/\._value$/,'')),...cfg.usernameParameters].join(',');
+  const expression='^(?:'+values.join('|')+')$',query={$or:[...paths.map(path=>({[path]:{$regex:expression,$options:'i'}})),{_id:{$regex:'-(?:'+values.join('|')+')$',$options:'i'}}]},raw=await requestJson(cfg,'/devices/',{timeoutMs:4000,maxResponseBytes:256*1024,query:{query:JSON.stringify(query),projection,limit:'6'}});
+  if(!Array.isArray(raw)||raw.length>5)throw new Error('Identitas ACS ambigu');
+  const rows=raw.map(device=>({id:cleanText(device._id),serialNumber:normalizeSerialNumber(cleanText(device._deviceId?._SerialNumber)||getPathValue(device,'InternetGatewayDevice.DeviceInfo.SerialNumber')||getPathValue(device,'Device.DeviceInfo.SerialNumber')||getPathValue(device,'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber')||getPathValue(device,'VirtualParameters.getSerialNumber')||cleanText(device._id).split('-').at(-1)),
+    username:resolveUsernameParameter(device,cfg.usernameParameters).value,lastInform:cleanText(device._lastInform),registered:cleanText(device._registered),tags:safeTags(device._tags)}));
+  if(rows.some(row=>row.serialNumber!==sn||!row.id))throw new Error('Identitas ACS tidak cocok');
+  return rows.map(row=>({...row,excluded:rowExcludedByUsernameSuffix(row,cfg.excludeUsernameSuffixes)}));
+}
+
 function recentPendingProjection(cfg = normalizeSettings({})) {
   const paths = new Set([
     '_id',
@@ -3414,6 +3429,7 @@ module.exports = {
   getWifiConfiguration,
   listDevices,
   identityDevices,
+  removalDevicesBySerial,
   normalizeDevice,
   normalizeSettings,
   recentPendingDevices,
