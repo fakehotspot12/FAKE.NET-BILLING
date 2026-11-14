@@ -89,6 +89,7 @@ const networkIdentity = require('./network-identity');
 const ticketNetwork = require('./ticket-network');
 const oltAutoIdentity = require('./olt-auto-identity');
 const oltDeviceRemoval = require('./olt-device-removal');
+const oltPlannedReboot = require('./olt-planned-reboot');
 const license = require('./license');
 const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
@@ -20011,6 +20012,12 @@ async function warmRouterDashboardCache(reason = 'interval') {
 }
 
 let oltBackgroundTimer = null;
+async function runPlannedModemReboot(target,actor,operation){
+  if(MIGRATION_MODE)throw new Error('Mode dev terisolasi: reboot perangkat asli dinonaktifkan');
+  if(!oltPlannedReboot.fromDeviceId(target.serialNumber)&&!oltPlannedReboot.fromDeviceId(target.deviceId))return operation();
+  const {result:marker}=await mutate(store=>{const marker=oltPlannedReboot.begin(store,target,actor);if(marker)addActivity(store,'monitoring','Reboot terencana: tiket otomatis dijeda maksimal 5 menit',{action:'modem-planned-reboot',markerId:marker.id,serialNumber:marker.serialNumber,oltId:marker.oltId,userId:actor.id,until:marker.until});return marker;},{collections:['activity'],includeCore:true});
+  try{return await operation();}catch(error){if(marker&&Number(error.status)>=400&&Number(error.status)<500&&Number(error.status)!==408)await mutate(store=>oltPlannedReboot.cancel(store,marker.id),{collections:[],includeCore:true});throw error;}
+}
 let oltWaDispatchTimer = null;
 function dispatchOltNotificationsSoon(count) {
   if(MIGRATION_MODE||!count||oltWaDispatchTimer)return;
@@ -21661,7 +21668,7 @@ async function handleApi(req, res, url) {
       return;
     }
     try {
-      await genieAcs.reboot(authContext.data.settings || {}, portal.device.id);
+      await runPlannedModemReboot({source:'wifiku',deviceId:portal.device.id,serialNumber:portal.device.serialNumber,nasId:authContext.customer.nasId},{id:authContext.customer.id},()=>genieAcs.reboot(authContext.data.settings || {}, portal.device.id));
       sendJson(res, 200, { ok: true, message: 'Perintah reboot dikirim ke perangkat' });
     } catch (error) {
       sendJson(res, 400, { ok: false, error: error.message || 'Reboot perangkat gagal' });
@@ -23143,7 +23150,7 @@ async function handleApi(req, res, url) {
     for (const deviceId of ids) {
       try {
         if (action === 'reboot') {
-          await genieAcs.reboot(authContext.data.settings || {}, deviceId);
+          await runPlannedModemReboot({source:'acs',deviceId},authContext.user,()=>genieAcs.reboot(authContext.data.settings || {}, deviceId));
         } else {
           await genieAcs.deleteDevice(authContext.data.settings || {}, deviceId);
         }
@@ -23305,7 +23312,7 @@ async function handleApi(req, res, url) {
       if (action === 'refresh') {
         actionResult = await genieAcs.refreshDevice(authContext.data.settings || {}, deviceId);
       } else if (action === 'reboot') {
-        actionResult = await genieAcs.reboot(authContext.data.settings || {}, deviceId);
+        actionResult = await runPlannedModemReboot({source:'acs',deviceId},authContext.user,()=>genieAcs.reboot(authContext.data.settings || {}, deviceId));
       } else if (action === 'wifi') {
         actionResult = await genieAcs.setWifiCredentials(authContext.data.settings || {}, deviceId, payload);
       } else if (action === 'wifi-password') {
@@ -24011,7 +24018,7 @@ async function handleApi(req, res, url) {
     try {
       if(!oltMonitor.normalizeSerial(serial)||oltMonitor.normalizeSerial(payload.serialNumber)!==oltMonitor.normalizeSerial(serial)||payload[confirmation]!==true)throw new Error(`Konfirmasi serial ONU dan persetujuan ${label} wajib diisi`);
       await mutate(store=>addActivity(store,'monitoring',`Permintaan ${label} ONU ${serial} dari ${device.name} oleh ${context.user.name||context.user.username}`,{action:`olt-onu-${action}-request`,oltId:device.id,serialNumber:serial,onuIndex:payload.onuIndex,userId:context.user.id}),{collections:['activity'],includeCore:false});
-      const result=await (reboot?oltMonitor.rebootOnu(context.data,device,serial,payload):oltDeviceRemoval.remove(context.data,device,serial,payload,context.user,{getData:loadStore}));
+      const result=await (reboot?runPlannedModemReboot({source:'olt',serialNumber:serial,oltId:device.id,onuIndex:payload.onuIndex,pon:oltMonitor.position(payload.onuIndex)?.ponKey},context.user,()=>oltMonitor.rebootOnu(context.data,device,serial,payload)):oltDeviceRemoval.remove(context.data,device,serial,payload,context.user,{getData:loadStore}));
       await mutate(store=>addActivity(store,'monitoring',result.message,{action:`olt-onu-${action}-result`,oltId:device.id,serialNumber:serial,onuIndex:result.onuIndex||payload.onuIndex,ponKey:result.ponKey,userId:context.user.id,confirmed:reboot?result.confirmed:result.complete,cascade:result.cascade,oltState:result.olt?.state,acsState:result.acs?.state}),{collections:['activity'],includeCore:false});
       sendJson(res,reboot||result.complete?200:207,{ok:reboot||result.complete,...result});
     }catch(error){sendJson(res,error.status||400,{error:error.message});}return;

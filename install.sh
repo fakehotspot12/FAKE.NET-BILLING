@@ -275,6 +275,7 @@ verify_repository_payload() {
     src/network-identity.js
     src/olt-auto-identity.js
     src/olt-device-removal.js
+    src/olt-planned-reboot.js
     src/olt-cli.js
     src/olt-monitor.js
     src/olt-ticketing.js
@@ -392,7 +393,7 @@ install_node_deps() {
     return 1
   fi
   [ "$install_status" -eq 0 ] || return "$install_status"
-  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status')" >/dev/null
+  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status')" >/dev/null
 }
 
 install_genieacs_runtime() {

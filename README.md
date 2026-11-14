@@ -446,6 +446,16 @@ menit per OLT, sesi CLI dikunci, dan respons sukses perangkat wajib terbaca.
 Jika hasil belum pasti, periksa OLT sebelum mengulang. Konfigurasi koneksi
 billing yang diedit pada form disimpan terpisah dan bukan Save Config OLT.
 
+Reboot melalui menu OLT, GenieACS dan WifiKu diberi penanda **Reboot terencana**
+selama lima menit. LOS sesaat pada perangkat yang tepat tidak membuat tiket/WA
+gangguan otomatis. Penanda tetap tersimpan saat service restart, tidak mengubah
+status modem asli, tidak menyelesaikan tiket lama secara paksa dan tidak
+memperpanjang jeda karena klik berulang. Jika LOS menetap setelah jeda, tiket
+dibuat kembali berdasarkan pembacaan OLT baru, bukan cache sewaktu reboot.
+Reboot langsung dari web/tombol fisik modem tidak dapat diketahui sebagai aksi
+terencana oleh billing; gangguan yang tidak diberi penanda tetap mengikuti
+deteksi biasa. Tidak ada polling atau scan modem tambahan untuk mekanisme ini.
+
 Jika integrasi aktif, tombol **Hapus** pada ONU memeriksa OLT dan ACS berdasarkan
 SN yang sama. OLT dihapus lebih dahulu; ACS hanya dihapus setelah keberhasilan
 OLT terverifikasi. Record yang terbukti sudah tidak ada dilewati, tetapi timeout

@@ -1326,6 +1326,7 @@ function publicSettings(settings) {
     waGateway,
     paymentGateway,
     license,
+    plannedOnuReboots,
     ...safeSettings
   } = rawSettings;
   const {

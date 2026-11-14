@@ -4,6 +4,7 @@ const auth = require('./auth');
 const olt = require('./olt-monitor');
 const crypto = require('node:crypto');
 const serviceTickets = require('./service-tickets');
+const plannedReboot = require('./olt-planned-reboot');
 const KINDS = Object.freeze(['detected', 'claimed', 'progress', 'resolved']);
 const NOTIFICATION_KINDS = Object.freeze(['detected', 'resolved']);
 const TICKET_QUEUE_VERSION = 2;
@@ -97,6 +98,7 @@ function enqueueNotifications(data, ticket, kind, origin, enqueue, actor = {}) {
   if (!settingsFor(data).whatsappEnabled || data.settings?.waGateway?.enabled !== true) return { queued: 0 };
   if(!KINDS.includes(kind))throw new Error('Jenis pesan tiket tidak valid');
   if(!NOTIFICATION_KINDS.includes(kind))return {queued:0,suppressed:true,reason:'Pesan pengambilan dan progres tiket hanya dicatat di web'};
+  if(kind==='detected'&&plannedReboot.suppressNotification(data,ticket))return {queued:0,suppressed:true,reason:'Reboot terencana; notifikasi gangguan otomatis dijeda'};
   if(kind==='detected'&&(ticket.status!=='new'||ticket.assignedTo))return {queued:0,suppressed:true,reason:'Gangguan sudah ditangani atau selesai'};
   const key = eventKey(ticket, kind), recipients = recipientsFor(data, ticket, kind);
   const previous = ticket.waNotifications?.[kind];
@@ -136,6 +138,7 @@ function basicDeliveryAllowed(data, message, context) {
   if (!settingsFor(data).whatsappEnabled) return false;
   if(!NOTIFICATION_KINDS.includes(message.oltTicketKind)||sentBefore(message))return false;
   const ticket = context.tickets.get(message.oltTicketId);
+  if(ticket&&message.oltTicketKind==='detected'&&plannedReboot.suppressNotification(data,ticket,context.now))return false;
   if (!ticket || (message.oltTicketKind==='detected'?(ticket.status!=='new'||ticket.assignedTo):(ticket.status!=='resolved'||!ticket.assignedTo))) return false;
   const recipientKey=ticket.id+':'+message.oltTicketKind;
   if(!context.recipients.has(recipientKey))context.recipients.set(recipientKey,recipientsFor(data,ticket,message.oltTicketKind));
@@ -146,7 +149,7 @@ function basicDeliveryAllowed(data, message, context) {
 }
 function deliveryContext(data, now = Date.now()) {
   const tickets=new Map((data.oltTickets||[]).map(ticket=>[ticket.id,ticket])),recentFaults=new Map(),completedEvents=new Set(),pendingFaults=new Set(),winners=new Map();
-  const context={tickets,recentFaults,pendingFaults,winners,recipients:new Map()};
+  const context={tickets,recentFaults,pendingFaults,winners,recipients:new Map(),now};
   for(const [key,value]of Object.entries(data.settings?.oltTicketing?.notificationCooldowns||{}))if(Number(value)>now)recentFaults.set(key,Number(value));
   for(const message of data.waMessages||[]){
     if(message.type!=='oltTicket'||!sentBefore(message))continue;

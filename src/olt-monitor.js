@@ -9,6 +9,7 @@ const redis = require('./redis-cache');
 const cli = require('./olt-cli');
 const networkIdentity = require('./network-identity');
 const autoIdentity = require('./olt-auto-identity');
+const plannedReboot = require('./olt-planned-reboot');
 
 const exec = promisify(execFile);
 const OIDS = Object.freeze({
@@ -459,6 +460,7 @@ function linkCustomer(data, device, serial, payload = {}) {
 function linkedOnus(data, device, rows, snapshot=null) {
   const customers = new Map((data.customers || []).map(row => [row.id,row])), points = new Map((data.fiberPoints || []).map(row => [row.id,row]));
   const identities=networkIdentity.directory(data);
+  const maintenance=plannedReboot.index(data);
   return rows.map(onu => {
     const link = device.links?.[onu.serialNumber] || {};
     const automatic=autoIdentity.customerFor(data,device,onu);
@@ -466,13 +468,14 @@ function linkedOnus(data, device, rows, snapshot=null) {
     const user=customer&&identities.userForCustomer(customer);
     if(customer&&!identities.compatible(user||customer,{nasId:device.nasId}))customer=null;
     const point = points.get(link.fiberPointId||customer?.fiberPointId||customer?.odpId||customer?.distributionPointId||customer?.distribution_point_id||customer?.odp);
-    return { ...onu, name:cli.onuDescription(onu.name,onu), lastOnlineAt:lastOnlineAt(snapshot,onu), customerId: customer?.id || '', customerName: customer?.name || '', customerUsername: customer?(user?.username||customer.username||''):'',
+    const reboot=maintenance.size?plannedReboot.forOnu(data,device,onu,{index:maintenance}):null;
+    return { ...onu, ...(reboot?{plannedRebootUntil:reboot.until}:{}), name:cli.onuDescription(onu.name,onu), lastOnlineAt:lastOnlineAt(snapshot,onu), customerId: customer?.id || '', customerName: customer?.name || '', customerUsername: customer?(user?.username||customer.username||''):'',
       fiberPointId: point?.id || '', fiberPointName: point ? [point.code, point.name].filter(Boolean).join(' - ') : '' };
   });
 }
 const TICKET_STATUSES = Object.freeze(['new','assigned','working','resolved']);
 const TICKET_SCOPE_LABELS=Object.freeze({onu:'ONU',pon:'PON / Area ODC',odp:'ODP',odc:'ODC',olt:'OLT'});
-function isConfirmedLos(onu){return onu.status==='offline'&&onu.condition==='los'&&onu.causeKnown===true&&classifyCause(onu.downCause)==='los';}
+function isConfirmedLos(onu){return !onu.plannedReboot&&onu.status==='offline'&&onu.condition==='los'&&onu.causeKnown===true&&classifyCause(onu.downCause)==='los';}
 function incidentKey(ticket) {
   const serial=normalizeSerial(ticket.serialNumber);
   if(serial)return `${ticket.oltId}:onu:${serial}`;
@@ -514,8 +517,8 @@ function losTicketPlan(data, observations, options = {}) {
     const simulated=options.allowSimulated===true&&/^demo-olt-\d{1,2}$/.test(device?.id||'')&&snapshot?.simulated===true;
     const checked=Date.parse(snapshot?.checkedAt||'');
     if(!device?.enabled||device.updatedAt!==observation.deviceUpdatedAt||snapshot?.status!=='online'||snapshot.stale||snapshot.pendingRefresh||!Number.isFinite(checked)||checked>now+30000||(!simulated&&now-checked>CACHE_MS*2)||(!simulated&&snapshot.simulated))continue;
-    const seen=new Map(),duplicates=new Set();
-    for(const onu of (snapshot.onus||[]).slice(0,MAX_ONUS)){const serial=normalizeSerial(onu.serialNumber);if(!serial)continue;if(seen.has(serial))duplicates.add(serial);else seen.set(serial,onu);}
+    const seen=new Map(),duplicates=new Set(),maintenance=plannedReboot.index(data,now);
+    for(const onu of (snapshot.onus||[]).slice(0,MAX_ONUS)){const serial=normalizeSerial(onu.serialNumber);if(!serial)continue;if(seen.has(serial))duplicates.add(serial);else{const reboot=maintenance.size&&plannedReboot.forOnu(data,device,onu,{now,checkedAt:snapshot.checkedAt,index:maintenance});seen.set(serial,reboot?{...onu,plannedReboot:true}:onu);}}
     for(const serial of duplicates)seen.delete(serial);
     for(const subject of losSubjects(data,device,snapshot,seen,activeByOnu,observedByOnu)) {
       const {key,los,recovered}=subject,previous=observedByOnu.get(key),detection=previous?.losDetection;
