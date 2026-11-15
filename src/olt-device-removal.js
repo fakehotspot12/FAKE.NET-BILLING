@@ -18,24 +18,25 @@ function permission(data,device,actor,cascade){
   if(!olt.visibleDevices(data,user).some(row=>row.id===device.id))throw error('OLT tidak ditemukan',404);
   return user;
 }
-function signature(data,device){const cfg=acs.normalizeSettings(data.settings||{});return crypto.createHash('sha256').update(JSON.stringify([data.settings?.networkIntegrationEnabled===true,cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,device.id,device.nasId,device.host,device.port,device.cliPort,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.communityEnc,device.vendor,device.cliProtocol,device.webPort])).digest('hex');}
+function signature(data,device){const cfg=acs.normalizeSettings(data.settings||{});return crypto.createHash('sha256').update(JSON.stringify([data.settings?.networkIntegrationEnabled===true,cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,cfg.usernameParameters,device.id,device.nasId,device.host,device.port,device.cliPort,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.communityEnc,device.vendor,device.cliProtocol,device.webPort,device.links,device.updatedAt])).digest('hex');}
 function prune(now){for(const[key,plan]of plans)if(plan.expires<=now&&plan.status!=='running')plans.delete(key);while(plans.size>=MAX_PLANS){const key=[...plans.keys()].find(key=>plans.get(key).status!=='running');if(!key)throw error('Pratinjau penghapusan sedang penuh',429);plans.delete(key);}}
 function ownerSignature(data,device,row){const users=(data.radiusUsers||[]).filter(user=>clean(user.username).toLowerCase()===clean(row.username).toLowerCase()).map(user=>[user.id,user.customerId,user.nasId]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));return JSON.stringify([row.id,row.username,row.registered,device.links?.[row.serialNumber]?.customerId||'',users]);}
 async function acsState(data,device,sn,target,user,options,now){
   if(!acs.configured(data.settings||{}))return {public:state('unavailable','Koneksi ACS belum aktif. Penghapusan gabungan ditahan.')};
-  let rows;try{rows=await(options.findAcs||acs.removalDevicesBySerial)(data.settings||{},sn);}catch{return {public:state('unavailable','ACS belum dapat diverifikasi. Timeout bukan berarti data tidak ada.')}}
+  const mac=target.identifierKind==='mac';
+  let rows;try{rows=await(options.findAcs||(mac?acs.removalDevicesByMac:acs.removalDevicesBySerial))(data.settings||{},sn);}catch{return {public:state('unavailable','ACS belum dapat diverifikasi. Timeout bukan berarti data tidak ada.')}}
   if(!Array.isArray(rows)||rows.length>1)return {public:state('unknown','SN cocok dengan beberapa record ACS. Periksa manual.')};
   if(!rows.length)return {public:state('missing')};
-  const row=rows[0];if(!row.id||identity.serial(row.serialNumber)!==sn)return {public:state('unknown','Identitas ACS tidak cocok.')};
+  const row=rows[0];if(!row.id||(mac?!row.interfaceMacs?.includes(sn):identity.serial(row.serialNumber)!==sn))return {public:state('unknown','Identitas ACS tidak cocok.')};
   const directory=identity.directory(data),known=[...(data.monitoringTargets||[]),...(data.radiusNas||[])].flatMap(row=>[row.id,row.name,row.host,row.address]).filter(Boolean);
-  if(row.excluded||!identity.strictDeviceCandidate([row],{boundSerialNumbers:[sn],nasAliases:directory.aliasesFor(device.nasId),knownNasAliases:known}))return {public:state('preserved','Perangkat ACS berada di luar cakupan OLT ini.'),row};
+  if(row.excluded||!identity.strictDeviceCandidate([row],{boundDeviceIds:mac?[row.id]:[],boundSerialNumbers:mac?[]:[sn],nasAliases:directory.aliasesFor(device.nasId),knownNasAliases:known}))return {public:state('preserved','Perangkat ACS berada di luar cakupan OLT ini.'),row};
   const accounts=(data.radiusUsers||[]).filter(user=>clean(user.username).toLowerCase()===clean(row.username).toLowerCase());
   if(accounts.length&&!accounts.some(account=>directory.compatible(account,{nasId:device.nasId})))return {public:state('preserved','NAS akun ACS berbeda. Data ACS dipertahankan.'),row};
   const actual=directory.customerForAcs(row),manual=device.links?.[sn]?.customerId;
   if(manual&&actual&&manual!==actual.id)return {public:state('preserved','Modem sudah mengarah ke pelanggan lain.'),row};
   const devices=olt.deviceRows(data).filter(item=>item.enabled);
   for(const other of devices){let snapshot;try{snapshot=await(options.snapshot||olt.snapshotFor)(other);}catch{continue;}
-    for(const onu of snapshot?.onus||[]){if(identity.serial(onu.serialNumber)!==sn||(other.id===device.id&&String(onu.id)===String(target.id)))continue;
+    for(const onu of snapshot?.onus||[]){if(!((onu.identifierKind==='mac')===mac&&identity.serial(onu.serialNumber)===sn)&&!(mac&&identity.serial(onu.serialNumber)===identity.serial(row.serialNumber)))continue;if(other.id===device.id&&String(onu.id)===String(target.id))continue;
       const checked=Date.parse(snapshot.checkedAt||''),fresh=snapshot.status==='online'&&!snapshot.stale&&!snapshot.pendingRefresh&&Number.isFinite(checked)&&now-checked<=olt.CACHE_MS*2&&checked<=now+30000;
       if(!fresh||onu.status!=='offline')return {public:state('preserved',fresh&&onu.status==='online'?'SN masih aktif pada posisi OLT lain.':'Posisi lain dengan SN ini belum terverifikasi.'),row};
     }
@@ -55,7 +56,6 @@ async function inspect(data,device,sn,selector,actor,options={}){
   if(found.simulated){current.olt=state('simulated');current.acs=state('simulated');return current;}
   if(!['offline','missing'].includes(found.state)){current.olt=state(found.state==='online'?'online':'unknown',found.state==='online'?'Lepaskan modem lama dahulu. ONU yang masih online tidak dihapus.':'Status ONU belum terverifikasi.');return current;}
   if(!cascade){current.canSubmit=true;return current;}
-  if(found.target.identifierKind==='mac'){current.acs=state('skipped','Identitas ONU berupa MAC EPON, bukan serial ACS. Data ACS dipertahankan.');current.canSubmit=true;return current;}
   const candidate=await acsState(data,device,sn,found.target,user,{...options,oltMissing:found.state==='missing'},now);current.acs=candidate.public;current.candidate=candidate.row;current.owner=candidate.owner;
   current.canSubmit=['ready','missing','preserved'].includes(current.acs.state)&&(found.state!=='missing'||current.acs.state!=='preserved');return current;
 }
@@ -91,7 +91,6 @@ async function remove(data,device,serial,payload,actor,options={}){
     if(!removed?.confirmed)return plan.result=summary(state('pending'),state('skipped'),plan.cascade);
     automatic.invalidate();let oltResult=state(removed.alreadyAbsent?'missing':'deleted');
     if(!plan.cascade)return plan.result=summary(oltResult,state('skipped'),false);
-    if(plan.target.identifierKind==='mac')return plan.result=summary(oltResult,state('skipped','Identitas berupa MAC EPON; ACS tidak dihapus.'),true);
     try{
       const current=options.getData?await options.getData():data,currentDevice=olt.deviceRows(current).find(row=>row.id===device.id);if(!currentDevice||signature(current,currentDevice)!==plan.signature)throw error('Pengaturan integrasi berubah');const user=permission(current,currentDevice,actor,true);
       const candidate=await acsState(current,currentDevice,sn,plan.target,user,{...options,oltMissing:true},options.now??Date.now());
@@ -99,7 +98,7 @@ async function remove(data,device,serial,payload,actor,options={}){
       if(candidate.public.state!=='ready')return plan.result=summary(oltResult,candidate.public,true);
       if(!plan.candidate||candidate.row.id!==plan.candidate.id||candidate.owner!==plan.owner)return plan.result=summary(oltResult,state('preserved','Identitas ACS berubah. Data dipertahankan.'),true);
       try{await(options.removeAcs||acs.deleteDevice)(current.settings||{},candidate.row.id);}catch(error){if(error.status!==404)throw error;}
-      const remaining=await(options.findAcs||acs.removalDevicesBySerial)(current.settings||{},sn);
+      const remaining=await(options.findAcs||(plan.target.identifierKind==='mac'?acs.removalDevicesByMac:acs.removalDevicesBySerial))(current.settings||{},sn);
       if(!Array.isArray(remaining)||remaining.length)return plan.result=summary(oltResult,state('preserved','Perangkat muncul kembali atau penghapusan belum terverifikasi. Tidak dihapus ulang otomatis.'),true);
       return plan.result=summary(oltResult,state('deleted'),true);
     }catch{return plan.result=summary(oltResult,state('failed','ACS belum berhasil diproses. Tidak ada penghapusan ulang OLT.'),true);}

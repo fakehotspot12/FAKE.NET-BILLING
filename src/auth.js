@@ -114,6 +114,7 @@ const ROLE_DEFINITIONS = {
     permissions: [
       'dashboard:read',
       'activity:read',
+      'olt:tickets:create',
       'external-incomes:read',
       'external-incomes:write',
       'expenses:read',
@@ -359,6 +360,21 @@ function publicUser(user) {
   }
 
   const role = normalizeRole(user.role);
+  const permissions = [...permissionsForRole(role)];
+  const technicalTickets = permissions.includes('olt:tickets:write');
+  const ticketCreationAllowed = technicalTickets || (typeof user.ticketCreationAllowed === 'boolean'
+    ? user.ticketCreationAllowed : permissions.includes('olt:tickets:create'));
+  const ticketCreationLimited = ticketCreationAllowed && !permissions.includes('olt:tickets:read');
+  if (!ticketCreationAllowed) {
+    for (const permission of ['olt:tickets:create', 'olt:tickets:read']) {
+      const index = permissions.indexOf(permission);
+      if (index >= 0) permissions.splice(index, 1);
+    }
+  } else if (!technicalTickets) {
+    for (const permission of ['olt:tickets:create', 'olt:tickets:read']) {
+      if (!permissions.includes(permission)) permissions.push(permission);
+    }
+  }
   const lockedNasIds = normalizeLockedNasIds(user);
   const lockedNasId = lockedNasIds[0] || String(user.lockedNasId || user.resellerNasId || user.voucherNasId || '').trim();
   const employeeId = user.employeeId || user.nik || user.nip || '';
@@ -398,7 +414,9 @@ function publicUser(user) {
     partnerUsernameSuffixes: normalizePartnerUsernameSuffixes(user),
     partnerIspSharePercent: Number(user.partnerIspSharePercent ?? user.ispSharePercent ?? 40) || 40,
     partnerSharePercent: Number(user.partnerSharePercent ?? user.resellerSharePercent ?? 60) || 60,
-    permissions: permissionsForRole(role)
+    ticketCreationAllowed,
+    ticketCreationLimited,
+    permissions
   };
 }
 
@@ -495,7 +513,7 @@ function userWithSession(user) {
   const safeUser = publicUser(user);
   return {
     ...safeUser,
-    permissions: safeUser ? permissionsForRole(safeUser.role) : []
+    permissions: safeUser ? safeUser.permissions : []
   };
 }
 
@@ -753,6 +771,9 @@ function updateOwnProfile(data, userId, payload = {}) {
 }
 
 function createUser(data, payload = {}) {
+  if (Object.hasOwn(payload, 'ticketCreationAllowed') && typeof payload.ticketCreationAllowed !== 'boolean') {
+    throw new Error('Izin membuat tiket harus aktif atau nonaktif');
+  }
   const username = validateUsername(payload.username);
   if (findUserByUsername(data, username)) {
     throw new Error('Username sudah digunakan');
@@ -778,6 +799,7 @@ function createUser(data, payload = {}) {
     address: cleanMultilineText(payload.address, 320),
     photoUrl: payload.photoUrl ? sanitizeProfilePhotoUrl(payload.photoUrl) : '',
     active: payload.active !== false && payload.active !== 'false',
+    ...(typeof payload.ticketCreationAllowed === 'boolean' ? { ticketCreationAllowed: payload.ticketCreationAllowed } : {}),
     passwordHash: hashPassword(validatePassword(payload.password)),
     radbooxUsername: String(payload.radbooxUsername || '').trim(),
     radbooxPasswordEnc: secureSecrets.encryptSecret(data, payload.radbooxPassword || ''),
@@ -802,12 +824,16 @@ function createUser(data, payload = {}) {
 }
 
 function updateUser(data, userId, payload = {}) {
+  if (Object.hasOwn(payload, 'ticketCreationAllowed') && typeof payload.ticketCreationAllowed !== 'boolean') {
+    throw new Error('Izin membuat tiket harus aktif atau nonaktif');
+  }
   const user = (data.users || []).find((item) => item.id === userId);
   if (!user) {
     return null;
   }
 
   const before = { ...user };
+  if (typeof payload.ticketCreationAllowed === 'boolean') user.ticketCreationAllowed = payload.ticketCreationAllowed;
 
   if (payload.username) {
     const username = validateUsername(payload.username);

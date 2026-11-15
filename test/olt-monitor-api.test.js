@@ -16,6 +16,25 @@ async function request(role,method='GET',suffix='',body={},validCsrf=true,handle
  const res=apiResponse();await handler(req,res,new URL(uri,'http://localhost:8891'));return res;
 }
 function apiResponse(){return{writeHead(status,headers={}){this.status=status;this.headers=headers;},end(data){this.body=Buffer.isBuffer(data)?data:JSON.parse(data);}};}
+test('finance can open ticket menu and create a service ticket but cannot manage OLT or handle tickets',async()=>{
+ reset();assert.equal((await request('finance','GET','/service-options')).status,200);assert.equal((await request('finance','GET','/tickets')).status,200);
+ const payload={category:'billing',customerName:'Unit Customer',text:'Please check payment',address:'Unit Address'};
+ assert.equal((await request('finance','POST','/tickets',payload,false)).status,419);
+ const created=await request('finance','POST','/tickets',payload);assert.equal(created.status,201);assert.equal(created.body.ticket.createdBy,'finance');
+ const id=created.body.ticket.id;assert.equal((await request('finance','GET','/tickets/'+id)).status,200);
+ for(const [method,suffix]of [['PUT',''],['POST','/claim'],['POST','/progress']])assert.equal((await request('finance',method,'/tickets/'+id+suffix,{status:'resolved',note:'Test'})).status,403);
+ assert.equal((await request('finance')).status,403);assert.equal((await request('finance','POST','/tickets',{title:'Network fault'})).status,403);
+ fixture.users.find(row=>row.role==='finance').ticketCreationAllowed=false;
+ for(const path of ['/tickets','/service-options','/tickets/'+id])assert.equal((await request('finance','GET',path)).status,403);
+ assert.equal((await request('finance','POST','/tickets',payload)).status,403);
+});
+test('per-user ticket grants take effect in an existing session, keep own-ticket scope and are revocable',async()=>{
+ reset();assert.equal((await request('collector','GET','/tickets')).status,403);const collector=fixture.users.find(row=>row.role==='collector');collector.ticketCreationAllowed=true;
+ const created=await request('collector','POST','/tickets',{category:'billing',customerName:'Unit',text:'Please check'});assert.equal(created.status,201);
+ fixture.oltTickets.push({...created.body.ticket,id:'someone-else',createdBy:'admin'});
+ assert.equal((await request('collector','GET','/tickets')).body.total,1);assert.equal((await request('collector','GET','/tickets/someone-else')).status,404);
+ fixture.users.find(row=>row.role==='collector').ticketCreationAllowed=false;assert.equal((await request('collector','GET','/tickets')).status,403);
+});
 test.after(()=>{for(const id of sessions.values())auth.destroySession(id);fs.rmSync(directory,{recursive:true,force:true});});
 test('automatic network integration defaults off and old stored values cannot accidentally opt in',()=>{
  assert.equal(storeModule.createDefaultStore().settings.networkIntegrationEnabled,false);

@@ -8,6 +8,7 @@ const auth = require('./auth');
 const olt = require('./olt-monitor');
 const networkIdentity=require('./network-identity');
 const autoIdentity=require('./olt-auto-identity');
+const {addressFromTags}=require('./network-address');
 const PHOTO_ROOT = path.join(__dirname, '..', 'data', 'private', 'service-tickets');
 const CATEGORIES = Object.freeze([
   ['new-installation','request','Pasang baru (PSB)'],
@@ -31,7 +32,8 @@ function ticketLocation(data,ticket){
   const automatic=autoIdentity.customerForTicket(data,ticket,device);
   const customer=ticket.customerId?(data.customers||[]).find(row=>row.id===ticket.customerId):autoIdentity.manualCustomerFor(data,device,{serialNumber:ticket.serialNumber})||automatic?.customer;
   const point=customer?coordinates(customer.latitude,customer.longitude):coordinates(ticket.latitude,ticket.longitude);
-  return {name:customer?.name||customer?.customerName||ticket.customerName||'',phone:customer?.phone||customer?.whatsapp||ticket.contactPhone||'',address:customer?.address||ticket.contactAddress||'',coordinates:point,locationUrl:point?'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(point.latitude+','+point.longitude):''};
+  const address=customer?.address||ticket.contactAddress||addressFromTags(data,autoIdentity.modemForTicket(data,ticket,device));
+  return {name:customer?.name||customer?.customerName||ticket.customerName||'',phone:customer?.phone||customer?.whatsapp||ticket.contactPhone||'',address,coordinates:point,locationUrl:point?'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(point.latitude+','+point.longitude):''};
 }
 function publicProgress(ticket){
   const rows=[{stage:'received',at:ticket.createdAt}],add=(stage,at,note='')=>{if(!PUBLIC_STAGES[stage]||!Number.isFinite(Date.parse(at)))return;const previous=rows.at(-1);if(previous?.stage===stage&&(previous.note||'')===note)return;rows.push({stage,at,...(note?{note}:{})});};
@@ -68,10 +70,13 @@ function cleanText(value, max = 1500) {
 function categoryFor(id) { const value=CATEGORIES.find(row=>row.id===id);if(!value)throw error('Pilih kategori layanan');return value; }
 function isServiceTicket(ticket){return ['wifiku','staff-service'].includes(ticket?.source)&&ticket.scope==='service';}
 function visibilityFilter(data,user,devices) {
-  if(!user||user.active===false||!auth.hasPermission(auth.publicUser(user),'olt:tickets:read'))return()=>false;
+  const safe=auth.publicUser(user);
+  if(!user||user.active===false||!auth.hasPermission(safe,'olt:tickets:read'))return()=>false;
   const unrestricted=['admin','owner','noc','secretary'].includes(user.role);
   let allowed,locks;
   return ticket=>{
+    if(safe.ticketCreationLimited&&ticket.id&&!(ticket.source==='staff-service'&&ticket.createdBy===user.id))return false;
+    if(user.role==='partner'&&ticket.customerId){const member=(data.customers||[]).find(row=>row.id===ticket.customerId),account=member&&networkIdentity.directory(data).userForCustomer(member),username=String(account?.username||member?.username||'').toLowerCase();if(!safe.partnerUsernameSuffixes.some(suffix=>username.endsWith(String(suffix).toLowerCase())))return false;}
     if(!isServiceTicket(ticket)){allowed??=new Set((devices||olt.visibleDevices(data,user)).map(device=>device.id));return allowed.has(ticket.oltId);}
     if(ticket.source==='staff-service'&&!ticket.nasId&&!ticket.customerId||unrestricted)return true;
     if(!locks){locks=new Set([...(Array.isArray(user.lockedNasIds)?user.lockedNasIds:[]),user.lockedNasId].filter(Boolean));for(const nas of [...(data.radiusNas||[]),...(data.monitoringTargets||[])])if([nas.id,nas.monitoringTargetId,nas.monitoringId].some(id=>locks.has(id)))for(const id of [nas.id,nas.monitoringTargetId,nas.monitoringId])if(id)locks.add(id);}
@@ -147,7 +152,7 @@ async function create(data,customer,payload,context = {}) {
   data.oltTickets=olt.pruneTickets([...(data.oltTickets||[]),ticket]);return {ticket,created:true,changed:true};
 }
 async function createStaff(data,payload,actor) {
-  if(!auth.hasPermission(auth.publicUser(actor),'olt:tickets:write'))throw error('Tidak memiliki izin membuat tiket',403);
+  if(!['olt:tickets:write','olt:tickets:create'].some(permission=>auth.hasPermission(auth.publicUser(actor),permission)))throw error('Tidak memiliki izin membuat tiket',403);
   const category=categoryFor(payload.category),customerId=cleanText(payload.customerId||'',100);
   const customer=customerId?(data.customers||[]).find(row=>row.id===customerId):null;if(customerId&&!customer)throw error('Pelanggan tidak ditemukan');
   const name=cleanText(customer?.name||payload.customerName||'',100);if(!name)throw error('Nama pemohon wajib diisi');

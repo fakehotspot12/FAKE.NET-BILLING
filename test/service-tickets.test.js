@@ -294,7 +294,9 @@ test('service visibility checks role and NAS locks including monitoring/radius a
   data.radiusNas = [{ id: 'radius-a', monitoringTargetId: 'nas-a', monitoringId: 'monitor-a' }];
   for (const role of ['admin', 'owner', 'noc', 'secretary']) assert.equal(service.visible(data, auth.publicUser({ role, lockedNasIds: ['other'] }), ticket), true, role);
   for (const role of ['collector', 'reseller_voucher', 'partner']) assert.equal(service.visible(data, auth.publicUser({ role }), ticket), false, role);
-  for (const role of ['finance', 'viewer']) assert.equal(service.visible(data, auth.publicUser({ role }), ticket), true, role);
+  assert.equal(service.visible(data, auth.publicUser({ role:'finance' }), ticket), true);
+  assert.equal(service.visible(data, auth.publicUser({ role:'viewer' }), ticket), false);
+  assert.equal(service.visible(data, auth.publicUser({ role:'viewer',ticketCreationAllowed:true }), ticket), true);
   for (const locks of [[], ['all'], ['nas-a'], ['radius-a'], ['monitor-a']]) assert.equal(service.visible(data, { ...actor, lockedNasIds: locks }, ticket), true);
   assert.equal(service.visible(data, { ...actor, lockedNasId: 'nas-a' }, ticket), true);
   assert.equal(service.visible(data, { ...actor, lockedNasIds: ['nas-b'] }, ticket), false);

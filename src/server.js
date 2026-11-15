@@ -89,6 +89,7 @@ const networkIdentity = require('./network-identity');
 const ticketNetwork = require('./ticket-network');
 const oltAutoIdentity = require('./olt-auto-identity');
 const oltDeviceRemoval = require('./olt-device-removal');
+const customerDeviceRemoval = require('./customer-device-removal');
 const oltPlannedReboot = require('./olt-planned-reboot');
 const oltVendors = require('./olt-vendors');
 const license = require('./license');
@@ -24045,7 +24046,7 @@ async function handleApi(req, res, url) {
     }catch(error){badRequest(res,error.message);}return;
   }
   if(pathname==='/api/monitoring/olt/service-options'&&method==='GET'){
-    const context=await requirePermission(req,res,'olt:tickets:write');if(!context)return;
+    const context=await requireAnyPermission(req,res,['olt:tickets:write','olt:tickets:create']);if(!context)return;
     const needle=String(url.searchParams.get('search')||'').trim().toLowerCase().slice(0,100),identities=networkIdentity.directory(context.data);
     const customers=(context.data.customers||[]).filter(customer=>{const account=identities.userForCustomer(customer)||{},nas=radiusFindNas(context.data,account.nasId||customer.nasId||customer.nas||customer.site);
       return serviceTickets.visible(context.data,context.user,{source:'staff-service',scope:'service',customerId:customer.id,nasId:nas?.id||''})&&(!needle||[customer.name,customer.username,customer.code].some(value=>String(value||'').toLowerCase().includes(needle)));
@@ -24123,8 +24124,9 @@ async function handleApi(req, res, url) {
   }
   const oltTicketMatch = pathname.match(/^\/api\/monitoring\/olt\/tickets(?:\/([^/]+))?$/);
   if (oltTicketMatch && ['POST','PUT'].includes(method)) {
-    const context = await requirePermission(req, res, 'olt:tickets:write'); if (!context) return;
+    const context = method==='POST'&&!oltTicketMatch[1]?await requireAnyPermission(req,res,['olt:tickets:write','olt:tickets:create']):await requirePermission(req, res, 'olt:tickets:write'); if (!context) return;
     const payload = await readBody(req), ticketId = oltTicketMatch[1] || '';
+    if(!auth.hasPermission(context.user,'olt:tickets:write')&&(ticketId||!payload.category)){forbidden(res);return;}
     let queuedNotifications=0;
     try {
       const { result } = await mutate(async store => {
@@ -24482,6 +24484,7 @@ async function handleApi(req, res, url) {
       { force: true }
     );
     result.partnerScope = partnerScopeResponse(partnerScope);
+    result.deviceRemovalEnabled=customerDeviceRemoval.enabled(authContext.data)&&['radius:write','olt:onu:delete','genieacs:write'].every(permission=>auth.hasPermission(authContext.user,permission));
     sendJson(res, 200, result);
     return;
   }
@@ -24661,6 +24664,29 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  const customerRemovalRoute=pathname.match(/^\/api\/radius\/ppp-dhcp\/users\/([^/]+)\/device-removal$/);
+  if(customerRemovalRoute&&['GET','POST'].includes(method)){
+    const context=await requirePermission(req,res,'radius:write');if(!context)return;
+    const id=decodeURIComponent(customerRemovalRoute[1]);
+    try{
+      if(method==='GET'){sendJson(res,200,await customerDeviceRemoval.preview(context.data,id,context.user));return;}
+      const payload=await readBody(req);const reason=radiusDeleteReasonPayload(payload);if(reason.reasonCode==='lainnya'&&!reason.reasonNote)throw new Error('Catatan alasan wajib diisi');
+      const journal=async record=>mutate(store=>{const previous=(store.networkRemovalRecords||[]).find(row=>row.userId===id);store.networkRemovalRecords=[{...previous,...record,updatedAt:new Date().toISOString(),actorId:context.user.id},...(store.networkRemovalRecords||[]).filter(row=>row.userId!==id)].slice(0,100);addActivity(store,'customer','Hasil tahap penghapusan perangkat pelanggan',{action:'customer-device-removal-stage',radiusUserId:id,oltState:record.olt?.state,acsState:record.acs?.state,status:record.status,userId:context.user.id});},{collections:['activity'],includeCore:true});
+      let finalized;
+      const devices=await customerDeviceRemoval.execute(context.data,id,payload,context.user,{getData:loadStore,journal,finalize:async(plan,stages)=>{finalized=await mutate(async store=>{
+        const value=customerDeviceRemoval.validateFinal(store,plan,context.user),user=freeradius.deleteRadiusUser(store,id),member=deleteRadiusLinkedMember(store,user,context.user,reason);
+        if(!member||member.id!==value.customer.id)throw new Error('Member berubah. Penghapusan billing dibatalkan.');
+        const record=(store.radiusRemovedRecords||[]).find(row=>row.radiusUserId===id);if(record)record.networkCleanup={olt:stages.olt,acs:stages.acs,completedAt:new Date().toISOString()};
+        const history=(store.networkRemovalRecords||[]).find(row=>row.userId===id);if(history)history.status='complete';
+        await syncFreeradiusIfNeeded(store,context.user,'customer-device-removal');
+        addActivity(store,'customer',`Pelanggan ${member.name||user.username} beserta perangkat terkait selesai dihapus; riwayat transaksi disimpan`,{action:'customer-device-removal-complete',radiusUserId:id,customerId:member.id,oltState:stages.olt.state,acsState:stages.acs.state,userId:context.user.id});return{user};
+      },{collections:['customers','invoices','activity'],includeCore:true});}});
+      if(!devices.complete){sendJson(res,207,{ok:false,complete:false,olt:devices.olt,acs:devices.acs,message:devices.message||'Perangkat belum selesai diproses. User/member tetap disimpan.'});return;}
+      const {result,data}=finalized;
+      const coa=await freeradiusCoa.disconnectUser(data,result.user).catch(()=>({ok:false}));
+      sendJson(res,200,{ok:true,complete:true,olt:devices.olt,acs:devices.acs,coa,message:'User/member dan perangkat terkait selesai diproses. Riwayat invoice dan transaksi tetap tersimpan.'});
+    }catch(error){sendJson(res,error.status||400,{error:error.message||'Penghapusan belum selesai. Periksa ulang sebelum mengulang.'});}return;
+  }
   const radiusPppUserMatch = pathname.match(/^\/api\/radius\/ppp-dhcp\/users(?:\/([^/]+))?$/);
   if (radiusPppUserMatch && ['POST', 'PUT', 'DELETE'].includes(method)) {
     const authContext = await requireAnyPermission(req, res, ['radius:write', 'radius:ppp-users:write']);
@@ -24678,6 +24704,7 @@ async function handleApi(req, res, url) {
 
     try {
       const { result, data } = await mutate(async (store) => {
+        if(id)customerDeviceRemoval.assertNotBusy(id);
         const existing = method === 'DELETE'
           ? (store.radiusUsers || []).find((user) => user.id === id)
           : method === 'PUT'
@@ -25058,6 +25085,7 @@ async function handleApi(req, res, url) {
             continue;
           }
           try {
+            customerDeviceRemoval.assertNotBusy(id);
             const next = freeradius.deleteRadiusUser(store, id);
             deleteRadiusLinkedMember(store, next, authContext.user, deleteReason);
             deleted.push({ id, username: next.username || item.username || id, user: next });
@@ -27557,13 +27585,15 @@ async function handleApi(req, res, url) {
     if (!authContext) return;
     const payload = await readBody(req);
     const hasNetworkIntegration = Object.prototype.hasOwnProperty.call(payload, 'networkIntegrationEnabled');
+    const hasCustomerRemoval=Object.prototype.hasOwnProperty.call(payload,'networkCustomerRemovalEnabled');
+    if(hasCustomerRemoval&&typeof payload.networkCustomerRemovalEnabled!=='boolean'){badRequest(res,'Status penghapusan tiga lapis harus aktif atau nonaktif');return;}
     if (hasNetworkIntegration && typeof payload.networkIntegrationEnabled !== 'boolean') {
       badRequest(res, 'Status integrasi dan sinkron otomatis harus aktif atau nonaktif');
       return;
     }
     const previousWifiKuRequireOtp = wifiKuSettings(authContext.data).requireOtp;
     let networkIntegrationChanged = false;
-    const integrationOnly = hasNetworkIntegration && Object.keys(payload).length === 1;
+    const integrationOnly = (hasNetworkIntegration||hasCustomerRemoval)&&Object.keys(payload).every(key=>['networkIntegrationEnabled','networkCustomerRemovalEnabled'].includes(key));
     let uploadedLogoUrl = '';
     if (typeof payload.logoUrl === 'string' && /^data:image\//i.test(payload.logoUrl.trim())) {
       try {
@@ -27578,9 +27608,10 @@ async function handleApi(req, res, url) {
       }
     }
     const { data } = await mutate((store) => {
+      if(hasCustomerRemoval){const changed=(store.settings.networkCustomerRemovalEnabled===true)!==payload.networkCustomerRemovalEnabled;store.settings.networkCustomerRemovalEnabled=payload.networkCustomerRemovalEnabled;networkIntegrationChanged=networkIntegrationChanged||changed;if(changed)addActivity(store,'settings',`Penghapusan tiga lapis ${payload.networkCustomerRemovalEnabled?'diaktifkan':'dinonaktifkan'} oleh ${authContext.user.name||authContext.user.username}`,{action:'network-customer-removal-setting',enabled:payload.networkCustomerRemovalEnabled,userId:authContext.user.id});}
       if (hasNetworkIntegration) {
         const changed = (store.settings.networkIntegrationEnabled === true) !== payload.networkIntegrationEnabled;
-        networkIntegrationChanged = changed;
+        networkIntegrationChanged = networkIntegrationChanged||changed;
         store.settings.networkIntegrationEnabled = payload.networkIntegrationEnabled;
         if (changed) addActivity(store, 'settings', `Integrasi dan sinkron otomatis ${payload.networkIntegrationEnabled ? 'diaktifkan' : 'dinonaktifkan'} oleh ${authContext.user.name || authContext.user.username}`, {
           action: 'network-integration-setting', enabled: payload.networkIntegrationEnabled, userId: authContext.user.id, role: authContext.user.role

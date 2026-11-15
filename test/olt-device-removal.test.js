@@ -18,8 +18,13 @@ function fixture(){
  return {data,device,actor,target,options,counter,preview,remove,get rows(){return rows;},set rows(value){rows=value;},get status(){return status;},set status(value){status=value;}};
 }
 test.beforeEach(()=>{process.env.MIGRATION_MODE='0';removal.invalidate();});
-test('EPON deletion uses its exact MAC/PON identity and never cascades a MAC into an ACS serial deletion',async()=>{
- const f=fixture(),mac='AABBCCDDEEFF',index='1/1:1:'+mac;f.device.vendor='hioso';const target={id:index,serialNumber:mac,identifierKind:'mac',slot:1,pon:1,onuId:1,ponKey:'0/1/1'},options={now:NOW,inspectOlt:async()=>({target,state:'offline'}),findAcs:async()=>{throw Error('MAC must not query ACS serial');},removeOlt:async(_,__,serial,payload)=>{assert.equal(serial,mac);assert.equal(payload.onuIndex,index);f.counter.olt++;return{confirmed:true};},removeAcs:async()=>{throw Error('Must not delete ACS');}},before=structuredClone(f.data),plan=await removal.preview(f.data,f.device,mac,{onuIndex:index},f.actor,options);assert(plan.canSubmit);assert.equal(plan.acs.state,'skipped');const result=await removal.remove(f.data,f.device,mac,{token:plan.token,serialNumber:mac,onuIndex:index,confirmDelete:true},f.actor,options);assert(result.complete);assert.equal(result.acs.state,'skipped');assert.equal(f.counter.olt,1);assert.deepEqual(f.data,before);
+test('EPON cascade uses native ONT MAC proof, not a serial or WiFi client MAC',async()=>{
+ const f=fixture(),mac='AABBCCDDEEFF',index='1/1:1:'+mac;f.device.vendor='hioso';const target={id:index,serialNumber:mac,identifierKind:'mac',slot:1,pon:1,onuId:1,ponKey:'0/1/1'};
+ let rows=[{...f.rows[0],serialNumber:'RTETQB8H0128704',interfaceMacs:[mac]}];
+ const options={now:NOW,inspectOlt:async()=>({target,state:'offline'}),snapshot:async()=>null,findAcs:async()=>structuredClone(rows),removeOlt:async(_,__,serial,payload)=>{assert.equal(serial,mac);assert.equal(payload.onuIndex,index);f.counter.olt++;return{confirmed:true};},removeAcs:async(_,id)=>{assert.equal(id,rows[0].id);f.counter.acs++;rows=[];}};
+ const before=structuredClone(f.data),plan=await removal.preview(f.data,f.device,mac,{onuIndex:index},f.actor,options);assert(plan.canSubmit);assert.equal(plan.acs.state,'ready');
+ const result=await removal.remove(f.data,f.device,mac,{token:plan.token,serialNumber:mac,onuIndex:index,confirmDelete:true},f.actor,options);assert(result.complete);assert.equal(result.acs.state,'deleted');assert.equal(f.counter.olt,1);assert.equal(f.counter.acs,1);assert.deepEqual(f.data,before);
+ rows=[{...f.rows[0],serialNumber:mac}];assert.equal((await removal.preview(f.data,f.device,mac,{onuIndex:index},f.actor,options)).canSubmit,false);
 });
 test('preview is read-only; exact offline OLT then ACS deletion leaves all business data unchanged',async()=>{
  const f=fixture(),before=structuredClone(f.data),plan=await f.preview();assert(plan.canSubmit);assert.equal(plan.acs.state,'ready');assert.deepEqual(f.counter,{olt:0,acs:0,reads:1});

@@ -1073,6 +1073,33 @@ async function removalDevicesBySerial(settings={},serialNumber=''){
   return rows.map(row=>({...row,excluded:rowExcludedByUsernameSuffix(row,cfg.excludeUsernameSuffixes)}));
 }
 
+async function removalDevicesByMac(settings={},macAddress=''){
+  const cfg=normalizeSettings(settings),mac=cleanText(macAddress).toUpperCase();
+  if(!configured(cfg))throw new Error('Koneksi ACS belum aktif');
+  if(!/^[A-F0-9]{12}$/.test(mac)||/^0{12}$|^F{12}$/.test(mac)||(parseInt(mac.slice(0,2),16)&1)!==0)throw new Error('MAC ONU tidak valid');
+  const paths=['InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress','Device.Ethernet.Interface.1.MACAddress'];
+  const values=[mac,mac.match(/../g).join(':'),mac.match(/../g).join('-')],expression='^(?:'+values.join('|')+')$';
+  const projection=['_id','_deviceId','_lastInform','_registered','_tags',...paths,...cfg.usernameParameters].join(',');
+  const raw=await requestJson(cfg,'/devices/',{timeoutMs:4000,maxResponseBytes:256*1024,query:{query:JSON.stringify({$or:paths.map(path=>({[path+'._value']:{$regex:expression,$options:'i'}}))}),projection,limit:'6'}});
+  if(!Array.isArray(raw)||raw.length>5)throw new Error('Identitas MAC ACS ambigu');
+  const rows=raw.map(device=>({id:cleanText(device._id),serialNumber:normalizeSerialNumber(cleanText(device._deviceId?._SerialNumber)),username:resolveUsernameParameter(device,cfg.usernameParameters).value,lastInform:cleanText(device._lastInform),registered:cleanText(device._registered),tags:safeTags(device._tags),interfaceMacs:paths.map(path=>cleanText(getPathValue(device,path)).toUpperCase().replace(/[:-]/g,''))}));
+  if(rows.some(row=>!row.id||!row.interfaceMacs.includes(mac)||!/^[A-Z0-9]{6,32}$/.test(row.serialNumber)))throw new Error('Identitas MAC ACS tidak cocok');
+  return rows.map(row=>({...row,excluded:rowExcludedByUsernameSuffix(row,cfg.excludeUsernameSuffixes)}));
+}
+async function removalDevicesForAccount(settings={},username=''){
+  const cfg=normalizeSettings(settings),name=cleanText(username);if(!configured(cfg))throw new Error('Koneksi ACS belum aktif');
+  if(!name||name.length>128)throw new Error('Akun ACS tidak valid');
+  const paths=['InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress','Device.Ethernet.Interface.1.MACAddress'];
+  const projection=['_id','_deviceId','_lastInform','_registered','_tags',...paths,...cfg.usernameParameters].join(',');
+  if(cfg.usernameParameters.some(path=>path.includes('*')))throw new Error('Path akun ACS harus spesifik sebelum penghapusan');
+  const expression='^'+name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$';
+  const raw=await requestJson(cfg,'/devices/',{timeoutMs:4000,maxResponseBytes:256*1024,query:{query:JSON.stringify({$or:cfg.usernameParameters.map(path=>({[path+'._value']:{$regex:expression,$options:'i'}}))}),projection,limit:'6'}});
+  if(!Array.isArray(raw)||raw.length>5)throw new Error('Akun ACS memiliki terlalu banyak identitas');
+  const rows=raw.map(device=>({id:cleanText(device._id),serialNumber:normalizeSerialNumber(cleanText(device._deviceId?._SerialNumber)),username:resolveUsernameParameter(device,cfg.usernameParameters).value,lastInform:cleanText(device._lastInform),registered:cleanText(device._registered),tags:safeTags(device._tags),interfaceMacs:paths.map(path=>cleanText(getPathValue(device,path)).toUpperCase().replace(/[:-]/g,'')).filter(mac=>/^[A-F0-9]{12}$/.test(mac))}));
+  if(rows.some(row=>!row.id||row.username.toLowerCase()!==name.toLowerCase()||!/^[A-Z0-9]{6,32}$/.test(row.serialNumber)))throw new Error('Akun ACS belum dapat dicocokkan secara tepat');
+  return rows.map(row=>({...row,excluded:rowExcludedByUsernameSuffix(row,cfg.excludeUsernameSuffixes)}));
+}
+
 function recentPendingProjection(cfg = normalizeSettings({})) {
   const paths = new Set([
     '_id',
@@ -3431,6 +3458,8 @@ module.exports = {
   listDevices,
   identityDevices,
   removalDevicesBySerial,
+  removalDevicesByMac,
+  removalDevicesForAccount,
   normalizeDevice,
   normalizeSettings,
   recentPendingDevices,

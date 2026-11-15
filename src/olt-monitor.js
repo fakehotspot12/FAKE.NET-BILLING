@@ -513,12 +513,13 @@ function linkedOnus(data, device, rows, snapshot=null) {
   return rows.map(onu => {
     const link = device.links?.[onu.serialNumber] || {};
     const automatic=autoIdentity.customerFor(data,device,onu);
+    const modem=autoIdentity.modemFor(data,device,onu);
     let customer=link.customerId&&!autoIdentity.manualConflict(data,device,onu)?customers.get(link.customerId):automatic?.customer;
     const user=customer&&identities.userForCustomer(customer);
     if(customer&&!identities.compatible(user||customer,{nasId:device.nasId}))customer=null;
     const point = points.get(link.fiberPointId||customer?.fiberPointId||customer?.odpId||customer?.distributionPointId||customer?.distribution_point_id||customer?.odp);
     const reboot=maintenance.size?plannedReboot.forOnu(data,device,onu,{index:maintenance}):null;
-    return { ...onu, ...(reboot?{plannedRebootUntil:reboot.until}:{}), name:cli.onuDescription(onu.name,onu), lastOnlineAt:lastOnlineAt(snapshot,onu), customerId: customer?.id || '', customerName: customer?.name || '', customerUsername: customer?(user?.username||customer.username||''):'',
+    return { ...onu, ...(reboot?{plannedRebootUntil:reboot.until}:{}), name:cli.onuDescription(onu.name,onu), lastOnlineAt:lastOnlineAt(snapshot,onu), customerId: customer?.id || '', customerName: customer?.name || '', customerUsername: customer?(user?.username||customer.username||''):'',address:customer?.address||require('./network-address').addressFromTags(data,modem),
       fiberPointId: point?.id || '', fiberPointName: point ? [point.code, point.name].filter(Boolean).join(' - ') : '' };
   });
 }

@@ -44,13 +44,13 @@ async function resolve(data,ticket,devices,options={}){
   let customer=conflicting?null:customers.get(ticket.customerId)||customers.get(link.customerId)||automatic?.customer||(ticket.scope==='service'?directory.customerForSerial(sn,{nasId:requested?.nasId||ticket.nasId}):null);
   let user=customer?directory.userForCustomer(customer):null;
   if(customer&&!directory.compatible(user||customer,{nasId:requested?.nasId||ticket.nasId})){customer=null;user=null;}
-  let modem=automatic?.modem||null;
+  let modem=automatic?.modem||(!conflicting&&autoIdentity.modemForTicket(data,ticket,requested))||null;
   if(!modem&&!conflicting&&(sn||customer)&&(options.lookup||ticket.scope==='service'||ticket.customerId||link.customerId)){
     let timer;
     try{modem=await Promise.race([(options.lookup||lookup)(data,{sn,customer,user,nasId:requested?.nasId||ticket.nasId}),new Promise(resolve=>{timer=setTimeout(()=>resolve(null),2500);})]);}catch{}finally{clearTimeout(timer);}
   }
   if(modem){
-    const matches=(!sn||identity.serial(modem.serialNumber)===sn)&&directory.compatible(modem,{nasId:requested?.nasId||ticket.nasId});
+    const matches=(!sn||identity.serial(modem.serialNumber)===sn||modem.interfaceMacs?.includes(sn))&&directory.compatible(modem,{nasId:requested?.nasId||ticket.nasId});
     const matched=matches?directory.customerForAcs(modem):null,matchedUser=matched&&directory.userForCustomer(matched);
     if(!matches||(matched&&!directory.compatible(matchedUser||matched,{nasId:requested?.nasId||ticket.nasId}))||(customer&&matched?.id!==customer.id)){modem=null;customer=null;user=null;conflicting=true;}
     else{

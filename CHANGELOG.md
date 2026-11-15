@@ -2,6 +2,24 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.5.0] - 2026-11-15
+
+### Added
+
+- Penghapusan tiga lapis pelanggan/akun, ONU OLT dan record ACS melalui pratinjau, sakelar opt-in default nonaktif, konfirmasi username serta persetujuan per pelanggan. Tahap perangkat diselesaikan dahulu; jika belum selesai, user/member dipertahankan untuk pemeriksaan ulang.
+- Izin membuat tiket untuk Keuangan dan ceklis Akses Tiket Layanan per user nonteknis. Ceklis mengatur menu sekaligus API; hak menangani tiket, reboot/hapus ONU dan pengelolaan OLT tidak ikut diberikan. Grant tambahan tetap dibatasi NAS/suffix dan tiket milik pembuat untuk role tanpa izin baca sebelumnya.
+- Alamat cadangan dari satu tag alamat ACS terverifikasi tanpa awalan wajib atau label ganda, termasuk pelanggan eksternal. Alamat member tetap utama; tag NAS/status dan alamat ambigu tidak ditebak.
+
+### Fixed
+
+- Memisahkan bukti MAC antarmuka ONT EPON dari serial GPON, termasuk serial modem yang panjangnya berbeda. Penghapusan ACS memerlukan satu identitas tepat, pemeriksaan pemilik/NAS dan proteksi inform baru/perangkat pindah.
+- Menahan perubahan/hapus user yang bertabrakan dengan penghapusan perangkat, menyimpan hasil per tahap dan jurnal pemulihan terbatas, serta mempertahankan histori pembayaran/invoice sesuai aturan billing.
+- Melengkapi verifikasi modul installer/updater dan invalidasi aset browser untuk menu, izin, pratinjau serta dokumentasi terbaru. Tidak mengubah parameter ACS, konfigurasi OLT, jadwal billing atau algoritma antrean WhatsApp.
+
+### Documentation
+
+- Menjelaskan alur tiga lapis dan batasannya, serta mengganti referensi lingkungan operasional pada catatan rilis lama dengan istilah umum. Tidak menyertakan data pelanggan, kredensial atau konfigurasi privat.
+
 ## [4.4.0] - 2026-11-14
 
 ### Added
@@ -312,7 +330,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 ### Changed
 
 - Merapikan susunan menu menjadi kelompok kerja yang lebih ringkas, mempertahankan lima tombol navigasi bawah, dan menempatkan menu Mitra di lembar Menu agar layar kecil tidak bergeser horizontal.
-- Menyelaraskan komponen UI terbaru dari environment pengembangan Cempaka secara selektif, tanpa mengambil pembatasan role atau konfigurasi yang berbeda dari kebijakan Fakenet.
+- Menyelaraskan komponen UI terbaru dari lingkungan pengembangan secara selektif, tanpa mengambil pembatasan role atau konfigurasi yang berbeda dari kebijakan aplikasi.
 - Merampingkan kartu inventaris, posisi tombol refresh, topbar, dan grafik statistik agar tetap presisi pada ponsel kecil, tablet, serta desktop.
 - Mempercepat generator invoice massal dengan satu kali pembacaan sequence serta membatasi cache session, voucher checkout, rate limit, dan konektor eksternal agar penggunaan memori tetap terkendali.
 - Mengurangi beban peta pelanggan melalui popup lazy, render bertahap, marker canvas, dan batas daftar yang menyesuaikan perangkat.
@@ -417,7 +435,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
-- Memperkuat updater untuk instalasi archive-based seperti Nynet agar `Check for Update` tetap bisa membaca versi remote meski folder aplikasi tidak punya `.git`.
+- Memperkuat updater untuk instalasi berbasis arsip agar `Check for Update` tetap bisa membaca versi remote meski folder aplikasi tidak punya `.git`.
 - Menambah timeout dan retry download archive update supaya koneksi GitHub/codeload yang lambat tidak mudah berhenti di tengah proses.
 - Menambahkan default env update archive/raw URL saat install/repair agar server lama dan install baru memakai jalur update yang sama.
 
@@ -542,13 +560,13 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
-- Memperbaiki route `Peta Pelanggan` dan `ODP/ODC` yang memanggil helper payload belum terdefinisi setelah sinkron Cempaka dev.
+- Memperbaiki route `Peta Pelanggan` dan `ODP/ODC` yang memanggil helper payload belum terdefinisi setelah sinkron perubahan pengembangan.
 
 ## [4.2.1] - 2026-08-11
 
 ### Added
 
-- Menambahkan menu Monitoring > Peta Pelanggan dari Cempaka dev untuk melihat titik pelanggan, status layanan, paket, alamat, dan pelanggan yang belum punya koordinat.
+- Menambahkan menu Monitoring > Peta Pelanggan untuk melihat titik pelanggan, status layanan, paket, alamat, dan pelanggan yang belum punya koordinat.
 - Menambahkan menu Monitoring > ODP/ODC untuk pencatatan ODC, ODP, kapasitas port, port rusak/reserved, peta titik fiber, dan pelanggan yang tertaut ke ODP.
 
 ### Changed
@@ -559,7 +577,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Changed
 
-- Sinkronisasi perubahan Cempaka dev ke FAKE.NET untuk halaman Member/Data Pelanggan dan Tagihan Pelanggan.
+- Sinkronisasi perubahan pengembangan untuk halaman Member/Data Pelanggan dan Tagihan Pelanggan.
 - Tampilan Member memakai tab operasional untuk semua pelanggan, pelanggan baru, isolir, dan terminated dengan pagination masing-masing.
 - Tampilan Tagihan Pelanggan dan tabel besar lain mengikuti layout mobile card/table terbaru agar lebih rapi di layar kecil.
 - Baseline engine/performance canonical dipakai kembali untuk cache, pagination PostgreSQL, RADIUS, GenieACS, dan UI mobile.
@@ -596,7 +614,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
-- Struktur sidebar dan navigasi bawah diselaraskan dengan shell Cempaka yang stabil, tanpa menimpa fitur billing terbaru.
+- Struktur sidebar dan navigasi bawah diselaraskan dengan navigasi yang stabil, tanpa menimpa fitur billing terbaru.
 - Tombol Menu mobile membuka Monitoring, Pengaturan, dan Admin Sistem sebagai panel bawah, bukan drawer menyamping.
 - Laporan Tagihan dan Laporan Voucher di sidebar digabungkan dengan status aktif yang tetap benar saat masuk halaman harian/bulanan.
 
@@ -623,7 +641,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
-- Drawer mobile dari tombol navigasi bawah kini muncul sebagai panel naik dari bawah, mengikuti pola Billcob/Cempaka.
+- Drawer mobile dari tombol navigasi bawah kini muncul sebagai panel naik dari bawah.
 - Tombol Menu mobile membuka grup Monitoring, Pengaturan, dan Admin Sistem dalam satu panel bawah.
 - Revision aset frontend diperbarui agar browser mengambil CSS/JS mobile terbaru.
 
@@ -631,7 +649,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
-- Navigasi mobile disamakan dengan pola Billcob: hamburger atas disembunyikan dan drawer menu hanya dibuka melalui navigasi bawah.
+- Navigasi mobile disederhanakan: hamburger atas disembunyikan dan drawer menu hanya dibuka melalui navigasi bawah.
 - Navigasi desktop tetap mempertahankan tombol hamburger untuk membuka atau menciutkan sidebar.
 
 ## [4.1.0] - 2026-08-09
@@ -1090,7 +1108,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Changed
 
-- Dashboard mengikuti model ringkas Cempaka: kartu pendapatan/pengeluaran/profit lebih padat, panel Monthly Billing dalam satu section, serta panel transaksi dan audit terbaru.
+- Dashboard mengikuti model ringkas: kartu pendapatan/pengeluaran/profit lebih padat, panel Monthly Billing dalam satu section, serta panel transaksi dan audit terbaru.
 - Panel transaksi dan audit dashboard dimuat setelah ringkasan utama supaya loading dashboard tetap ringan.
 
 ## [2.10.13] - 2026-07-29
@@ -1606,7 +1624,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
-- GenieACS mendukung pengecualian suffix username seperti `@kampung.net` untuk kebutuhan demo/tester site tertentu.
+- GenieACS mendukung pengecualian suffix username seperti `@example.test` untuk kebutuhan lingkungan demo/pengujian.
 
 ## [2.9.14] - 2026-07-25
 
@@ -2082,7 +2100,7 @@ Format versi memakai pola `major.minor.patch`:
 
 - Menu akun topbar memakai foto/avatar user, sapaan nama, menu Akun Saya, dan Logout dalam satu dropdown.
 - Unit/Divisi user mengikuti role agar konsisten sebagai dasar pengembangan absensi.
-- Template voucher Hotspot A4, Thermal 58 mm, Thermal 80 mm, Small, dan editor HTML/CSS disesuaikan dengan pola Mikhmon.
+- Template voucher Hotspot A4, Thermal 58 mm, Thermal 80 mm, Small, dan editor HTML/CSS disesuaikan dengan tata letak cetak yang ringkas.
 - Preview dan print voucher diperbaiki agar QR lebih jelas, layout tidak memanjang, teks tidak menumpuk, dan laporan voucher harian memuat informasi penting.
 
 ## [1.6.3] - 2026-07-19
@@ -2466,7 +2484,7 @@ Format versi memakai pola `major.minor.patch`:
 
 ### Changed
 
-- Member ID baru memakai prefix `22` diikuti 9 digit numerik unik, contohnya `22096501095`.
+- Member ID baru memakai prefix `22` diikuti 9 digit numerik unik, contohnya `22000000001`.
 - Pembuatan Member ID dipindahkan dari browser ke server agar tidak bergantung pada random client dan mencegah benturan ID.
 - Tabel `Rincian Harian` pada Laporan Statistik diganti panel ringkas 12 bulan berisi pelanggan aktif, pertumbuhan, voucher, pendapatan, pengeluaran, dan laba bersih.
 

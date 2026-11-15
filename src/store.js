@@ -226,6 +226,7 @@ function createDefaultStore() {
         packages: {}
       },
       networkIntegrationEnabled: false,
+      networkCustomerRemovalEnabled: false,
       security: {
         secretKey: '',
         loginVerificationEnabled: true
@@ -269,6 +270,7 @@ function createDefaultStore() {
     }],
     radiusUsers: [],
     radiusRemovedRecords: [],
+    networkRemovalRecords: [],
     radiusVoucherRecords: [],
     radiusSyncState: {},
     invoices: [],
@@ -633,6 +635,7 @@ function ensureShape(data) {
       ...base.settings,
       ...settings,
       networkIntegrationEnabled: settings.networkIntegrationEnabled === true,
+      networkCustomerRemovalEnabled: settings.networkCustomerRemovalEnabled === true,
       collectorDailyBonusTiers: Array.isArray(settings.collectorDailyBonusTiers)
         ? settings.collectorDailyBonusTiers
         : base.settings.collectorDailyBonusTiers.map((tier) => ({ ...tier })),
@@ -741,6 +744,7 @@ function ensureShape(data) {
     radiusHotspotTemplates: Array.isArray(safe.radiusHotspotTemplates) ? safe.radiusHotspotTemplates : base.radiusHotspotTemplates,
     radiusUsers: Array.isArray(safe.radiusUsers) ? safe.radiusUsers : [],
     radiusRemovedRecords: Array.isArray(safe.radiusRemovedRecords) ? safe.radiusRemovedRecords : [],
+    networkRemovalRecords: Array.isArray(safe.networkRemovalRecords) ? safe.networkRemovalRecords.slice(0,100) : [],
     radiusVoucherRecords: Array.isArray(safe.radiusVoucherRecords) ? safe.radiusVoucherRecords : [],
     radiusSyncState: safe.radiusSyncState && typeof safe.radiusSyncState === 'object' ? safe.radiusSyncState : {},
     invoices: Array.isArray(safe.invoices) ? safe.invoices : [],
@@ -1427,6 +1431,7 @@ function publicSettings(settings) {
   return {
     ...safeSettings,
     networkIntegrationEnabled: rawSettings.networkIntegrationEnabled === true,
+    networkCustomerRemovalEnabled: rawSettings.networkCustomerRemovalEnabled === true,
     oltManager,
     mediaServices,
     genieAcs: publicGenieAcs,

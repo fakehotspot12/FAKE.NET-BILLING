@@ -12,9 +12,9 @@ const clean=value=>String(value||'').trim();
 const onuKey=onu=>onu?.identifierKind==='mac'?(/^[A-F0-9]{12}$/.test(onu.serialNumber)?'mac:'+onu.serialNumber:''):identity.serial(onu?.serialNumber);
 const deviceSignature=device=>JSON.stringify([device.host,device.nasId,device.updatedAt]);
 function configuration(data){
-  const raw=data.settings?.genieAcs||{},signature=JSON.stringify([raw.enabled,raw.baseUrl,raw.token,raw.excludeUsernameSuffixes,process.env.GENIEACS_ENABLED,process.env.GENIEACS_BASE_URL,process.env.GENIEACS_TOKEN,process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES]),old=keys.get(data);
+  const raw=data.settings?.genieAcs||{},signature=JSON.stringify([raw.enabled,raw.baseUrl,raw.token,raw.excludeUsernameSuffixes,raw.usernameParameters,process.env.GENIEACS_ENABLED,process.env.GENIEACS_BASE_URL,process.env.GENIEACS_TOKEN,process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES]),old=keys.get(data);
   if(old?.signature===signature)return old;
-  const cfg=acs.normalizeSettings(data.settings||{}),key=crypto.createHash('sha256').update(JSON.stringify([cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes])).digest('hex'),value={key,signature,configured:acs.configured(cfg)};keys.set(data,value);return value;
+  const cfg=acs.normalizeSettings(data.settings||{}),key=crypto.createHash('sha256').update(JSON.stringify([cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,cfg.usernameParameters])).digest('hex'),value={key,signature,configured:acs.configured(cfg)};keys.set(data,value);return value;
 }
 const keyFor=data=>configuration(data).key;
 function available(data){return data.settings?.networkIntegrationEnabled===true&&configuration(data).configured&&(data.oltDevices||[]).some(device=>device.enabled!==false);}
@@ -45,10 +45,10 @@ async function refresh(data,observations=[],options={}){
     try{
       const rows=await(options.fetch||acs.identityDevices)(data.settings||{});if(!Array.isArray(rows)||rows.length>MAX_ROWS)throw new Error('Identitas ACS tidak valid');
       const indexed=new Map(),accounts=new Map();
-      for(const source of rows){const sn=identity.serial(source.serialNumber),username=clean(source.username);if(!/^[A-Z0-9]{12}$/.test(sn)||!source.id||!username)continue;
+      for(const source of rows){const sn=identity.serial(source.serialNumber),username=clean(source.username);if(!/^[A-Z0-9]{6,32}$/.test(sn)||!source.id||!username)continue;
         const interfaceMacs=Array.isArray(source.interfaceMacs)?[...new Set(source.interfaceMacs.filter(value=>typeof value==='string'&&/^[A-F0-9]{12}$/.test(value)&&!/^0{12}$|^F{12}$/.test(value)&&(parseInt(value.slice(0,2),16)&1)===0))].slice(0,2):[];
         const row={id:clean(source.id),serialNumber:sn,username,lastInform:clean(source.lastInform),registered:clean(source.registered),productClass:clean(source.productClass),nasId:clean(source.nasId),interfaceMacs,tags:Array.isArray(source.tags)?source.tags.map(clean).slice(0,32):[]};
-        for(const key of [sn,...interfaceMacs.map(value=>'mac:'+value)])if(positions.has(key)){const group=indexed.get(key)||[];group.push(row);indexed.set(key,group);}
+        for(const key of [...(/^[A-Z0-9]{12}$/.test(sn)?[sn]:[]),...interfaceMacs.map(value=>'mac:'+value)])if(positions.has(key)){const group=indexed.get(key)||[];group.push(row);indexed.set(key,group);}
         const key=username.toLowerCase(),peers=accounts.get(key)||[];peers.push(row);accounts.set(key,peers);
       }
       state.rows=indexed;state.accounts=accounts;state.checkedAt=now;state.failed=false;state.revision=++revision;
@@ -60,7 +60,8 @@ async function refresh(data,observations=[],options={}){
 function deviceFor(data,device,onu,now){
   if(!device||!available(data)||device.enabled===false)return null;
   const state=states.get(keyFor(data));if(!state||state.failed||now-state.checkedAt>TTL_MS||now<state.checkedAt-30000)return null;
-  const sn=onuKey(onu),mac=onu?.identifierKind==='mac',position=chosenPosition(state.positions.get(sn));
+  const implicitMac=!onu?.identifierKind&&/^[A-F0-9]{12}$/.test(onu?.serialNumber||'')&&state.positions.has('mac:'+onu.serialNumber)&&!state.positions.has(onu.serialNumber);
+  const sn=onuKey(implicitMac?{...onu,identifierKind:'mac'}:onu),mac=onu?.identifierKind==='mac'||implicitMac,position=chosenPosition(state.positions.get(sn));
   if(!position||position.deviceId!==device.id||position.signature!==deviceSignature(device)||(onu?.id!==undefined&&position.index!==String(onu.id)))return null;
   const directory=identity.directory(data);
   let proofCache=proofs.get(data);
@@ -104,6 +105,14 @@ function customerForTicket(data,ticket,device,now=Date.now()){
   const registered=Date.parse(match.modem.registered||'');if(!ticket.customerId&&Number.isFinite(registered)&&registered>Date.parse(ticket.createdAt||''))return null;
   return match;
 }
+function modemFor(data,device,onu,now=Date.now()){return deviceFor(data,device,onu,now)?.modem||null;}
+function modemForTicket(data,ticket,device,now=Date.now()){
+  if(!device||!ticket.serialNumber||ticket.status==='resolved')return null;
+  const proof=deviceFor(data,device,{serialNumber:ticket.serialNumber},now);if(!proof||ticket.pon&&ticket.pon!==proof.position.pon||ticket.onuIndex&&String(ticket.onuIndex)!==proof.position.index)return null;
+  const member=proof.directory.customerForAcs(proof.modem);if(ticket.customerId&&member?.id!==ticket.customerId)return null;
+  const registered=Date.parse(proof.modem.registered||'');if(!ticket.customerId&&Number.isFinite(registered)&&registered>Date.parse(ticket.createdAt||''))return null;
+  return proof.modem;
+}
 function cacheVersion(data){const key=keyFor(data),state=states.get(key);return key+':'+(state?.revision||revision)+':'+Boolean(available(data)&&state&&!state.failed&&Date.now()-state.checkedAt<=TTL_MS);}
 function invalidate(){states.clear();revision++;}
-module.exports={refresh,customerFor,customerForTicket,manualConflict,manualCustomerFor,cacheVersion,available,invalidate,INTERVAL_MS,TTL_MS};
+module.exports={refresh,customerFor,customerForTicket,modemFor,modemForTicket,manualConflict,manualCustomerFor,cacheVersion,available,invalidate,INTERVAL_MS,TTL_MS};

@@ -360,6 +360,7 @@ const state = {
     logoUrl: DEFAULT_LOGO_URL,
     timeZone: DEFAULT_APP_TIME_ZONE,
     networkIntegrationEnabled: false,
+    networkCustomerRemovalEnabled: false,
     security: {
       loginVerificationEnabled: true
     },
@@ -3227,7 +3228,7 @@ function openModal(title, body, onSubmit) {
     } finally {
       delete form.dataset.submitting;
       previousControls.forEach(({ control, disabled, label }) => {
-        control.disabled = disabled;
+        if (!control.hasAttribute('data-modal-managed-state')) control.disabled = disabled;
         if (label) setControlLabel(control, label);
       });
       setSubmitStatus('');
@@ -14517,6 +14518,7 @@ function openRadiusPppDeleteModal(users = [], onConfirm) {
           <textarea name="reasonNote" rows="3" placeholder="Tulis alasan singkat"></textarea>
         </label>
       </div>
+      ${state.radiusDeviceRemovalEnabled?`<label class="check-row"><input type="checkbox" name="removeLinkedDevices" ${selected.length!==1?'disabled':''}><span>Ikut hapus perangkat OLT/ACS terkait</span></label>${selected.length!==1?'<p class="muted">Penghapusan perangkat diperiksa per pelanggan.</p>':''}`:''}
       <div class="modal-actions">
         <button class="ghost-button" type="button" data-close-modal>Batal</button>
         <button class="danger-button" type="submit">Hapus User</button>
@@ -14529,6 +14531,7 @@ function openRadiusPppDeleteModal(users = [], onConfirm) {
       submit.textContent = 'Menghapus...';
     }
     try {
+      if(form.elements.removeLinkedDevices?.checked){const reason=radiusPppDeletePayload(values);await openCustomerDeviceRemovalModal(selected[0],reason);return false;}
       return await onConfirm(radiusPppDeletePayload(values));
     } finally {
       if (submit) {
@@ -14538,6 +14541,19 @@ function openRadiusPppDeleteModal(users = [], onConfirm) {
     }
   });
   bindRadiusPppDeleteModalFields();
+}
+
+async function openCustomerDeviceRemovalModal(user,reason){
+  const endpoint='/api/radius/ppp-dhcp/users/'+encodeURIComponent(user.id)+'/device-removal';let preview=null,busy=false,finished=false;
+  openModal('Hapus Pelanggan dan Perangkat',`<div class="form-grid"><div class="field full"><strong>${escapeHtml(user.name||user.customerName||user.username)}</strong><span>${escapeHtml(user.username)}</span></div><div class="field full" id="customerRemovalStages" role="status"></div><p class="field full" id="customerRemovalMessage"></p><label class="field full"><span>Ketik username untuk konfirmasi</span><input name="confirmUsername" required autocomplete="off"></label><label class="check-row full"><input type="checkbox" name="confirmDevices" required><span>Saya menyetujui penghapusan perangkat dan user/member terkait. Riwayat transaksi tetap disimpan.</span></label><p class="notice warning full" id="customerRemovalError" hidden></p><div class="modal-actions full"><button type="button" class="ghost-button" data-close-modal>Tutup</button><button type="button" class="ghost-button" id="customerRemovalRefresh">Periksa Ulang</button><button type="submit" class="danger-button" id="customerRemovalConfirm" data-modal-managed-state disabled>Hapus Pelanggan & Perangkat</button></div></div>`,async(values,form)=>{
+    if(busy||finished||!preview?.canSubmit)return false;busy=true;sync();const error=document.getElementById('customerRemovalError');error.hidden=true;
+    try{const reply=await api(endpoint,{method:'POST',timeoutMs:120000,body:JSON.stringify({...reason,networkRemovalToken:preview.token,confirmUsername:values.confirmUsername,confirmDevices:form.elements.confirmDevices.checked})});if(!panel.isConnected)return false;show(reply);preview=null;finished=reply.complete===true;if(finished){setToast(reply.message);await renderRadiusPppDhcp({refresh:true});}}catch(failure){if(panel.isConnected){preview=null;error.textContent=failure.message;error.hidden=false;}}finally{busy=false;if(panel.isConnected)sync();}return false;
+  });
+  const panel=modalBody.querySelector('.form-grid'),confirm=document.getElementById('customerRemovalConfirm'),refresh=document.getElementById('customerRemovalRefresh');
+  const sync=()=>{confirm.disabled=busy||finished||!preview?.canSubmit;confirm.hidden=finished;refresh.disabled=busy;refresh.hidden=finished;panel.setAttribute('aria-busy',String(busy));};
+  const show=reply=>{document.getElementById('customerRemovalStages').innerHTML=[['OLT',reply.olt],['ACS',reply.acs]].map(([label,stage])=>`<div><strong>${label}: </strong>${escapeHtml(stage?.label||'Belum diperiksa')}${stage?.name?' / '+escapeHtml(stage.name):''}${stage?.serialNumber?' / '+escapeHtml(stage.serialNumber):''}${stage?.reason?'<small>'+escapeHtml(stage.reason)+'</small>':''}</div>`).join('');document.getElementById('customerRemovalMessage').textContent=reply.message||'';};
+  const check=async()=>{if(busy||finished||!panel.isConnected)return;busy=true;preview=null;sync();try{const reply=await api(endpoint,{timeoutMs:60000});if(!panel.isConnected)return;preview=reply;show(reply);}catch(error){if(panel.isConnected){const notice=document.getElementById('customerRemovalError');notice.textContent=error.message;notice.hidden=false;}}finally{busy=false;if(panel.isConnected)sync();}};
+  refresh.addEventListener('click',check);await check();
 }
 
 function radiusUserStatusPayload(user = {}, nextStatus = 'active', type = 'ppp') {
@@ -14792,6 +14808,7 @@ async function renderRadiusPppDhcp(options = {}) {
     ...partnerScopeQueryParams()
   });
   const payload = await api(`/api/radius/ppp-dhcp?${params}`);
+  state.radiusDeviceRemovalEnabled=payload.deviceRemovalEnabled===true;
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
   const radiusPppStartNo = ((Number(payload.pagination?.page || state.radiusPppPage || 1) - 1) * Number(payload.pagination?.limit || RADIUS_PAGE_SIZE)) + 1;
   const fullWriteAllowed = can('radius:write');
@@ -23937,6 +23954,10 @@ function userFormBody(user = {}, options = {}) {
         <strong>${escapeHtml(roleText)}</strong>
         <span>${escapeHtml(roleHelp)}</span>
       </div>
+      <label class="check-row full" data-user-ticket-permission>
+        <input type="checkbox" name="ticketCreationAllowed" ${user.ticketCreationAllowed===true||user.ticketCreationAllowed===undefined&&(user.role==='finance'||['admin','owner','secretary','technician','noc'].includes(user.role))?'checked':''}>
+        <span>Akses Tiket Layanan</span>
+      </label>
       <label class="field">
         <span>ID Karyawan (NIK)</span>
         <input name="employeeId" value="${escapeHtml(user.employeeId || user.nik || '')}" inputmode="numeric" autocomplete="off">
@@ -24002,6 +24023,11 @@ function bindUserRoleNasLock() {
   const unitInput = modalBody.querySelector('[data-user-role-unit]');
   const positionSelect = modalBody.querySelector('select[name="position"]');
   const roleHelp = modalBody.querySelector('[data-user-role-description]');
+  const ticketPermission = modalBody.querySelector('[data-user-ticket-permission]');
+  const ticketInput = modalBody.querySelector('input[name="ticketCreationAllowed"]');
+  let ticketRole = roleSelect?.value || 'viewer';
+  let ticketTouched = false;
+  ticketInput?.addEventListener('change',()=>{ticketTouched=true;});
   const syncCount = () => {
     const selected = lockInputs.filter((input) => input.checked);
     if (lockCount) lockCount.textContent = allInput?.checked ? 'Semua NAS' : `${selected.length} NAS dipilih`;
@@ -24021,6 +24047,10 @@ function bindUserRoleNasLock() {
   };
   const sync = () => {
     const selectedRole = roleSelect?.value || 'viewer';
+    const technicalTickets = ['admin','owner','secretary','technician','noc'].includes(selectedRole);
+    if(ticketPermission)ticketPermission.hidden=technicalTickets;
+    if(ticketInput){ticketInput.disabled=technicalTickets;if(technicalTickets)ticketInput.checked=true;else if(selectedRole!==ticketRole&&!ticketTouched)ticketInput.checked=selectedRole==='finance';}
+    ticketRole=selectedRole;
     const nasLockedRole = ['partner', 'reseller_voucher', 'collector', 'technician'].includes(selectedRole);
     if (lockField) lockField.hidden = !nasLockedRole;
     if (lockPicker) lockPicker.hidden = !nasLockedRole;
@@ -24299,6 +24329,7 @@ async function openUserModal(user = null) {
     const body = {
       ...payload,
       active: payload.active === 'true',
+      ticketCreationAllowed: form.elements.ticketCreationAllowed.checked,
       nik: payload.employeeId
     };
     if (photoFile) {
@@ -26318,6 +26349,10 @@ async function renderSettings(options = {}) {
               <input id="networkIntegrationEnabled" name="networkIntegrationEnabled" type="checkbox" role="switch" ${settings.networkIntegrationEnabled === true ? 'checked' : ''}>
               <span>Aktifkan integrasi dan sinkron otomatis</span>
             </label>
+            <label class="check-row" for="networkCustomerRemovalEnabled">
+              <input id="networkCustomerRemovalEnabled" name="networkCustomerRemovalEnabled" type="checkbox" role="switch" ${settings.networkCustomerRemovalEnabled === true ? 'checked' : ''}>
+              <span>Izinkan hapus pelanggan beserta perangkat OLT/ACS</span>
+            </label>
           </div>
           <label class="field">
             <span>Upload logo</span>
@@ -26429,6 +26464,10 @@ async function renderSettings(options = {}) {
     } finally { input.disabled = false; }
   });
 
+  document.getElementById('networkCustomerRemovalEnabled').addEventListener('change',async event=>{
+    const input=event.currentTarget,previous=settings.networkCustomerRemovalEnabled===true;input.disabled=true;
+    try{const result=await api('/api/settings',{method:'PUT',body:JSON.stringify({networkCustomerRemovalEnabled:input.checked})});settings.networkCustomerRemovalEnabled=result.settings.networkCustomerRemovalEnabled===true;state.settings={...state.settings,...result.settings};input.checked=settings.networkCustomerRemovalEnabled;setToast(`Penghapusan tiga lapis ${input.checked?'diizinkan':'dinonaktifkan'}`);}catch(error){input.checked=previous;setToast(error.message);}finally{input.disabled=false;}
+  });
   document.getElementById('settingsForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -26441,6 +26480,7 @@ async function renderSettings(options = {}) {
       voucherRevenueSharePercent: form.voucherRevenueSharePercent.value,
       collectorDailyBonusEnabled: form.collectorDailyBonusEnabled.checked,
       networkIntegrationEnabled: form.networkIntegrationEnabled.checked,
+      networkCustomerRemovalEnabled: form.networkCustomerRemovalEnabled.checked,
       security: {
         loginVerificationEnabled: form.loginVerificationEnabled.checked
       }
@@ -26804,8 +26844,8 @@ async function renderMonitoringOlt(mode = 'olt') {
   const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
   if (!window.FakenetOltUI) {
     if (!oltUiLoadPromise) oltUiLoadPromise = new Promise((resolve,reject) => {
-      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/olt.css?ui=olt-buttons-single-20261115'; document.head.appendChild(style);
-      const script = document.createElement('script'); script.src = '/olt.js?ui=olt-buttons-single-20261115';
+      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/olt.css?ui=network-removal-20261115'; document.head.appendChild(style);
+      const script = document.createElement('script'); script.src = '/olt.js?ui=network-removal-20261115';
       script.onload = resolve; script.onerror = () => { oltUiLoadPromise = null; script.remove(); reject(new Error('Tampilan OLT belum dapat dimuat')); };
       document.head.appendChild(script);
     });

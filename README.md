@@ -251,7 +251,7 @@ Alur voucher online:
 Pada instalasi dengan beberapa NAS, tautan beli voucher di setiap captive portal wajib membawa NAS tujuan agar paket dan voucher tidak bercampur antar-NAS. Nilainya dapat memakai ID, nama, atau alamat NAS yang terdaftar, misalnya:
 
 ```text
-http://IP-SERVER:8893/voucher?nas=FAKE.NET
+http://IP-SERVER:8893/voucher?nas=NAS-CONTOH
 http://IP-SERVER:8893/voucher?nas=NAS-CABANG
 ```
 
@@ -446,7 +446,52 @@ menit per OLT, sesi CLI dikunci, dan respons sukses perangkat wajib terbaca.
 Jika hasil belum pasti, periksa OLT sebelum mengulang. Konfigurasi koneksi
 billing yang diedit pada form disimpan terpisah dan bukan Save Config OLT.
 
-### Library Vendor OLT
+### Alur Integrasi Tiga Lapis
+
+| Lapis | Alur | Pengaman dan data yang dipertahankan |
+| --- | --- | --- |
+| 1. Identitas | Pelanggan/akun internet, ACS, lalu ONU OLT dicocokkan berdasarkan identitas perangkat yang tepat dan NAS yang sesuai. | Tidak menebak pemilik dari description. SN ganda, modem pindah, akun berbeda, atau sumber kedaluwarsa tidak dipaksakan cocok. |
+| 2. Penggantian modem | Hapus ONU pada OLT, kemudian hapus record ACS yang terbukti milik modem itu. | Wajib konfirmasi, posisi PON/ONU dan SN/MAC diverifikasi ulang, modem masih online ditahan. Member, akun internet, invoice dan pembayaran tetap tersimpan. |
+| 3. Pelanggan berhenti | Pada hapus satu user PPP-DHCP, pilih ikut hapus perangkat terkait dan periksa pratinjau OLT/ACS. | Wajib integrasi aktif, izin teknis lengkap, sakelar khusus, ketik username dan persetujuan. Perangkat diproses dahulu; user/member baru dihapus setelah tahap perangkat selesai. |
+
+Sakelar **Izinkan hapus pelanggan beserta perangkat OLT/ACS terkait** ada di
+Pengaturan Sistem dan default **nonaktif**, terpisah dari integrasi identitas.
+Pilihan ikut hapus perangkat juga tidak dicentang otomatis; hapus massal tidak
+menjalankan penghapusan perangkat. Tanpa pilihan itu, aturan hapus billing tetap
+seperti sebelumnya. Tidak ada penghapusan otomatis hanya karena akun isolir,
+terminated, modem offline, atau integrasi diaktifkan.
+
+Record yang terbukti tidak ada dapat dilewati; sumber yang dikonfigurasi tetapi
+timeout bukan dianggap kosong. ACS yang belum dikonfigurasi dilewati dengan
+status yang jelas. Jika hanya sebagian tahap selesai, user/member dipertahankan;
+gunakan pratinjau ulang untuk melanjutkan posisi yang sama, bukan mengulang
+perintah secara buta. Jurnal pemulihan dibatasi 100 proses terakhir. Hasil per
+tahap tercatat di audit dan catatan Cabut. Riwayat pembayaran/invoice lunas tetap
+disimpan; tagihan belum lunas mengikuti aturan pembatalan saat pelanggan dihapus.
+
+GPON memakai serial; EPON memakai MAC antarmuka ONT asli yang cocok tepat dengan
+ACS, bukan MAC perangkat WiFi pelanggan. Penghapusan gabungan menahan hasil
+ganda, NAS/pemilik berubah dan inform modem yang masih baru. Penelusuran hanya
+berjalan saat pratinjau/konfirmasi, tidak menambah polling normal setiap baris.
+
+Alamat utama tetap berasal dari member. Jika kosong, satu tag alamat ACS yang
+jelas dapat dipakai dari modem terverifikasi, termasuk untuk pelanggan di luar
+billing. Tag boleh berisi alamat langsung, misalnya `Jl. Contoh No. 10`; awalan
+`Alamat:` tidak wajib dan tidak digandakan dalam pesan. Tag NAS, status, akun,
+model dan beberapa alamat yang ambigu tidak dijadikan alamat atau bukti pemilik.
+
+### Izin Tiket Per User
+
+Role Keuangan dapat membuat tiket layanan tanpa hak menangani tiket atau
+mengelola OLT. Di tambah/edit User tersedia ceklis **Akses Tiket Layanan** untuk
+user nonteknis: aktif menampilkan menu dan mengizinkan pembuatan tiket; nonaktif
+menyembunyikan menu sekaligus menolak API tiket. Role teknis/admin tetap memakai
+izin tugasnya. Grant tambahan tidak membuka reboot, hapus ONU, pengaturan OLT,
+atau pengubahan progres. User yang sebelumnya tidak punya hak baca tiket hanya
+melihat tiket layanan buatannya sendiri, tetap sesuai batas NAS/suffix mitra.
+Pemeriksaan memakai data user/sesi existing, tanpa scheduler atau query tambahan.
+
+### Dukungan Vendor
 
 Vendor dipilih saat menambah OLT. Jenis vendor integrasi yang sudah tersimpan
 tidak dapat diganti agar format indeks dan identitas ONU lama tidak tercampur.
@@ -469,14 +514,17 @@ SNMP, bukan nama OLT atau jumlah ONU terpasang. PON kosong tetap ditampilkan
 berurutan dan filter PON memakai posisi yang sama dengan inventory ONU. Bila
 sumber port bertentangan, model tidak ditebak dan peringatan ditampilkan.
 MAC ONU EPON tetap dibedakan dari serial GPON. Monitoring HIOSO memakai
-SNMP dan pembacaan web terbatas, dengan fallback CLI sesuai firmware; akses
+SNMP/CLI yang didukung, dengan pelengkap web terbatas sesuai firmware; akses
 web menggunakan akun CLI yang dikonfigurasi. Tombol ganti nama/reboot/hapus
 tersedia setelah form native dikenali. Ganti nama diverifikasi kembali;
 hapus harus offline dan hilangnya record diperiksa sesudah perintah. Reboot
 memakai penanda jeda gangguan existing, bukan factory reset. Hasil ambigu tidak
-dicoba ulang otomatis. Save Config/provisioning dan tiket LOS otomatis HIOSO
-belum diaktifkan; klasifikasi firmware yang belum pasti tidak dianggap LOS.
-Identitas MAC EPON tidak dipakai untuk menghapus record ACS secara otomatis.
+dicoba ulang otomatis. Save Config memakai jalur terverifikasi yang dijelaskan
+di bawah. Provisioning dan tiket LOS otomatis HIOSO belum diaktifkan;
+klasifikasi firmware yang belum pasti tidak dianggap LOS.
+MAC EPON tidak dianggap serial GPON. Penghapusan gabungan hanya memakai
+kecocokan tepat MAC antarmuka ONT asli pada satu record ACS, disertai pemeriksaan
+NAS, pemilik, posisi dan inform terakhir; MAC klien WiFi tidak dipakai.
 
 Model dan bar CPU/RAM ada pada **Ringkasan**. Pembacaan berjalan di background
 dan disimpan pada snapshot/cache: resource paling cepat setiap lima menit,
