@@ -17,6 +17,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Mendeteksi HIOSO 2/4 PON dari daftar port fisik web/CLI dan SNMP, termasuk nama antarmuka Pon-Nni. PON kosong tetap tampil berurutan, posisi/filter ONU konsisten, dan nama OLT tidak dijadikan penentu model. Sumber bertentangan diberi peringatan tanpa menghilangkan posisi ONU nyata atau menebak model; aksi tulis yang belum terverifikasi tetap terkunci.
 - Menyamakan Sekretaris sebagai administrator kedua sesuai kebijakan aplikasi, termasuk pengaturan dan pengelolaan pengguna, tanpa mengubah identitas role/audit maupun perlindungan admin terakhir.
 - Memperbaiki pembacaan description CDATA kosong/berawalan lokasi dan konfirmasi hasil penghapusan pada ONU yang sudah tidak terdaftar. SN ganda tidak memilih posisi pertama atau menyentuh ONU aktif di posisi lain.
 - Menampilkan tombol Edit/Hapus integrasi di pilihan OLT pada tab PON/ONU selain Ringkasan. Penghapusan integrasi memerlukan nama OLT dan persetujuan; riwayat tiket dilindungi dan tidak ada perintah hapus perangkat fisik dari aksi ini.

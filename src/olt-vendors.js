@@ -34,6 +34,37 @@ function normalizeOnus(rows,helpers={}){
   }
   const exact=new Map();for(const row of output){const previous=exact.get(row.id);if(previous&&(previous.status!==row.status||previous.downCause!==row.downCause))exact.set(row.id,{...previous,status:'unknown',condition:'unknown',downCause:'',causeKnown:false});else if(!previous)exact.set(row.id,row);}return [...exact.values()];
 }
+function ponPosition(name, vendor) {
+  const value=String(name||'').trim();
+  const full=value.match(/^(?:xgpon|gpon|epon)\s+(0)\/(\d+)\/(\d+)$/i);
+  const compact=value.match(/^(?:xgpon|gpon|epon)\s+(0)\/(\d+)$/i);
+  const hioso=normalize(vendor)==='hioso'&&value.match(/^Pon-Nni\s*(\d+)$/i);
+  const slot=full?Number(full[2]):1,pon=full?Number(full[3]):compact?Number(compact[2]):hioso?Number(hioso[1]):0;
+  return slot<=31&&pon>=1&&pon<=16?{slot,pon,ponKey:`0/${slot}/${pon}`}:null;
+}
+function monitoringPorts(device, interfaces, inventory={}) {
+  const vendor=normalize(device.vendor),ports=[],seen=new Map();
+  for(const row of interfaces){
+    const position=ponPosition(row.name,vendor);
+    const port={...row,kind:position?'pon':'uplink',ponKey:position?.ponKey||''};
+    if(!position){ports.push(port);continue;}
+    const previous=seen.get(position.ponKey);
+    if(previous){if(previous.status!==port.status)previous.status='unknown';continue;}
+    seen.set(position.ponKey,port);ports.push(port);
+  }
+  if(vendor!=='hioso')return{ports,modelLabel:'',warning:''};
+  const physical=[...seen.keys()],reported=inventory.ponNumbers||[],observed=(inventory.rows||[]).map(row=>row.ponKey);
+  for(const key of [...reported.map(pon=>`0/1/${pon}`),...observed]){
+    if(!/^0\/(?:[0-9]|[12][0-9]|3[01])\/(?:[1-9]|1[0-6])$/.test(key)||seen.has(key))continue;
+    const port={id:`hioso:${key}`,name:`epon ${key}`,kind:'pon',ponKey:key,status:'unknown'};seen.set(key,port);ports.push(port);
+  }
+  // ONU positions alone cannot distinguish a partly populated 4-PON OLT from a 2-PON OLT.
+  const authoritative=(reported.length?reported.map(pon=>`0/1/${pon}`):physical).slice().sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const count=authoritative.length,complete=[2,4].includes(count)&&authoritative.every((key,index)=>key===`0/1/${index+1}`);
+  const conflict=reported.length&&physical.length&&physical.some(key=>!authoritative.includes(key))||complete&&[...seen.keys()].some(key=>!authoritative.includes(key));
+  ports.sort((a,b)=>a.kind===b.kind?a.ponKey.localeCompare(b.ponKey,undefined,{numeric:true}):a.kind==='pon'?-1:1);
+  return{ports,modelLabel:complete&&!conflict?`HIOSO ${count} PON`:'',warning:conflict?'Daftar port PON berbeda antar sumber; identitas model belum dipastikan.':!complete?'Jumlah port fisik HIOSO belum terverifikasi; posisi ONU yang terbaca tetap ditampilkan.':''};
+}
 async function readInventory(data,device,helpers={},transportOptions={}){
   const cfg=profile(device.vendor);if(!cfg||cfg.inventory==='basic')return {available:false,rows:[],warning:'Inventory ONU belum terverifikasi untuk model ini. Monitoring SNMP dasar tetap aktif; aksi tulis terkunci.'};
   if(!device.cliEnabled||!device.cliPasswordEnc)return {available:false,rows:[],warning:'Aktifkan akses CLI baca untuk melengkapi inventory ONU. Aksi tulis tetap terkunci.'};
@@ -51,12 +82,23 @@ async function readInventory(data,device,helpers={},transportOptions={}){
       };
       adapter.enrichOnuStatuses=async(items=[])=>{const statuses=await adapter.readOnuOperStatusMap(items);return items.map(item=>{const status=statuses.get(`${Number(item.pon)}:${Number(item.onu_id)}`);return{...item,status:status?.status||'unknown',description:status?.description||item.description,down_cause:null,down_cause_label:null};});};
     }
-    let rows;
-    if(cfg.value==='hioso')rows=(await adapter.readInventory()).items;
+    let rows,ponNumbers=[],ponSource='';
+    if(cfg.value==='hioso'){
+      const result=await adapter.readInventory();rows=result.items;
+      if(result.source==='web-hioso'){
+        try{
+          const response=await adapter.fetchWebPath('/oltPonPortStatusPonList.asp');
+          if(response.ok){ponNumbers=[...new Set(adapter.parseWebPonList(await response.text()).map(value=>Number(value.split('/').at(-1))).filter(value=>Number.isSafeInteger(value)&&value>=1&&value<=16))].sort((a,b)=>a-b);ponSource=ponNumbers.length?'web-hioso':'';}
+        }catch{}
+      }else{
+        const counts=[...new Set((result.olt_rows||[]).map(row=>Number(row.pon_count)))];
+        if(counts.length===1&&[2,4].includes(counts[0])){ponNumbers=Array.from({length:counts[0]},(_,index)=>index+1);ponSource='cli-hioso';}
+      }
+    }
     else if(cfg.value==='tarmoc')rows=await adapter.readWebOnuStatus();
     else rows=(await adapter.getDashboardStats())?.registered_onus;
     if(!Array.isArray(rows)||!rows.length)return {available:false,rows:[],warning:'Inventory ONU belum dapat diverifikasi; bukan berarti tidak ada ONU.'};
-    const normalized=normalizeOnus(rows,helpers);return normalized.length?{available:true,rows:normalized}:{available:false,rows:[],warning:'Format identitas/posisi ONU belum terverifikasi untuk firmware ini.'};
+    const normalized=normalizeOnus(rows,helpers);return normalized.length?{available:true,rows:normalized,ponNumbers,ponSource}:{available:false,rows:[],warning:'Format identitas/posisi ONU belum terverifikasi untuk firmware ini.'};
   },transportOptions);
 }
 async function testConnection(data,device,transportOptions={}){
@@ -64,4 +106,4 @@ async function testConnection(data,device,transportOptions={}){
     const olt=legacyDevice(device),command=['huawei','tarmoc'].includes(normalize(device.vendor))?'display version':'show version';const result=await transport.executeOltCommands({olt,password:context.decryptSecret(device.cliPasswordEnc),commands:['enable',command]});if(!result.success)throw new Error('Koneksi CLI vendor belum terverifikasi');return result;
   },transportOptions);
 }
-module.exports={PROFILES,normalize,profile,options,canWrite,loadLibrary,legacyDevice,normalizeOnus,readInventory,testConnection};
+module.exports={PROFILES,normalize,profile,options,canWrite,loadLibrary,legacyDevice,normalizeOnus,ponPosition,monitoringPorts,readInventory,testConnection};

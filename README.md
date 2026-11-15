@@ -463,6 +463,14 @@ belum terverifikasi, bukan jumlah nol. Kegagalan pembacaan mempertahankan data
 terakhir dengan penanda data lama. Tiket LOS otomatis untuk driver baru belum
 diaktifkan; tiket manual tetap dapat digunakan.
 
+HIOSO 2 PON dan 4 PON dideteksi dari daftar port fisik web/CLI atau antarmuka
+SNMP, bukan nama OLT atau jumlah ONU terpasang. PON kosong tetap ditampilkan
+berurutan dan filter PON memakai posisi yang sama dengan inventory ONU. Bila
+sumber port bertentangan, model tidak ditebak dan peringatan ditampilkan.
+MAC ONU EPON tetap dibedakan dari serial GPON. Monitoring HIOSO memakai
+SNMP dan pembacaan web terbatas, dengan fallback CLI sesuai firmware; akses
+web menggunakan akun CLI yang dikonfigurasi. Aksi tulis HIOSO tetap terkunci.
+
 Library memakai kredensial terenkripsi dan poller/cache billing yang sama,
 tanpa aplikasi, database atau scheduler tambahan. SSH memakai dependency yang
 dipasang oleh installer/updater. Vendor baru dibatasi baca-saja di factory,

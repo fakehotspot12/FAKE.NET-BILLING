@@ -230,12 +230,12 @@ function publicDevice(device, snapshot = null, options = {}) {
     latitude: device.latitude, longitude: device.longitude,
     status: !device.enabled ? 'disabled' : snapshot?.status || 'checking', checkedAt: snapshot?.checkedAt || '',
     lastSuccessAt: snapshot?.lastSuccessAt || (snapshot?.status === 'online' ? snapshot.checkedAt : ''), stale: !simulated&&Boolean(snapshot?.stale || (snapshot?.checkedAt && Date.now() - Date.parse(snapshot.checkedAt) > CACHE_MS * 2)),
-    error: snapshot?.error || '', systemName: snapshot?.systemName || '', description: snapshot?.description || '', uptimeTicks: snapshot?.uptimeTicks ?? null,
+    error: snapshot?.error || '', systemName: snapshot?.systemName || '', description: snapshot?.description || '', uptimeTicks: snapshot?.uptimeTicks ?? null, modelLabel:snapshot?.modelLabel||'',
     ponPorts: snapshot ? (snapshot.ports || []).filter(port => port.kind === 'pon').length : null,
     ponOverview: (snapshot?.ports || []).filter(row => row.kind === 'pon').slice(0,64),
     summary: snapshot?.summary || null, warnings: snapshot?.warnings || [] };
 }
-function fingerprint(device) { const fields=[device.host,device.port,device.communityEnc,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.cliPort];if(vendors.normalize(device.vendor)!=='cdata')fields.push(device.vendor,device.cliProtocol,device.webPort);return crypto.createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0,24); }
+function fingerprint(device) { const fields=[device.host,device.port,device.communityEnc,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.cliPort];if(vendors.normalize(device.vendor)!=='cdata')fields.push(device.vendor,device.cliProtocol,device.webPort,'pon-topology-v1');return crypto.createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0,24); }
 function cacheKey(device) { return `fakenet-billing:olt:v2:${device.id}:${fingerprint(device)}`; }
 async function snapshotFor(device) {
   if(process.env.MIGRATION_MODE==='1'&&/^demo-olt-\d{1,2}$/.test(device.id)&&device.demoSnapshot?.simulated===true&&Array.isArray(device.demoSnapshot.onus)&&device.demoSnapshot.onus.length<=128)return device.demoSnapshot;
@@ -261,9 +261,10 @@ async function collect(data, device, transport = executeTable, causeTransport = 
     let inventory;try{inventory=await vendors.readInventory(data,device,{normalizeSerial,classifyCause});}catch{inventory={available:false,rows:[],warning:'Pembacaan inventory vendor belum berhasil. Aksi tulis tetap terkunci.'};}
     if(inventory.warning)warnings.push(inventory.warning);warnings.push('Driver vendor baca-saja: reboot, hapus, perubahan konfigurasi, dan tiket LOS otomatis belum diaktifkan.');
     const states=column(tables.interfaceStatus||[],OIDS.interfaceStatus),onus=inventory.rows||[];
-    const ports=[...column(tables.interfaces||[],OIDS.interfaces)].map(([id,row])=>{const name=string(row),value=number(states.get(id));return{id,name,kind:/gpon|epon|xgpon/i.test(name)?'pon':'uplink',status:value===1?'online':value===2?'offline':'unknown',ponKey:name.match(/(?:gpon|epon|xgpon)\s+(\d+\/\d+\/\d+)/i)?.[1]||''};});
+    const interfaces=[...column(tables.interfaces||[],OIDS.interfaces)].map(([id,row])=>{const value=number(states.get(id));return{id,name:string(row),status:value===1?'online':value===2?'offline':'unknown'};});
+    const {ports,modelLabel,warning}=vendors.monitoringPorts(device,interfaces,inventory);if(warning)warnings.push(warning);
     for(const port of ports)if(port.kind==='pon'&&inventory.available)Object.assign(port,summarizeOnus(onus.filter(row=>row.ponKey===port.ponKey)));
-    return{checkedAt:new Date().toISOString(),status:'online',inventoryAvailable:inventory.available,systemName:string(system.get('5.0')),description:string(system.get('1.0')),uptimeTicks:number(system.get('3.0')),onus,ports,summary:inventory.available?summarizeOnus(onus):null,causeSchema:2,warnings};
+    return{checkedAt:new Date().toISOString(),status:'online',inventoryAvailable:inventory.available,systemName:string(system.get('5.0')),description:string(system.get('1.0')),uptimeTicks:number(system.get('3.0')),onus,ports,modelLabel,summary:inventory.available?summarizeOnus(onus):null,causeSchema:2,warnings};
   }
   // Walk columns, never the whole enterprise MIB or individual ONU credentials.
   for (const name of ['system','interfaces','interfaceStatus','serial','status','name','model','distance','rx']) {

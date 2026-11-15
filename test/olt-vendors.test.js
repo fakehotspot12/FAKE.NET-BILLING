@@ -17,6 +17,37 @@ test('SN/position/state normalization preserves uncertainty and MAC identity sep
 test('conflicting same-position observations become unknown, duplicate serial positions remain distinct',()=>{
  const row={sn:'HWTCAABBCCDD',slot:0,pon:1,onu_id:1,status:'online'},rows=vendors.normalizeOnus([row,{...row,status:'offline'},{...row,pon:2}],{normalizeSerial:olt.normalizeSerial});assert.equal(rows.length,2);assert.equal(rows[0].status,'unknown');assert.notEqual(rows[0].id,rows[1].id);
 });
+for(const count of [2,4])test(`HIOSO ${count}-PON physical interfaces include empty PONs without using the OLT name`,()=>{
+ const device={vendor:'hioso',name:count===2?'Name says HIOSO 4PON':'OLT HIOSO2'},interfaces=Array.from({length:count},(_,index)=>({id:String(index+1),name:`Pon-Nni${index+1}`,status:index?'offline':'online'})).reverse();
+ interfaces.push({id:'9',name:'G1',status:'online'});
+ const result=vendors.monitoringPorts(device,interfaces,{rows:[{ponKey:'0/1/1'}]});assert.equal(result.modelLabel,`HIOSO ${count} PON`);assert.equal(result.warning,'');assert.deepEqual(result.ports.filter(row=>row.kind==='pon').map(row=>row.ponKey),Array.from({length:count},(_,index)=>`0/1/${index+1}`));assert.equal(result.ports.find(row=>row.ponKey==='0/1/2').status,'offline');assert.equal(result.ports.filter(row=>row.kind==='uplink').length,1);
+});
+for(const count of [2,4])test(`HIOSO web physical list detects ${count} PON even when only PON 1 has ONUs`,async()=>{
+ const[factory]=await vendors.loadLibrary(),{data,device}=fixture('hioso'),proto=Object.getPrototypeOf(factory.createOltAdapter({vendor:'hioso'})),original=proto.readInventory;let calls=0;
+ proto.readInventory=async()=>({source:'web-hioso',items:[{sn:'AA:BB:CC:DD:EE:FF',slot:1,pon:1,onu_id:1,status:'online'}]});
+ try{const inventory=await vendors.readInventory(data,device,{}, {transports:{fetch:async(url,options)=>{calls++;assert.equal(url.pathname,'/oltPonPortStatusPonList.asp');assert.equal(options.method,'GET');return new Response('var ponListTable=new Array('+Array.from({length:count},(_,index)=>`\'0/${index+1}\',\'ONU Total=0\'`).join(',')+');');}}});assert.equal(calls,1);assert.equal(inventory.ponSource,'web-hioso');assert.deepEqual(inventory.ponNumbers,Array.from({length:count},(_,index)=>index+1));const result=vendors.monitoringPorts(device,[],inventory);assert.equal(result.modelLabel,`HIOSO ${count} PON`);assert.equal(result.ports.length,count);assert(result.ports.every(row=>row.status==='unknown'));assert.equal(inventory.rows[0].identifierKind,'mac');}
+ finally{proto.readInventory=original;}
+});
+test('HIOSO unknown topology never invents a two-PON model or drops conflicting ONU positions',()=>{
+ const device={vendor:'hioso',name:'HIOSO 2 PON'},unknown=vendors.monitoringPorts(device,[],{rows:[{ponKey:'0/1/1'},{ponKey:'0/1/2'}]});assert.equal(unknown.modelLabel,'');assert(unknown.warning);assert.equal(unknown.ports.length,2);
+ const conflicting=vendors.monitoringPorts(device,[],{ponNumbers:[1,2],rows:[{ponKey:'0/1/4'}]});assert.equal(conflicting.modelLabel,'');assert(conflicting.warning.includes('berbeda'));assert.deepEqual(conflicting.ports.map(row=>row.ponKey),['0/1/1','0/1/2','0/1/4']);
+ const conflictingPhysical=vendors.monitoringPorts(device,[{id:'4',name:'Pon-Nni4',status:'online'}],{ponNumbers:[1,2]});assert.equal(conflictingPhysical.modelLabel,'');assert(conflictingPhysical.warning.includes('berbeda'));
+});
+test('PON parsing preserves vendor positions and excludes ONU virtual interfaces and invalid names',()=>{
+ for(const[name,vendor,key]of[['gpon 0/1/4','hsgq','0/1/4'],['epon 0/2','hioso','0/1/2'],['xgpon 0/0/16','btpon','0/0/16'],['Pon-Nni2','hioso','0/1/2']])assert.equal(vendors.ponPosition(name,vendor)?.ponKey,key);
+ for(const name of ['gpon-onu_0/1:2','epon 0/17','gpon 0/32/1','gpon 1/1/1','G1','fake-gpon 0/1/1'])assert.equal(vendors.ponPosition(name,'hioso'),null);assert.equal(vendors.ponPosition('Pon-Nni1','hsgq'),null);
+ const result=vendors.monitoringPorts({vendor:'hsgq'},[{id:'a',name:'gpon 0/1/1',status:'online'},{id:'b',name:'gpon 0/1/1',status:'offline'}]);assert.equal(result.ports.length,1);assert.equal(result.ports[0].status,'unknown');
+});
+test('HIOSO failed port-list read keeps real inventory and physical SNMP topology usable',async()=>{
+ const[factory]=await vendors.loadLibrary(),{data,device}=fixture('hioso'),proto=Object.getPrototypeOf(factory.createOltAdapter({vendor:'hioso'})),original=proto.readInventory;
+ proto.readInventory=async()=>({source:'web-hioso',items:[{sn:'AA:BB:CC:DD:EE:FF',slot:1,pon:1,onu_id:1,status:'online'}]});
+ try{const inventory=await vendors.readInventory(data,device,{}, {transports:{fetch:async()=>{throw Error('read unavailable');}}});assert(inventory.available);assert.equal(inventory.rows.length,1);assert.deepEqual(inventory.ponNumbers,[]);assert.equal(vendors.monitoringPorts(device,[1,2].map(pon=>({id:String(pon),name:`Pon-Nni${pon}`,status:'unknown'})),inventory).modelLabel,'HIOSO 2 PON');}finally{proto.readInventory=original;}
+});
+test('HIOSO CLI-reported physical port count is used without enabling write actions',async()=>{
+ const[factory]=await vendors.loadLibrary(),{data,device}=fixture('hioso'),proto=Object.getPrototypeOf(factory.createOltAdapter({vendor:'hioso'})),original=proto.readInventory;
+ proto.readInventory=async()=>({source:'cli-hioso',olt_rows:[{olt_id:1,pon_count:2}],items:[{sn:'AA:BB:CC:DD:EE:FF',slot:1,pon:1,onu_id:1,status:'online'}]});
+ try{const result=await vendors.readInventory(data,device);assert.deepEqual(result.ponNumbers,[1,2]);assert.equal(result.ponSource,'cli-hioso');assert.equal(vendors.canWrite(device),false);}finally{proto.readInventory=original;}
+});
 test('all imported adapter modules load without original service/database/configuration',async()=>{
  const[factory]=await vendors.loadLibrary();for(const cfg of vendors.PROFILES){const adapter=factory.createOltAdapter({vendor:cfg.value==='cdata'?'c-data':cfg.value});assert.equal(typeof adapter.getCommandNotes,'function');assert.equal(typeof adapter.getRegisteredOnus,'function');assert(Array.isArray(adapter.getCommandNotes()));}
 });
