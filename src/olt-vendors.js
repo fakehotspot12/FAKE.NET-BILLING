@@ -18,7 +18,7 @@ function profile(value){return PROFILES.find(row=>row.value===normalize(value));
 function canWrite(device){return profile(device.vendor)?.writes===true&&(device.cliProtocol||'telnet')==='telnet';}
 function capabilities(device,snapshot){
   const configured=Boolean(device.enabled&&device.cliEnabled&&device.cliPasswordEnc),native=canWrite(device),hioso=normalize(device.vendor)==='hioso'?snapshot?.hiosoActions||{}:{};
-  return{rename:configured&&(native||hioso.rename===true),reboot:configured&&(native||hioso.reboot===true),delete:configured&&(native||hioso.delete===true),saveConfig:configured&&native};
+  return{rename:configured&&(native||hioso.rename===true),reboot:configured&&(native||hioso.reboot===true),delete:configured&&(native||hioso.delete===true),saveConfig:configured&&(native||hioso.saveConfig===true)};
 }
 function options(){return PROFILES.map(row=>({...row,mode:row.writes?'verified':'read-only',note:row.writes?'Jalur CDATA terverifikasi':row.inventory==='basic'?'Monitoring SNMP dasar; inventory dan aksi ONU belum terverifikasi':'Monitoring ONU baca-saja; aksi tulis belum terverifikasi'}));}
 let library;
@@ -89,7 +89,7 @@ async function readInventory(data,device,helpers={},transportOptions={}){
     let rows,ponNumbers=[],ponSource='',hiosoActions={};
     if(cfg.value==='hioso'){
       const result=await adapter.readInventory();rows=result.items;
-      if(result.source==='web-hioso')hiosoActions=await require('./olt-hioso').probe(adapter,rows);
+      hiosoActions=await require('./olt-hioso').probe(adapter,rows);
       if(result.source==='web-hioso'){
         try{
           const response=await adapter.fetchWebPath('/oltPonPortStatusPonList.asp');

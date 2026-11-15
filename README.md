@@ -486,6 +486,24 @@ vendor lain memakai SNMP/CLI yang didukung. Data tidak tersedia tetap `-`, data
 lama diberi penanda, dan seri fisik tidak ditebak dari nama atau jumlah port.
 Keluarga firmware yang tersedia tanpa seri fisik dibedakan melalui tooltip.
 
+SNMP/Telnet diprioritaskan untuk data dan perintah yang terverifikasi didukung
+perangkat. Web hanya melengkapi field yang tidak tersedia atau menjadi cadangan
+sebelum perintah dikirim. Perintah dengan hasil pengiriman ambigu tidak diulang
+otomatis melalui jalur lain.
+
+Reboot/hapus ONU HIOSO memakai CLI bila syntax bantuan firmware dikenali.
+Target selalu terikat ke OLT, PON, nomor ONU dan MAC; tabel dibaca ulang dalam
+sesi yang sama sebelum perubahan. Hapus memerlukan status offline, dan tabel
+sesudahnya harus terverifikasi. MAC/SN ganda, pindah posisi, status tidak jelas
+atau hasil ambigu ditahan, bukan diteruskan ke ONU lain atau diulang lewat web.
+
+Save Config HIOSO memprioritaskan Telnet bila bantuan firmware membuktikan
+perintahnya; form web native yang dikenali menjadi cadangan. Aksi ini
+memerlukan konfirmasi nama OLT dan menyimpan konfigurasi berjalan, bukan reboot
+atau reset. Pengiriman dibatasi satu kali dengan jeda ulang satu menit; hasil
+yang belum terkonfirmasi tidak otomatis dicoba ulang. Model/firmware lain tetap
+terkunci bila jalur penyimpanannya belum dikenali.
+
 Daftar **PON / ONU** membaca satu OLT yang dipilih, bukan gabungan seluruh ONU.
 Ringkasan boleh menampilkan total cache antar-OLT, tetapi masuk ke daftar akan
 memilih satu OLT. Filter/pagination dikerjakan pada snapshot lokal; perangkat

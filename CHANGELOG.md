@@ -6,6 +6,8 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Added
 
+- Save Config HIOSO memprioritaskan perintah Telnet yang dibuktikan melalui bantuan firmware; form web native menjadi cadangan sebelum pengiriman. Konfirmasi nama/revisi koneksi, otorisasi satu kali dan jeda ulang satu menit tetap berlaku. Tidak melakukan reboot/reset, tidak dicoba ulang lewat jalur lain setelah perintah terkirim, dan respons yang belum pasti tidak disebut berhasil.
+- Reboot/hapus ONU HIOSO memilih perintah CLI yang dibuktikan bantuan firmware. Grant mengikat OLT/PON/ID/MAC dan satu urutan perintah; sesi yang sama membaca ulang tabel ONU sebelum mutasi, menahan MAC/status berubah atau identitas ganda, serta memverifikasi tabel setelah hapus. Bantuan dibaca tanpa Enter pada baris perintah mutasi; tidak ada fallback setelah hasil pengiriman ambigu.
 - Pengelolaan ONU HIOSO melalui form web native: ganti nama, reboot dan hapus dengan pemeriksaan MAC/PON terbaru, validasi offline untuk hapus, verifikasi hasil serta pengunci permintaan tanpa retry aksi ambigu. Factory reset, provisioning dan Save Config tidak dibuka oleh jalur ini.
 - Ringkasan OLT menampilkan model terdeteksi dan bar CPU/RAM dari snapshot background. Model dicache 24 jam, resource lima menit dan kegagalan diberi backoff 15 menit; daftar PON/ONU tidak menambah request sistem ke perangkat. Sumber yang tidak tersedia tidak ditampilkan sebagai nol.
 - Integrasi EPON berbasis kecocokan tepat MAC antarmuka ONT di ACS, dengan satu posisi/perangkat, inform terbaru dan akun/NAS yang sesuai. Tidak menggunakan MAC klien terhubung atau nama ONU, tidak menimpa data pelanggan, dan tidak menyamakan MAC EPON dengan serial untuk penghapusan ACS.
@@ -20,6 +22,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Menyesuaikan ikon dan tooltip tombol OLT/tiket: satu tombol refresh di dekat Tambah OLT memperbarui tampilan dan menjadwalkan pembacaan bergiliran; kembali memakai panah kiri, tautkan memakai ikon rantai, dan lihat detail tetap ikon mata. Klik ganda saat permintaan berjalan ditahan; kegagalan permintaan ditampilkan tanpa error promise yang tidak tertangani dan popup tidak terbuka setelah pindah halaman.
 - Tombol kembali dari detail PON/ONU menuju Ringkasan; membuka ulang menu OLT kembali ke Ringkasan, sementara Lihat ONU dari tiket tetap menuju OLT dan identitas tiket yang dipilih. Perubahan filter/pencarian tidak menerima hasil permintaan lama yang sudah tidak sesuai halaman.
 - Mendeteksi HIOSO 2/4 PON dari daftar port fisik web/CLI dan SNMP, termasuk nama antarmuka Pon-Nni. PON kosong tetap tampil berurutan, posisi/filter ONU konsisten, dan nama OLT tidak dijadikan penentu model. Sumber bertentangan diberi peringatan tanpa menghilangkan posisi ONU nyata atau menebak model; aksi tulis yang belum terverifikasi tetap terkunci.
 - Menyamakan Sekretaris sebagai administrator kedua sesuai kebijakan aplikasi, termasuk pengaturan dan pengelolaan pengguna, tanpa mengubah identitas role/audit maupun perlindungan admin terakhir.
@@ -39,6 +42,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Performance And Operations
 
+- SNMP/Telnet menjadi sumber utama pembacaan yang didukung. Inventory HIOSO mencoba CLI lebih dahulu; web hanya melengkapi field yang belum disediakan atau menjadi cadangan jika CLI tidak lengkap, tanpa menimpa posisi/status valid, menambah polling per halaman atau menghilangkan ONU yang masih terdaftar.
 - Daftar PON/ONU wajib satu OLT terpilih dan tidak menggabungkan seluruh inventory saat dibuka. Filter status/PON dijalankan sebelum pengayaan pelanggan; tanpa pencarian hanya baris halaman terpilih yang dilengkapi. Ringkasan global tetap memakai cache, bukan query ulang perangkat.
 - Daftar tiket menghitung status dalam satu lintasan dan memakai pemeriksaan izin/NAS yang disiapkan sekali per permintaan. Popup identitas berbagi cache lookup ACS terbatas untuk pelanggan/perangkat yang sama, dengan pemisahan konfigurasi dan kredensial, tanpa mengubah perlindungan kepemilikan, antrean WA atau aturan LOS.
 - Menggunakan snapshot OLT, cache terbatas dan pembacaan identitas ACS ringkas secara batch; tanpa request ACS per baris, summon massal, pembacaan password/WiFi/host atau perubahan parameter modem. Tiket dan billing tetap dapat dipakai tanpa OLT/ACS.

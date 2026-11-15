@@ -1065,7 +1065,17 @@ export class HiosoAdapter extends BaseOltAdapter {
   }
 
   async readInventory() {
-    const webItems = await this.readWebOnuList();
+    let cliResult=null;
+    try{cliResult=await this.readCliInventory();}catch{}
+    const webItems = await this.readWebOnuList().catch(()=>[]);
+    if(cliResult?.items?.length){
+      const key=row=>`${Number(row.slot)}/${Number(row.pon)}:${Number(row.onu_id)}:${this.macAsSn(row.sn||row.mac_address)}`,cliKeys=new Set(cliResult.items.map(key));
+      // A partial CLI parser must not hide ONUs that the firmware web table still proves exist.
+      if(!webItems.some(row=>!cliKeys.has(key(row)))){
+        const web=new Map(webItems.map(row=>[key(row),row]));
+        return{...cliResult,items:cliResult.items.map(row=>{const extra=web.get(key(row));if(!extra)return row;const sameState=extra.status===row.status;return{...row,description:row.description||extra.description,model:row.model||extra.model,rx_power:row.rx_power??extra.rx_power,tx_power:row.tx_power??extra.tx_power,...(sameState&&row.status==='offline'?{down_cause:extra.down_cause,down_cause_label:extra.down_cause_label,down_cause_detail:extra.down_cause_detail}:{})};})};
+      }
+    }
     if (webItems.length) {
       return {
         items: webItems,
@@ -1074,7 +1084,11 @@ export class HiosoAdapter extends BaseOltAdapter {
         source: 'web-hioso',
       };
     }
+    if(cliResult)return cliResult;
+    throw new HttpError(502,'Inventory HIOSO belum dapat dibaca melalui Telnet maupun web');
+  }
 
+  async readCliInventory() {
     let legacyExecution = null;
     let oltRows = [];
     let items = [];

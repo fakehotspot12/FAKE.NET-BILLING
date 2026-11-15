@@ -1,4 +1,4 @@
-Icons: Lucide trash, rotate-cw and save
+Icons: Lucide trash, rotate-cw, refresh-cw, arrow-left, link-2 and save
 Source: https://github.com/lucide-icons/lucide
 
 ISC License

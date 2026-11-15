@@ -472,14 +472,14 @@ async function testConnection(data,device,kind,transport={}) {
   }catch(error){return{ok:false,kind,elapsedMs:Date.now()-started,message:kind==='snmp'?'SNMP belum merespons. Periksa layanan SNMP di OLT, UDP 161/port terpilih, community dan izin IP server billing.':/ditolak/.test(error.message)?'Login Telnet ditolak. Periksa username/password CLI.':'Telnet belum berhasil. Periksa layanan, port, akun CLI dan izin akses OLT.'};}
   finally{diagnosticPending.delete(key);}
 }
-async function saveConfig(data,device,payload,transport=cli.saveConfig) {
-  if(!vendors.canWrite(device))throw new Error('Save Config vendor ini masih terkunci sampai model dan aksi terverifikasi');
+async function saveConfig(data,device,payload,transport) {
+  if(!vendors.canWrite(device)&&device.vendor!=='hioso')throw new Error('Save Config vendor ini masih terkunci sampai model dan aksi terverifikasi');
   if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: Save Config OLT asli dinonaktifkan');
   if(payload.confirmSave!==true||payload.confirmId!==device.id||String(payload.confirmName||'').trim()!==device.name)throw new Error('Konfirmasi nama OLT dan persetujuan Save Config wajib sesuai');
   if(!payload.revision||payload.revision!==device.updatedAt){const error=new Error('Pengaturan OLT berubah. Buka ulang sebelum menyimpan konfigurasi.');error.status=409;throw error;}
   if(!device.enabled||!device.cliEnabled||!device.cliUsername||!device.cliPasswordEnc)throw new Error('Aktifkan monitoring dan akses CLI OLT terlebih dahulu');
   const key=[device.id,device.host,device.cliPort].join(':'),now=Date.now();if(now-(saveTimes.get(key)||0)<60000){const error=new Error('Save Config baru diproses. Tunggu setidaknya satu menit dan periksa hasil sebelumnya.');error.status=429;throw error;}remember(saveTimes,key,now);
-  try{const result=await transport(data,device);return{confirmed:result.saveConfirmed===true,message:result.saveConfirmed?'Konfigurasi OLT berhasil disimpan ke penyimpanan permanen.':'Perintah Save Config sudah diproses, tetapi keberhasilannya belum terkonfirmasi. Periksa di OLT sebelum mengulang.'};}
+  try{const result=await (transport||(device.vendor==='hioso'?hioso.saveConfig:cli.saveConfig))(data,device);return{confirmed:result.saveConfirmed===true,message:result.saveConfirmed?'Konfigurasi OLT berhasil disimpan ke penyimpanan permanen.':'Perintah Save Config sudah diproses, tetapi keberhasilannya belum terkonfirmasi. Periksa di OLT sebelum mengulang.'};}
   catch{return{confirmed:false,message:'Hasil Save Config belum dapat dipastikan. Periksa status di OLT sebelum mencoba lagi.'};}
 }
 function visibleDevices(data, user = {}) {

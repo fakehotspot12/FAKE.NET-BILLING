@@ -2,7 +2,7 @@
 
 const {pathToFileURL}=require('node:url');
 const path=require('node:path');
-const busy=new Set(),attempts=new Map(),capabilityCache=new Map();
+const busy=new Set(),attempts=new Map(),capabilityCache=new Map(),cliCapabilityCache=new Map();
 function fail(message,status=409){const error=new Error(message);error.status=status;return error;}
 function position(value){
   const match=String(value||'').match(/^(\d+)\/(\d+):(\d+):([A-F0-9]{12})$/);
@@ -29,12 +29,48 @@ async function details(adapter,target){
   if(!current||current.sn!==target.sn||current.address!==address)throw fail('MAC atau posisi ONU HIOSO berubah. Segarkan data dahulu.');
   return{...current,actions:formCapabilities(html)};
 }
+function saveForm(html){
+  const form=String(html).match(/<form\b[^>]*\baction\s*=\s*["']?\/goform\/saveConfiguration(?=["'\s>])[^>]*>([\s\S]*?)<\/form>/i);
+  if(!form||!/\bmethod\s*=\s*["']?get(?=["'\s>])/i.test(form[0]))return false;
+  const fields=[...form[1].matchAll(/<input\b[^>]*\bname\s*=\s*["']?([\w-]+)(?=["'\s>])/gi)].map(row=>row[1]);
+  return fields.length===1&&fields[0]==='savecfg';
+}
+async function saveCapability(adapter){const response=await adapter.fetchWebPath('/system_save.asp');return response.ok&&saveForm(await response.text());}
+async function cliSaveCapability(adapter){
+  try{const result=await adapter.executeHiosoCommands(['enable','?'],{allowWrite:false,timeoutMs:4000});return result.success===true&&/^[ \t]*write[ \t]+Write running configuration to file[ \t]*\r?$/im.test(result.outputs?.find(row=>row.command==='?')?.stdout||'');}catch{return false;}
+}
+async function cliOnuCapabilities(adapter,target){
+  const address=String(target?.snmp_onu_index||''),match=address.match(/^0\/([1-9]|1[0-6]):([1-9]\d?|1[01]\d|12[0-8])$/);if(!match)return{reboot:false,delete:false};
+  const key=JSON.stringify([adapter.olt.host,adapter.olt.port,adapter.olt.protocol,adapter.olt.username,adapter.olt.password_encrypted,match[1]]),cached=cliCapabilityCache.get(key);if(cached?.until>Date.now())return cached.actions;
+  const prefix=['enable','configure terminal','epon',`interface epon 0/${match[1]}`],actions={reboot:false,delete:false};
+  try{const result=await adapter.executeHiosoCommands([...prefix,`onu ${match[2]} ?`],{allowWrite:false,timeoutMs:4000});actions.reboot=result.success===true&&/^[ \t]*reboot[ \t]+--[ \t]*Reboot ONU\b/im.test(result.outputs?.at(-1)?.stdout||'');}catch{}
+  try{const result=await adapter.executeHiosoCommands([...prefix,'delete onu ?'],{allowWrite:false,timeoutMs:4000});actions.delete=result.success===true&&/<1-128>\s+--\s*Specified Onu Id/i.test(result.outputs?.at(-1)?.stdout||'');}catch{}
+  cliCapabilityCache.set(key,{actions,until:Date.now()+(actions.reboot&&actions.delete?3600000:60000)});while(cliCapabilityCache.size>64)cliCapabilityCache.delete(cliCapabilityCache.keys().next().value);return actions;
+}
+function saveConfirmed(html){return require('./olt-cli').saveConfirmed(String(html))||/<td\b[^>]*\bid\s*=\s*["']?retVal(?=["'\s>])[^>]*>\s*0\s*<\/td>/i.test(String(html))&&!/operation failed|save failed|access denied/i.test(String(html));}
 async function probe(adapter,items){
   const target=items.find(row=>row.status==='online')||items[0];
-  if(!target?.snmp_onu_index)return{};
   const key=JSON.stringify([adapter.olt.host,adapter.olt.web_port,adapter.olt.username,adapter.olt.password_encrypted]),cached=capabilityCache.get(key);if(cached?.until>Date.now())return cached.actions;
-  let actions={};try{actions=(await details(adapter,target)).actions;try{actions.delete=await deleteCapability(adapter,target);}catch{actions.delete=false;}}catch{}
-  capabilityCache.set(key,{actions,until:Date.now()+(actions.rename&&actions.reboot&&actions.delete?3600000:60000)});while(capabilityCache.size>64)capabilityCache.delete(capabilityCache.keys().next().value);return actions;
+  let actions={};if(target?.snmp_onu_index)try{actions=(await details(adapter,target)).actions;try{actions.delete=await deleteCapability(adapter,target);}catch{actions.delete=false;}}catch{}
+  const cliActions=await cliOnuCapabilities(adapter,target);actions.reboot=Boolean(actions.reboot||cliActions.reboot);actions.delete=Boolean(actions.delete||cliActions.delete);
+  actions.saveConfig=await cliSaveCapability(adapter);if(!actions.saveConfig)try{actions.saveConfig=await saveCapability(adapter);}catch{actions.saveConfig=false;}
+  capabilityCache.set(key,{actions,until:Date.now()+(actions.rename&&actions.reboot&&actions.delete&&actions.saveConfig?3600000:60000)});while(capabilityCache.size>64)capabilityCache.delete(capabilityCache.keys().next().value);return actions;
+}
+async function saveConfig(data,device,options={}){
+  if(device.vendor!=='hioso'||!device.enabled||!device.cliEnabled||!device.cliUsername||!device.cliPasswordEnc)throw fail('Akses web HIOSO belum dikonfigurasi',400);
+  if(busy.has(device.id)||busy.size>=2)throw fail('Aksi HIOSO sedang berjalan. Tunggu hasilnya.',429);
+  busy.add(device.id);
+  try{const vendors=require('./olt-vendors'),[,context]=await vendors.loadLibrary(),{HiosoAdapter}=await import(pathToFileURL(path.join(__dirname,'olt-vendor-library/adapters/hioso.adapter.js')).href);
+    return await context.withContext(data,device,async()=>{
+      const adapter=new HiosoAdapter(vendors.legacyDevice(device));
+      if(await cliSaveCapability(adapter)){context.authorizeHiosoSave('cli');const result=await adapter.executeHiosoCommands(['enable','write'],{timeoutMs:12000});return{saveConfirmed:result.success===true&&require('./olt-cli').saveConfirmed(result.outputs?.find(row=>row.command==='write')?.stdout||''),transport:device.cliProtocol||'telnet'};}
+      if(!await saveCapability(adapter))throw fail('Form Save Config HIOSO belum terverifikasi',400);
+      context.authorizeHiosoSave();
+      const response=await adapter.fetchWebPath('/goform/saveConfiguration?savecfg=');
+      if(response.status>=300&&response.status<400){const next=new URL(response.headers.get('location')||'',adapter.getWebBaseUrl());if(next.origin!==adapter.getWebBaseUrl()||next.pathname!=='/system_save.asp'||next.search)return{saveConfirmed:false};const verify=await adapter.fetchWebPath('/system_save.asp');return{saveConfirmed:verify.ok&&saveConfirmed(await verify.text())};}
+      return{saveConfirmed:response.ok&&saveConfirmed(await response.text())};
+    },{...options,hiosoActionAllowed:true});
+  }finally{busy.delete(device.id);}
 }
 async function inventory(adapter){
   const response=await adapter.fetchWebPath('/onuAllPonOnuList.asp');
@@ -56,10 +92,24 @@ async function run(data,device,onu,action,payload={},options={}){
   try{
     const vendors=require('./olt-vendors'),[,context]=await vendors.loadLibrary(),{HiosoAdapter}=await import(pathToFileURL(path.join(__dirname,'olt-vendor-library/adapters/hioso.adapter.js')).href);
     return await context.withContext(data,device,async()=>{
-      const adapter=new HiosoAdapter(vendors.legacyDevice(device)),rows=await inventory(adapter),matches=rows.filter(row=>Number(row.slot)===address.slot&&Number(row.pon)===address.pon&&Number(row.onu_id)===address.onuId);
+      const adapter=new HiosoAdapter(vendors.legacyDevice(device));let rows;
+      if(['reboot','delete'].includes(action))try{const result=await adapter.readInventory();if(result.items?.length)rows=result.items;}catch{}
+      rows??=await inventory(adapter);let matches=rows.filter(row=>Number(row.slot)===address.slot&&Number(row.pon)===address.pon&&Number(row.onu_id)===address.onuId);
+      if(!matches.length&&['reboot','delete'].includes(action)){rows=await inventory(adapter);matches=rows.filter(row=>Number(row.slot)===address.slot&&Number(row.pon)===address.pon&&Number(row.onu_id)===address.onuId);}
       if(!matches.length){if(action==='inspect')return{state:'missing'};if(action==='delete')return{deleteConfirmed:true,alreadyAbsent:true};throw fail('ONU tidak terdaftar pada posisi yang dipilih');}
       const target=matches[0];
       if(matches.length!==1||target.sn!==onu.serialNumber||rows.filter(row=>row.sn===target.sn).length!==1)throw fail('Identitas ONU HIOSO ambigu atau berubah. Aksi dibatalkan.');
+      if(['reboot','delete'].includes(action)&&(await cliOnuCapabilities(adapter,target))[action]){
+        if(target.status!==(action==='delete'?'offline':'online'))throw fail('Status ONU HIOSO belum sesuai atau belum terverifikasi');
+        context.authorizeHiosoCliOnu({address:target.snmp_onu_index,serialNumber:onu.serialNumber,operation:action});
+        attempts.set(key,Date.now());while(attempts.size>512)attempts.delete(attempts.keys().next().value);
+        const commands=['enable','terminal length 0','configure terminal','epon',`interface epon 0/${address.pon}`,'show onu info all',action==='delete'?`delete onu ${address.onuId}`:`onu ${address.onuId} reboot`,...(action==='delete'?['show onu info all']:[])];
+        const result=await adapter.executeHiosoCommands(commands,{timeoutMs:12000});
+        if(!result.success)throw fail('Aksi Telnet HIOSO ditahan atau hasilnya belum pasti. Periksa identitas dan status sebelum mengulang.',502);
+        if(action==='reboot')return{submitted:true,confirmed:false};
+        const[,,transport]=await vendors.loadLibrary(),after=transport.hiosoCliRows(result.outputs?.at(-1)?.stdout||'');
+        return{deleteConfirmed:Boolean(after&&!after.some(row=>row.address===target.snmp_onu_index)),alreadyAbsent:false};
+      }
       const current=await details(adapter,target);
       if(action==='delete'||action==='inspect')current.actions.delete=await deleteCapability(adapter,target);
       if(action==='inspect')return{state:current.status===target.status?current.status:'unknown',description:current.raw_name,actions:current.actions};
@@ -87,4 +137,4 @@ async function run(data,device,onu,action,payload={},options={}){
     },{...options,hiosoActionAllowed:true});
   }finally{busy.delete(device.id);}
 }
-module.exports={position,formCapabilities,probe,run};
+module.exports={position,formCapabilities,saveForm,saveConfirmed,saveConfig,probe,run};

@@ -18,17 +18,29 @@ export function authorizeHiosoOperation({address,operation,name=''}){
   if(operation!=='delete'&&(typeof name!=='string'||!name||name.length>30||/[\x00-\x1f]/.test(name)))throw new Error('HIOSO operation name rejected');
   context.hiosoGrant={address,operation,name,used:false};
 }
+export function authorizeHiosoSave(mode='web'){
+  const context=current();
+  if(context.device.vendor!=='hioso'||!context.hiosoActionAllowed||context.hiosoGrant||!['cli','web'].includes(mode))throw new Error('HIOSO save authorization rejected');
+  context.hiosoGrant={operation:mode==='cli'?'saveConfigCli':'saveConfig',used:false};
+}
+export function authorizeHiosoCliOnu({address,serialNumber,operation}){
+  const context=current(),match=String(address||'').match(/^0\/([1-9]|1[0-6]):([1-9]\d?|1[01]\d|12[0-8])$/);
+  if(context.device.vendor!=='hioso'||!context.hiosoActionAllowed||context.hiosoGrant||!match||!/^[A-F0-9]{12}$/.test(serialNumber)||!['reboot','delete'].includes(operation))throw new Error('HIOSO CLI ONU authorization rejected');
+  context.hiosoGrant={operation:'onuCli',action:operation,address,serialNumber,pon:Number(match[1]),onuId:Number(match[2]),used:false};
+}
 export async function readOnlyFetch(value,options={}){
   const context=request(),url=new URL(value),host=url.hostname.replace(/^\[|\]$/g,''),method=String(options.method||'GET').toUpperCase();
   const login=method==='POST'&&((url.pathname==='/goform/SetLogin')||(url.pathname==='/userlogin'&&url.searchParams.get('form')==='login'));
   const hiosoDeleteView=context.device.vendor==='hioso'&&method==='GET'&&url.pathname==='/onuDeleteOnuList.asp'&&url.searchParams.size===1&&/^0\/(?:\d+\/)?[1-9]\d*$/.test(url.searchParams.get('oltponno')||'');
+  const hiosoSaveView=context.device.vendor==='hioso'&&method==='GET'&&url.pathname==='/system_save.asp'&&!url.search;
   let hiosoWrite=false;
+  if(context.device.vendor==='hioso'&&context.hiosoActionAllowed&&method==='GET'&&context.hiosoGrant?.operation==='saveConfig')hiosoWrite=!context.hiosoGrant.used&&url.pathname==='/goform/saveConfiguration'&&url.searchParams.size===1&&url.searchParams.getAll('savecfg').length===1&&url.searchParams.get('savecfg')===''&&options.body===undefined;
   if(context.device.vendor==='hioso'&&context.hiosoActionAllowed&&method==='POST'&&context.hiosoGrant){
     const grant=context.hiosoGrant,body=new URLSearchParams(options.body),deleting=grant.operation==='delete',keys=deleting?['onuId']:['onuId','onuName','onuOperation'];
     hiosoWrite=!grant.used&&!url.search&&url.pathname===(deleting?'/goform/deleteOnu':'/goform/setOnu')&&[...body.keys()].length===keys.length&&keys.every(key=>body.getAll(key).length===1)&&body.get('onuId')===grant.address&&(deleting||body.get('onuName')===grant.name&&body.get('onuOperation')===grant.operation);
   }
   if(!['http:','https:'].includes(url.protocol)||host!==context.device.host||url.username||url.password||Number(url.port||(url.protocol==='https:'?443:80))!==(context.device.webPort||80))throw new Error('Vendor web target rejected');
-  if(!login&&!hiosoWrite&&!hiosoDeleteView&&(method!=='GET'||/(?:delete|reboot|reset|restart|restore|cfgload|setonu|save|update|remove|\/goform\/)/i.test(url.pathname)))throw new Error('Vendor web write actions are locked');
+  if(!login&&!hiosoWrite&&!hiosoDeleteView&&!hiosoSaveView&&(method!=='GET'||/(?:delete|reboot|reset|restart|restore|cfgload|setonu|save|update|remove|\/goform\/)/i.test(url.pathname)))throw new Error('Vendor web write actions are locked');
   if(!login&&[...url.searchParams].some(([key,value])=>/^(?:action|operation|op|cmd|command|method)$/i.test(key)&&!/^(?:get|read|list|show|status|detail)$/i.test(value)))throw new Error('Vendor web query action rejected');
   if(hiosoWrite)context.hiosoGrant.used=true;
   const response=await(context.transports.fetch||fetch)(url,{...options,method,redirect:'manual',signal:context.controller.signal});
