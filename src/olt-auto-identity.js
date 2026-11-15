@@ -9,6 +9,7 @@ const proofs=new WeakMap();
 let revision=0;
 const INTERVAL_MS=180000,TTL_MS=300000,MAX_ROWS=10000;
 const clean=value=>String(value||'').trim();
+const onuKey=onu=>onu?.identifierKind==='mac'?(/^[A-F0-9]{12}$/.test(onu.serialNumber)?'mac:'+onu.serialNumber:''):identity.serial(onu?.serialNumber);
 const deviceSignature=device=>JSON.stringify([device.host,device.nasId,device.updatedAt]);
 function configuration(data){
   const raw=data.settings?.genieAcs||{},signature=JSON.stringify([raw.enabled,raw.baseUrl,raw.token,raw.excludeUsernameSuffixes,process.env.GENIEACS_ENABLED,process.env.GENIEACS_BASE_URL,process.env.GENIEACS_TOKEN,process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES]),old=keys.get(data);
@@ -23,9 +24,8 @@ function locations(observations,now){
     const at=Date.parse(snapshot?.checkedAt||'');
     if(!device?.id||device.enabled===false||snapshot?.status!=='online'||snapshot.stale||snapshot.pendingRefresh||!Number.isFinite(at)||now-at>360000||at>now+30000)continue;
     for(const onu of snapshot.onus||[]){
-      if(onu.identifierKind==='mac')continue;
       if(++count>32768)throw new Error('Pemetaan ONU melebihi batas aman');
-      const sn=identity.serial(onu.serialNumber);if(!/^[A-Z0-9]{12}$/.test(sn))continue;
+      const sn=onuKey(onu);if(!/^(?:mac:)?[A-Z0-9]{12}$/.test(sn))continue;
       const rows=map.get(sn)||[];rows.push({deviceId:device.id,signature:deviceSignature(device),index:String(onu.id),status:onu.status,pon:onu.ponKey||''});map.set(sn,rows);
       if(map.size>32768)throw new Error('Pemetaan ONU melebihi batas aman');
     }
@@ -46,8 +46,9 @@ async function refresh(data,observations=[],options={}){
       const rows=await(options.fetch||acs.identityDevices)(data.settings||{});if(!Array.isArray(rows)||rows.length>MAX_ROWS)throw new Error('Identitas ACS tidak valid');
       const indexed=new Map(),accounts=new Map();
       for(const source of rows){const sn=identity.serial(source.serialNumber),username=clean(source.username);if(!/^[A-Z0-9]{12}$/.test(sn)||!source.id||!username)continue;
-        const row={id:clean(source.id),serialNumber:sn,username,lastInform:clean(source.lastInform),registered:clean(source.registered),productClass:clean(source.productClass),nasId:clean(source.nasId),tags:Array.isArray(source.tags)?source.tags.map(clean).slice(0,32):[]};
-        if(positions.has(sn)){const group=indexed.get(sn)||[];group.push(row);indexed.set(sn,group);}
+        const interfaceMacs=Array.isArray(source.interfaceMacs)?[...new Set(source.interfaceMacs.filter(value=>typeof value==='string'&&/^[A-F0-9]{12}$/.test(value)&&!/^0{12}$|^F{12}$/.test(value)&&(parseInt(value.slice(0,2),16)&1)===0))].slice(0,2):[];
+        const row={id:clean(source.id),serialNumber:sn,username,lastInform:clean(source.lastInform),registered:clean(source.registered),productClass:clean(source.productClass),nasId:clean(source.nasId),interfaceMacs,tags:Array.isArray(source.tags)?source.tags.map(clean).slice(0,32):[]};
+        for(const key of [sn,...interfaceMacs.map(value=>'mac:'+value)])if(positions.has(key)){const group=indexed.get(key)||[];group.push(row);indexed.set(key,group);}
         const key=username.toLowerCase(),peers=accounts.get(key)||[];peers.push(row);accounts.set(key,peers);
       }
       state.rows=indexed;state.accounts=accounts;state.checkedAt=now;state.failed=false;state.revision=++revision;
@@ -57,10 +58,9 @@ async function refresh(data,observations=[],options={}){
   })();state.pending=pending;return pending;
 }
 function deviceFor(data,device,onu,now){
-  if(onu?.identifierKind==='mac')return null;
   if(!device||!available(data)||device.enabled===false)return null;
   const state=states.get(keyFor(data));if(!state||state.failed||now-state.checkedAt>TTL_MS||now<state.checkedAt-30000)return null;
-  const sn=identity.serial(onu?.serialNumber),position=chosenPosition(state.positions.get(sn));
+  const sn=onuKey(onu),mac=onu?.identifierKind==='mac',position=chosenPosition(state.positions.get(sn));
   if(!position||position.deviceId!==device.id||position.signature!==deviceSignature(device)||(onu?.id!==undefined&&position.index!==String(onu.id)))return null;
   const directory=identity.directory(data);
   let proofCache=proofs.get(data);
@@ -69,7 +69,8 @@ function deviceFor(data,device,onu,now){
   if(proofCache.rows.has(proofKey))return proofCache.rows.get(proofKey);
   const freshness=row=>({...row,online:Number.isFinite(Date.parse(row.lastInform))&&now-Date.parse(row.lastInform)<=900000&&Date.parse(row.lastInform)<=now+30000});
   const candidates=(state.rows.get(sn)||[]).map(freshness),nasAliases=directory.aliasesFor(device.nasId);
-  const modem=identity.strictDeviceCandidate(candidates,{boundSerialNumbers:[sn],nasAliases,knownNasAliases});if(!modem)return null;
+  if(mac&&(candidates.length!==1||!candidates[0].online||state.positions.get(sn)?.length!==1))return null;
+  const modem=identity.strictDeviceCandidate(candidates,{boundDeviceIds:mac?[candidates[0].id]:[],boundSerialNumbers:mac?[]:[sn],nasAliases,knownNasAliases});if(!modem)return null;
   const current=identity.strictDeviceCandidate((state.accounts.get(modem.username.toLowerCase())||[]).map(freshness),{username:modem.username,nasAliases,knownNasAliases});
   if(!current||current.id!==modem.id)return null;
   const informed=Date.parse(modem.lastInform);if(!Number.isFinite(informed)||informed>now+30000)return null;

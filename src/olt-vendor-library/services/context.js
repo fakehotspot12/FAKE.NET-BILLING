@@ -8,20 +8,35 @@ export function request(){const context=current();remaining();if(++context.reque
 export function decryptSecret(value){return value?secrets.decryptSecret(current().data,value):'';}
 export async function withContext(data,device,operation,options={}){
   if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
-  const context={data,device,controller:new AbortController(),deadline:Date.now()+Math.min(options.timeoutMs||16000,18000),requests:0,transports:options.transports||{}};
+  const context={data,device,controller:new AbortController(),deadline:Date.now()+Math.min(options.timeoutMs||16000,18000),requests:0,transports:options.transports||{},hiosoActionAllowed:options.hiosoActionAllowed===true,hiosoGrant:null};
   const timer=setTimeout(()=>context.controller.abort(),context.deadline-Date.now());
   try{return await contexts.run(context,operation);}finally{clearTimeout(timer);context.controller.abort();}
+}
+export function authorizeHiosoOperation({address,operation,name=''}){
+  const context=current();
+  if(context.device.vendor!=='hioso'||!context.hiosoActionAllowed||context.hiosoGrant||!/^0\/(?:\d+\/)?[1-9]\d*:[1-9]\d*$/.test(address)||!['nonOp','rebootOp','delete'].includes(operation))throw new Error('HIOSO action authorization rejected');
+  if(operation!=='delete'&&(typeof name!=='string'||!name||name.length>30||/[\x00-\x1f]/.test(name)))throw new Error('HIOSO operation name rejected');
+  context.hiosoGrant={address,operation,name,used:false};
 }
 export async function readOnlyFetch(value,options={}){
   const context=request(),url=new URL(value),host=url.hostname.replace(/^\[|\]$/g,''),method=String(options.method||'GET').toUpperCase();
   const login=method==='POST'&&((url.pathname==='/goform/SetLogin')||(url.pathname==='/userlogin'&&url.searchParams.get('form')==='login'));
+  const hiosoDeleteView=context.device.vendor==='hioso'&&method==='GET'&&url.pathname==='/onuDeleteOnuList.asp'&&url.searchParams.size===1&&/^0\/(?:\d+\/)?[1-9]\d*$/.test(url.searchParams.get('oltponno')||'');
+  let hiosoWrite=false;
+  if(context.device.vendor==='hioso'&&context.hiosoActionAllowed&&method==='POST'&&context.hiosoGrant){
+    const grant=context.hiosoGrant,body=new URLSearchParams(options.body),deleting=grant.operation==='delete',keys=deleting?['onuId']:['onuId','onuName','onuOperation'];
+    hiosoWrite=!grant.used&&!url.search&&url.pathname===(deleting?'/goform/deleteOnu':'/goform/setOnu')&&[...body.keys()].length===keys.length&&keys.every(key=>body.getAll(key).length===1)&&body.get('onuId')===grant.address&&(deleting||body.get('onuName')===grant.name&&body.get('onuOperation')===grant.operation);
+  }
   if(!['http:','https:'].includes(url.protocol)||host!==context.device.host||url.username||url.password||Number(url.port||(url.protocol==='https:'?443:80))!==(context.device.webPort||80))throw new Error('Vendor web target rejected');
-  if(!login&&(method!=='GET'||/(?:delete|reboot|reset|restart|restore|cfgload|setonu|save|update|remove|\/goform\/)/i.test(url.pathname)))throw new Error('Vendor web write actions are locked');
+  if(!login&&!hiosoWrite&&!hiosoDeleteView&&(method!=='GET'||/(?:delete|reboot|reset|restart|restore|cfgload|setonu|save|update|remove|\/goform\/)/i.test(url.pathname)))throw new Error('Vendor web write actions are locked');
   if(!login&&[...url.searchParams].some(([key,value])=>/^(?:action|operation|op|cmd|command|method)$/i.test(key)&&!/^(?:get|read|list|show|status|detail)$/i.test(value)))throw new Error('Vendor web query action rejected');
+  if(hiosoWrite)context.hiosoGrant.used=true;
   const response=await(context.transports.fetch||fetch)(url,{...options,method,redirect:'manual',signal:context.controller.signal});
   if(Number(response.headers.get('content-length')||0)>524288)throw new Error('Vendor response too large');
   if(!response.body)return response;
   const reader=response.body.getReader(),parts=[];let bytes=0;
   try{while(true){remaining();const{done,value:chunk}=await reader.read();if(done)break;bytes+=chunk.length;if(bytes>524288)throw new Error('Vendor response too large');parts.push(chunk);}}catch(error){await reader.cancel().catch(()=>{});throw error;}
-  return new Response(Buffer.concat(parts),{status:response.status,statusText:response.statusText,headers:response.headers});
+  const body=Buffer.concat(parts);
+  if(hiosoWrite&&/<title>\s*(?:error|denied)\b|>[^<>]{0,120}\b(?:operation failed|invalid operation|access denied)\b/i.test(body.toString('utf8')))throw new Error('HIOSO rejected operation');
+  return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
 }

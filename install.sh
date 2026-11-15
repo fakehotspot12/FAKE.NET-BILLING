@@ -277,6 +277,8 @@ verify_repository_payload() {
     src/olt-device-removal.js
     src/olt-planned-reboot.js
     src/olt-vendors.js
+    src/olt-hioso.js
+    src/olt-telemetry.js
     src/olt-vendor-library/NOTICE.md
     src/olt-vendor-library/adapters/base.adapter.js
     src/olt-vendor-library/adapters/bdcom.adapter.js

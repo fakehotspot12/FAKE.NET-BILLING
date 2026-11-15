@@ -8,7 +8,7 @@ function rows(data,now=Date.now()){return(Array.isArray(data.settings?.plannedOn
 function begin(data,target,actor={},now=Date.now()){
  const sn=serial(target.serialNumber)||fromDeviceId(target.deviceId);if(!sn)return null;
  const existing=rows(data,now),oltId=clean(target.oltId),onuIndex=clean(target.onuIndex);
- if(oltId&&(!/^\d+$/.test(onuIndex)||!clean(target.pon)))throw new Error('Posisi ONU untuk penanda reboot wajib sesuai');
+ if(oltId){const epon=require('./olt-hioso').position(onuIndex);if((!/^\d+$/.test(onuIndex)&&(!epon||epon.serialNumber!==sn||epon.ponKey!==clean(target.pon)))||!clean(target.pon))throw new Error('Posisi ONU untuk penanda reboot wajib sesuai');}
  if(existing.some(row=>row.serialNumber===sn&&Date.parse(row.until)>now)){const error=new Error('Reboot perangkat ini masih dalam jeda 5 menit. Tunggu perangkat pulih sebelum mengulang.');error.status=429;throw error;}
  if(existing.length>=MAX_MARKERS){const error=new Error('Penanda reboot sedang penuh. Coba lagi setelah jeda berakhir.');error.status=429;throw error;}
  const unrestricted=['admin','owner','secretary','noc'].includes(actor.role),nasIds=[...new Set([target.nasId,...(!unrestricted&&Array.isArray(actor.lockedNasIds)?actor.lockedNasIds:[]),...(!unrestricted?[actor.lockedNasId]:[])].map(clean).filter(Boolean))];

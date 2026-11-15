@@ -16,6 +16,10 @@ const aliases={'c-data':'cdata',cdata:'cdata',baudcom:'bdcom','v-sol':'vsol','hs
 function normalize(value='cdata'){const key=String(value||'cdata').trim().toLowerCase().replace(/[_\s]+/g,'-');return aliases[key]||key;}
 function profile(value){return PROFILES.find(row=>row.value===normalize(value));}
 function canWrite(device){return profile(device.vendor)?.writes===true&&(device.cliProtocol||'telnet')==='telnet';}
+function capabilities(device,snapshot){
+  const configured=Boolean(device.enabled&&device.cliEnabled&&device.cliPasswordEnc),native=canWrite(device),hioso=normalize(device.vendor)==='hioso'?snapshot?.hiosoActions||{}:{};
+  return{rename:configured&&(native||hioso.rename===true),reboot:configured&&(native||hioso.reboot===true),delete:configured&&(native||hioso.delete===true),saveConfig:configured&&native};
+}
 function options(){return PROFILES.map(row=>({...row,mode:row.writes?'verified':'read-only',note:row.writes?'Jalur CDATA terverifikasi':row.inventory==='basic'?'Monitoring SNMP dasar; inventory dan aksi ONU belum terverifikasi':'Monitoring ONU baca-saja; aksi tulis belum terverifikasi'}));}
 let library;
 async function loadLibrary(){if(!library)library=Promise.all(['adapters/index.js','services/context.js','services/olt-transport.js'].map(file=>import(pathToFileURL(path.join(__dirname,'olt-vendor-library',file)).href))).catch(error=>{library=null;throw error;});return library;}
@@ -82,9 +86,10 @@ async function readInventory(data,device,helpers={},transportOptions={}){
       };
       adapter.enrichOnuStatuses=async(items=[])=>{const statuses=await adapter.readOnuOperStatusMap(items);return items.map(item=>{const status=statuses.get(`${Number(item.pon)}:${Number(item.onu_id)}`);return{...item,status:status?.status||'unknown',description:status?.description||item.description,down_cause:null,down_cause_label:null};});};
     }
-    let rows,ponNumbers=[],ponSource='';
+    let rows,ponNumbers=[],ponSource='',hiosoActions={};
     if(cfg.value==='hioso'){
       const result=await adapter.readInventory();rows=result.items;
+      if(result.source==='web-hioso')hiosoActions=await require('./olt-hioso').probe(adapter,rows);
       if(result.source==='web-hioso'){
         try{
           const response=await adapter.fetchWebPath('/oltPonPortStatusPonList.asp');
@@ -98,7 +103,7 @@ async function readInventory(data,device,helpers={},transportOptions={}){
     else if(cfg.value==='tarmoc')rows=await adapter.readWebOnuStatus();
     else rows=(await adapter.getDashboardStats())?.registered_onus;
     if(!Array.isArray(rows)||!rows.length)return {available:false,rows:[],warning:'Inventory ONU belum dapat diverifikasi; bukan berarti tidak ada ONU.'};
-    const normalized=normalizeOnus(rows,helpers);return normalized.length?{available:true,rows:normalized,ponNumbers,ponSource}:{available:false,rows:[],warning:'Format identitas/posisi ONU belum terverifikasi untuk firmware ini.'};
+    const normalized=normalizeOnus(rows,helpers);return normalized.length?{available:true,rows:normalized,ponNumbers,ponSource,hiosoActions}:{available:false,rows:[],warning:'Format identitas/posisi ONU belum terverifikasi untuk firmware ini.'};
   },transportOptions);
 }
 async function testConnection(data,device,transportOptions={}){
@@ -106,4 +111,4 @@ async function testConnection(data,device,transportOptions={}){
     const olt=legacyDevice(device),command=['huawei','tarmoc'].includes(normalize(device.vendor))?'display version':'show version';const result=await transport.executeOltCommands({olt,password:context.decryptSecret(device.cliPasswordEnc),commands:['enable',command]});if(!result.success)throw new Error('Koneksi CLI vendor belum terverifikasi');return result;
   },transportOptions);
 }
-module.exports={PROFILES,normalize,profile,options,canWrite,loadLibrary,legacyDevice,normalizeOnus,ponPosition,monitoringPorts,readInventory,testConnection};
+module.exports={PROFILES,normalize,profile,options,canWrite,capabilities,loadLibrary,legacyDevice,normalizeOnus,ponPosition,monitoringPorts,readInventory,testConnection};

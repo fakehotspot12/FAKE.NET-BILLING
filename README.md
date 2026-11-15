@@ -454,7 +454,8 @@ tidak dapat diganti agar format indeks dan identitas ONU lama tidak tercampur.
 | Vendor | Monitoring Pada Rilis Ini | Aksi Perangkat |
 | --- | --- | --- |
 | CDATA GPON | Jalur SNMP/CLI yang telah terverifikasi | Hapus, reboot, description dan Save Config dengan pengamanan |
-| Tarmoc, HSGQ GPON/EPON, HIOSO EPON, BTPON | Adapter inventory live baca-saja; kompatibilitas tetap bergantung model/firmware | Terkunci sampai aksi model terverifikasi |
+| Tarmoc, HSGQ GPON/EPON, BTPON | Adapter inventory live baca-saja; kompatibilitas tetap bergantung model/firmware | Terkunci sampai aksi model terverifikasi |
+| HIOSO EPON | Inventory web/CLI dan deteksi 2/4 PON | Ganti nama, reboot, dan hapus ONU melalui form web yang cocok; MAC/PON diperiksa ulang dan hapus wajib offline |
 | ZTE, Huawei, VSOL, BDCOM/Baudcom, FiberHome | SNMP dasar: identitas sistem dan antarmuka; inventory ONU belum dinyatakan terverifikasi | Terkunci sampai aksi model terverifikasi |
 
 Semua library vendor disertakan, tetapi keberadaan nama vendor bukan jaminan
@@ -469,7 +470,27 @@ berurutan dan filter PON memakai posisi yang sama dengan inventory ONU. Bila
 sumber port bertentangan, model tidak ditebak dan peringatan ditampilkan.
 MAC ONU EPON tetap dibedakan dari serial GPON. Monitoring HIOSO memakai
 SNMP dan pembacaan web terbatas, dengan fallback CLI sesuai firmware; akses
-web menggunakan akun CLI yang dikonfigurasi. Aksi tulis HIOSO tetap terkunci.
+web menggunakan akun CLI yang dikonfigurasi. Tombol ganti nama/reboot/hapus
+tersedia setelah form native dikenali. Ganti nama diverifikasi kembali;
+hapus harus offline dan hilangnya record diperiksa sesudah perintah. Reboot
+memakai penanda jeda gangguan existing, bukan factory reset. Hasil ambigu tidak
+dicoba ulang otomatis. Save Config/provisioning dan tiket LOS otomatis HIOSO
+belum diaktifkan; klasifikasi firmware yang belum pasti tidak dianggap LOS.
+Identitas MAC EPON tidak dipakai untuk menghapus record ACS secara otomatis.
+
+Model dan bar CPU/RAM ada pada **Ringkasan**. Pembacaan berjalan di background
+dan disimpan pada snapshot/cache: resource paling cepat setiap lima menit,
+model setiap 24 jam, serta jeda ulang 15 menit saat gagal. Membuka daftar PON/ONU
+tidak memicu pembacaan sistem baru. Hanya HIOSO memakai web untuk informasi ini;
+vendor lain memakai SNMP/CLI yang didukung. Data tidak tersedia tetap `-`, data
+lama diberi penanda, dan seri fisik tidak ditebak dari nama atau jumlah port.
+Keluarga firmware yang tersedia tanpa seri fisik dibedakan melalui tooltip.
+
+Integrasi EPON opsional memerlukan MAC ONU yang persis cocok dengan satu MAC
+antarmuka milik ONT pada ACS, satu posisi OLT, inform terbaru, akun dan NAS yang
+sesuai. MAC perangkat klien WiFi/LAN, description dan kemiripan nama tidak
+dipakai sebagai bukti. Konflik, modem pindah dan sumber tidak tersedia tidak
+menimpa member; penautan manual tetap tersedia.
 
 Library memakai kredensial terenkripsi dan poller/cache billing yang sama,
 tanpa aplikasi, database atau scheduler tambahan. SSH memakai dependency yang

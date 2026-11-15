@@ -1047,13 +1047,14 @@ function deviceSummaryProjection(cfg = normalizeSettings({})) {
 async function identityDevices(settings = {}) {
   const cfg=normalizeSettings(settings);
   if(!configured(cfg))return [];
+  const interfaceMacPaths=['InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress','Device.Ethernet.Interface.1.MACAddress'];
   const projection=['_id','_deviceId','_lastInform','_registered','_tags',
-    'InternetGatewayDevice.DeviceInfo.SerialNumber','InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber','Device.DeviceInfo.SerialNumber',...cfg.usernameParameters].join(',');
+    'InternetGatewayDevice.DeviceInfo.SerialNumber','InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber','Device.DeviceInfo.SerialNumber',...interfaceMacPaths,...cfg.usernameParameters].join(',');
   // Background-only read: no CWMP refresh, WiFi/host scan or credentials projection.
   const raw=await requestJson(cfg,'/devices/',{timeoutMs:4000,maxResponseBytes:8*1024*1024,query:{query:JSON.stringify(usernameSuffixExclusionQuery(cfg)),projection,limit:'10001'}});
   if(!Array.isArray(raw)||raw.length>10000)throw new Error('Daftar identitas ACS melebihi batas aman');
   return raw.map(device=>({id:cleanText(device._id),serialNumber:normalizeSerialNumber(cleanText(device._deviceId?._SerialNumber)||getPathValue(device,'InternetGatewayDevice.DeviceInfo.SerialNumber')||getPathValue(device,'Device.DeviceInfo.SerialNumber')||getPathValue(device,'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber')),
-    username:resolveUsernameParameter(device,cfg.usernameParameters).value,productClass:cleanText(device._deviceId?._ProductClass),lastInform:cleanText(device._lastInform),registered:cleanText(device._registered),tags:safeTags(device._tags)}))
+    username:resolveUsernameParameter(device,cfg.usernameParameters).value,interfaceMacs:[...new Set(interfaceMacPaths.map(path=>cleanText(getPathValue(device,path)).toUpperCase().replace(/[:-]/g,'')).filter(mac=>/^[0-9A-F]{12}$/.test(mac)&&!/^0{12}$|^F{12}$/.test(mac)&&(parseInt(mac.slice(0,2),16)&1)===0))],productClass:cleanText(device._deviceId?._ProductClass),lastInform:cleanText(device._lastInform),registered:cleanText(device._registered),tags:safeTags(device._tags)}))
     .filter(row=>row.id&&row.serialNumber&&row.username&&!rowExcludedByUsernameSuffix(row,cfg.excludeUsernameSuffixes));
 }
 

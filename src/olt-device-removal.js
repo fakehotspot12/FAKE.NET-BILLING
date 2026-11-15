@@ -18,7 +18,7 @@ function permission(data,device,actor,cascade){
   if(!olt.visibleDevices(data,user).some(row=>row.id===device.id))throw error('OLT tidak ditemukan',404);
   return user;
 }
-function signature(data,device){const cfg=acs.normalizeSettings(data.settings||{});return crypto.createHash('sha256').update(JSON.stringify([data.settings?.networkIntegrationEnabled===true,cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,device.id,device.nasId,device.host,device.port,device.cliPort,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.communityEnc])).digest('hex');}
+function signature(data,device){const cfg=acs.normalizeSettings(data.settings||{});return crypto.createHash('sha256').update(JSON.stringify([data.settings?.networkIntegrationEnabled===true,cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,device.id,device.nasId,device.host,device.port,device.cliPort,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.communityEnc,device.vendor,device.cliProtocol,device.webPort])).digest('hex');}
 function prune(now){for(const[key,plan]of plans)if(plan.expires<=now&&plan.status!=='running')plans.delete(key);while(plans.size>=MAX_PLANS){const key=[...plans.keys()].find(key=>plans.get(key).status!=='running');if(!key)throw error('Pratinjau penghapusan sedang penuh',429);plans.delete(key);}}
 function ownerSignature(data,device,row){const users=(data.radiusUsers||[]).filter(user=>clean(user.username).toLowerCase()===clean(row.username).toLowerCase()).map(user=>[user.id,user.customerId,user.nasId]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));return JSON.stringify([row.id,row.username,row.registered,device.links?.[row.serialNumber]?.customerId||'',users]);}
 async function acsState(data,device,sn,target,user,options,now){
@@ -50,18 +50,19 @@ async function acsState(data,device,sn,target,user,options,now){
 async function inspect(data,device,sn,selector,actor,options={}){
   const cascade=data.settings?.networkIntegrationEnabled===true,user=permission(data,device,actor,cascade),now=options.now??Date.now();let found;
   try{found=await(options.inspectOlt||olt.readRemovalState)(data,device,sn,selector);}catch{return {cascade,canSubmit:false,olt:state('unavailable','OLT belum dapat diverifikasi. Penghapusan ditahan.'),acs:state('skipped'),target:null};}
-  if(!found?.target||!olt.position(found.target.id)||identity.serial(found.target.serialNumber)!==sn)throw error('Posisi atau SN ONU tidak cocok');
+  if(!found?.target||!olt.actionPosition(device,found.target.id)||identity.serial(found.target.serialNumber)!==sn)throw error('Posisi atau SN ONU tidak cocok');
   const current={cascade,canSubmit:false,olt:state(found.state),acs:state('skipped'),target:found.target,simulated:found.simulated===true};
   if(found.simulated){current.olt=state('simulated');current.acs=state('simulated');return current;}
   if(!['offline','missing'].includes(found.state)){current.olt=state(found.state==='online'?'online':'unknown',found.state==='online'?'Lepaskan modem lama dahulu. ONU yang masih online tidak dihapus.':'Status ONU belum terverifikasi.');return current;}
   if(!cascade){current.canSubmit=true;return current;}
+  if(found.target.identifierKind==='mac'){current.acs=state('skipped','Identitas ONU berupa MAC EPON, bukan serial ACS. Data ACS dipertahankan.');current.canSubmit=true;return current;}
   const candidate=await acsState(data,device,sn,found.target,user,{...options,oltMissing:found.state==='missing'},now);current.acs=candidate.public;current.candidate=candidate.row;current.owner=candidate.owner;
   current.canSubmit=['ready','missing','preserved'].includes(current.acs.state)&&(found.state!=='missing'||current.acs.state!=='preserved');return current;
 }
 function publicPreview(plan,token=''){return {token,serialNumber:plan.serialNumber,onuIndex:String(plan.target?.id||''),cascade:plan.cascade,canSubmit:plan.canSubmit,simulated:plan.simulated===true,olt:plan.olt,acs:plan.acs,expiresAt:plan.expires?new Date(plan.expires).toISOString():''};}
 async function preview(data,device,serial,selector,actor,options={}){
   const sn=olt.normalizeSerial(serial);if(!sn)throw error('Serial ONU tidak valid');
-  const index=clean(selector?.onuIndex);if(!olt.position(index)||!/^[0-9]+$/.test(index))throw error('Posisi ONU wajib diisi');
+  const index=clean(selector?.onuIndex);if(!olt.actionPosition(device,index))throw error('Posisi ONU wajib diisi');
   const key=JSON.stringify([actor.id,device.id,index,sn,signature(data,device)]);if(previews.has(key))return previews.get(key);if(previews.size>=8)throw error('Pratinjau sedang penuh, coba kembali',429);
   const pending=(async()=>{const checked=await inspect(data,device,sn,{onuIndex:index},actor,options),plan={...checked,serialNumber:sn,actorId:actor.id,deviceId:device.id,signature:signature(data,device),expires:(options.now??Date.now())+TTL,status:'ready'};
     if(!checked.canSubmit)return publicPreview(plan);prune(options.now??Date.now());const token=crypto.randomBytes(24).toString('base64url');plans.set(token,plan);return publicPreview(plan,token);
@@ -90,6 +91,7 @@ async function remove(data,device,serial,payload,actor,options={}){
     if(!removed?.confirmed)return plan.result=summary(state('pending'),state('skipped'),plan.cascade);
     automatic.invalidate();let oltResult=state(removed.alreadyAbsent?'missing':'deleted');
     if(!plan.cascade)return plan.result=summary(oltResult,state('skipped'),false);
+    if(plan.target.identifierKind==='mac')return plan.result=summary(oltResult,state('skipped','Identitas berupa MAC EPON; ACS tidak dihapus.'),true);
     try{
       const current=options.getData?await options.getData():data,currentDevice=olt.deviceRows(current).find(row=>row.id===device.id);if(!currentDevice||signature(current,currentDevice)!==plan.signature)throw error('Pengaturan integrasi berubah');const user=permission(current,currentDevice,actor,true);
       const candidate=await acsState(current,currentDevice,sn,plan.target,user,{...options,oltMissing:true},options.now??Date.now());

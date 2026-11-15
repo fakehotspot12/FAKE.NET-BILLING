@@ -653,6 +653,7 @@ export class HiosoAdapter extends BaseOltAdapter {
 
       const statusText = String(normalizedRow.status || '').trim();
       const online = /^up$/i.test(statusText);
+      const status = online ? 'online' : /^down$/i.test(statusText) ? 'offline' : 'unknown';
       const dyingGasp = Number(normalizedRow.dyingGasp) === 1;
       const downCause = this.normalizeWebDownCause({
         online,
@@ -672,8 +673,8 @@ export class HiosoAdapter extends BaseOltAdapter {
         firmware_version: normalizedRow.firmware ? String(normalizedRow.firmware) : null,
         chip_id: normalizedRow.chip ? String(normalizedRow.chip) : null,
         port_count: Number.isFinite(Number(normalizedRow.ports)) ? Number(normalizedRow.ports) : null,
-        status: online ? 'online' : 'offline',
-        run_state: online ? 'online' : 'offline',
+        status,
+        run_state: status,
         down_cause: downCause.cause,
         down_cause_label: downCause.label,
         down_cause_detail: downCause.detail,
@@ -802,7 +803,7 @@ export class HiosoAdapter extends BaseOltAdapter {
       description: this.normalizeWebDescription(row[1]),
       mac_address: macAddress,
       sn: macAddress ? this.macAsSn(macAddress) : null,
-      status: /^up$/i.test(String(row[3] || '')) ? 'online' : 'offline',
+      status: /^up$/i.test(String(row[3] || '')) ? 'online' : /^down$/i.test(String(row[3] || '')) ? 'offline' : 'unknown',
       firmware_version: row[4] ? String(row[4]) : null,
       chip_id: row[5] ? String(row[5]) : null,
       port_count: Number.isFinite(Number(row[6])) ? Number(row[6]) : null,
