@@ -4,7 +4,9 @@ const identity=require('./network-identity');
 const olt=require('./olt-monitor');
 const acs=require('./genieacs');
 const autoIdentity=require('./olt-auto-identity');
+const crypto=require('node:crypto');
 const caches=new WeakMap();
+const lookups=new Map();
 const ttl=30000;
 const clean=value=>String(value||'').trim();
 const pointId=customer=>clean(customer?.fiberPointId||customer?.odpId||customer?.distributionPointId||customer?.distribution_point_id||customer?.odp);
@@ -18,10 +20,19 @@ async function lookup(data,selector){
   const username=user?.username||customer?.username||'';
   const terms=sn?serialTerms(sn):[...boundDeviceIds,...boundSerialNumbers,username].filter(Boolean);
   if(!terms.length)return null;
-  return acs.findBestDevice(data.settings||{},terms,{compact:true,strictIdentity:true,
+  const cfg=acs.normalizeSettings(data.settings||{}),nasAliases=directory.aliasesFor(nasId||user?.nasId||customer?.nasId||customer?.nas||customer?.site);
+  const knownNasAliases=[...(data.radiusNas||[]),...(data.monitoringTargets||[])].flatMap(row=>[row.id,row.name,row.address,row.host]).filter(Boolean);
+  const key=crypto.createHash('sha256').update(JSON.stringify([cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,cfg.usernameParameters,terms,username,boundDeviceIds,boundSerialNumbers,nasAliases,knownNasAliases])).digest('hex'),now=Date.now();
+  for(const[key,row]of lookups)if(!row.pending&&row.until<=now)lookups.delete(key);
+  const cached=lookups.get(key);if(cached?.pending)return structuredClone(await cached.pending);if(cached?.until>now)return structuredClone(cached.value);
+  if([...lookups.values()].filter(row=>row.pending).length>=8)return null;
+  const entry={pending:null,until:0,value:null};
+  const pending=acs.findBestDevice(data.settings||{},terms,{compact:true,strictIdentity:true,
     username:sn?'':username,boundDeviceIds:sn?[]:boundDeviceIds,boundSerialNumbers,
-    nasAliases:directory.aliasesFor(nasId||user?.nasId||customer?.nasId||customer?.nas||customer?.site),
-    knownNasAliases:[...(data.radiusNas||[]),...(data.monitoringTargets||[])].flatMap(row=>[row.id,row.name,row.address,row.host]).filter(Boolean)});
+    nasAliases,knownNasAliases}).catch(()=>null);
+  entry.pending=pending;lookups.set(key,entry);
+  while(lookups.size>128){const oldest=[...lookups.keys()].find(key=>!lookups.get(key).pending);if(!oldest)break;lookups.delete(oldest);}
+  try{const value=await pending;entry.value=value;entry.until=Date.now()+(value?ttl:15000);return structuredClone(value);}finally{entry.pending=null;}
 }
 
 async function resolve(data,ticket,devices,options={}){

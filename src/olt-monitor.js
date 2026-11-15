@@ -304,18 +304,19 @@ function parseCauseRows(stdout = '') {
   return causes;
 }
 async function onuPage(data, devices, options = {}, management = false) {
-  const selected = devices.filter(device => (!options.oltId || options.oltId === 'all' || device.id === options.oltId) && (!options.nasId || options.nasId === device.nasId));
-  const rows = [], ports = [], publicRows = [];
-  for (const device of selected) {
-    const snapshot = await snapshotFor(device); publicRows.push(publicDevice(device,snapshot,{management}));
-    rows.push(...linkedOnus(data,device,snapshot?.onus || [],snapshot).map(row => ({...row,oltId:device.id,oltName:device.name})));
-    ports.push(...(snapshot?.ports || []).map(row => ({...row,oltId:device.id,oltName:device.name})));
-  }
+  const limit = [10,25,50,100].includes(Number(options.limit)) ? Number(options.limit) : 25;
+  const candidates=devices.filter(device=>(!options.nasId||options.nasId==='all'||options.nasId===device.nasId));
+  const explicit=options.oltId&&options.oltId!=='all',device=explicit?candidates.find(row=>row.id===options.oltId):candidates.length===1?candidates[0]:null;
+  if(!device)return{device:null,devices:[],ports:[],summary:null,onus:[],total:0,page:1,pages:1,limit,selectionRequired:!explicit&&candidates.length>1};
+  const snapshot=await snapshotFor(device),publicRow=publicDevice(device,snapshot,{management});
   const search = String(options.search || '').slice(0,100).toLowerCase();
-  const filtered = rows.filter(row => matchesState(row,options.status) && (!options.pon || row.ponKey === options.pon) && [row.name,row.serialNumber,row.model,row.customerName,row.customerUsername,row.fiberPointName,row.oltName,row.downCause].some(value => String(value || '').toLowerCase().includes(search)));
-  const limit = [10,25,50,100].includes(Number(options.limit)) ? Number(options.limit) : 25, pages = Math.max(1,Math.ceil(filtered.length/limit));
+  const raw=(snapshot?.onus||[]).filter(row=>matchesState(row,options.status)&&(!options.pon||row.ponKey===options.pon));
+  // Cached state/PON filters precede enrichment; a normal page projects at most 100 ONUs.
+  const filtered=search?linkedOnus(data,device,raw,snapshot).filter(row=>[row.name,row.serialNumber,row.model,row.customerName,row.customerUsername,row.fiberPointName,device.name,row.downCause].some(value=>String(value||'').toLowerCase().includes(search))):raw;
+  const pages = Math.max(1,Math.ceil(filtered.length/limit));
   const page = Math.max(1,Math.min(pages,parseInt(options.page,10)||1));
-  return { device: selected.length === 1 ? publicRows[0] : null, devices: publicRows, ports, summary:publicRows.some(row=>row.inventoryAvailable!==false&&row.summary)?summarizeOnus(rows):null, onus:filtered.slice((page-1)*limit,page*limit), total:filtered.length, page, pages, limit };
+  const selected=filtered.slice((page-1)*limit,page*limit),rows=search?selected:linkedOnus(data,device,selected,snapshot);
+  return { device:publicRow,devices:[publicRow],ports:(snapshot?.ports||[]).map(row=>({...row,oltId:device.id,oltName:device.name})),summary:publicRow.inventoryAvailable!==false?publicRow.summary:null,onus:rows.map(row=>({...row,oltId:device.id,oltName:device.name})),total:filtered.length,page,pages,limit,selectionRequired:false };
 }
 async function liveSerial(data,device,onu) {
   const address=net.isIP(device.host)===6?`udp6:[${device.host}]:${device.port}`:`${device.host}:${device.port}`;

@@ -208,7 +208,7 @@ function ticketPage(data, user, query = {}) {
   if (!['', 'open', ...olt.TICKET_STATUSES].includes(status)) throw new Error('Status tiket tidak valid');
   const search = String(query.search || '').trim().toLocaleLowerCase('id-ID').slice(0, 100);
   const limit = [10,25,50,100].includes(Number(query.limit)) ? Number(query.limit) : 25;
-  const visible=(data.oltTickets||[]).filter(ticket=>serviceTickets.visible(data,user,ticket));
+  const visible=(data.oltTickets||[]).filter(serviceTickets.visibilityFilter(data,user,devices));
   const scoped = visible.filter(ticket => {
     const device = byId.get(ticket.oltId);
     return (!query.oltId || query.oltId === 'all' || ticket.oltId === query.oltId)
@@ -218,7 +218,8 @@ function ticketPage(data, user, query = {}) {
       && (!search || [ticket.number,ticket.title,ticket.serialNumber,ticket.customerName,ticket.fiberPointName,ticket.description,device?.name,ticket.nasName]
         .some(value => String(value || '').toLocaleLowerCase('id-ID').includes(search)));
   });
-  const counts = Object.fromEntries(olt.TICKET_STATUSES.map(key => [key, scoped.filter(ticket => ticket.status === key).length]));
+  const counts = Object.fromEntries(olt.TICKET_STATUSES.map(key => [key,0]));
+  for(const ticket of scoped)if(Object.hasOwn(counts,ticket.status))counts[ticket.status]++;
   counts.all = scoped.length; counts.open = counts.new + counts.assigned + counts.working;
   const filtered = scoped.filter(ticket => (!query.bucket||(query.bucket==='resolved'?ticket.status==='resolved':ticket.status!=='resolved'))&&(!status || (status === 'open' ? ticket.status !== 'resolved' : ticket.status === status)));
   filtered.sort((a,b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(a.id).localeCompare(String(b.id)));

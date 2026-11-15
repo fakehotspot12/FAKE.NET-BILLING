@@ -23959,11 +23959,12 @@ async function handleApi(req, res, url) {
     const context = await requirePermission(req, res, 'olt:read'); if (!context) return;
     const devices = oltMonitor.visibleDevices(context.data, context.user);
     const manage = auth.hasPermission(context.user, 'olt:manage');
+    const nasRows=radiusNasRowsLocal(context.data),nasNames=new Map(nasRows.map(nas=>[nas.id,nas.name])),openTickets=new Map();
+    for(const ticket of context.data.oltTickets||[])if(ticket.status!=='resolved')openTickets.set(ticket.oltId,(openTickets.get(ticket.oltId)||0)+1);
     const rows = await Promise.all(devices.map(async device => ({ ...oltMonitor.publicDevice(device, await oltMonitor.snapshotFor(device), { management: manage }),
-      nasName: radiusNasRowsLocal(context.data).find(nas => nas.id === device.nasId)?.name || '',
-      openTickets: (context.data.oltTickets || []).filter(ticket => ticket.oltId === device.id && ticket.status !== 'resolved').length })));
+      nasName: nasNames.get(device.nasId)||'',openTickets:openTickets.get(device.id)||0 })));
     sendJson(res, 200, { devices: rows, tickets: [], vendors:oltVendors.options(),
-      nasOptions: manage ? radiusNasRowsLocal(context.data).map(nas => ({ id: nas.id, name: nas.name })) : [],
+      nasOptions: manage ? nasRows.map(nas => ({ id: nas.id, name: nas.name })) : [],
       technicians: (context.data.users || []).filter(user => user.active !== false && ['admin','owner','noc','technician','secretary'].includes(user.role)).map(user => ({ id: user.id, name: user.name || user.username })),
       integrationEnabled: context.data.settings?.networkIntegrationEnabled === true,
       notificationEnabled: oltTicketing.settingsFor(context.data).whatsappEnabled, ticketAutomation: {enabled:true,cause:'los',whatsappEnabled:oltTicketing.settingsFor(context.data).whatsappEnabled}, ticketTemplates:oltMonitor.ticketTemplates(context.data),

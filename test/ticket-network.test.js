@@ -5,6 +5,11 @@ const sn='HWTCAABBCCDD';
 function fixture(){return {updatedAt:'r1',settings:{genieAcs:{enabled:false}},customers:[{id:'member-a',code:'12345678901',name:'Real Customer',username:'alpha@isp',nasId:'n1',fiberPointId:'odp-a',password:'PRIVATE_CUSTOMER'}],radiusUsers:[{id:'user-a',customerId:'member-a',username:'alpha@isp',nasId:'n1',service:'pppoe',status:'isolated',password:'PRIVATE_RADIUS'}],radiusNas:[{id:'n1',name:'NAS A'},{id:'n2',name:'NAS B'}],oltDevices:[{id:'olt-a',name:'OLT A',nasId:'n1',links:{[sn]:{customerId:'member-a',fiberPointId:'odp-a'}},communityEnc:'PRIVATE_SNMP'}],fiberPoints:[{id:'odp-a',code:'ODP-01',name:'Area A'}],invoices:[{amount:150000}],waMessages:[]};}
 const ticket=()=>({id:'ticket-a',source:'olt-los',scope:'onu',oltId:'olt-a',serialNumber:sn,pon:'0/0/1',customerName:'RAW_DESCRIPTION_NOT_A_CUSTOMER'});
 const snapshot=async()=>({onus:[{serialNumber:sn,ponKey:'0/0/1',onuId:8,model:'HG8145V5',name:'RAW_DESCRIPTION'}]});
+test('different ticket popups for one identity share a bounded ACS lookup and credentials changes invalidate it',async t=>{
+ const data=fixture();data.settings.genieAcs={enabled:true,baseUrl:'http://192.0.2.99:7557',token:'unit-lookup-v1'};const acs=require('../src/genieacs');let reads=0;t.mock.method(acs,'findBestDevice',async()=>{reads++;await new Promise(resolve=>setTimeout(resolve,10));return{id:'acs-a',serialNumber:sn,username:'alpha@isp'};});
+ const first={...ticket(),id:'shared-lookup-one'},second={...ticket(),id:'shared-lookup-two'};const values=await Promise.all([network.context(data,first,data.oltDevices,{snapshot}),network.context(data,second,data.oltDevices,{snapshot})]);assert.equal(reads,1);assert(values.every(row=>row.ownerVerified));assert.equal((await network.context(data,{...ticket(),id:'shared-lookup-three'},data.oltDevices,{snapshot})).customer.name,'Real Customer');assert.equal(reads,1);
+ data.settings.genieAcs.token='unit-lookup-v2';await network.context(data,{...ticket(),id:'shared-lookup-four'},data.oltDevices,{snapshot});assert.equal(reads,2);
+});
 
 test('ticket joins exact SN, ACS account, member, OLT PON and mapped ODP without exposing credentials or ONU number',async()=>{
  const data=fixture(),before=structuredClone(data);let reads=0;

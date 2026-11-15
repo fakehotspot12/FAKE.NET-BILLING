@@ -67,17 +67,18 @@ function cleanText(value, max = 1500) {
 }
 function categoryFor(id) { const value=CATEGORIES.find(row=>row.id===id);if(!value)throw error('Pilih kategori layanan');return value; }
 function isServiceTicket(ticket){return ['wifiku','staff-service'].includes(ticket?.source)&&ticket.scope==='service';}
-function visible(data,user,ticket) {
-  if(!user||user.active===false)return false;
-  if(!auth.hasPermission(auth.publicUser(user),'olt:tickets:read'))return false;
-  if(!isServiceTicket(ticket))return olt.visibleDevices(data,user).some(device=>device.id===ticket.oltId);
-  if(ticket.source==='staff-service'&&!ticket.nasId&&!ticket.customerId)return true;
-  if(['admin','owner','noc','secretary'].includes(user.role))return true;
-  const locks=new Set([...(Array.isArray(user.lockedNasIds)?user.lockedNasIds:[]),user.lockedNasId].filter(Boolean));
-  if(!locks.size||locks.has('all'))return true;
-  for(const nas of [...(data.radiusNas||[]),...(data.monitoringTargets||[])])if([nas.id,nas.monitoringTargetId,nas.monitoringId].some(id=>locks.has(id)))for(const id of [nas.id,nas.monitoringTargetId,nas.monitoringId])if(id)locks.add(id);
-  return Boolean(ticket.nasId&&locks.has(ticket.nasId));
+function visibilityFilter(data,user,devices) {
+  if(!user||user.active===false||!auth.hasPermission(auth.publicUser(user),'olt:tickets:read'))return()=>false;
+  const unrestricted=['admin','owner','noc','secretary'].includes(user.role);
+  let allowed,locks;
+  return ticket=>{
+    if(!isServiceTicket(ticket)){allowed??=new Set((devices||olt.visibleDevices(data,user)).map(device=>device.id));return allowed.has(ticket.oltId);}
+    if(ticket.source==='staff-service'&&!ticket.nasId&&!ticket.customerId||unrestricted)return true;
+    if(!locks){locks=new Set([...(Array.isArray(user.lockedNasIds)?user.lockedNasIds:[]),user.lockedNasId].filter(Boolean));for(const nas of [...(data.radiusNas||[]),...(data.monitoringTargets||[])])if([nas.id,nas.monitoringTargetId,nas.monitoringId].some(id=>locks.has(id)))for(const id of [nas.id,nas.monitoringTargetId,nas.monitoringId])if(id)locks.add(id);}
+    return !locks.size||locks.has('all')||Boolean(ticket.nasId&&locks.has(ticket.nasId));
+  };
 }
+function visible(data,user,ticket){return visibilityFilter(data,user)(ticket);}
 function customerTickets(data,customer) { return (data.oltTickets||[]).filter(row=>isServiceTicket(row)&&row.customerId===customer.id); }
 function markRead(ticket,seenAt,now=Date.now()){
   const seen=seenAt===undefined?now:typeof seenAt==='string'?Date.parse(seenAt):NaN;
@@ -180,4 +181,4 @@ async function cleanupPhotos(data,root = PHOTO_ROOT,now = Date.now()) {
   for(const entry of entries){if(removed>=100)break;if(!entry.isFile()||!/^[a-f0-9-]{36}\.webp$/.test(entry.name)||referenced.has(entry.name))continue;const target=path.join(root,entry.name),stat=await fs.stat(target).catch(()=>null);if(stat&&now-stat.mtimeMs>7*86400000){await fs.unlink(target);removed++;}}
   return removed;
 }
-module.exports={CATEGORIES,STATUS_LABELS,PUBLIC_STAGES,PHOTO_ROOT,error,coordinates,ticketLocation,publicProgress,progress,isServiceTicket,visible,customerTickets,markRead,publicTicket,customerList,appendMessage,create,createStaff,update,savePhoto,cleanupPhotos};
+module.exports={CATEGORIES,STATUS_LABELS,PUBLIC_STAGES,PHOTO_ROOT,error,coordinates,ticketLocation,publicProgress,progress,isServiceTicket,visible,visibilityFilter,customerTickets,markRead,publicTicket,customerList,appendMessage,create,createStaff,update,savePhoto,cleanupPhotos};

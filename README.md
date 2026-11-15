@@ -486,6 +486,15 @@ vendor lain memakai SNMP/CLI yang didukung. Data tidak tersedia tetap `-`, data
 lama diberi penanda, dan seri fisik tidak ditebak dari nama atau jumlah port.
 Keluarga firmware yang tersedia tanpa seri fisik dibedakan melalui tooltip.
 
+Daftar **PON / ONU** membaca satu OLT yang dipilih, bukan gabungan seluruh ONU.
+Ringkasan boleh menampilkan total cache antar-OLT, tetapi masuk ke daftar akan
+memilih satu OLT. Filter/pagination dikerjakan pada snapshot lokal; perangkat
+OLT tidak dihubungi saat mengetik pencarian atau berpindah halaman. Pengayaan
+pelanggan dilakukan setelah pagination bila tidak ada pencarian. Daftar tiket
+tidak melakukan polling perangkat; popup detail memakai cache identitas dan
+menggabungkan lookup ACS berulang untuk identitas sama selama paling lama
+30 detik, tetap dengan validasi role, NAS dan kepemilikan terbaru.
+
 Integrasi EPON opsional memerlukan MAC ONU yang persis cocok dengan satu MAC
 antarmuka milik ONT pada ACS, satu posisi OLT, inform terbaru, akun dan NAS yang
 sesuai. MAC perangkat klien WiFi/LAN, description dan kemiripan nama tidak

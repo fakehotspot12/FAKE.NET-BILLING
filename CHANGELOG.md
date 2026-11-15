@@ -20,6 +20,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Tombol kembali dari detail PON/ONU menuju Ringkasan; membuka ulang menu OLT kembali ke Ringkasan, sementara Lihat ONU dari tiket tetap menuju OLT dan identitas tiket yang dipilih. Perubahan filter/pencarian tidak menerima hasil permintaan lama yang sudah tidak sesuai halaman.
 - Mendeteksi HIOSO 2/4 PON dari daftar port fisik web/CLI dan SNMP, termasuk nama antarmuka Pon-Nni. PON kosong tetap tampil berurutan, posisi/filter ONU konsisten, dan nama OLT tidak dijadikan penentu model. Sumber bertentangan diberi peringatan tanpa menghilangkan posisi ONU nyata atau menebak model; aksi tulis yang belum terverifikasi tetap terkunci.
 - Menyamakan Sekretaris sebagai administrator kedua sesuai kebijakan aplikasi, termasuk pengaturan dan pengelolaan pengguna, tanpa mengubah identitas role/audit maupun perlindungan admin terakhir.
 - Memperbaiki pembacaan description CDATA kosong/berawalan lokasi dan konfirmasi hasil penghapusan pada ONU yang sudah tidak terdaftar. SN ganda tidak memilih posisi pertama atau menyentuh ONU aktif di posisi lain.
@@ -38,6 +39,8 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Performance And Operations
 
+- Daftar PON/ONU wajib satu OLT terpilih dan tidak menggabungkan seluruh inventory saat dibuka. Filter status/PON dijalankan sebelum pengayaan pelanggan; tanpa pencarian hanya baris halaman terpilih yang dilengkapi. Ringkasan global tetap memakai cache, bukan query ulang perangkat.
+- Daftar tiket menghitung status dalam satu lintasan dan memakai pemeriksaan izin/NAS yang disiapkan sekali per permintaan. Popup identitas berbagi cache lookup ACS terbatas untuk pelanggan/perangkat yang sama, dengan pemisahan konfigurasi dan kredensial, tanpa mengubah perlindungan kepemilikan, antrean WA atau aturan LOS.
 - Menggunakan snapshot OLT, cache terbatas dan pembacaan identitas ACS ringkas secara batch; tanpa request ACS per baris, summon massal, pembacaan password/WiFi/host atau perubahan parameter modem. Tiket dan billing tetap dapat dipakai tanpa OLT/ACS.
 - Melengkapi klien Telnet/SNMP, pemeriksaan modul dan aset OLT/tiket pada installer/updater, serta kebutuhan uninstall. Data pelanggan, invoice, pembayaran, konfigurasi privat dan data ACS existing tidak disertakan dalam rilis.
 

@@ -159,10 +159,16 @@ test('one optional CLI read enriches the whole snapshot; failure never claims LO
  const result=await olt.collect(data,device,async(target,name)=>tables()[name]||[],async()=>{reads++;return 'Offline : 1\n0/0 1 2 FHTTAABBCCDD 7 LOS';});assert.equal(reads,1);assert.equal(result.summary.los,1);
  const failed=await olt.collect(data,device,async(target,name)=>tables()[name]||[],async()=>{throw Error('Password secret');});assert.equal(failed.summary.other,1);assert.equal(failed.summary.los,0);assert(!JSON.stringify(failed).includes('Password secret'));
 });
-test('all-OLT ONU pagination remains scoped and duplicate indexes retain their OLT identity',async()=>{
+test('ONU pagination requires one selected OLT and never aggregates several OLT inventories',async()=>{
  const data=createDefaultStore();for(let i=1;i<=2;i++){const device=olt.validateDevice(data,{name:'OLT '+i,host:'192.0.2.'+(30+i),community:'x'});data.oltDevices.push(device);await olt.poll(data,device,async(target,name)=>tables()[name]||[]);}
- const page=await olt.onuPage(data,data.oltDevices,{status:'other',limit:10});assert.equal(page.total,2);assert.notEqual(page.onus[0].oltId,page.onus[1].oltId);
+ for(const oltId of [undefined,'all']){const page=await olt.onuPage(data,data.oltDevices,{oltId,status:'other',limit:10});assert.equal(page.total,0);assert.equal(page.selectionRequired,true);assert.deepEqual(page.onus,[]);assert.deepEqual(page.devices,[]);}
+ const page=await olt.onuPage(data,data.oltDevices,{oltId:data.oltDevices[1].id,status:'other',limit:10});assert.equal(page.total,1);assert(page.onus.every(row=>row.oltId===data.oltDevices[1].id));assert.equal(page.summary.total,2);
  const single=await olt.onuPage(data,[data.oltDevices[0]],{oltId:'all'});assert.equal(single.total,2);assert(single.onus.every(row=>row.oltId===data.oltDevices[0].id));
+});
+test('unselected OLT never reads cache or projects customer details, and pagination enriches only shown rows',async()=>{
+ const data=createDefaultStore(),device=olt.validateDevice(data,{name:'Selected OLT',host:'192.0.2.130',community:'unit'});data.oltDevices=[device];await olt.poll(data,device,async(_,name)=>tables()[name]||[]);const snapshot=await olt.snapshotFor(device),hidden={id:'other',nasId:'other',get vendor(){throw Error('Unselected cache accessed');}},customer={id:'private',get name(){throw Error('Unshown ONU projected');}};data.customers=[customer];
+ const rows=Array.from({length:26},(_,index)=>({...snapshot.onus[0],id:String(4718593+index),serialNumber:'HWTC'+String(index+1).padStart(8,'0')}));snapshot.onus=rows;snapshot.summary=olt.summarizeOnus(rows);device.links={[rows[25].serialNumber]:{customerId:customer.id}};
+ const first=await olt.onuPage(data,[device,hidden],{oltId:device.id,limit:25});assert.equal(first.onus.length,25);assert.equal(first.total,26);assert.equal(first.summary.total,26);assert(first.onus.every(row=>row.customerName===''));await assert.rejects(olt.onuPage(data,[device,hidden],{oltId:device.id,limit:25,page:2}),/Unshown ONU projected/);
 });
 test('ONU deletion requires exact confirmation and current live serial; financial data untouched',async()=>{
  const data=createDefaultStore(),device=olt.validateDevice(data,{name:'Unit',host:'192.0.2.44',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'x'});

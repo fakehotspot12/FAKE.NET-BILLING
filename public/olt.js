@@ -4,7 +4,7 @@
   const view = { tab: 'devices', deviceId: 'all', nasId: '', search: '', status: '', pon: '', limit: 25, page: 1 };
   const ticketView = { oltId:'', nasId:'', scope:'', pon:'', search:'', bucket:'open', status:'', kind:'', limit:25, page:1 };
   const ticketStates = [['open','Aktif'],['resolved','Selesai']];
-  let context, payload = {}, generation = 0, detailGeneration = 0, latestDetails = null, refreshTimer;
+  let context, payload = {}, generation = 0, detailGeneration = 0, latestDetails = null, refreshTimer, requestedOnuView;
   const $ = id => document.getElementById(id);
   const esc = value => context.escapeHtml(value ?? '');
   const labels = { online:'Online',simulated:'Simulasi',offline:'Semua Offline',los:'LOS','dying-gasp':'Dying Gasp',other:'Other','high-rx':'Redaman Tinggi',unreachable:'Tidak terjangkau',checking:'Belum dibaca',disabled:'Nonaktif',unknown:'Belum terbaca',new:'Baru',assigned:'Diambil',working:'Dikerjakan',resolved:'Selesai' };
@@ -30,7 +30,8 @@
   const active = () => context?.isCurrent() && Boolean($('oltRoot'));
   const deviceSaveButton=row=>button('save-config',row.id,'Simpan Config OLT','save','',!(row.saveConfigAvailable??row.onuDeleteAvailable));
   const selectedDeviceActions=()=>{const row=payload.devices?.find(item=>item.id===view.deviceId);return context.can('olt:manage')&&row?button('edit',row.id,'Edit OLT','edit')+deviceSaveButton(row)+button('delete',row.id,'Hapus integrasi OLT','delete'):'';};
-  async function render(ctx = context) {
+  async function render(ctx) {
+    if(ctx){if(ctx.mode!=='tickets'&&requestedOnuView){Object.assign(view,requestedOnuView);requestedOnuView=null;}else view.tab='devices';latestDetails=null;clearTimeout(refreshTimer);}else ctx=context;
     context=ctx; const token=++generation;
     if(context.mode==='tickets')return renderTicketCenter(token);
     const result=await context.api('/api/monitoring/olt');
@@ -116,21 +117,28 @@
     });
   }
   async function onuView() {
-    if(!payload.devices.length){$('oltContent').innerHTML='<div class="olt-state">Belum ada OLT terdaftar.</div>';return;}
-    $('oltContent').innerHTML=`<div class="olt-toolbar"><label>OLT<select id="oltSelected"><option value="all">Semua OLT</option>${payload.devices.filter(row=>!view.nasId||row.nasId===view.nasId).map(row=>`<option value="${esc(row.id)}" ${row.id===view.deviceId?'selected':''}>${esc(row.name)}</option>`).join('')}</select></label><label>Status<select id="oltStatus">${[['','Semua status'],...states.slice(1).map(([key,label])=>[key,label]),['offline','Semua Offline'],['unknown','Belum terbaca']].map(([key,label])=>`<option value="${key}" ${view.status===key?'selected':''}>${label}</option>`).join('')}</select></label><label>Tampil<select id="oltLimit">${[10,25,50,100].map(value=>`<option ${value===view.limit?'selected':''}>${value}</option>`).join('')}</select></label><label class="olt-search">Cari<input id="oltSearch" type="search" value="${esc(view.search)}" maxlength="100" placeholder="Nama / serial / pelanggan" autocomplete="off"></label></div><div class="olt-ports" id="oltPorts"></div><div id="oltOnuResults"></div>`;
+    const devices=payload.devices.filter(row=>!view.nasId||row.nasId===view.nasId);
+    if(!devices.length){latestDetails=null;$('oltContent').innerHTML='<div class="olt-state">Belum ada OLT pada filter ini.</div>';return;}
+    if(!devices.some(row=>row.id===view.deviceId)){view.deviceId=devices[0].id;view.pon='';view.page=1;}
+    $('oltContent').innerHTML=`<div class="olt-detail-head"><div class="olt-actions">${button('summary','','Kembali ke Ringkasan','rollback')}<strong>PON / ONU</strong></div></div><div class="olt-toolbar"><label>OLT<select id="oltSelected">${devices.map(row=>`<option value="${esc(row.id)}" ${row.id===view.deviceId?'selected':''}>${esc(row.name)}</option>`).join('')}</select></label><label>Status<select id="oltStatus">${[['','Semua status'],...states.slice(1).map(([key,label])=>[key,label]),['offline','Semua Offline'],['unknown','Belum terbaca']].map(([key,label])=>`<option value="${key}" ${view.status===key?'selected':''}>${label}</option>`).join('')}</select></label><label>Tampil<select id="oltLimit">${[10,25,50,100].map(value=>`<option ${value===view.limit?'selected':''}>${value}</option>`).join('')}</select></label><label class="olt-search">Cari<input id="oltSearch" type="search" value="${esc(view.search)}" maxlength="100" placeholder="Nama / serial / pelanggan" autocomplete="off"></label></div><div class="olt-ports" id="oltPorts"></div><div id="oltOnuResults"></div>`;
     const deviceActions=document.createElement('div');deviceActions.id='oltSelectedActions';deviceActions.className='olt-actions olt-selected-actions';deviceActions.innerHTML=selectedDeviceActions();$('oltSelected').closest('label').append(deviceActions);
     $('oltSelected').addEventListener('change',event=>{view.deviceId=event.target.value;view.pon='';view.page=1;deviceActions.innerHTML=selectedDeviceActions();loadDetails();});
     $('oltStatus').addEventListener('change',event=>{view.status=event.target.value;view.page=1;loadDetails();});
     $('oltLimit').addEventListener('change',event=>{view.limit=Number(event.target.value);view.page=1;loadDetails();});
-    let timer;$('oltSearch').addEventListener('input',event=>{view.search=event.target.value;view.page=1;clearTimeout(timer);timer=setTimeout(()=>{if(active())loadDetails();},250);});
+    let timer;$('oltSearch').addEventListener('input',event=>{view.search=event.target.value;view.page=1;detailGeneration++;clearTimeout(timer);timer=setTimeout(()=>{if(active()&&context.mode!=='tickets'&&$('oltSearch')===event.target)loadDetails();},250);});
     await loadDetails();
   }
   async function loadDetails() {
-    const token=++detailGeneration;
+    const token=++detailGeneration,renderToken=generation;
+    if(!view.deviceId||view.deviceId==='all')return;
+    latestDetails=null;
     try {
       const result=await context.api('/api/monitoring/olt/onus?'+new URLSearchParams({oltId:view.deviceId,nasId:view.nasId,search:view.search,status:view.status,pon:view.pon,page:view.page,limit:view.limit}));
-      if(token!==detailGeneration||!active()||!$('oltOnuResults'))return;
+      if(token!==detailGeneration||renderToken!==generation||!active()||!$('oltOnuResults'))return;
       latestDetails=result;
+      const updated=new Map(result.devices.map(row=>[row.id,row]));payload.devices=payload.devices.map(row=>({...row,...updated.get(row.id)}));
+      for(const [state,,key]of states){const metric=$('oltRoot').querySelector(`.olt-summary [data-olt-state="${state}"]`);if(metric){metric.querySelector('strong').textContent=count(result.summary?.[key]);metric.dataset.olt=view.deviceId;}}
+      if($('oltSelectedActions'))$('oltSelectedActions').innerHTML=selectedDeviceActions();
       notice(result.devices.map(row=>row.error||(row.warnings||[]).join('. ')).filter(Boolean).join('. '));
       $('oltPorts').innerHTML=view.deviceId==='all'?'':`<button type="button" class="olt-port" data-pon="" aria-pressed="${!view.pon}"><strong>Semua PON</strong><small>${count(result.summary?.total)} ONU</small></button>`+(result.ports || []).filter(row=>row.kind==='pon').map(row=>`<button type="button" class="olt-port" data-pon="${esc(row.ponKey)}" aria-pressed="${view.pon===row.ponKey}"><strong>${esc(row.name)}</strong><small>${count(row.online)} online / ${count(row.offline)} offline</small></button>`).join('');
       $('oltPorts').querySelectorAll('[data-pon]').forEach(button=>button.addEventListener('click',()=>{view.pon=button.dataset.pon;view.page=1;loadDetails();}));
@@ -141,7 +149,7 @@
       ])):'<div class="olt-state">'+(result.devices.some(row=>row.checkedAt)?'Tidak ada ONU sesuai filter.':'Belum ada pembacaan ONU.')+'</div>')+
       `<div class="olt-pages"><span>${count(result.total)} ONU / Halaman ${result.page} dari ${result.pages}</span><button class="olt-icon" data-olt-page="-1" aria-label="Halaman sebelumnya" ${result.page<=1?'disabled':''}>&lt;</button><button class="olt-icon" data-olt-page="1" aria-label="Halaman berikutnya" ${result.page>=result.pages?'disabled':''}>&gt;</button></div>`;
       $('oltOnuResults').querySelectorAll('[data-olt-page]').forEach(button=>button.addEventListener('click',()=>{view.page+=Number(button.dataset.oltPage);loadDetails();}));
-    }catch(error){if(active())notice(error.message);}
+    }catch(error){if(token===detailGeneration&&renderToken===generation&&active())notice(error.message);}
   }
   async function linkForm(onu) {
     const endpoint=`/api/monitoring/olt/${encodeURIComponent(onu.oltId)}`;
@@ -294,6 +302,7 @@
     const action=buttonEl.dataset.oltAction,id=buttonEl.dataset.id,row=payload.devices.find(row=>row.id===id);
     try {
       if(action==='reload')return context.mode==='tickets'?loadTicketRows():render();
+      if(action==='summary'){view.tab='devices';view.pon='';latestDetails=null;return render();}
       if(action==='refresh-all'){buttonEl.disabled=true;const reply=await context.api('/api/monitoring/olt/refresh',{method:'POST',body:'{}'});notice(reply.queued?`${reply.queued} OLT dijadwalkan untuk dibaca bergiliran.`:'Pembacaan sedang berjalan atau baru diperbarui.');followRefresh();return;}
       if(action==='detail'){view.deviceId=id;view.tab='onus';view.pon='';view.page=1;return render();}
       if(action==='edit')return deviceForm(row);
@@ -313,7 +322,7 @@
       if(action==='conversation-ticket'){const detail=await context.api('/api/monitoring/olt/tickets/'+encodeURIComponent(id));if(active()&&context.mode==='tickets')return conversationForm(detail);return;}
       if(action==='message-ticket')return messageForm(payload.tickets.find(ticket=>ticket.id===id));
       if(action==='claim-ticket'){await context.api('/api/monitoring/olt/tickets/'+encodeURIComponent(id)+'/claim',{method:'POST',body:'{}'});await loadTicketRows();return context.setToast('Tiket berhasil diambil');}
-      if(action==='ticket-onu'){const ticket=payload.tickets.find(row=>row.id===id);if(!ticket||ticket.scope==='service')return;view.deviceId=ticket.oltId;view.search=ticket.serialNumber||'';view.pon=ticket.serialNumber?'':ticket.pon||'';view.status='';view.page=1;view.tab='onus';return context.navigate('monitoringOlt');}
+      if(action==='ticket-onu'){const ticket=payload.tickets.find(row=>row.id===id);if(!ticket||ticket.scope==='service')return;requestedOnuView={deviceId:ticket.oltId,nasId:'',search:ticket.serialNumber||'',pon:ticket.serialNumber?'':ticket.pon||'',status:'',page:1,tab:'onus'};return context.navigate('monitoringOlt');}
       if(action==='copy-ticket'){
         const ticket=payload.tickets.find(row=>row.id===id),device=payload.devices.find(row=>row.id===ticket.oltId);
         await context.copyTextToClipboard([`Tiket ${ticket.number}`,ticket.title,`OLT: ${device?.name || '-'}`,ticket.pon?`PON: ${ticket.pon}`:'',ticket.serialNumber?`ONU: ${ticket.serialNumber}`:'',`Status: ${labels[ticket.status]}`,ticket.description].filter(Boolean).join('\n'));context.setToast('Pesan tiket disalin');return;

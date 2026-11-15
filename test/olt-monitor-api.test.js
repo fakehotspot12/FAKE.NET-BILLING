@@ -68,11 +68,12 @@ test('manual ticket is auditable, cannot duplicate fault, and dispatches no What
  assert.equal(fixture.waMessages.length,0);assert(fixture.activity.some(row=>row.meta?.action==='olt-ticket'));
  assert.equal((await request('admin','DELETE','/'+id,{confirmId:id,confirmName:'Unit',confirmDelete:true})).status,400);assert.equal(fixture.oltTickets.length,1);
 });
-test('aggregate ONU list keeps authentication and technician NAS boundaries',async()=>{
+test('ONU list requires a selected OLT without weakening authentication or technician NAS boundaries',async()=>{
  reset();const a=await request('admin','POST','',{name:'A',host:'192.0.2.1',community:'Unit',nasId:'nas-a'}),b=await request('admin','POST','',{name:'B',host:'192.0.2.2',community:'Unit',nasId:'nas-b'});
  fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-a'];assert.equal((await request('','GET','/onus')).status,401);
  const result=await request('technician','GET','/onus?oltId=all');assert.equal(result.status,200);assert.deepEqual(result.body.devices.map(row=>row.id),[a.body.device.id]);assert(!JSON.stringify(result.body).includes(b.body.device.id));
  const forced=await request('technician','GET','/onus?oltId='+b.body.device.id);assert.equal(forced.status,200);assert.equal(forced.body.devices.length,0);
+ const aggregate=await request('admin','GET','/onus?oltId=all');assert.equal(aggregate.status,200);assert(aggregate.body.selectionRequired);assert.equal(aggregate.body.devices.length,0);assert.equal(aggregate.body.onus.length,0);
 });
 test('ONU actions preserve CSRF, roles, NAS scopes and isolated-dev restrictions',async()=>{
  reset();const device=await request('admin','POST','',{name:'A',host:'192.0.2.1',community:'Unit',nasId:'nas-a'}),suffix='/'+device.body.device.id+'/onus/HWTCAABBCCDD';
