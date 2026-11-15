@@ -20603,23 +20603,16 @@ function memberDataValidationState(member = {}) {
   if (serverChecks && typeof serverChecks === 'object') {
     const checks = {
       name: serverChecks.name === true,
-      ktpName: serverChecks.ktpName === true,
-      ktpNumber: serverChecks.ktpNumber === true,
       address: serverChecks.address === true,
       location: serverChecks.location === true,
       housePhoto: serverChecks.housePhoto === true
     };
-    const optionalChecks = {
-      ktpPhoto: serverChecks.ktpPhoto === true || memberHasKtpPhoto(member)
-    };
-    return { valid: Object.values(checks).every(Boolean), checks, optionalChecks };
+    return { valid: Object.values(checks).every(Boolean), checks };
   }
   const latitude = Number(member.latitude ?? member.memberLatitude ?? 0);
   const longitude = Number(member.longitude ?? member.memberLongitude ?? 0);
   const checks = {
     name: Boolean(String(member.fullName || member.customerName || member.name || '').trim()),
-    ktpName: Boolean(String(member.ktpName || member.memberKtpName || '').trim()),
-    ktpNumber: String(member.ktp || member.idCard || '').replace(/\D+/g, '').length === 16,
     address: Boolean(String(member.address || '').trim()),
     location: Number.isFinite(latitude)
       && Number.isFinite(longitude)
@@ -20631,24 +20624,16 @@ function memberDataValidationState(member = {}) {
       && longitude <= 180,
     housePhoto: Boolean(memberHousePhotoUrl(member))
   };
-  const optionalChecks = {
-    ktpPhoto: memberHasKtpPhoto(member)
-  };
-  return { valid: Object.values(checks).every(Boolean), checks, optionalChecks };
+  return { valid: Object.values(checks).every(Boolean), checks };
 }
 
 function memberDataValidationModalBody(member = {}) {
   const validation = memberDataValidationState(member);
   const items = [
     ['name', 'Nama'],
-    ['ktpName', 'Nama di KTP'],
-    ['ktpNumber', 'No KTP'],
     ['address', 'Alamat'],
     ['location', 'Data Lokasi'],
     ['housePhoto', 'Foto Rumah']
-  ];
-  const optionalItems = [
-    ['ktpPhoto', 'Foto KTP', 'Opsional untuk OCR/arsip']
   ];
   return `
     <div class="member-validation-modal">
@@ -20669,16 +20654,6 @@ function memberDataValidationModalBody(member = {}) {
             <small>${validation.checks[key] ? 'Valid' : 'Belum terisi'}</small>
           </div>
         `).join('')}
-        ${optionalItems.map(([key, label, hint]) => {
-          const complete = validation.optionalChecks?.[key] === true;
-          return `
-            <div class="member-validation-item ${complete ? 'is-valid' : ''}">
-              <span class="member-validation-icon" aria-hidden="true"></span>
-              <strong>${escapeHtml(label)}</strong>
-              <small>${complete ? 'Tersimpan' : escapeHtml(hint)}</small>
-            </div>
-          `;
-        }).join('')}
       </div>
       <div class="modal-actions">
         <button class="ghost-button" data-close-modal type="button">Tutup</button>
@@ -24917,6 +24892,7 @@ function openWaGatewayTemplatesModal(settings = {}, options = {}) {
     for (const item of definitions) {
       templates[item.key] = payload[item.key] || '';
     }
+    if(options.save){await options.save(templates);setToast('Template tiket tersimpan');return;}
     await api('/api/wa-gateway', {
       method: 'PUT',
       body: JSON.stringify({
@@ -24949,6 +24925,7 @@ function openWaGatewayTemplatesModal(settings = {}, options = {}) {
   modalBody.querySelector('#waTemplateSectionSelect')?.addEventListener('change', (event) => activateTemplateSection(event.target.value));
   modalBody.querySelector('#resetWaTemplates')?.addEventListener('click', async () => {
     if (!window.confirm('Reset semua template WA ke default?')) return;
+    if(options.reset){await options.reset();setToast('Template tiket direset ke default');modal.close();return;}
     await api('/api/wa-gateway/templates/reset', {
       method: 'POST',
       body: JSON.stringify({})
@@ -25065,6 +25042,7 @@ async function renderWaGateway() {
             <div class="row-actions">
               <button class="ghost-button" id="openWaTemplates" type="button">Templates</button>
               <button class="ghost-button" id="openWaHotspotTemplates" type="button">Template Hotspot</button>
+              <button class="ghost-button" id="openWaTicketTemplates" type="button">Template Tiket</button>
               <button class="ghost-button" id="openWaBroadcast" type="button">Broadcast</button>
             </div>
           </div>
@@ -25166,6 +25144,9 @@ async function renderWaGateway() {
     renderWaGateway();
   });
   document.getElementById('openWaTemplates')?.addEventListener('click', () => openWaGatewayTemplatesModal(settings));
+  document.getElementById('openWaTicketTemplates')?.addEventListener('click',async()=>{
+    try{const result=await api('/api/tickets/templates');openWaGatewayTemplatesModal({templates:result.templates},{title:'Template Tiket Layanan',definitions:result.definitions,variables:[['[ticket_no]','Nomor tiket'],['[customer]','Nama pelanggan'],['[category]','Kategori permintaan'],['[package]','Paket PSB'],['[phone]','Kontak pelanggan'],['[location]','Alamat'],['[map]','Arah pelanggan'],['[odp]','Nama ODP'],['[area]','Area gangguan pelanggan'],['[network]','Referensi jaringan'],['[affected]','Jumlah terdampak'],['[total]','Jumlah terpetakan'],['[online]','ONU online'],['[eligible]','Target selain modem mati'],['[powered_off]','Modem kehilangan daya'],['[remaining_los]','Sisa LOS'],['[technician]','Penanggung jawab'],['[companions]','Pendamping'],['[progress]','Catatan penanganan'],['[request]','Keterangan permintaan'],['[service_title]','Judul sesuai kategori'],['[completion_title]','Judul penyelesaian'],['[ticket_link]','Tautan privat petugas'],['[time]','Waktu gangguan']],save:templates=>api('/api/tickets/templates',{method:'PUT',body:JSON.stringify(templates)}),reset:()=>api('/api/tickets/templates',{method:'PUT',body:JSON.stringify({resetDefaults:true})})});}catch(error){setToast(error.message);}
+  });
   document.getElementById('openWaHotspotTemplates')?.addEventListener('click', () => openWaGatewayTemplatesModal(settings, {
     title: 'Template Hotspot',
     definitions: WA_HOTSPOT_TEMPLATE_DEFINITIONS,
@@ -26844,8 +26825,8 @@ async function renderMonitoringOlt(mode = 'olt') {
   const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
   if (!window.FakenetOltUI) {
     if (!oltUiLoadPromise) oltUiLoadPromise = new Promise((resolve,reject) => {
-      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/olt.css?ui=network-removal-20261115'; document.head.appendChild(style);
-      const script = document.createElement('script'); script.src = '/olt.js?ui=network-removal-20261115';
+      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/olt.css?ui=ticket-team-psb-20261115'; document.head.appendChild(style);
+      const script = document.createElement('script'); script.src = '/olt.js?ui=ticket-team-psb-20261115';
       script.onload = resolve; script.onerror = () => { oltUiLoadPromise = null; script.remove(); reject(new Error('Tampilan OLT belum dapat dimuat')); };
       document.head.appendChild(script);
     });

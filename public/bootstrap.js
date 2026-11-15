@@ -6,7 +6,7 @@
 
   const authHintKey = 'fakenetAuthHint';
   const appVersion = '__FAKENET_APP_VERSION__';
-  const assetRevision = 'network-removal-20261115';
+  const assetRevision = 'ticket-team-psb-20261115';
   const appScriptUrl = `/app.js?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const appStyleUrl = `/styles.css?v=fakenet-billing-${appVersion}&ui=${assetRevision}`;
   const defaultBranding = {
@@ -27,9 +27,10 @@
   let verificationController = null;
 
   window.openOltTicketAfterLogin = () => {
-    const id = new URLSearchParams(location.search).get('oltTicket') || '';
+    const params = new URLSearchParams(location.search);
+    const id = params.get('tkt') || params.get('oltTicket') || '';
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) return false;
-    location.replace('/olt-ticket.html?id=' + encodeURIComponent(id));
+    location.replace('/tkt.html?id=' + encodeURIComponent(id));
     return true;
   };
 

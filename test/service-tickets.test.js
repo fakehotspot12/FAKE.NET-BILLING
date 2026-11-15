@@ -115,7 +115,7 @@ test('service progress needs no free-text bureaucracy, preserves claim checks an
   let next=olt.claimTicket(ticket,actor,NOW+1000);
   assert.throws(()=>service.progress(next,{stage:'checking'},{...actor,id:'other'},NOW+2000),status(403));
   assert.throws(()=>service.progress(next,{stage:'private-secret'},actor,NOW+2000),status(400));
-  assert.throws(()=>service.progress(next,{stage:'resolved',status:'working'},actor,NOW+2000),status(400));
+  assert.throws(()=>service.progress(next,{stage:'resolved',status:'working'},{id:'secretary',role:'secretary'},NOW+2000),status(400));
   next=service.progress(next,{stage:'on-way',note:'PRIVATE_INTERNAL',publicNote:'Kami sedang menuju lokasi.'},actor,NOW+2000);
   assert.equal(next.status,'working');assert.equal(next.history.at(-1).note,'PRIVATE_INTERNAL');
   assert.equal(service.progress(next,{stage:'on-way',note:'PRIVATE_INTERNAL',publicNote:'Kami sedang menuju lokasi.'},actor,NOW+2001),next);
@@ -125,9 +125,10 @@ test('service progress needs no free-text bureaucracy, preserves claim checks an
   assert.equal(progress[2].note,'Kami sedang menuju lokasi.');
   assert(!JSON.stringify(progress).includes('PRIVATE_INTERNAL'));assert(!JSON.stringify(progress).includes(actor.id));
   assert.equal(service.publicTicket(data,next).progress,undefined);
-  next=service.progress(next,{stage:'resolved'},actor,NOW+4000);
+  next=service.progress(next,{stage:'resolved'},{id:'secretary',role:'secretary'},NOW+4000);
   assert.equal(next.status,'resolved');assert.equal(service.publicProgress(next).at(-1).label,'Selesai');
-  assert.throws(()=>service.progress(next,{stage:'checking'},actor,NOW+5000),/sudah selesai/);
+  assert.throws(()=>service.progress(next,{stage:'checking'},actor,NOW+5000),status(403));
+  assert.throws(()=>service.progress(next,{stage:'checking'},{id:'secretary',role:'secretary'},NOW+5000),/sudah selesai/);
   assert.deepEqual(data,before);
 });
 
@@ -199,6 +200,26 @@ test('prospect coordinates are optional and validated while registered member co
   Object.assign(data.customers[0],{latitude:-0.6,longitude:117.2});
   const linked=await service.createStaff(data,{...payload,customerId:customer.id,coordinates:'0,0'},actor);
   assert.equal(linked.latitude,-0.6);assert.equal(linked.longitude,117.2);
+});
+
+test('member coordinates prefill tickets, while missing coordinates can be supplied for this ticket only',async()=>{
+ const data=fixture(),before=structuredClone(data.customers),ticket=await service.createStaff(data,{customerId:customer.id,category:'internet-down',text:'Visit requested',coordinates:'-0.5,117.15'},actor);
+ assert.deepEqual(service.ticketLocation(data,ticket).coordinates,{latitude:-0.5,longitude:117.15});assert.deepEqual(data.customers,before);
+ Object.assign(data.customers[0],{latitude:-0.6,longitude:117.2});assert.deepEqual(service.ticketLocation(data,ticket).coordinates,{latitude:-0.6,longitude:117.2});
+});
+
+test('PSB package is validated and snapshotted without creating accounts, invoices or changing profile prices',async()=>{
+ const data=fixture();data.radiusProfiles=[{id:'ppp',name:'Paket Unit',serviceType:'pppoe',price:150000},{id:'free',name:'Paket Tanpa Biaya',serviceType:'pppoe',price:0},{id:'inactive',name:'Nonaktif',serviceType:'pppoe',active:false},{id:'hotspot',name:'Voucher',serviceType:'hotspot',price:5000},{id:'foreign',name:'Other NAS',serviceType:'pppoe',nasId:'nas-b'}];data.users[0]={...actor,lockedNasIds:['nas-a']};
+ assert.deepEqual(service.installationPackages(data,data.users[0]).map(row=>row.id),['free','ppp']);
+ const before=structuredClone({...data,oltTickets:undefined}),payload={category:'new-installation',customerName:'Prospect',text:'New connection',packageId:'ppp',price:1};
+ const ticket=await service.createStaff(data,payload,data.users[0]);assert.deepEqual(ticket.requestedPackage,{id:'ppp',name:'Paket Unit',price:150000});assert.deepEqual({...data,oltTickets:undefined},before);
+ assert.equal((await service.createStaff(data,payload,data.users[0])).id,ticket.id);
+ for(const packageId of['missing','inactive','hotspot','foreign'])await assert.rejects(service.createStaff(data,{...payload,packageId},data.users[0]),status(400));
+ await assert.rejects(service.createStaff(data,{...payload,category:'internet-down'},data.users[0]),status(400));
+ const text=require('../src/olt-ticketing').messageText(data,ticket,'detected','https://billing.example.test');assert(text.startsWith('*PERMINTAAN PASANG BARU*'));assert(text.includes('Paket PSB: Paket Unit'));assert(text.includes('150.000'));assert(!text.includes('TIKET GANGGUAN'));assert(text.includes('/tkt.html?id='));
+ data.radiusProfiles[0].price=180000;assert.equal(ticket.requestedPackage.price,150000);
+ const other=await service.createStaff(data,{...payload,packageId:'free'},data.users[0]);assert.notEqual(other.id,ticket.id);assert.equal(other.requestedPackage.price,0);
+ for(const category of['package-change','relocation','addon']){const request=await service.createStaff(data,{...payload,category,packageId:''},data.users[0]);assert(require('../src/olt-ticketing').messageText(data,request,'detected','https://billing.example.test').startsWith('*PERMINTAAN: '));}
 });
 
 test('customer lists paginate each bucket, clamp pages and count unread without cross-customer leakage', async () => {
@@ -310,16 +331,20 @@ test('service visibility checks role and NAS locks including monitoring/radius a
 
 test('staff update bounds history and preserves service identity without executing billing requests', async () => {
   const data = fixture(), ticket = await opened(data, { category: 'pause-stop' });
+  ticket.assignedTo = actor.id;
   ticket.history = Array.from({ length: 55 }, (_, i) => ({ id: String(i), note: 'Old' }));
+  const closer={id:'secretary',role:'secretary',active:true};data.users.push(closer);
   const before = structuredClone(data);
-  const updated = service.update(data, { title: 'Checked', description: 'PRIVATE_NOTE', status: 'resolved', assignedTo: actor.id, customerId: other.id, nasId: 'nas-b', category: 'addon', source: 'olt-los', oltId: 'olt-forged', amount: 0 }, actor, ticket);
+  assert.throws(()=>service.update(data,{status:'resolved'},actor,ticket),status(403));
+  const updated = service.update(data, { title: 'Checked', description: 'PRIVATE_NOTE', status: 'resolved', assignedTo: actor.id, customerId: other.id, nasId: 'nas-b', category: 'addon', source: 'olt-los', oltId: 'olt-forged', amount: 0 }, closer, ticket);
   assert.equal(updated.status, 'resolved');
   assert(updated.resolvedAt);
   assert.equal(updated.history.length, 50);
-  assert.equal(updated.history.at(-1).userId, actor.id);
+  assert.equal(updated.history.at(-1).userId, closer.id);
   for (const key of ['id', 'customerId', 'nasId', 'category', 'source', 'kind', 'oltId', 'messages']) assert.deepEqual(updated[key], ticket[key], key);
   assert.equal(service.update(data, { description: 'Edited' }, actor, updated).resolvedAt, updated.resolvedAt);
-  assert.equal(service.update(data, { status: 'working' }, actor, updated).resolvedAt, '');
+  assert.throws(()=>service.update(data,{status:'working'},actor,updated),status(403));
+  assert.equal(service.update(data, { status: 'working' }, closer, updated).resolvedAt, '');
   assert.deepEqual(data, before);
   for (const payload of [{ title: '' }, { title: 'x'.repeat(161) }, { description: 'x'.repeat(1501) }, { status: 'paid' }, { assignedTo: 'finance' }, { assignedTo: 'inactive' }, { assignedTo: 'missing' }, { assignedTo: 'x'.repeat(101) }]) assert.throws(() => service.update(data, payload, actor, ticket));
   data.users.push({ id: 'outside', role: 'technician', active: true, lockedNasIds: ['nas-b'] });

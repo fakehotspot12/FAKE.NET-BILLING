@@ -61,16 +61,18 @@ async function resolve(data,ticket,devices,options={}){
   sn=sn||identity.serial(modem?.serialNumber||customer?.genieAcsSerialNumber||user?.genieAcsSerialNumber);
   const permitted=devices.filter(device=>!requested||device.id===requested.id).filter(device=>directory.compatible(user||customer||{nasId:ticket.nasId},{nasId:device.nasId}));
   const hits=[];
-  if(sn)await Promise.all(permitted.map(async device=>{try{const snapshot=await (options.snapshot||olt.snapshotFor)(device);for(const onu of snapshot?.onus||[])if(identity.serial(onu.serialNumber)===sn)hits.push({device,onu});}catch{}}));
+  if(sn)await Promise.all(permitted.map(async device=>{try{const snapshot=await (options.snapshot||olt.snapshotFor)(device);for(const onu of snapshot?.onus||[])if((identity.serial(onu.serialNumber)===sn||onu.identifierKind==='mac'&&modem?.interfaceMacs?.includes(onu.serialNumber))&&(!ticket.onuIndex||String(ticket.onuIndex)===String(onu.id))&&(!ticket.pon||!ticket.serialNumber||ticket.pon===onu.ponKey))hits.push({device,onu,snapshot});}catch{}}));
   const hit=hits.length===1?hits[0]:null,device=hit?.device||requested;
   link=hit?.device.links?.[sn]||link;
   if(!customer&&!conflicting&&link.customerId){const candidate=customers.get(link.customerId),account=candidate&&directory.userForCustomer(candidate);if(candidate&&directory.compatible(account||candidate,{nasId:device?.nasId})){customer=candidate;user=account;}}
   const odpIds=[link.fiberPointId,ticket.fiberPointId,pointId(customer)].filter(Boolean),odp=(data.fiberPoints||[]).find(row=>row.id===odpIds[0]);
   const knownUsername=user?.username||customer?.username||'';
+  const saved=ticket.oltOptical,stored=saved&&saved.oltId===ticket.oltId&&saved.serialNumber===ticket.serialNumber&&(!ticket.onuIndex||saved.onuIndex===ticket.onuIndex)?olt.lastOptical(null,{lastRxPower:saved.rxPower,lastRxPowerAt:saved.at}):{rxPower:null,at:'',stale:true};
+  const observed=hit&&(!ticket.customerId||!conflicting)?olt.lastOptical(hit.snapshot,hit.onu):null,optical=observed?.rxPower!==null&&observed?.rxPower!==undefined?observed:stored;
   return {customer:{name:customer?.name||customer?.customerName||'',memberId:customer?.code||customer?.memberCode||customer?.accountId||''},
     account:{username:knownUsername||modem?.username||'',type:user?.service||'',status:user?.status||customer?.status||''},
     modem:{serialNumber:sn||'',model:modem?.productClass||hit?.onu.model||''},
-    network:{olt:device?.name||'',pon:hit?.onu.ponKey||ticket.pon||'',odp:odp?[odp.code,odp.name].filter(Boolean).join(' - '):''},
+    network:{olt:device?.name||'',pon:hit?.onu.ponKey||ticket.pon||'',odp:odp?[odp.code,odp.name].filter(Boolean).join(' - '):'',optical,...(require('./ticket-recovery').grouped(ticket)?{recovery:await require('./ticket-recovery').forTicket(data,ticket,options)}:{})},
     ownerVerified:Boolean(customer),acsMatched:Boolean(modem)};
 }
 

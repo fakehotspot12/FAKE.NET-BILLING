@@ -111,7 +111,7 @@ test('ticket lifecycle is independent of invoices and prevents duplicate active 
   const before=structuredClone({customers:data.customers,invoices:data.invoices,payments:data.payments,waMessages:data.waMessages});
   const ticket=olt.saveTicket(data,{oltId:'a',title:'PON down',description:'Line one\nLine two',pon:'0/0/1',assignedTo:'tech'},{id:'admin'});data.oltTickets=[ticket];
   assert.throws(()=>olt.saveTicket(data,{oltId:'a',title:'Duplicate',pon:'0/0/1'},{id:'admin'}),/sudah memiliki tiket/);
-  const done=olt.saveTicket(data,{status:'resolved'},{id:'tech'},ticket);assert(done.resolvedAt);assert.equal(done.number,ticket.number);
+  const done=olt.saveTicket(data,{status:'resolved'},{id:'secretary',role:'secretary'},ticket);assert(done.resolvedAt);assert.equal(done.number,ticket.number);
   assert(olt.ticketMessage(data,ticket).includes('Unit'));
   assert.deepEqual({customers:data.customers,invoices:data.invoices,payments:data.payments,waMessages:data.waMessages},before);
 });

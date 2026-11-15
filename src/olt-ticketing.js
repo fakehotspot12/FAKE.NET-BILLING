@@ -5,6 +5,7 @@ const olt = require('./olt-monitor');
 const crypto = require('node:crypto');
 const serviceTickets = require('./service-tickets');
 const plannedReboot = require('./olt-planned-reboot');
+const ticketTeam = require('./ticket-team');
 const KINDS = Object.freeze(['detected', 'claimed', 'progress', 'resolved']);
 const NOTIFICATION_KINDS = Object.freeze(['detected', 'resolved']);
 const TICKET_QUEUE_VERSION = 2;
@@ -41,10 +42,12 @@ function eligibleUsers(data) {
 function settingsFor(data) {
   const value = data.settings?.oltTicketing || {};
   return { whatsappEnabled: value.whatsappEnabled === true,
+    customerOutageEnabled:value.customerOutageEnabled===true,
     recipientIds: Array.isArray(value.recipientIds) ? [...new Set(value.recipientIds)].slice(0, 25) : [] };
 }
 
 function validateSettings(data, payload) {
+  if(payload.customerOutageEnabled!==undefined&&typeof payload.customerOutageEnabled!=='boolean')throw new Error('Pengaturan pesan gangguan massal tidak valid');
   if (typeof payload.whatsappEnabled !== 'boolean' || !Array.isArray(payload.recipientIds)
     || payload.recipientIds.length > 25 || payload.recipientIds.some(id => typeof id !== 'string')) {
     throw new Error('Pengaturan notifikasi tiket tidak valid');
@@ -52,12 +55,12 @@ function validateSettings(data, payload) {
   const ids = [...new Set(payload.recipientIds)], users = new Map(eligibleUsers(data).map(user => [user.id, user]));
   if (ids.some(id => !users.has(id) || !phoneFor(users.get(id)))) throw new Error('Penerima wajib user berwenang dengan nomor WhatsApp valid');
   if (payload.whatsappEnabled && !ids.length) throw new Error('Pilih minimal satu penerima notifikasi tiket');
-  return { whatsappEnabled: payload.whatsappEnabled, recipientIds: ids };
+  return { whatsappEnabled: payload.whatsappEnabled, recipientIds: ids,customerOutageEnabled:payload.customerOutageEnabled??settingsFor(data).customerOutageEnabled };
 }
 
 function recipientsFor(data, ticket, kind = 'detected') {
   if(!NOTIFICATION_KINDS.includes(kind))return [];
-  const ids = new Set(kind==='resolved' ? [ticket.assignedTo].filter(Boolean) : settingsFor(data).recipientIds);
+  const ids = new Set(kind==='resolved' ? ticketTeam.memberIds(ticket) : settingsFor(data).recipientIds);
   return eligibleUsers(data).filter(user => ids.has(user.id) && phoneFor(user)
     && serviceTickets.visible(data, auth.publicUser(user),ticket));
 }
@@ -66,7 +69,7 @@ function ticketLink(origin, ticket) {
   try {
     const url = new URL(origin);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return '';
-    return new URL('/olt-ticket.html?id=' + encodeURIComponent(ticket.id), url.origin).href;
+    return new URL('/tkt.html?id=' + encodeURIComponent(ticket.id), url.origin).href;
   } catch { return ''; }
 }
 
@@ -82,19 +85,17 @@ function eventKey(ticket, kind) {
 }
 
 function messageText(data, ticket, kind, origin) {
+  ticket={...ticket,number:require('./ticket-reference').number(ticket)};
   const link = ticketLink(origin, ticket);
   if (!link) throw new Error('URL publik billing belum diatur di Payment Gateway');
   const location=serviceTickets.ticketLocation(data,ticket);
-  const rendered = (serviceTickets.isServiceTicket(ticket) ? [kind==='resolved'?'*TIKET LAYANAN SELESAI*':ticket.category==='new-installation'?'*PERMINTAAN PASANG BARU*':'*TIKET LAYANAN BARU*',
-    `Tiket: ${ticket.number}`,`Pelanggan: ${location.name||'Belum dilengkapi'}`,`Kategori: ${serviceTickets.CATEGORIES.find(row=>row.id===ticket.category)?.label||ticket.title}`,
-    ...(location.phone?[`Kontak: ${location.phone}`]:[]),`Alamat: ${location.address||'Belum dilengkapi'}`,location.locationUrl?`Arah pelanggan: ${location.locationUrl}`:'Lokasi peta: Belum dilengkapi',kind==='detected'?`Keterangan: ${(ticket.messages||[])[0]?.text||'-'}`:'Penanganan telah selesai.'].join('\n')
-    : olt.renderTicketTemplate(data, ticket, kind)).replaceAll('[ticket_link]', link);
+  const rendered=olt.renderTicketTemplate(data,ticket,kind).replaceAll('[ticket_link]',link);
   const contact=!serviceTickets.isServiceTicket(ticket)?[location.phone&&!rendered.includes(location.phone)?'Kontak: '+location.phone:'',location.locationUrl&&!rendered.includes(location.locationUrl)?'Arah pelanggan: '+location.locationUrl:''].filter(Boolean).join('\n'):'';
   const message=rendered+(contact?'\n'+contact:'');
-  return message.includes(link) ? message : message + '\n\nBuka / ambil tiket:\n' + link;
+  return message.includes(link) ? message : message + (kind==='resolved'?'\n\nLihat hasil penanganan:\n':'\n\nBuka / ambil tiket:\n') + link;
 }
 
-function enqueueNotifications(data, ticket, kind, origin, enqueue, actor = {}) {
+function enqueueStaffNotifications(data, ticket, kind, origin, enqueue, actor = {}) {
   if (!settingsFor(data).whatsappEnabled || data.settings?.waGateway?.enabled !== true) return { queued: 0 };
   if(!KINDS.includes(kind))throw new Error('Jenis pesan tiket tidak valid');
   if(!NOTIFICATION_KINDS.includes(kind))return {queued:0,suppressed:true,reason:'Pesan pengambilan dan progres tiket hanya dicatat di web'};
@@ -123,8 +124,14 @@ function enqueueNotifications(data, ticket, kind, origin, enqueue, actor = {}) {
       ...(kind==='detected'?{oltFaultKey:faultKeyFor(ticket,phone)}:{}) });
     for(const recipient of users)sent.add(recipient.id);
   }
-  ticket.waNotifications = { ...ticket.waNotifications, [kind]: { eventKey: key, recipientIds: [...sent].slice(-25) } };
+  ticket.waNotifications = { ...ticket.waNotifications, [kind]: { eventKey: key, recipientIds: [...sent].slice(-(kind==='resolved'?ticketTeam.MAX_COMPANIONS+1:25)) } };
   return { queued: byPhone.size };
+}
+
+function enqueueNotifications(data,ticket,kind,origin,enqueue,actor={}){
+  const staff=enqueueStaffNotifications(data,ticket,kind,origin,enqueue,actor),customers=require('./ticket-customer-notifications');
+  const extra=customers.enabled(data,ticket)&&NOTIFICATION_KINDS.includes(kind)?customers.enqueue(data,ticket,kind,enqueue,deliveryContext(data)):{queued:0};
+  return{...staff,queued:staff.queued+extra.queued};
 }
 
 function faultKeyFor(ticket, phone) {
@@ -135,15 +142,17 @@ function sentBefore(message) {
   return ['sent','delivered','read','seen'].includes(message.status)||Number.isFinite(Date.parse(message.sentAt||''));
 }
 function basicDeliveryAllowed(data, message, context) {
-  if (!settingsFor(data).whatsappEnabled) return false;
   if(!NOTIFICATION_KINDS.includes(message.oltTicketKind)||sentBefore(message))return false;
   const ticket = context.tickets.get(message.oltTicketId);
+  if(message.oltTicketAudience==='customer')return Boolean(ticket&&require('./ticket-customer-notifications').allowed(data,ticket,message,context));
+  if (!settingsFor(data).whatsappEnabled) return false;
+  if(message.oltTicketKind==='detected'&&ticket?.recovery?.ready)return false;
   if(ticket&&message.oltTicketKind==='detected'&&plannedReboot.suppressNotification(data,ticket,context.now))return false;
   if (!ticket || (message.oltTicketKind==='detected'?(ticket.status!=='new'||ticket.assignedTo):(ticket.status!=='resolved'||!ticket.assignedTo))) return false;
   const recipientKey=ticket.id+':'+message.oltTicketKind;
   if(!context.recipients.has(recipientKey))context.recipients.set(recipientKey,recipientsFor(data,ticket,message.oltTicketKind));
   const recipients=context.recipients.get(recipientKey);
-  if(message.oltTicketKind==='resolved')return recipients.some(user=>user.id===ticket.assignedTo&&phoneFor(user)===message.phone);
+  if(message.oltTicketKind==='resolved')return recipients.some(user=>phoneFor(user)===message.phone);
   const ids=new Set(message.oltTicketRecipientIds||[message.oltTicketRecipientId]);
   return recipients.some(user => ids.has(user.id) && phoneFor(user) === message.phone);
 }
@@ -179,6 +188,7 @@ function deliveryAllowed(data, message, context = deliveryContext(data)) {
 function recordDelivery(data, message, sentAt) {
   if(message.type!=='oltTicket'||message.oltTicketKind!=='detected')return;
   const ticket=(data.oltTickets||[]).find(row=>row.id===message.oltTicketId);if(!ticket)return;
+  require('./ticket-customer-notifications').recordDelivery(ticket,message);
   const now=Date.parse(sentAt),context=deliveryContext(data,now);
   context.recentFaults.set(faultKeyFor(ticket,message.phone),now+FAULT_COOLDOWN_MS);
   saveCooldowns(data,context.recentFaults,now);
@@ -224,8 +234,8 @@ function ticketPage(data, user, query = {}) {
   const filtered = scoped.filter(ticket => (!query.bucket||(query.bucket==='resolved'?ticket.status==='resolved':ticket.status!=='resolved'))&&(!status || (status === 'open' ? ticket.status !== 'resolved' : ticket.status === status)));
   filtered.sort((a,b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(a.id).localeCompare(String(b.id)));
   const pages = Math.max(1,Math.ceil(filtered.length / limit)), page = Math.max(1,Math.min(pages,parseInt(query.page,10) || 1));
-  const fields = ['id','number','oltId','title','scope','source','kind','category','nasId','nasName','pon','serialNumber','fiberPointId','fiberPointName','customerName','assignedTo','status','updatedAt','createdAt','autoResolved','affectedCount','losDetection'];
-  const tickets = filtered.slice((page-1)*limit,page*limit).map(ticket => ({...Object.fromEntries(fields.filter(key => ticket[key] !== undefined).map(key => [key,ticket[key]])),affectedTotal:ticket.affectedSerialNumbers?.length || ticket.affectedCount || (ticket.serialNumber ? 1 : 0)}));
+  const fields = ['id','number','oltId','title','scope','source','kind','category','nasId','nasName','pon','serialNumber','fiberPointId','fiberPointName','customerName','assignedTo','companionIds','status','updatedAt','createdAt','autoResolved','affectedCount','losDetection'];
+  const tickets = filtered.slice((page-1)*limit,page*limit).map(ticket => ({...Object.fromEntries(fields.filter(key => ticket[key] !== undefined).map(key => [key,ticket[key]])),number:require('./ticket-reference').number(ticket),...(ticket.recovery?{recovery:Object.fromEntries(['ready','threshold','total','online','eligible','poweredOff','remainingLos','unknown'].map(key=>[key,ticket.recovery[key]]))}:{}),affectedTotal:ticket.affectedSerialNumbers?.length || ticket.affectedCount || (ticket.serialNumber ? 1 : 0)}));
   return { tickets, counts, page, limit, pages, total: filtered.length,nasIds:[...new Set([...devices.map(row=>row.nasId),...visible.map(row=>row.nasId)].filter(Boolean))],
     devices: devices.map(device => ({id:device.id,name:device.name,nasId:device.nasId || ''})) };
 }

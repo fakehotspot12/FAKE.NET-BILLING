@@ -53,7 +53,7 @@ function createDirectory(data={}) {
     return unique(rows.filter(row=>now-row.at<300000).map(row=>{const customer=customers.get(row.customerId),user=customer&&userForCustomer(customer);return customer&&compatible(user||customer,nas)&&(!user?.username||clean(user.username)===row.username)?customer:null;}));
   }
   function referencesAcs(row={}){return Boolean((byName.get(clean(row.username))||[]).length||(byCustomerName.get(clean(row.username))||[]).length||(byDevice.get(clean(row.id))||[]).length||(bySerial.get(serial(row.serialNumber||row.sn))||[]).length);}
-  return {userForCustomer,customerForAcs,customerForSerial,referencesAcs,aliasesFor,compatible};
+  return {customerById:id=>customers.get(id)||null,userForCustomer,customerForAcs,customerForSerial,referencesAcs,aliasesFor,compatible};
 }
 function directory(data={}) {
   const old=directories.get(data),refs=[data.customers,data.radiusUsers,data.monitoringTargets,data.radiusNas];

@@ -140,10 +140,20 @@ function lastOnlineAt(snapshot,onu={}) {
 function preserveLastOnline(snapshot,previous=null) {
   // An offline poll or a failed OLT read must never advance last-online time.
   const old=new Map((previous?.onus||[]).map(row=>[normalizeSerial(row.serialNumber),lastOnlineAt(previous,row)]).filter(([sn])=>sn));
+  const key=row=>JSON.stringify([row.identifierKind||'serial',normalizeSerial(row.serialNumber),String(row.id)]),readings=new Map(),duplicates=new Set();
+  for(const row of previous?.onus||[]){const id=key(row);if(readings.has(id))duplicates.add(id);readings.set(id,lastOptical(previous,row));}
   return {...snapshot,onus:(snapshot.onus||[]).map(row=>{
     const known=old.get(normalizeSerial(row.serialNumber))||'',saved=lastOnlineAt(snapshot,row);
-    return {...row,lastOnlineAt:lastOnlineAt(snapshot,{...row,lastOnlineAt:Date.parse(saved)>(Date.parse(known)||0)?saved:known})};
+    const current=lastOptical(snapshot,row),previousReading=duplicates.has(key(row))?null:readings.get(key(row)),reading=current.at?current:previousReading?.at?previousReading:current;
+    return {...row,lastOnlineAt:lastOnlineAt(snapshot,{...row,lastOnlineAt:Date.parse(saved)>(Date.parse(known)||0)?saved:known}),lastRxPower:reading.rxPower,lastRxPowerAt:reading.at};
   })};
+}
+function lastOptical(snapshot,onu={}) {
+  const valid=value=>typeof value==='number'&&Number.isFinite(value)&&value<0&&value>=-60;
+  const at=Date.parse(snapshot?.checkedAt||''),saved=Date.parse(onu.lastRxPowerAt||'');
+  if(onu.status==='online'&&snapshot?.status==='online'&&!snapshot.stale&&valid(onu.rxPower)&&Number.isFinite(at)&&at<=Date.now()+30000)return{rxPower:onu.rxPower,at:new Date(at).toISOString(),stale:false};
+  if(valid(onu.lastRxPower)&&Number.isFinite(saved)&&saved<=Date.now()+30000)return{rxPower:onu.lastRxPower,at:new Date(saved).toISOString(),stale:true};
+  return{rxPower:valid(onu.rxPower)?onu.rxPower:null,at:'',stale:true};
 }
 function normalizeSnapshot(tables, now = Date.now()) {
   const system = column(tables.system || [], OIDS.system);
@@ -533,10 +543,13 @@ function incidentKey(ticket) {
   return ticket.pon?`${ticket.oltId}:pon:${ticket.pon}`:'';
 }
 function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey) {
-  const groups=new Map(),consumed=new Set(),subjects=[];
+  const groups=new Map(),consumed=new Set(),subjects=[],recovery=require('./ticket-recovery');
+  const needsGroups=[...seen.values()].some(isConfirmedLos)||[...activeByKey.values(),...observedByKey.values()].some(ticket=>ticket.oltId===device.id&&recovery.grouped(ticket));
+  const topology=needsGroups?recovery.topology(data,device,[...seen.values()]):[];
   const points=new Map((data.fiberPoints||[]).map(point=>[point.id,point]));
-  for(const onu of seen.values())if(onu.ponKey){const key='pon:'+onu.ponKey;if(!groups.has(key))groups.set(key,{scope:'pon',pon:onu.ponKey,members:[]});groups.get(key).members.push(onu);}
-  for(const onu of seen.values()){const point=points.get(device.links?.[onu.serialNumber]?.fiberPointId);if(point){const key='odp:'+point.id;if(!groups.has(key))groups.set(key,{scope:'odp',fiberPointId:point.id,fiberPointName:[point.code,point.name].filter(Boolean).join(' - '),members:[]});groups.get(key).members.push(onu);}}
+  if(needsGroups)for(const onu of seen.values())if(onu.ponKey){const key='pon:'+onu.ponKey;if(!groups.has(key))groups.set(key,{scope:'pon',pon:onu.ponKey,members:[]});groups.get(key).members.push(onu);}
+  const bySerial=new Map(topology.map(row=>[row.serialNumber,row]));
+  for(const onu of seen.values()){const point=points.get(bySerial.get(onu.serialNumber)?.odp);if(point){const key='odp:'+point.id;if(!groups.has(key))groups.set(key,{scope:'odp',fiberPointId:point.id,fiberPointName:[point.code,point.name].filter(Boolean).join(' - '),members:[]});groups.get(key).members.push(onu);}}
   for(const group of groups.values()) {
     const key=incidentKey({oltId:device.id,...group}),previous=observedByKey.get(key),active=activeByKey.get(key),tracked=active||previous;
     const members=group.members.filter(row=>!consumed.has(row.serialNumber)),lost=members.filter(isConfirmedLos);
@@ -546,12 +559,16 @@ function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey) {
     if(!qualifies&&!ongoing)continue;
     if(!ongoing&&lost.some(row=>activeByKey.has(incidentKey({oltId:device.id,serialNumber:row.serialNumber}))))continue;
     const previousSerials=tracked?.affectedSerialNumbers||[],affectedSerialNumbers=[...new Set([...previousSerials,...lost.map(row=>row.serialNumber)])].sort().slice(0,1024);
-    const recovered=lost.length===0&&affectedSerialNumbers.length>0&&affectedSerialNumbers.every(serial=>seen.get(serial)?.status==='online');
+    const measured=recovery.measure({...tracked,scope:group.scope,fiberPointId:group.fiberPointId,pon:group.pon||tracked?.pon||''},seen,group.members.map(row=>bySerial.get(row.serialNumber))),recovered=measured.ready;
     const pon=group.pon||([...new Set(members.map(row=>row.ponKey))].length===1?members[0]?.ponKey:'')||'';
-    subjects.push({key,scope:group.scope,serialNumber:'',pon,los:lost.length>0,recovered,affectedSerialNumbers,affectedCount:lost.length,fiberPointId:group.fiberPointId||'',fiberPointName:group.fiberPointName||'',title:group.scope==='pon'?`LOS PON ${pon} - Area ODC`:`LOS ODP ${group.fiberPointName||group.fiberPointId}`});
+    subjects.push({key,scope:group.scope,serialNumber:'',pon,los:!recovered&&lost.length>0,recovered,recovery:recovery.publicResult(measured),recoveryTargets:measured.targets||[],affectedSerialNumbers,affectedCount:lost.length,fiberPointId:group.fiberPointId||'',fiberPointName:group.fiberPointName||'',title:group.scope==='pon'?`LOS PON ${pon} - Area ODC`:`LOS ODP ${group.fiberPointName||group.fiberPointId}`});
     if(lost.length||ongoing)for(const row of members)consumed.add(row.serialNumber);
   }
-  for(const onu of seen.values())if(!consumed.has(onu.serialNumber)||onu.status==='online')subjects.push({key:incidentKey({oltId:device.id,serialNumber:onu.serialNumber}),scope:'onu',serialNumber:onu.serialNumber,pon:onu.ponKey||'',los:isConfirmedLos(onu),recovered:onu.status==='online',affectedSerialNumbers:[onu.serialNumber],affectedCount:isConfirmedLos(onu)?1:0,title:`LOS - ${onu.name||onu.serialNumber}`,onuName:onu.name});
+  for(const onu of seen.values())if(!consumed.has(onu.serialNumber)||onu.status==='online'){
+    const key=incidentKey({oltId:device.id,serialNumber:onu.serialNumber}),prior=activeByKey.get(key)||observedByKey.get(key),los=isConfirmedLos(onu);
+    if(!los&&!(onu.status==='online'&&prior?.losDetection?.state==='los'))continue;
+    subjects.push({key,scope:'onu',serialNumber:onu.serialNumber,onuIndex:String(onu.id||''),optical:lastOptical(snapshot,onu),pon:onu.ponKey||'',los,recovered:onu.status==='online',affectedSerialNumbers:[onu.serialNumber],affectedCount:los?1:0,title:`LOS - ${onu.name||onu.serialNumber}`,onuName:onu.name});
+  }
   return subjects;
 }
 function losTicketPlan(data, observations, options = {}) {
@@ -576,20 +593,21 @@ function losTicketPlan(data, observations, options = {}) {
       if(!los&&!recovered)continue;
       if(detection&&Date.parse(detection.observedAt)>=checked)continue;
       if(!los) {
-        if(detection&&(detection.state==='los'||previous.source==='olt-los'&&previous.status!=='resolved'))changes.push({kind:'observe',id:previous.id,patch:{affectedCount:0},losDetection:{...detection,state:'online',observedAt:snapshot.checkedAt,recoveredAt:detection.recoveredAt||snapshot.checkedAt}});
+        const progressChanged=subject.recovery&&JSON.stringify(previous?.recovery)!==JSON.stringify(subject.recovery);
+        if(detection&&(detection.state==='los'||previous.source==='olt-los'&&previous.status!=='resolved'&&(!subject.recovery||progressChanged)))changes.push({kind:'observe',id:previous.id,patch:{affectedCount:subject.recovery?.remainingLos||0,...(subject.recovery?{recovery:subject.recovery}:{})},losDetection:{...detection,state:'online',observedAt:snapshot.checkedAt,recoveredAt:detection.recoveredAt||snapshot.checkedAt}});
         continue;
       }
       if(detection?.state==='los'){
-        if(previous.scope!=='onu'&&subject.scope!=='onu'&&(previous.affectedCount!==subject.affectedCount||JSON.stringify(previous.affectedSerialNumbers)!==JSON.stringify(subject.affectedSerialNumbers)))changes.push({kind:'observe',id:previous.id,patch:{affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers},losDetection:{...detection,observedAt:snapshot.checkedAt}});
+        if(previous.scope!=='onu'&&subject.scope!=='onu'&&(previous.affectedCount!==subject.affectedCount||JSON.stringify(previous.affectedSerialNumbers)!==JSON.stringify(subject.affectedSerialNumbers)||JSON.stringify(previous.recovery)!==JSON.stringify(subject.recovery)))changes.push({kind:'observe',id:previous.id,patch:{affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers,...(subject.recovery?{recovery:subject.recovery}:{})},losDetection:{...detection,observedAt:snapshot.checkedAt}});
         continue;
       }
       const active=activeByOnu.get(key),nextDetection={state:'los',firstDetectedAt:active?.losDetection?.firstDetectedAt||snapshot.checkedAt,lastLosAt:snapshot.checkedAt,observedAt:snapshot.checkedAt,recoveredAt:'',occurrences:(active?.losDetection?.occurrences||0)+1};
-      if(active){changes.push({kind:'observe',id:active.id,patch:active.source==='olt-los'?{affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers}:{},losDetection:nextDetection});continue;}
+      if(active){changes.push({kind:'observe',id:active.id,patch:active.source==='olt-los'?{affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers,...(subject.recovery?{recovery:subject.recovery}:{})}:{},losDetection:nextDetection});continue;}
       if(!available)continue;
       if(creates>=50){deferred++;continue;}
       available--;creates++;
       const link=device.links?.[subject.serialNumber]||{},automatic=autoIdentity.customerFor(data,device,{serialNumber:subject.serialNumber}),customer=autoIdentity.manualCustomerFor(data,device,{serialNumber:subject.serialNumber})||automatic?.customer;
-      changes.push({kind:'create',payload:{oltId:device.id,serialNumber:subject.serialNumber,pon:subject.pon,title:subject.title.slice(0,160),description:'',assignedTo:'',status:'new',scope:subject.scope,fiberPointId:subject.fiberPointId||''},scope:subject.scope,affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers,losDetection:nextDetection,onuName:String(subject.onuName||'').slice(0,160),customerId:customer?.id||'',customerName:customer?.name||'',fiberPointId:subject.fiberPointId||link.fiberPointId||'',fiberPointName:subject.fiberPointName||'',simulated});
+      changes.push({kind:'create',payload:{oltId:device.id,serialNumber:subject.serialNumber,pon:subject.pon,title:subject.title.slice(0,160),description:'',assignedTo:'',status:'new',scope:subject.scope,fiberPointId:subject.fiberPointId||''},scope:subject.scope,recovery:subject.recovery,recoveryTargets:subject.recoveryTargets,onuIndex:subject.onuIndex||'',optical:subject.optical,affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers,losDetection:nextDetection,onuName:String(subject.onuName||'').slice(0,160),customerId:customer?.id||'',customerName:customer?.name||'',fiberPointId:subject.fiberPointId||link.fiberPointId||'',fiberPointName:subject.fiberPointName||'',simulated});
     }
   }
   return {changes,creates,deferred};
@@ -600,14 +618,21 @@ function applyLosTicketPlan(data, plan, now = Date.now()) {
   for(const change of plan.changes) {
     if(change.kind==='observe') {
       const index=byId.get(change.id);if(index===undefined)continue;
+      const becameReady=change.patch?.recovery?.ready===true&&rows[index].recovery?.ready!==true;
       rows[index]={...rows[index],...change.patch,losDetection:change.losDetection,updatedAt:new Date(now).toISOString()};observed++;
-      if(rows[index].source==='olt-los'&&rows[index].status!=='resolved'&&change.losDetection.state==='online'){
+      if(becameReady&&rows[index].status!=='resolved')rows[index].history=ticketHistory(rows[index],{id:'system-olt',name:'Sistem OLT'},'recovery-ready','Target pemulihan jaringan tercapai. Menunggu konfirmasi selesai oleh penanggung jawab/tim.',rows[index].status,now);
+      if(rows[index].source==='olt-los'&&rows[index].status!=='resolved'&&change.losDetection.state==='online'&&!require('./ticket-recovery').grouped(rows[index])){
         rows[index]={...rows[index],status:'resolved',resolvedAt:new Date(now).toISOString(),updatedBy:'system-olt',autoResolved:true,
-          history:ticketHistory(rows[index],{id:'system-olt',name:'Sistem OLT'},'recovered','ONU terdampak terkonfirmasi online kembali','resolved',now)};
+          history:ticketHistory(rows[index],{id:'system-olt',name:'Sistem OLT'},'recovered',rows[index].recovery?`Target pemulihan ${rows[index].recovery.threshold}% tercapai: ${rows[index].recovery.online}/${rows[index].recovery.eligible} ONU online; ${rows[index].recovery.poweredOff} modem kehilangan daya, ${rows[index].recovery.remainingLos} sisa LOS.`:'ONU terdampak terkonfirmasi online kembali','resolved',now)};
         resolved.push(rows[index]);
       }
     } else {
-      const ticket={...saveTicket({...data,oltTickets:rows},change.payload,{id:'system-olt'}),source:'olt-los',scope:change.scope,affectedCount:change.affectedCount,affectedSerialNumbers:change.affectedSerialNumbers,losDetection:change.losDetection,onuName:change.onuName,customerId:change.customerId,customerName:change.customerName,fiberPointId:change.fiberPointId,fiberPointName:change.fiberPointName,...(change.simulated?{simulated:true}:{})};
+      const ticket={...saveTicket({...data,oltTickets:rows},change.payload,{id:'system-olt'}),source:'olt-los',scope:change.scope,onuIndex:change.onuIndex||'',...(change.optical?.at?{oltOptical:{...change.optical,oltId:change.payload.oltId,serialNumber:change.payload.serialNumber,onuIndex:change.onuIndex}}:{}),affectedCount:change.affectedCount,affectedSerialNumbers:change.affectedSerialNumbers,losDetection:change.losDetection,onuName:change.onuName,customerId:change.customerId,customerName:change.customerName,fiberPointId:change.fiberPointId,fiberPointName:change.fiberPointName,...(change.simulated?{simulated:true}:{})};
+      if(change.recovery){ticket.recovery=change.recovery;ticket.recoveryTargets=change.recoveryTargets;}
+      if(ticket.scope==='onu'){
+        const parents=rows.filter(row=>row.source==='olt-los'&&row.status==='resolved'&&row.oltId===ticket.oltId&&row.pon===ticket.pon&&row.recovery?.residualSerialNumbers?.includes(ticket.serialNumber)&&now-Date.parse(row.resolvedAt)>=0&&now-Date.parse(row.resolvedAt)<86400000);
+        if(parents.length===1){const parent=parents[0],team=require('./ticket-team'),allowed=id=>{const user=(data.users||[]).find(row=>row.id===id);return user&&team.canHandle(parent,user)&&require('./service-tickets').visible(data,user,ticket);};ticket.parentTicketId=parent.id;if(allowed(parent.assignedTo)){ticket.assignedTo=parent.assignedTo;ticket.companionIds=team.companionIds(parent).filter(allowed);ticket.status='assigned';}ticket.history=ticketHistory(ticket,{id:'system-olt',name:'Sistem OLT'},'followup','Pemeriksaan lanjutan setelah perbaikan gangguan kelompok '+require('./ticket-reference').number(parent),ticket.status,now);}
+      }
       rows.push(ticket);created.push(ticket);
     }
   }
@@ -619,6 +644,7 @@ function ticketMessage(data, ticket) {
     ticket.serialNumber ? `ONU: ${ticket.serialNumber}` : '', `Status: ${ticket.status}`, ticket.description || ''].filter(Boolean).join('\n');
 }
 function saveTicket(data, payload, actor, previous = {}) {
+  require('./ticket-team').requireStatusChange(previous,payload,actor);
   if(previous.source==='olt-los'&&((payload.oltId!==undefined&&payload.oltId!==previous.oltId)||(payload.pon!==undefined&&payload.pon!==previous.pon)||(payload.serialNumber!==undefined&&(payload.serialNumber?normalizeSerial(payload.serialNumber):'')!==previous.serialNumber)||(payload.scope!==undefined&&payload.scope!==previous.scope)||(payload.fiberPointId!==undefined&&payload.fiberPointId!==previous.fiberPointId)))throw new Error('Identitas OLT/PON/ONU tiket otomatis tidak dapat diubah');
   const device = deviceRows(data).find(row => row.id === (payload.oltId || previous.oltId));
   if (!device) throw new Error('OLT tidak ditemukan');
@@ -628,6 +654,7 @@ function saveTicket(data, payload, actor, previous = {}) {
   const pon = text(payload.pon ?? previous.pon ?? '', 24); if (pon && !/^\d{1,2}\/\d{1,2}\/\d{1,2}$/.test(pon)) throw new Error('Port PON tidak valid');
   const serialNumber = payload.serialNumber === '' ? '' : normalizeSerial(payload.serialNumber || previous.serialNumber || '');
   const scope=payload.scope??previous.scope??(serialNumber?'onu':pon?'pon':'olt');if(!Object.hasOwn(TICKET_SCOPE_LABELS,scope))throw new Error('Lingkup tiket tidak valid');
+  if(!previous.id&&status==='resolved'&&['odp','pon','odc'].includes(scope))throw ticketAccessError('Buat dan tugaskan tiket kelompok terlebih dahulu sebelum konfirmasi selesai');
   const fiberPointId=text(payload.fiberPointId??previous.fiberPointId??'',100);if(scope==='odp'&&!(data.fiberPoints||[]).some(point=>point.id===fiberPointId))throw new Error('Pemetaan ODP tiket belum tersedia');
   const assignedTo = text(payload.assignedTo ?? previous.assignedTo ?? '', 100);
   if (assignedTo && !(data.users || []).some(user => user.id === assignedTo && user.active !== false && ['admin','owner','noc','technician','secretary'].includes(user.role))) throw new Error('Petugas tiket tidak valid');
@@ -639,8 +666,8 @@ function saveTicket(data, payload, actor, previous = {}) {
   }
   const now = new Date().toISOString();
   const history=previous.id&&(previous.status!==status||previous.assignedTo!==assignedTo||previous.description!==description)?ticketHistory(previous,actor,'updated',description||'Data tiket diperbarui',status):previous.history;
-  return { ...previous, id: previous.id || crypto.randomUUID(), number: previous.number || `OLT-${now.slice(0,10).replaceAll('-','')}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
-    oltId: device.id, title, description, pon, serialNumber, scope, fiberPointId, assignedTo, status, createdAt: previous.createdAt || now,
+  return { ...previous, id: previous.id || crypto.randomUUID(), number: require('./ticket-reference').number(previous) || `TKT-${now.slice(0,10).replaceAll('-','')}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
+    oltId: device.id, title, description, pon, serialNumber, scope, fiberPointId, assignedTo, companionIds:assignedTo===previous.assignedTo?require('./ticket-team').companionIds(previous):[], status, createdAt: previous.createdAt || now,
     updatedAt: now, updatedBy: actor.id, createdBy: previous.createdBy || actor.id, resolvedAt: status === 'resolved' ? previous.resolvedAt || now : '',...(history?{history}:{}) };
 }
 function ticketAccessError(message,status=409){const error=new Error(message);error.status=status;return error;}
@@ -651,11 +678,12 @@ function claimTicket(ticket,actor,now=Date.now()) {
   if(ticket.status==='resolved')throw ticketAccessError('Tiket sudah selesai');
   if(ticket.assignedTo&&ticket.assignedTo!==actor.id)throw ticketAccessError('Tiket sudah diambil petugas lain');
   if(ticket.assignedTo===actor.id)return ticket;
-  return {...ticket,assignedTo:actor.id,status:'assigned',updatedAt:new Date(now).toISOString(),updatedBy:actor.id,history:ticketHistory(ticket,actor,'claimed','Tiket diambil','assigned',now)};
+  return {...ticket,assignedTo:actor.id,companionIds:[],status:'assigned',updatedAt:new Date(now).toISOString(),updatedBy:actor.id,history:ticketHistory(ticket,actor,'claimed','Tiket diambil','assigned',now)};
 }
 function progressTicket(ticket,payload,actor,now=Date.now()) {
+  require('./ticket-team').requireStatusChange(ticket,payload,actor);
   if(!ticket.assignedTo)throw ticketAccessError('Ambil atau tugaskan tiket terlebih dahulu');
-  if(actor.role==='technician'&&ticket.assignedTo!==actor.id)throw ticketAccessError('Tiket ditangani petugas lain',403);
+  if(actor.role==='technician'&&!require('./ticket-team').memberIds(ticket).includes(actor.id))throw ticketAccessError('Tiket ditangani petugas lain',403);
   if(ticket.status==='resolved')throw ticketAccessError('Tiket sudah selesai');
   const status=payload.status||'working';if(!['working','resolved'].includes(status))throw new Error('Status progres tidak valid');
   const note=text(payload.note??'',1000,true);if(!note)throw new Error('Catatan progres wajib diisi');
@@ -664,24 +692,25 @@ function progressTicket(ticket,payload,actor,now=Date.now()) {
 }
 function requireTicketEditor(ticket,payload,actor) {
   if(actor.role!=='technician')return;
-  if(ticket?.id&&ticket.assignedTo&&ticket.assignedTo!==actor.id)throw ticketAccessError('Tiket ditangani petugas lain',403);
-  if(payload.assignedTo&&payload.assignedTo!==actor.id)throw ticketAccessError('Penugasan petugas lain hanya melalui koordinator',403);
+  if(ticket?.id&&ticket.assignedTo&&ticket.assignedTo!==actor.id){if(!require('./ticket-team').memberIds(ticket).includes(actor.id)||Object.keys(payload).length)throw ticketAccessError('Tiket ditangani petugas lain; pendamping menggunakan pembaruan progres',403);}
+  if(Object.hasOwn(payload,'assignedTo')&&payload.assignedTo!==(ticket?.assignedTo||actor.id))throw ticketAccessError('Penugasan petugas lain hanya melalui koordinator',403);
   if(ticket?.id&&!ticket.assignedTo&&(payload.assignedTo||(payload.status&&payload.status!==ticket.status)))throw ticketAccessError('Ambil tiket terlebih dahulu');
 }
 const DEFAULT_TICKET_TEMPLATES=Object.freeze({
   detected:'*GANGGUAN INTERNET*\nPelanggan: [customer]\nKondisi: Sinyal fiber terputus (LOS)\nLokasi: [location]\nReferensi: [network]\nTerdampak: [affected] ONU\nTiket: [ticket_no]\nWaktu: [time]',
   claimed:'*TIKET DIAMBIL*\nTiket: [ticket_no]\nLingkup: [scope]\nOLT: [olt]\nPON: [pon]\nTeknisi: [technician]\nStatus: [status]',
   progress:'*PROGRES PENANGANAN*\nTiket: [ticket_no]\nLingkup: [scope]\nOLT: [olt]\nPON: [pon]\nTeknisi: [technician]\nStatus: [status]\nCatatan: [progress]',
-  resolved:'*PENANGANAN SELESAI*\nPelanggan: [customer]\nLokasi: [location]\nReferensi: [network]\nTiket: [ticket_no]\nPetugas: [technician]\nCatatan: [progress]'
+  resolved:'*PENANGANAN SELESAI*\nPelanggan: [customer]\nLokasi: [location]\nReferensi: [network]\nTiket: [ticket_no]\nPetugas: [technician]\nPendamping: [companions]\nCatatan: [progress]'
 });
 function ticketTemplates(data){
-  const result={...DEFAULT_TICKET_TEMPLATES,...(data.settings?.oltTicketing?.templates||{})};
+  const result={...DEFAULT_TICKET_TEMPLATES,...require('./ticket-templates').DEFAULTS,...(data.settings?.oltTicketing?.templates||{})};
   // Upgrade only untouched legacy defaults; preserve genuinely customized templates.
   if(/^\*GANGGUAN \[scope\]\*\nTiket: \[ticket_no\]\nOLT: \[olt\]\nPON: \[pon\]\nODP: \[odp\]\nONU: \[onu\]\nPelanggan: \[customer\]\nTerdampak: \[affected\] ONU\nTerdeteksi: \[time\]\nSilakan ambil tiket melalui menu (?:OLT > Tiket Gangguan|Monitoring > Tiket Layanan)\.$/.test(result.detected))result.detected=DEFAULT_TICKET_TEMPLATES.detected;
   if(result.resolved==='*PENANGANAN SELESAI*\nTiket: [ticket_no]\nLingkup: [scope]\nOLT: [olt]\nPON: [pon]\nTeknisi: [technician]\nCatatan: [progress]')result.resolved=DEFAULT_TICKET_TEMPLATES.resolved;
+  if(result.resolved==='*PENANGANAN SELESAI*\nPelanggan: [customer]\nLokasi: [location]\nReferensi: [network]\nTiket: [ticket_no]\nPetugas: [technician]\nCatatan: [progress]')result.resolved=DEFAULT_TICKET_TEMPLATES.resolved;
   return result;
 }
-function validateTicketTemplates(payload){const result={};for(const key of Object.keys(DEFAULT_TICKET_TEMPLATES)){if(payload[key]!==undefined){const value=text(payload[key],2400,true);if(!value)throw new Error('Template tiket tidak boleh kosong');result[key]=value;}}return result;}
+function validateTicketTemplates(payload){const result={};for(const key of Object.keys({...DEFAULT_TICKET_TEMPLATES,...require('./ticket-templates').DEFAULTS})){if(payload[key]!==undefined){const value=text(payload[key],2400,true);if(!value)throw new Error('Template tiket tidak boleh kosong');result[key]=value;}}return result;}
 function renderTicketTemplate(data,ticket,kind='detected') {
   if(!Object.hasOwn(DEFAULT_TICKET_TEMPLATES,kind))throw new Error('Jenis template tidak valid');
   const labels={new:'Baru',assigned:'Diambil',working:'Dikerjakan',resolved:'Selesai'},device=deviceRows(data).find(row=>row.id===ticket.oltId),technician=(data.users||[]).find(row=>row.id===ticket.assignedTo),point=(data.fiberPoints||[]).find(row=>row.id===ticket.fiberPointId);
@@ -691,8 +720,11 @@ function renderTicketTemplate(data,ticket,kind='detected') {
   const affectedCustomers=[...new Set((ticket.affectedSerialNumbers||[]).map(sn=>(autoIdentity.manualCustomerFor(data,device,{serialNumber:sn})||autoIdentity.customerFor(data,device,{serialNumber:sn})?.customer)?.name).filter(Boolean))];
   const customerText=customer?.name||ticket.customerName|| (affectedCustomers.length?affectedCustomers.slice(0,5).join(', ')+(affectedCustomers.length>5?` dan ${affectedCustomers.length-5} pelanggan lainnya`:''):'-');
   const location=customer?.address||ticket.contactAddress||ticket.fiberPointName||(point?[point.code,point.name].filter(Boolean).join(' - '):'')||'-';
-  const values={ticket_no:ticket.number,scope:TICKET_SCOPE_LABELS[ticket.scope]||'ONU',olt:device?.name,pon:ticket.pon,odp:ticket.fiberPointName||(point?[point.code,point.name].filter(Boolean).join(' - '):''),onu:ticket.serialNumber,customer:customerText,location,network:[device?.name,ticket.pon?'PON '+ticket.pon:''].filter(Boolean).join(' / '),affected:ticket.affectedSerialNumbers?.length||ticket.affectedCount||(ticket.serialNumber?1:0),technician:technician?.name||technician?.username||'Belum ditugaskan',status:labels[ticket.status]||ticket.status,progress,time};
-  return ticketTemplates(data)[kind].replace(/\[([a-z_]+)\]/g,(all,key)=>Object.hasOwn(values,key)?String(values[key]??'').trim()||'-':all);
+  const values={ticket_no:require('./ticket-reference').number(ticket),scope:TICKET_SCOPE_LABELS[ticket.scope]||'ONU',olt:device?.name,pon:ticket.pon,odp:ticket.fiberPointName||(point?[point.code,point.name].filter(Boolean).join(' - '):''),onu:ticket.serialNumber,customer:customerText,location,network:[device?.name,ticket.pon?'PON '+ticket.pon:''].filter(Boolean).join(' / '),affected:ticket.affectedSerialNumbers?.length||ticket.affectedCount||(ticket.serialNumber?1:0),technician:technician?.name||technician?.username||'Belum ditugaskan',status:labels[ticket.status]||ticket.status,progress,time};
+  values.companions=require('./ticket-team').publicTeam(data,ticket).filter(row=>!row.lead).map(row=>row.name).join(', ');values.team=require('./ticket-team').publicTeam(data,ticket).map(row=>row.name+(row.lead?' (PJ)':'')).join(', ');
+  const service=require('./service-tickets'),locationData=service.ticketLocation(data,ticket),plan=ticket.requestedPackage,recovery=ticket.recovery||{},category=service.CATEGORIES.find(row=>row.id===ticket.category)?.label||ticket.title||'Layanan';
+  Object.assign(values,{customer:locationData.name||values.customer,location:locationData.address||(['staff-service','wifiku'].includes(ticket.source)?'Belum dilengkapi':values.location),phone:locationData.phone,map:locationData.locationUrl||'Belum dilengkapi',category,request:ticket.messages?.[0]?.text||'',package:plan?plan.name+' / '+new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(plan.price):'',service_title:ticket.kind==='request'?'PERMINTAAN: '+category.toUpperCase():'LAPORAN GANGGUAN',completion_title:ticket.kind==='request'?'PERMINTAAN LAYANAN SELESAI':'PENANGANAN GANGGUAN SELESAI',total:recovery.total??ticket.affectedCount,online:recovery.online,eligible:recovery.eligible,powered_off:recovery.poweredOff,remaining_los:recovery.remainingLos});
+  return require('./ticket-templates').render(ticketTemplates(data)[require('./ticket-templates').keyFor(ticket,kind)],values);
 }
 function pruneTickets(rows) {
   const cutoff = Date.now() - 180 * 86400000;
@@ -702,6 +734,6 @@ function pruneTickets(rows) {
 }
 
 module.exports = { OIDS, CACHE_MS, MAX_DEVICES, parseRows, normalizeSerial, normalizeSnapshot, position, optical, validateDevice,
-  classifyCause, summarizeOnus, applyCauses, matchesState, lastOnlineAt, preserveLastOnline, parseCauseRows, onuPage, removeOnu, rebootOnu, renameOnu, readOnuDescription, readRemovalState,
+  classifyCause, summarizeOnus, applyCauses, matchesState, lastOnlineAt, lastOptical, preserveLastOnline, parseCauseRows, onuPage, removeOnu, rebootOnu, renameOnu, readOnuDescription, readRemovalState,
   deviceRows, publicDevice, snapshotFor, collect, poll, pollNext, requestRefresh, requestRefreshAll, testConnection, saveConfig, visibleDevices, mappingNodes, linkCustomer, linkedOnus,actionPosition,
   saveTicket, pruneTickets, ticketMessage, TICKET_STATUSES, losTicketPlan, applyLosTicketPlan, TICKET_SCOPE_LABELS, claimTicket, progressTicket, requireTicketEditor, ticketTemplates, validateTicketTemplates, renderTicketTemplate };

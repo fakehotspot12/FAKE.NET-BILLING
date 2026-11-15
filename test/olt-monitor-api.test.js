@@ -10,7 +10,7 @@ serverModule._compile(fs.readFileSync(serverPath,'utf8')+'\nmodule.exports.__tes
 const handle=serverModule.exports.__test.oltApi,sessions=new Map();
 function reset(){fixture=storeModule.createDefaultStore();fixture.users=auth.publicRoles().map(({value})=>({id:value,username:value,name:'Unit '+value,role:value,active:true}));fixture.monitoringTargets=[{id:'nas-a',name:'NAS-A',host:'192.0.2.10'},{id:'nas-b',name:'NAS-B',host:'192.0.2.11'}];saves=0;}
 async function request(role,method='GET',suffix='',body={},validCsrf=true,handler=handle){
- if(role&&!sessions.has(role))sessions.set(role,auth.createSession(fixture.users.find(row=>row.role===role)));
+ if(role&&!sessions.has(role))sessions.set(role,auth.createSession(fixture.users.find(row=>row.id===role||row.role===role)));
  const id=sessions.get(role),uri=suffix.startsWith('/api/')?suffix:'/api/monitoring/olt'+suffix,req=Readable.from([Buffer.from(JSON.stringify(body))]);req.method=method;req.url=uri;req.socket={remoteAddress:'127.0.0.1'};
  req.headers={host:'localhost:8891',origin:'http://localhost:8891','content-type':'application/json',...(id?{cookie:auth.SESSION_COOKIE+'='+id}:{}),'x-csrf-token':validCsrf?auth.csrfTokenForSessionId(id):'bad'};
  const res=apiResponse();await handler(req,res,new URL(uri,'http://localhost:8891'));return res;
@@ -81,8 +81,8 @@ test('NAS-scoped technician sees only assigned OLT and cannot read or refresh an
 });
 test('manual ticket is auditable, cannot duplicate fault, and dispatches no WhatsApp',async()=>{
  reset();const device=await request('admin','POST','',{name:'Unit',host:'192.0.2.1',community:'Unit'}),id=device.body.device.id;
- const created=await request('technician','POST','/tickets',{oltId:id,title:'PON fault',pon:'0/0/1',description:'Checked',assignedTo:'technician'});assert.equal(created.status,201);assert(created.body.message.includes('PON fault'));
- assert.equal((await request('secretary','POST','/tickets',{oltId:id,title:'Duplicate',pon:'0/0/1'})).status,400);
+ const created=await request('technician','POST','/tickets',{oltId:id,title:'Unit fault',description:'Checked',assignedTo:'technician'});assert.equal(created.status,201);assert(created.body.message.includes('Unit fault'));
+ assert.equal((await request('secretary','POST','/tickets',{oltId:id,title:'Duplicate'})).status,400);
  const done=await request('secretary','PUT','/tickets/'+created.body.ticket.id,{status:'resolved',description:'Recovered'});assert.equal(done.status,200);assert.equal(done.body.ticket.status,'resolved');
  assert.equal(fixture.waMessages.length,0);assert(fixture.activity.some(row=>row.meta?.action==='olt-ticket'));
  assert.equal((await request('admin','DELETE','/'+id,{confirmId:id,confirmName:'Unit',confirmDelete:true})).status,400);assert.equal(fixture.oltTickets.length,1);
@@ -176,14 +176,14 @@ test('claim and progress serialize competing claims, check CSRF and keep WhatsAp
  if(winner==='noc')assert.equal((await request('technician','POST','/tickets/'+id+'/progress',{note:'Cannot alter another technician'})).status,403);
  assert.equal((await request(winner,'POST','/tickets/'+id+'/progress',{note:'Pengecekan konektor'})).status,200);assert.equal(fixture.oltTickets[0].status,'working');assert.equal(fixture.oltTickets[0].history.at(-1).note,'Pengecekan konektor');
  const preview=await request('secretary','GET','/tickets/'+id+'/message?kind=progress');assert.equal(preview.status,200);assert(preview.body.message.includes('Pengecekan konektor'));assert.equal(preview.body.whatsappEnabled,false);
- assert.equal((await request(winner,'POST','/tickets/'+id+'/progress',{note:'Perbaikan selesai',status:'resolved'})).status,200);assert.equal(fixture.oltTickets[0].status,'resolved');assert.equal(fixture.waMessages.length,0);
+ assert.equal((await request(winner,'POST','/tickets/'+id+'/progress',{note:'Perbaikan selesai',status:'resolved'})).status,403);assert.equal((await request('secretary','POST','/tickets/'+id+'/progress',{note:'Perbaikan selesai',status:'resolved'})).status,200);assert.equal(fixture.oltTickets[0].status,'resolved');assert.equal(fixture.waMessages.length,0);
 });
 test('templates and ticket workflow preserve role and NAS boundaries',async()=>{
  reset();const a=await request('admin','POST','',{name:'A',host:'192.0.2.92',community:'unit',nasId:'nas-a'}),created=await request('admin','POST','/tickets',{oltId:a.body.device.id,title:'Scoped fault'}),id=created.body.ticket.id;
  for(const role of ['finance','collector','reseller_voucher'])for(const [method,suffix]of [['POST','/claim'],['POST','/progress'],['GET','/message']])assert.equal((await request(role,method,'/tickets/'+id+suffix,{note:'Test'})).status,role==='finance'&&method==='GET'?200:403);
  fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-b'];for(const [method,suffix]of [['POST','/claim'],['POST','/progress'],['GET','/message']])assert.equal((await request('technician',method,'/tickets/'+id+suffix,{note:'Test'})).status,404);
  assert.equal((await request('technician','PUT','/ticket-templates',{detected:'Text'})).status,403);assert.equal((await request('secretary','PUT','/ticket-templates',{detected:'Text'})).status,200);assert.equal((await request('admin','PUT','/ticket-templates',{detected:'Text'},false)).status,419);
- assert.equal((await request('admin','PUT','/ticket-templates',{detected:'Custom [ticket_no]'})).status,200);assert((await request('admin','GET','/tickets/'+id+'/message')).body.message.startsWith('Custom OLT-'));assert.equal((await request('admin','PUT','/ticket-templates',{detected:''})).status,400);
+ assert.equal((await request('admin','PUT','/ticket-templates',{detected:'Custom [ticket_no]'})).status,200);assert((await request('admin','GET','/tickets/'+id+'/message')).body.message.startsWith('Custom TKT-'));assert.equal((await request('admin','PUT','/ticket-templates',{detected:''})).status,400);
  fixture.users.find(row=>row.role==='technician').lockedNasIds=[];assert.equal((await request('technician','PUT','/tickets/'+id,{status:'working'})).status,409);assert.equal((await request('technician','PUT','/tickets/'+id,{assignedTo:'noc'})).status,403);assert.equal(fixture.waMessages.length,0);
 });
 test('direct ticket links require a permitted session and GET never claims the ticket',async()=>{
@@ -277,7 +277,7 @@ test('claimed service ticket progress supports optional notes and exposes custom
  let response=await request('technician','POST','/tickets/'+ticket.id+'/progress',{stage:'on-way',note:'PRIVATE_INTERNAL_NOTE',publicNote:'Petugas sedang menuju lokasi.'});assert.equal(response.status,200);
  response=await wifiRequest(a,'GET','/'+ticket.id);assert.equal(response.status,200);assert.equal(response.body.ticket.progress.at(-1).stage,'on-way');assert.equal(response.body.ticket.progress.at(-1).note,'Petugas sedang menuju lokasi.');assert(!JSON.stringify(response.body).includes('PRIVATE_INTERNAL_NOTE'));
  assert.equal((await wifiRequest(b,'GET','/'+ticket.id)).status,404);
- assert.equal((await request('technician','POST','/tickets/'+ticket.id+'/progress',{stage:'resolved'})).status,200);
+ assert.equal((await request('technician','POST','/tickets/'+ticket.id+'/progress',{stage:'resolved'})).status,403);assert.equal((await request('secretary','POST','/tickets/'+ticket.id+'/progress',{stage:'resolved'})).status,200);
  response=await wifiRequest(a,'GET','/'+ticket.id);assert.equal(response.body.ticket.status,'resolved');assert.equal(response.body.ticket.progress.at(-1).label,'Selesai');
  assert.deepEqual(businessState(),before);
 });
@@ -428,7 +428,7 @@ test('staff can create PSB or fault without NAS/OLT, claim and complete without 
  serviceFixture();const before=businessState(),body={category:'new-installation',customerName:'New Prospect',phone:'081200000001',address:'Address pending survey',text:'Please survey installation',nasId:'forged',oltId:'forged'};
  const response=await request('admin','POST','/tickets',body);assert.equal(response.status,201);const ticket=response.body.ticket;assert.equal(ticket.kind,'request');assert.equal(ticket.source,'staff-service');assert.equal(ticket.nasId,'');assert.equal(ticket.oltId,'');assert.equal(ticket.customerId,'');
  assert.equal((await request('admin','POST','/tickets',body)).body.ticket.id,ticket.id);assert.equal(fixture.oltTickets.length,1);
- fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-b'];assert.equal((await request('technician','GET','/tickets/'+ticket.id)).status,200);assert.equal((await request('technician','POST','/tickets/'+ticket.id+'/claim')).status,200);assert.equal((await request('technician','POST','/tickets/'+ticket.id+'/progress',{status:'resolved',note:'Survey completed'})).status,200);assert.deepEqual(businessState(),before);
+ fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-b'];assert.equal((await request('technician','GET','/tickets/'+ticket.id)).status,200);assert.equal((await request('technician','POST','/tickets/'+ticket.id+'/claim')).status,200);assert.equal((await request('secretary','POST','/tickets/'+ticket.id+'/progress',{status:'resolved',note:'Survey completed'})).status,200);assert.deepEqual(businessState(),before);
  const fault=await request('secretary','POST','/tickets',{...body,category:'internet-down',text:'Fault report without identified NAS'});assert.equal(fault.status,201);assert.equal(fault.body.ticket.kind,'fault');assert.equal((await request('collector','POST','/tickets',body)).status,403);assert.equal((await request('admin','POST','/tickets',body,false)).status,419);
 });
 test('staff customer selection auto maps NAS and prevents forged identity or out-of-scope member selection',async()=>{
@@ -436,6 +436,58 @@ test('staff customer selection auto maps NAS and prevents forged identity or out
  assert.equal((await request('technician','POST','/tickets',{customerId:customer.id,category:'internet-down',text:'Fault report'})).status,403);
  const response=await request('admin','POST','/tickets',{customerId:customer.id,category:'internet-down',text:'Fault report',customerName:'Forged',nasId:'nas-b'});assert.equal(response.status,201);assert.equal(response.body.ticket.customerName,customer.name);assert.equal(response.body.ticket.nasId,'nas-a');
  const target='/'+ 'fixture-olt' +'/onus/HWTCAABBCCDD/description';assert.equal((await request('finance','PUT',target,{})).status,403);
+});
+test('ticket team API supports two companions with bounded scope, progress rights and no business changes',async()=>{
+ serviceFixture();fixture.users.push({id:'team-a',username:'team-a',name:'Team A',role:'technician',active:true},{id:'team-b',username:'team-b',name:'Team B',role:'technician',active:true},{id:'team-foreign',username:'team-foreign',role:'technician',active:true,lockedNasIds:['nas-b']});
+ const ticket=await seedService(),base='/tickets/'+ticket.id,before=businessState();assert.equal((await request('technician','POST',base+'/claim')).status,200);
+ let team=await request('technician','GET',base+'/team');assert.equal(team.status,200);assert(team.body.options.some(row=>row.id==='team-a'));assert(!team.body.options.some(row=>row.id==='team-foreign'));
+ const payload={revision:team.body.revision,companionIds:['team-a','team-b']};assert.equal((await request('technician','PUT',base+'/team',payload,false)).status,419);assert.equal((await request('finance','PUT',base+'/team',payload)).status,403);
+ assert.equal((await request('technician','PUT',base+'/team',payload)).status,200);assert.deepEqual(fixture.oltTickets[0].companionIds,['team-a','team-b']);assert.equal(fixture.oltTickets[0].assignedTo,'technician');assert(fixture.activity.some(row=>row.meta?.action==='ticket-team'));assert.deepEqual(businessState(),before);
+ for(const id of ['team-a','team-b']){const detail=await request(id,'GET',base);assert.equal(detail.body.canProgress,true);assert.equal(detail.body.canManageTeam,false);assert.equal(detail.body.team.length,3);assert.equal((await request(id,'PUT',base+'/team',{...payload,companionIds:[]})).status,403);assert.equal((await request(id,'PUT',base,{assignedTo:id})).status,403);}
+ assert.equal((await request('team-a','POST',base+'/messages',{text:'Assistant reviewed'})).status,200);assert.equal((await request('team-a','POST',base+'/progress',{stage:'checking',publicNote:'Layanan sedang diperiksa'})).status,200);assert.equal(fixture.oltTickets[0].history.at(-1).userId,'team-a');
+ assert.equal((await request('technician','PUT',base+'/team',payload)).status,409);team=await request('technician','GET',base+'/team');assert.equal((await request('technician','PUT',base+'/team',{revision:team.body.revision,companionIds:['team-a']})).status,200);
+ assert.equal((await request('team-b','POST',base+'/progress',{stage:'resolved'})).status,403);assert.equal((await request('team-foreign','GET',base)).status,404);assert.equal((await request('team-a','POST',base+'/progress',{stage:'resolved'})).status,403);assert.equal((await request('secretary','POST',base+'/progress',{stage:'resolved'})).status,200);
+ assert.equal((await request('technician','GET',base+'/team')).status,403);assert.deepEqual(businessState(),before);
+});
+test('canonical TKT routes retain auth, CSRF, legacy links, package scoping and automatic coordinates',async()=>{
+ serviceFixture();const member=fixture.customers[0];Object.assign(member,{latitude:-0.5,longitude:117.15});
+ fixture.radiusProfiles=[{id:'unit-plan',name:'Paket Unit',price:150000,serviceType:'pppoe'},{id:'foreign-plan',name:'Other Unit',price:100000,serviceType:'pppoe',nasId:'nas-b'},{id:'voucher',name:'Voucher',serviceType:'hotspot'}];
+ fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-a'];
+ assert.equal((await request('','GET','/api/tickets')).status,401);
+ const options=await request('technician','GET','/api/tickets/options?customerId='+member.id);assert.equal(options.status,200);assert.deepEqual(options.body.packages.map(row=>row.id),['unit-plan']);assert.deepEqual(options.body.customers[0].coordinates,{latitude:-0.5,longitude:117.15});
+ assert.equal((await request('technician','GET','/api/tickets/options?customerId=member-b')).status,404);
+ const before=businessState(),payload={customerId:member.id,category:'new-installation',text:'PSB Unit',packageId:'unit-plan'};
+ assert.equal((await request('technician','POST','/api/tickets',payload,false)).status,419);
+ const response=await request('technician','POST','/api/tickets',payload);assert.equal(response.status,201);const id=response.body.ticket.id;assert.match(response.body.ticket.number,/^TKT-/);assert.equal(response.body.ticket.latitude,-0.5);assert.equal(response.body.ticket.requestedPackage.price,150000);
+ fixture.oltTickets[0].number='OLT-20261115-ABCDEF';assert.equal((await request('technician','GET','/api/tickets/'+id)).body.ticket.number,'TKT-20261115-ABCDEF');assert.equal((await request('technician','GET','/tickets/'+id)).body.ticket.number,'TKT-20261115-ABCDEF');assert.equal(fixture.oltTickets[0].number,'OLT-20261115-ABCDEF');
+ assert.equal((await request('technician','POST','/api/tickets/'+id+'/claim')).status,200);const team=await request('technician','GET','/api/tickets/'+id+'/team');assert.equal(team.status,200);
+ assert.equal((await request('technician','PUT','/api/tickets/'+id+'/team',{revision:team.body.revision,companionIds:[]},false)).status,419);assert.deepEqual(businessState(),before);
+});
+test('ticket templates are managed through WhatsApp permissions without modifying provider, schedules or financial data',async()=>{
+ serviceFixture();const before=structuredClone(fixture.settings.waGateway),business=businessState();
+ for(const role of['','technician','collector','reseller_voucher'])assert.equal((await request(role,'GET','/api/tickets/templates')).status,role?403:401);
+ const shown=await request('admin','GET','/api/tickets/templates');assert.equal(shown.status,200);assert(shown.body.definitions.some(row=>row.key==='odpDetected'));assert(shown.body.definitions.some(row=>row.key==='odcResolved'));assert(shown.body.definitions.some(row=>row.key==='customerOutagePending'));
+ assert.equal((await request('admin','PUT','/api/tickets/templates',{psbDetected:'PSB [package] [ticket_no]'},false)).status,419);
+ assert.equal((await request('admin','PUT','/api/tickets/templates',{psbDetected:'PSB [package] [ticket_no]'})).status,200);assert.equal(fixture.settings.oltTicketing.templates.psbDetected,'PSB [package] [ticket_no]');
+ assert.equal((await request('admin','PUT','/api/tickets/templates',{resetDefaults:true})).status,200);assert(fixture.settings.oltTicketing.templates.psbDetected.includes('PERMINTAAN PASANG BARU'));assert.deepEqual(fixture.settings.waGateway,before);assert.deepEqual(businessState(),business);
+});
+test('mass customer notices require explicit boolean opt-in and activation date without modifying staff or billing schedules',async()=>{
+ serviceFixture();const before=structuredClone(fixture.settings.waGateway),payload={whatsappEnabled:false,recipientIds:[],customerOutageEnabled:true};
+ assert.equal((await request('technician','PUT','/api/tickets/settings',payload)).status,403);assert.equal((await request('admin','PUT','/api/tickets/settings',payload,false)).status,419);
+ assert.equal((await request('admin','PUT','/api/tickets/settings',{...payload,customerOutageEnabled:'true'})).status,400);
+ assert.equal((await request('admin','PUT','/api/tickets/settings',payload)).status,200);const at=fixture.settings.oltTicketing.customerOutageEnabledAt;assert(Number.isFinite(Date.parse(at)));assert.equal(fixture.settings.oltTicketing.whatsappEnabled,false);
+ assert.equal((await request('admin','PUT','/api/tickets/settings',payload)).status,200);assert.equal(fixture.settings.oltTicketing.customerOutageEnabledAt,at);
+ assert.equal((await request('admin','PUT','/api/tickets/settings',{...payload,customerOutageEnabled:false})).status,200);assert.equal(fixture.settings.oltTicketing.customerOutageEnabled,false);assert.deepEqual(fixture.settings.waGateway,before);assert.equal(fixture.waMessages.length,0);
+});
+test('ODP/ODC completion requires an assigned responsible team and ninety percent current recovery, never RX or automatic closure',async()=>{
+ reset();const olt=require('../src/olt-monitor'),saved=olt.snapshotFor,now=Date.now(),onus=Array.from({length:10},(_,i)=>({id:String(i),serialNumber:'HWTC'+String(i).padStart(8,'0'),ponKey:'0/0/1',status:'online',condition:'online',causeKnown:true,rxPower:null}));
+ fixture.oltDevices=[{id:'olt-unit',enabled:true,nasId:'nas-a',links:Object.fromEntries(onus.map(row=>[row.serialNumber,{fiberPointId:'odp-unit'}]))}];fixture.fiberPoints=[{id:'odp-unit'}];
+ const ticket={id:'22222222-2222-4222-8222-222222222222',number:'TKT-UNIT',source:'olt-los',scope:'odp',fiberPointId:'odp-unit',oltId:'olt-unit',pon:'0/0/1',assignedTo:'',status:'new',createdAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString(),history:[],affectedSerialNumbers:onus.map(row=>row.serialNumber)};fixture.oltTickets=[ticket];
+ olt.snapshotFor=async()=>({status:'online',checkedAt:new Date(now).toISOString(),onus});const path='/api/tickets/'+ticket.id;
+ try{assert.equal((await request('technician','POST',path+'/progress',{status:'resolved',note:'Confirmed repair'})).status,409);assert.equal((await request('technician','POST',path+'/claim')).status,200);
+  onus.slice(8).forEach(row=>Object.assign(row,{status:'offline',condition:'los'}));assert.equal((await request('technician','POST',path+'/progress',{status:'resolved',note:'Confirmed repair'})).status,409);assert.notEqual(fixture.oltTickets[0].status,'resolved');
+  Object.assign(onus[8],{status:'online',condition:'online'});const response=await request('technician','POST',path+'/progress',{status:'resolved',note:'Perbaikan dikonfirmasi, sisa satu pelanggan ditindaklanjuti'});assert.equal(response.status,200);assert.equal(response.body.ticket.status,'resolved');assert.equal(response.body.ticket.recovery.ready,true);assert.equal(response.body.ticket.recovery.remainingLos,1);assert.notEqual(response.body.ticket.autoResolved,true);assert.equal(fixture.waMessages.length,0);
+ }finally{olt.snapshotFor=saved;}
 });
 test('native description GET keeps technical role, NAS and isolated-dev boundaries without saving data',async()=>{
  reset();const a=await request('admin','POST','',{name:'Unit',host:'192.0.2.87',community:'unit',nasId:'nas-a'}),path='/'+a.body.device.id+'/onus/HWTCAABBCCDD/description',before=saves;

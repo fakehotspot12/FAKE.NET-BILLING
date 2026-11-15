@@ -11,7 +11,7 @@ test('planned reboot blocks a new automatic fault before queue and again at deli
 });
 test('OLT messages prioritize real customer without treating raw ONU descriptions as a verified owner',()=>{
  const data=fixture(),olt=require('../src/olt-monitor'),ticket={...data.oltTickets[0],source:'olt-los',onuName:'House Alpha',pon:'0/0/1',customerId:'member-a'};data.customers=[{id:'member-a',name:'Alpha Customer',address:'Customer Address'}];
- const text=ticketing.messageText(data,ticket,'detected','https://billing.example.test');assert(text.includes('Pelanggan: Alpha Customer'));assert(text.includes('Lokasi: Customer Address'));assert(text.includes('Referensi: OLT A / PON 0/0/1'));assert(!text.includes('SN:'));assert(!text.includes(ticket.serialNumber));assert(text.includes('/olt-ticket.html?id='));
+ const text=ticketing.messageText(data,ticket,'detected','https://billing.example.test');assert(text.includes('Pelanggan: Alpha Customer'));assert(text.includes('Lokasi: Customer Address'));assert(text.includes('Referensi: OLT A / PON 0/0/1'));assert(!text.includes('SN:'));assert(!text.includes(ticket.serialNumber));assert(text.includes('/tkt.html?id='));
  data.customers=[];assert(ticketing.messageText(data,ticket,'detected','https://billing.example.test').includes('Pelanggan: -'));
  data.settings.oltTicketing.templates={detected:'Custom [customer] [ticket_no]'};assert(olt.renderTicketTemplate(data,ticket).startsWith('Custom -'));
  const psb={...ticket,source:'staff-service',scope:'service',category:'new-installation',customerName:'New Prospect',contactPhone:'081200000001',contactAddress:'Survey Address',messages:[{role:'staff',text:'Survey needed'}]};const message=ticketing.messageText(data,psb,'detected','https://billing.example.test');assert(message.includes('PERMINTAAN PASANG BARU'));assert(message.includes('New Prospect'));assert(message.includes('Survey Address'));assert(message.includes('Survey needed'));
@@ -19,16 +19,16 @@ test('OLT messages prioritize real customer without treating raw ONU description
 test('ticket notification defaults to disabled and validates explicit authorized recipients',()=>{
  const empty=createDefaultStore();assert.equal(ticketing.settingsFor(empty).whatsappEnabled,false);const data=fixture();assert.deepEqual(ticketing.eligibleUsers(data).map(row=>row.role),['admin','technician','secretary']);
  for(const recipientIds of [[],['finance'],['unknown']])assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds}));
- assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:'yes',recipientIds:['technician']}));assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:false,recipientIds:[]}),{whatsappEnabled:false,recipientIds:[]});
+ assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:'yes',recipientIds:['technician']}));assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:false,recipientIds:[]}),{whatsappEnabled:false,recipientIds:[],customerOutageEnabled:false});
  data.users[1].phone='';assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds:['technician']}));
 });
 test('ticket URLs are fixed internal paths with no password or login bypass',()=>{
- const ticket=fixture().oltTickets[0];assert.equal(ticketing.ticketLink('https://billing.example.test/base',ticket),'https://billing.example.test/olt-ticket.html?id=t1');
+ const ticket=fixture().oltTickets[0];assert.equal(ticketing.ticketLink('https://billing.example.test/base',ticket),'https://billing.example.test/tkt.html?id=t1');
  for(const origin of ['javascript:alert(1)','https://user:pass@example.test','//evil.test','https://example.test/?return=evil','https://example.test/#evil'])assert.equal(ticketing.ticketLink(origin,ticket),'');
- assert(ticketing.messageText(fixture(),ticket,'detected','https://billing.example.test').includes('/olt-ticket.html?id=t1'));
+ assert(ticketing.messageText(fixture(),ticket,'detected','https://billing.example.test').includes('/tkt.html?id=t1'));
 });
 test('event notifications are bounded and idempotent even when WA history was pruned',()=>{
- const data=fixture(),ticket=data.oltTickets[0];let result=ticketing.enqueueNotifications(data,ticket,'detected','https://billing.example.test',enqueue);assert.equal(result.queued,2);assert.equal(data.waMessages.length,2);assert.equal(data.waMessages[0].phone,'081200000001');assert.equal(data.waMessages[0].type,'oltTicket');assert.equal(data.waMessages[0].bulk,false);assert(data.waMessages[0].text.includes('/olt-ticket.html?id=t1'));
+ const data=fixture(),ticket=data.oltTickets[0];let result=ticketing.enqueueNotifications(data,ticket,'detected','https://billing.example.test',enqueue);assert.equal(result.queued,2);assert.equal(data.waMessages.length,2);assert.equal(data.waMessages[0].phone,'081200000001');assert.equal(data.waMessages[0].type,'oltTicket');assert.equal(data.waMessages[0].bulk,false);assert(data.waMessages[0].text.includes('/tkt.html?id=t1'));
  assert.equal(ticketing.enqueueNotifications(data,ticket,'detected','https://billing.example.test',enqueue).queued,0);data.waMessages=[];assert.equal(ticketing.enqueueNotifications(data,ticket,'detected','https://billing.example.test',enqueue).queued,0);
 });
 test('role, active-user, phone and NAS boundaries are rechecked for queued delivery',()=>{
@@ -102,7 +102,7 @@ test('service WhatsApp messages omit NAS only from text and resolve old ticket c
  assert(text.includes('Pelanggan: Current Customer'));assert(text.includes('Kontak: 081200000001'));assert(text.includes('Alamat: Full Street and House Number'));
  assert(text.includes('https://www.google.com/maps/dir/?api=1&destination=-0.5%2C117.15'));assert(!text.includes('NAS:'));assert(!text.includes('PRIVATE_NAS_NAME'));
  assert.equal(ticket.nasId,'nas-a');assert.equal(ticket.nasName,'PRIVATE_NAS_NAME');assert.deepEqual(data,before);
- const unknown=ticketing.messageText(data,{...ticket,customerId:'missing',customerName:'New Prospect'},'detected','https://billing.example.test');assert(unknown.includes('Alamat: Belum dilengkapi'));assert(unknown.includes('Lokasi peta: Belum dilengkapi'));assert(!unknown.includes('destination=0'));
+ const unknown=ticketing.messageText(data,{...ticket,customerId:'missing',customerName:'New Prospect'},'detected','https://billing.example.test');assert(unknown.includes('Alamat: Belum dilengkapi'));assert(unknown.includes('Arah pelanggan: Belum dilengkapi'));assert(!unknown.includes('destination=0'));
 });
 
 test('two service bucket tabs include every active workflow status and resolved works without an explicit status',()=>{

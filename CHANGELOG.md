@@ -6,12 +6,22 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Added
 
+- Tim pendamping tiket dengan satu penanggung jawab dan beberapa petugas, pemilihan anggota sesuai role/NAS, progres bersama serta riwayat perubahan tim. Pendamping tidak dapat mengubah tim atau mengambil alih penanggung jawab.
+- Redaman terakhir OLT beserta waktu pembacaan di informasi tiket melalui snapshot existing, tanpa polling baru. Pembacaan offline tidak menimpa nilai terakhir dan tidak ditebak menjadi nol.
+- Koordinat pelanggan otomatis pada form tiket dan pilihan paket PSB aktif. Paket dicatat sebagai informasi permintaan tanpa membuat akun/invoice; pesan PSB, permintaan lain dan gangguan disesuaikan kategorinya.
+- Nomor tiket `TKT`, tautan `/tkt.html` dan endpoint tiket terpisah dari monitoring OLT. Tautan/API lama tetap kompatibel tanpa mengubah ID, histori atau status tiket.
+- Template tiket dipindahkan ke WhatsApp Gateway, mencakup ONU, ODP, ODC/PON, PSB dan permintaan layanan. Notifikasi gangguan massal pelanggan tersedia melalui checkbox terpisah default nonaktif, dengan deduplikasi, pemeriksaan pemetaan/nomor sebelum kirim dan pacing antrean existing.
+- Target pemulihan kelompok minimal 90% ONU layak hitung online pada setiap ODP berdasarkan anggota nyata, bukan kapasitas 8/16. Target tercapai menunggu konfirmasi Selesai oleh penanggung jawab/tim, bukan menutup ODP/ODC otomatis. Modem kehilangan daya dipisahkan, sumber stale/unknown tidak dipalsukan pulih, tanpa ambang redaman; sisa LOS ditindaklanjuti secara satuan dengan tim sebelumnya bila masih berwenang. Pesan pelanggan membedakan pulih, pemeriksaan lanjutan dan modem mati setelah konfirmasi.
 - Penghapusan tiga lapis pelanggan/akun, ONU OLT dan record ACS melalui pratinjau, sakelar opt-in default nonaktif, konfirmasi username serta persetujuan per pelanggan. Tahap perangkat diselesaikan dahulu; jika belum selesai, user/member dipertahankan untuk pemeriksaan ulang.
 - Izin membuat tiket untuk Keuangan dan ceklis Akses Tiket Layanan per user nonteknis. Ceklis mengatur menu sekaligus API; hak menangani tiket, reboot/hapus ONU dan pengelolaan OLT tidak ikut diberikan. Grant tambahan tetap dibatasi NAS/suffix dan tiket milik pembuat untuk role tanpa izin baca sebelumnya.
 - Alamat cadangan dari satu tag alamat ACS terverifikasi tanpa awalan wajib atau label ganda, termasuk pelanggan eksternal. Alamat member tetap utama; tag NAS/status dan alamat ambigu tidak ditebak.
 
 ### Fixed
 
+- Membatasi penutupan manual tiket umum dan pembukaan kembali ke Admin/Sekretaris. Teknisi penanggung jawab/pendamping dapat menutup ODP/ODC/PON yang ditugaskan hanya setelah target pemulihan terbaru diperiksa server; tiket kelompok tidak ditutup otomatis.
+- Checklist Data Valid member hanya mensyaratkan nama pelanggan, alamat, koordinat dan foto rumah. Nama KTP, nomor KTP dan foto KTP tidak dihitung atau ditampilkan pada checklist; pengisian, OCR dan unggahan KTP tetap tersedia.
+- Memperbarui patch keamanan pustaka pemrosesan gambar dan ekspansi pola. Installer/updater menyelaraskan prasyarat Node.js 20.9+ dan memakai Node.js 22 LTS bila runtime perlu diperbarui, sebelum memasang dependency di staging.
+- Check for Update pada instalasi archive membaca perubahan changelog rilis yang versinya tetap sama, tanpa menawarkan versi yang lebih lama. Jalur Git tetap membandingkan revisi commit.
 - Memisahkan bukti MAC antarmuka ONT EPON dari serial GPON, termasuk serial modem yang panjangnya berbeda. Penghapusan ACS memerlukan satu identitas tepat, pemeriksaan pemilik/NAS dan proteksi inform baru/perangkat pindah.
 - Menahan perubahan/hapus user yang bertabrakan dengan penghapusan perangkat, menyimpan hasil per tahap dan jurnal pemulihan terbatas, serta mempertahankan histori pembayaran/invoice sesuai aturan billing.
 - Melengkapi verifikasi modul installer/updater dan invalidasi aset browser untuk menu, izin, pratinjau serta dokumentasi terbaru. Tidak mengubah parameter ACS, konfigurasi OLT, jadwal billing atau algoritma antrean WhatsApp.

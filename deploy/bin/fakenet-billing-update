@@ -319,6 +319,11 @@ verify_update_payload() {
     src/olt-ticketing.js
     src/service-tickets.js
     src/ticket-network.js
+    src/ticket-team.js
+    src/ticket-reference.js
+    src/ticket-recovery.js
+    src/ticket-templates.js
+    src/ticket-customer-notifications.js
     src/wifiku-modem-status.js
     public/index.html
     public/app.js
@@ -328,6 +333,9 @@ verify_update_payload() {
     public/manifest.webmanifest
     public/olt.js
     public/olt.css
+    public/tkt.html
+    public/tkt.js
+    public/tkt.css
     public/olt-ticket.html
     public/olt-ticket.js
     public/olt-ticket.css
@@ -587,7 +595,7 @@ install_node_dependencies() {
   fi
   rm -rf "$dependency_stage"
   dependency_stage=""
-  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('ssh2'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/customer-device-removal'); require('./src/network-address'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status'); require('./src/olt-vendors').loadLibrary().catch(error => { console.error(error.message); process.exitCode=1; })" >/dev/null; then
+  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('ssh2'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/customer-device-removal'); require('./src/network-address'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/ticket-team'); require('./src/ticket-reference'); require('./src/ticket-recovery'); require('./src/ticket-templates'); require('./src/ticket-customer-notifications'); require('./src/wifiku-modem-status'); require('./src/olt-vendors').loadLibrary().catch(error => { console.error(error.message); process.exitCode=1; })" >/dev/null; then
     rm -rf "$APP_DIR/node_modules"
     [ ! -d "$previous_modules" ] || mv "$previous_modules" "$APP_DIR/node_modules"
     echo "Verifikasi dependency baru gagal; dependency lama dipulihkan." >&2
@@ -652,6 +660,9 @@ fi
 
 cd "$APP_DIR"
 verify_update_payload
+if [ -f "$APP_DIR/install.sh" ]; then
+  bash "$APP_DIR/install.sh" node-runtime
+fi
 if command -v npm >/dev/null 2>&1; then
   install_node_dependencies
 fi

@@ -80,13 +80,13 @@ function deviceFor(data,device,onu,now){
 function manualConflict(data,device,onu,now=Date.now()){
   const manual=device?.links?.[identity.serial(onu?.serialNumber)]?.customerId;if(!manual)return false;
   const proof=deviceFor(data,device,onu,now);if(!proof)return false;
-  const member=(data.customers||[]).find(row=>row.id===manual),user=member&&proof.directory.userForCustomer(member);
+  const member=proof.directory.customerById(manual),user=member&&proof.directory.userForCustomer(member);
   return Boolean(user?.username&&clean(user.username).toLowerCase()!==clean(proof.modem.username).toLowerCase());
 }
 function manualCustomerFor(data,device,onu,now=Date.now()){
   const id=device?.links?.[identity.serial(onu?.serialNumber)]?.customerId;
   if(!id||manualConflict(data,device,onu,now))return null;
-  const member=(data.customers||[]).find(row=>row.id===id),directory=identity.directory(data);
+  const directory=identity.directory(data),member=directory.customerById(id);
   return member&&directory.compatible(directory.userForCustomer(member)||member,{nasId:device.nasId})?member:null;
 }
 function customerFor(data,device,onu,now=Date.now()){

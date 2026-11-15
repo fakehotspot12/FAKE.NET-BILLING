@@ -90,6 +90,7 @@ const ticketNetwork = require('./ticket-network');
 const oltAutoIdentity = require('./olt-auto-identity');
 const oltDeviceRemoval = require('./olt-device-removal');
 const customerDeviceRemoval = require('./customer-device-removal');
+const ticketTeam = require('./ticket-team');
 const oltPlannedReboot = require('./olt-planned-reboot');
 const oltVendors = require('./olt-vendors');
 const license = require('./license');
@@ -899,6 +900,10 @@ async function fetchTextWithTimeout(url, timeoutMs = APP_UPDATE_REMOTE_TIMEOUT_M
   }
 }
 
+function archiveReleaseChanged(remoteVersion,currentVersion,remoteChangelog,localChangelog){
+  const comparison=compareVersionStrings(remoteVersion,currentVersion);
+  return comparison>0||comparison===0&&Boolean(remoteChangelog?.trim())&&remoteChangelog.trim()!==String(localChangelog||'').trim();
+}
 async function populateArchiveUpdateStatus(status) {
   const packageUrl = archiveRawUrl('package.json');
   const changelogUrl = archiveRawUrl('CHANGELOG.md');
@@ -917,6 +922,7 @@ async function populateArchiveUpdateStatus(status) {
     if (changelogUrl) {
       const changelogRaw = await fetchTextWithTimeout(changelogUrl, timeout).catch(() => '');
       status.remoteChangelog = changelogSummaryFromText(changelogRaw, 10);
+      status.updateAvailable=archiveReleaseChanged(status.remoteVersion,APP_VERSION,status.remoteChangelog,appChangelogSummary(10));
     }
     status.error = '';
   } catch (error) {
@@ -9322,11 +9328,8 @@ function memberDataValidation(customer = {}) {
     && latitude <= 90
     && longitude >= -180
     && longitude <= 180;
-  const ktpDigits = String(customer.ktp || customer.idCard || '').replace(/\D+/g, '');
   const checks = {
     name: Boolean(String(customer.name || customer.customerName || '').trim()),
-    ktpName: Boolean(String(customer.ktpName || '').trim()),
-    ktpNumber: ktpDigits.length === 16,
     address: Boolean(String(customer.address || '').trim()),
     location: hasLocation,
     housePhoto: Boolean(String(customer.housePhotoUrl || customer.memberHousePhotoUrl || '').trim())
@@ -20932,7 +20935,7 @@ async function handlePaymentGatewayWebhook(req, res, url) {
 
 async function handleApi(req, res, url) {
   const method = req.method || 'GET';
-  const pathname = url.pathname;
+  const pathname = require('./ticket-reference').apiPath(url.pathname);
 
   if (method === 'GET' && pathname === '/api/health') {
     sendJson(res, 200, { ok: true });
@@ -24030,9 +24033,14 @@ async function handleApi(req, res, url) {
     const context = await requirePermission(req,res,'olt:read'); if (!context) return;
     sendJson(res,200,await oltMonitor.onuPage(context.data,oltMonitor.visibleDevices(context.data,context.user),Object.fromEntries(url.searchParams),auth.hasPermission(context.user,'olt:manage')));return;
   }
+  if(pathname==='/api/monitoring/olt/ticket-templates'&&method==='GET') {
+    const context=await requirePermission(req,res,'wa-gateway:manage');if(!context)return;
+    sendJson(res,200,{templates:oltMonitor.ticketTemplates(context.data),definitions:Object.entries(require('./ticket-templates').LABELS).map(([key,label])=>({key,label}))});return;
+  }
   if(pathname==='/api/monitoring/olt/ticket-templates'&&method==='PUT') {
-    const context=await requirePermission(req,res,'olt:manage');if(!context)return;const payload=await readBody(req);
-    try{const templates=oltMonitor.validateTicketTemplates(payload);await mutate(store=>{store.settings.oltTicketing={...(store.settings.oltTicketing||{}),templates:{...oltMonitor.ticketTemplates(store),...templates}};addActivity(store,'monitoring',`Template tiket OLT diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-template'});},{collections:['activity'],includeCore:true});sendJson(res,200,{ok:true,whatsappEnabled:false});}catch(error){badRequest(res,error.message);}return;
+    const context=await requireAnyPermission(req,res,['wa-gateway:manage','olt:manage']);if(!context)return;let payload=await readBody(req);
+    if(payload.resetDefaults===true)payload=oltMonitor.ticketTemplates({settings:{}});
+    try{const templates=oltMonitor.validateTicketTemplates(payload);await mutate(store=>{store.settings.oltTicketing={...(store.settings.oltTicketing||{}),templates:{...oltMonitor.ticketTemplates(store),...templates}};addActivity(store,'monitoring',`Template tiket layanan diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-template'});},{collections:['activity'],includeCore:true});sendJson(res,200,{ok:true,whatsappEnabled:false});}catch(error){badRequest(res,error.message);}return;
   }
   if(pathname==='/api/monitoring/olt/tickets'&&method==='GET') {
     const context=await requirePermission(req,res,'olt:tickets:read');if(!context)return;
@@ -24051,16 +24059,19 @@ async function handleApi(req, res, url) {
     const customers=(context.data.customers||[]).filter(customer=>{const account=identities.userForCustomer(customer)||{},nas=radiusFindNas(context.data,account.nasId||customer.nasId||customer.nas||customer.site);
       return serviceTickets.visible(context.data,context.user,{source:'staff-service',scope:'service',customerId:customer.id,nasId:nas?.id||''})&&(!needle||[customer.name,customer.username,customer.code].some(value=>String(value||'').toLowerCase().includes(needle)));
     }).slice(0,25).map(customer=>({id:customer.id,name:customer.name||customer.username,username:customer.username||'',phone:normalizeLocalPhone(customer.phone||customer.whatsapp||''),address:customer.address||'',coordinates:serviceTickets.coordinates(customer.latitude,customer.longitude)}));
-    sendJson(res,200,{customers});return;
+    const selectedId=String(url.searchParams.get('customerId')||'').trim(),selected=selectedId&&(context.data.customers||[]).find(row=>row.id===selectedId);
+    if(selectedId&&(!selected||!serviceTickets.visible(context.data,context.user,{source:'staff-service',scope:'service',customerId:selected.id,nasId:radiusFindNas(context.data,identities.userForCustomer(selected)?.nasId||selected.nasId||selected.nas||selected.site)?.id||''}))){notFound(res);return;}
+    sendJson(res,200,{customers,packages:serviceTickets.installationPackages(context.data,context.user,selected||null)});return;
   }
   if(pathname==='/api/monitoring/olt/ticket-settings'&&method==='PUT') {
     const context=await requirePermission(req,res,'olt:manage');if(!context)return;const payload=await readBody(req);
     try{await mutate(store=>{
       const settings=oltTicketing.validateSettings(store,payload),templates=oltMonitor.validateTicketTemplates(payload.templates||{});
+      if(settings.customerOutageEnabled&&store.settings?.oltTicketing?.customerOutageEnabled!==true)settings.customerOutageEnabledAt=new Date().toISOString();
       if(settings.whatsappEnabled&&!oltTicketing.ticketLink(paymentGatewayOrigin(store.settings),{id:'example'}))throw new Error('Atur URL publik billing di Payment Gateway terlebih dahulu');
       store.settings.oltTicketing={...(store.settings.oltTicketing||{}),...settings,templates:{...oltMonitor.ticketTemplates(store),...templates}};
       const cancelled=oltTicketing.cancelQueued(store);
-      addActivity(store,'monitoring',`Pengaturan tiket OLT diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-settings',whatsappEnabled:settings.whatsappEnabled,cancelled});
+      addActivity(store,'monitoring',`Pengaturan tiket layanan diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-settings',whatsappEnabled:settings.whatsappEnabled,cancelled});
     },{collections:['activity','waMessages'],includeCore:true});sendJson(res,200,{ok:true});}catch(error){badRequest(res,error.message);}return;
   }
   const oltTicketNetwork=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([^/]+)\/network$/);
@@ -24075,10 +24086,29 @@ async function handleApi(req, res, url) {
     const context=await requirePermission(req,res,'olt:tickets:read');if(!context)return;
     const ticket=(context.data.oltTickets||[]).find(row=>row.id===oltTicketRead[1]),device=ticket&&oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===ticket.oltId);
     if(!ticket||!serviceTickets.visible(context.data,context.user,ticket)){notFound(res);return;}
-    const {waNotifications,notificationError,...publicTicket}=ticket;
+    const {waNotifications,notificationError,recoveryTargets,customerNoticeReceipts,...publicTicket}=ticket;publicTicket.number=require('./ticket-reference').number(ticket);
     const location=serviceTickets.ticketLocation(context.data,ticket);
     const writable=auth.hasPermission(context.user,'olt:tickets:write');
-    sendJson(res,200,{ticket:{...publicTicket,customerName:location.name,contactPhone:normalizeLocalPhone(location.phone),contactAddress:location.address,locationUrl:location.locationUrl,coordinates:location.coordinates,...(serviceTickets.isServiceTicket(ticket)?{progress:serviceTickets.publicProgress(ticket)}:{})},device:{name:device?.name||ticket.nasName||'Layanan Pelanggan'},assignee:(context.data.users||[]).find(row=>row.id===ticket.assignedTo)?.name||'',canClaim:writable&&ticket.status!=='resolved'&&!ticket.assignedTo,canProgress:writable&&ticket.status!=='resolved'&&Boolean(ticket.assignedTo)&&(context.user.role!=='technician'||ticket.assignedTo===context.user.id)});return;
+    sendJson(res,200,{ticket:{...publicTicket,customerName:location.name,contactPhone:normalizeLocalPhone(location.phone),contactAddress:location.address,locationUrl:location.locationUrl,coordinates:location.coordinates,...(serviceTickets.isServiceTicket(ticket)?{progress:serviceTickets.publicProgress(ticket)}:{})},device:{name:device?.name||ticket.nasName||'Layanan Pelanggan'},assignee:(context.data.users||[]).find(row=>row.id===ticket.assignedTo)?.name||'',team:ticketTeam.publicTeam(context.data,ticket),canManageTeam:ticketTeam.canManage(ticket,context.user),canClose:ticketTeam.canClose(context.user,ticket),canClaim:writable&&ticket.status!=='resolved'&&!ticket.assignedTo,canProgress:ticket.status!=='resolved'&&ticketTeam.canHandle(ticket,context.user)});return;
+  }
+  const oltTicketTeam=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([^/]+)\/team$/);
+  if(oltTicketTeam&&['GET','PUT'].includes(method)){
+    const context=await requirePermission(req,res,'olt:tickets:write');if(!context)return;
+    const id=oltTicketTeam[1],ticket=(context.data.oltTickets||[]).find(row=>row.id===id);
+    if(!ticket||!serviceTickets.visible(context.data,context.user,ticket)){notFound(res);return;}
+    try{
+      if(method==='GET'){
+        if(!ticketTeam.canManage(ticket,context.user)){forbidden(res);return;}
+        sendJson(res,200,{team:ticketTeam.publicTeam(context.data,ticket),options:ticketTeam.candidates(context.data,ticket,serviceTickets.visible),revision:ticket.updatedAt});return;
+      }
+      const payload=await readBody(req),{result}=await mutate(store=>{
+        const index=(store.oltTickets||[]).findIndex(row=>row.id===id);if(index<0)throw serviceTickets.error('Tiket tidak ditemukan',404);
+        const current=store.oltTickets[index],next=ticketTeam.update(store,current,payload,context.user,serviceTickets.visible);
+        if(next===current)return{ticket:current,changed:false};store.oltTickets[index]=next;oltTicketing.cancelQueued(store);
+        addActivity(store,'monitoring',`Tim penanganan ${current.number} diperbarui oleh ${context.user.name||context.user.username}`,{action:'ticket-team',ticketId:id,userId:context.user.id,leadId:next.assignedTo,companionIds:next.companionIds});return{ticket:next,changed:true};
+      },{collections:['activity','waMessages'],includeCore:true,shouldPersist:result=>result.changed});
+      sendJson(res,200,{ok:true,ticket:result.ticket,team:ticketTeam.publicTeam(context.data,result.ticket)});
+    }catch(error){sendJson(res,error.status||400,{error:error.message});}return;
   }
   const serviceStaffRoute=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([a-f0-9-]{36})\/(messages|photos)(?:\/([a-f0-9-]{36}))?$/i);
   if(serviceStaffRoute&&((method==='POST'&&serviceStaffRoute[2]==='messages')||(method==='GET'&&serviceStaffRoute[2]==='photos'))){
@@ -24101,7 +24131,7 @@ async function handleApi(req, res, url) {
     try {
       if(method==='GET'){const kind=url.searchParams.get('kind')||'detected',origin=paymentGatewayOrigin(context.data.settings);sendJson(res,200,{message:oltTicketing.ticketLink(origin,ticket)?oltTicketing.messageText(context.data,ticket,kind,origin):oltMonitor.renderTicketTemplate(context.data,ticket,kind),whatsappEnabled:oltTicketing.settingsFor(context.data).whatsappEnabled});return;}
       const payload=await readBody(req),action=oltTicketAction[2];
-      const {result}=await mutate(store=>{
+      const {result}=await mutate(async store=>{
         const index=(store.oltTickets||[]).findIndex(row=>row.id===ticket.id);if(index<0)throw new Error('Tiket tidak ditemukan');const current=store.oltTickets[index];
         if(!serviceTickets.visible(store,context.user,current))throw new Error('Tiket di luar kewenangan');
         if(action==='notify'){
@@ -24113,7 +24143,9 @@ async function handleApi(req, res, url) {
           if(!result.queued)return{ticket:current,changed:false,queued:0,reason:result.reason};
           addActivity(store,'monitoring',`Pesan tiket ${current.number} diantrikan oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-notify',ticketId:current.id,queued:result.queued});return{ticket:current,changed:true,queued:result.queued};
         }
+        const recovery=action==='progress'?await require('./ticket-recovery').validateResolution(store,current,payload):null;
         const next=action==='claim'?oltMonitor.claimTicket(current,context.user):serviceTickets.isServiceTicket(current)?serviceTickets.progress(current,payload,context.user):oltMonitor.progressTicket(current,payload,context.user);
+        if(recovery)next.recovery=recovery;
         if(next!==current&&serviceTickets.isServiceTicket(next))next.lastStaffMessageAt=next.updatedAt;
         if(next===current)return{ticket:current,changed:false};store.oltTickets[index]=next;
         let queuedNotifications=0;try{queuedNotifications=queueOltTicketNotifications(store,next,action==='claim'?'claimed':next.status==='resolved'?'resolved':'progress',context.user).queued;}catch(error){next.notificationError=error.message;}
@@ -24140,7 +24172,9 @@ async function handleApi(req, res, url) {
         oltMonitor.requireTicketEditor(previous,payload,context.user);
         if (previous.id && !serviceTickets.visible(store, context.user,previous)) throw new Error('Tiket di luar kewenangan');
         if (!serviceTickets.isServiceTicket(previous)&&!oltMonitor.visibleDevices(store, context.user).some(row => row.id === (payload.oltId || previous.oltId))) throw new Error('OLT di luar kewenangan');
+        const recovery=await require('./ticket-recovery').validateResolution(store,previous,payload);
         const ticket = serviceTickets.isServiceTicket(previous)?serviceTickets.update(store,payload,context.user,previous):oltMonitor.saveTicket(store, payload, context.user, previous);
+        if(recovery)ticket.recovery=recovery;
         store.oltTickets = oltMonitor.pruneTickets([...(store.oltTickets || []).filter(row => row.id !== ticket.id), ticket]);
         const notificationKind=!previous.id?'detected':previous.status!=='resolved'&&ticket.status==='resolved'?'resolved':previous.assignedTo!==ticket.assignedTo&&ticket.assignedTo?'claimed':'';
         if(notificationKind)try{queuedNotifications=queueOltTicketNotifications(store,ticket,notificationKind,context.user).queued;}catch(error){ticket.notificationError=error.message;}
@@ -28143,6 +28177,7 @@ module.exports = {
     tripayTransactionHistory,
     applyTripayTransactionHistory,
     syncTripayTransactionHistory,
-    updateAvailableFallbackSummary
+    updateAvailableFallbackSummary,
+    archiveReleaseChanged
   }
 };

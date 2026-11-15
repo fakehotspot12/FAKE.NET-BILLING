@@ -171,6 +171,11 @@ Data lokasi pelanggan dapat disimpan dari izin lokasi browser atau ditandai manu
 
 Untuk pendataan pelanggan baru, foto KTP dapat diupload oleh role yang berwenang seperti admin atau teknisi. Aplikasi akan mencoba membaca NIK menggunakan OCR lokal, lalu mengisi field Nomor KTP otomatis jika terbaca. Foto KTP disimpan di storage privat aplikasi dan tidak diekspos sebagai file publik, sehingga tetap bisa dipakai untuk verifikasi administrasi tanpa bercampur dengan asset web.
 
+Status **Data Valid** member hanya memeriksa nama pelanggan, alamat, koordinat
+yang valid dan bukan nol, serta foto rumah. Nama di KTP, nomor KTP dan foto KTP
+tidak menjadi syarat atau item checklist validasi. Field KTP, OCR dan unggahannya
+tetap tersedia bagi petugas berwenang tanpa menghapus arsip yang sudah ada.
+
 Monitoring member PPP-DHCP memuat status pelanggan, status pembayaran, NAS, kontak, alamat, invoice, serta data pendukung untuk pekerjaan lapangan. Portal WifiKu dapat digunakan pelanggan untuk melihat pemakaian bulanan, redaman, dan aksi perangkat jika integrasi GenieACS aktif.
 
 ## Metode Pembayaran Member
@@ -309,13 +314,32 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   Other, data lama, dan pembacaan gagal tidak membuat tiket LOS. Satu gangguan
   yang belum pulih tidak membuat tiket berulang, termasuk setelah restart.
   Tiket aktif yang sudah ada digunakan kembali, bukan digandakan.
-- Saat ONU terkonfirmasi online kembali, tiket LOS otomatis **ditutup otomatis**,
+- Saat ONU terkonfirmasi online kembali, tiket LOS satuan **ditutup otomatis**,
   dengan catatan pemulihan dan riwayat petugas tetap tersimpan. Untuk PON/ODP,
   seluruh ONU yang tercatat terdampak harus online; data kosong, timeout, dan
   Dying Gasp bukan bukti pemulihan. Tiket manual tetap ditutup oleh petugas.
   Jika tiket sudah selesai dan kemudian terjadi
   LOS baru setelah pemulihan, sistem dapat membuat tiket kejadian berikutnya.
   Pemeriksaan mengikuti cache/polling OLT yang sudah ada, tanpa polling tambahan.
+- Tiket gangguan ODP menghitung anggota yang benar-benar terpetakan, bukan
+  kapasitas tetap 8/16 port. Target pemulihan minimal **90% ONU layak hitung online**
+  pada setiap ODP; modem yang terbukti kehilangan daya dipisahkan dari hitungan.
+  Semua modem mati, status tidak dikenal, data ganda, perangkat hilang dari snapshot
+  atau pembacaan lama bukan bukti pulih. Redaman tidak menjadi syarat penutupan.
+  Target tercapai hanya menandai **siap dikonfirmasi selesai**. Tiket ODP/ODC tetap
+  aktif sampai penanggung jawab/tim teknisi yang ditugaskan mengonfirmasi Selesai; tidak
+  ditutup otomatis. Pengelola berwenang tetap dapat membantu penugasan/konfirmasi.
+  Teknisi hanya dapat menutup tiket ODP/ODC/PON yang ditugaskan setelah target
+  terbaru tervalidasi oleh server. Penutupan manual tiket lainnya dan pembukaan
+  kembali tiket selesai hanya diizinkan untuk Admin/Sekretaris. Pembatasan berlaku
+  di UI serta API, bukan sekadar menyembunyikan pilihan status.
+  Gangguan PON/area ODC memeriksa target masing-masing ODP, bukan hanya rata-rata
+  global; pelanggan belum terpetakan diperiksa dalam kelompok terpisah.
+  Pemetaan ODP/ODC tidak dibuat dari perkiraan nama atau kapasitas. Pelanggan tanpa
+  ODP dan ODP tanpa ODC tetap mempertahankan pemetaan mandirinya.
+  Setelah konfirmasi selesai, sisa LOS tetap tercatat dan diproses sebagai gangguan
+  ONU pada pembacaan berikutnya, dengan tim penanganan sebelumnya bila masih berwenang,
+  bukan diberi status normal hanya karena target kelompok telah tercapai.
 - Gangguan dikelompokkan menurut **port PON sebenarnya**, bukan kapasitas splitter
   8/16 ONU. Indikasi gangguan **PON / Area ODC** muncul jika sedikitnya 3 ONU dan
   50% ONU pada PON yang sama terpantau LOS, atau port PON dilaporkan down dengan
@@ -326,9 +350,9 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   menandai selesai. Pengambilan serentak dilindungi agar satu tiket tidak diambil
   dua petugas; teknisi tidak dapat mengubah pekerjaan petugas lain. Riwayat progres
   dibatasi 50 catatan per tiket. Koordinator dapat mengatur penugasan.
-- Template pesan gangguan baru dan penyelesaian tersedia melalui
-  tombol pengaturan di menu tiket, beserta checkbox **Aktifkan notifikasi WhatsApp**
-  dan pilihan penerima user berwenang, termasuk teknisi dan sekretaris.
+- Template gangguan ONU/ODP/ODC, PSB, permintaan layanan dan penyelesaian tersedia
+  melalui **WhatsApp Gateway > Template Tiket**. Pengaturan di menu tiket hanya
+  berisi checkbox notifikasi serta penerima petugas, termasuk teknisi dan sekretaris.
   Default nonaktif. Mengaktifkannya tidak mengirim ulang semua tiket lama;
   pratinjau menyediakan tombol kirim untuk mencoba tiket yang dipilih.
   Pengiriman memakai gateway WhatsApp billing yang sudah tertaut dan antrean
@@ -336,8 +360,8 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   tiket yang belum terkirim, bukan pesan invoice/pembayaran. Pesan yang sudah
   dikirim tidak dapat ditarik kembali oleh checkbox ini.
 - WA gangguan baru dikirim hanya ke penerima terpilih. Pengambilan tiket dan
-  catatan progres tidak mengirim WA. Pesan selesai/pulih hanya ke petugas yang
-  mengambil/ditugaskan pada tiket, dengan validasi role, nomor WA dan akses NAS;
+  catatan progres tidak mengirim WA. Pesan selesai/pulih hanya ke penanggung jawab
+  dan pendamping tiket, dengan validasi role, nomor WA dan akses NAS;
   jika belum ada petugas, selesai cukup tercatat di web. Notifikasi ONU/gangguan
   yang sama dibatasi sekali per penerima selama 30 menit, termasuk ketika LOS
   berulang membuat tiket kejadian baru. Tidak ada perubahan pada mekanisme
@@ -348,6 +372,21 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   Isi/riwayat tidak dihapus oleh pembersihan ini; pengiriman ulang pesan tiket
   yang dibatalkan atau sudah terkirim diblokir. Batas histori WA yang sudah ada
   tetap berlaku. Pesan invoice, pembayaran, OTP dan broadcast tidak dibatalkan.
+- Checkbox **Kirim WhatsApp gangguan massal ke pelanggan** pada Pengaturan Tiket
+  default **nonaktif** dan terpisah dari notifikasi petugas. Jika diaktifkan, hanya
+  kejadian baru dan pelanggan terpetakan yang benar-benar terdampak yang diproses;
+  tidak mengirim ulang riwayat gangguan. Identitas/NAS/nomor kontak diperiksa lagi
+  sebelum pengiriman. Maksimum 1.024 penerima unik per kejadian, dengan deduplikasi
+  nomor dan catatan pengiriman per tiket yang tetap ada saat histori WA dipangkas.
+  Antrean memakai gateway existing, jeda minimal 45 detik atau konfigurasi yang
+  lebih besar, tambahan jitter dan istirahat 120 detik per 20 pesan. OTP, bukti
+  pembayaran dan notifikasi teknisi tetap lebih diprioritaskan. Jeda mengurangi
+  risiko, bukan jaminan kebal pembatasan WhatsApp.
+  Pemberitahuan perbaikan baru diantrikan setelah penanggung jawab/tim mengonfirmasi
+  Selesai, hanya kepada pelanggan yang telah menerima pesan gangguan.
+  Pelanggan yang masih LOS mendapat pesan pemeriksaan lanjutan, sedangkan modem
+  kehilangan daya diminta dinyalakan; tidak dinyatakan normal secara massal.
+  Menonaktifkan checkbox membatalkan antrean pelanggan yang belum terkirim.
 - Notifikasi gangguan memiliki prioritas di atas reminder/invoice massal dan
   broadcast, tetapi OTP dan bukti pembayaran tetap lebih tinggi. Tiket tidak
   mengikuti tanggal antrean broadcast yang sudah panjang. Pengiriman tetap satu
@@ -355,7 +394,8 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   tambahan 90 detik per batch 20 pesan tiket saat antrean menumpuk. Dispatcher dipicu setelah tiket tersimpan;
   konfigurasi jam kirim gateway tetap dihormati. Upgrade hanya menyesuaikan job
   tiket lama yang belum terkirim, bukan jadwal/isi pesan invoice atau pembayaran.
-- Pesan menyertakan link `/olt-ticket.html?id=...`. Halaman ini hanya memuat
+- Pesan menyertakan link `/tkt.html?id=...` dan nomor tiket berawalan `TKT`.
+  Tautan lama tetap dapat dibuka; ID tiket dan riwayat tidak diganti. Halaman ini hanya memuat
   detail setelah autentikasi dan pemeriksaan role/akses NAS. Jika belum login,
   verifikasi login billing tetap berlaku, lalu kembali langsung ke tiket,
   bukan dashboard. Teknisi/sekretaris dapat mengambil tiket dan mengisi progres
@@ -371,9 +411,22 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   tiket hanya melalui submenu tersebut, tanpa tombol/tautan tiket di halaman OLT.
   Tidak ada salinan dataset, service, database, atau instalasi tambahan.
 - Tiket memiliki petugas, catatan, status, lihat ONU, dan salin pesan. Tiket otomatis
-  awalnya belum ditugaskan. Tidak ada pengiriman WhatsApp ke pelanggan dari fitur ini.
+  awalnya belum ditugaskan. WhatsApp pelanggan hanya melalui opt-in gangguan massal.
   Riwayat tiket selesai dibatasi 180 hari
   dan maksimum 1.000; tiket aktif tidak dibuang otomatis.
+- Setelah mengambil tiket, penanggung jawab dapat memilih beberapa teknisi
+  pendamping melalui ikon tim. Pendamping berwenang dapat membalas dan mengisi
+  progres, tetapi tidak mengambil alih penanggung jawab atau mengubah anggota tim.
+  Perubahan tim dan progres dicatat pada riwayat petugas; batas role/NAS tetap berlaku.
+- Detail tiket menampilkan redaman terakhir OLT dalam dBm beserta waktu pembacaannya.
+  Data memakai snapshot yang sudah tersedia tanpa polling tambahan. Jika belum
+  pernah terbaca, nilainya ditandai belum tersedia, bukan nol atau perkiraan.
+- Pemilihan pelanggan pada form tiket mengisi nama, kontak, alamat dan koordinat
+  yang tersimpan. Jika koordinat belum ada, petugas boleh mengisi lokasi khusus
+  tiket tanpa menimpa data member. Tiket PSB menyediakan pilihan paket PPP-DHCP
+  aktif; nama dan harga paket disimpan pada tiket dan dicantumkan di pesan PSB.
+  Membuat tiket tidak membuat akun internet, invoice atau perubahan paket otomatis.
+  Pesan PSB, permintaan layanan dan gangguan memakai keterangan sesuai kategorinya.
 - Maksimum awal 32 OLT. Snapshot tidak membuat riwayat per polling di database.
   Menghapus integrasi hanya menghapus metadata billing; OLT dengan riwayat tiket
   cukup dinonaktifkan agar riwayat tetap terjaga. Lingkungan demo/dev tetap memakai
@@ -481,6 +534,22 @@ billing. Tag boleh berisi alamat langsung, misalnya `Jl. Contoh No. 10`; awalan
 model dan beberapa alamat yang ambigu tidak dijadikan alamat atau bukti pemilik.
 
 ### Izin Tiket Per User
+
+Tiket dapat ditangani oleh satu penanggung jawab dan beberapa teknisi pendamping.
+Setelah tiket diambil, penanggung jawab atau koordinator membuka **Tim Penanganan**
+untuk memilih pendamping aktif dalam cakupan tiket. Pendamping dapat memperbarui
+progres dan membalas pelanggan, tetapi tidak mengambil alih penanggung jawab atau
+mengubah tim. Perubahan tim dan progres dicatat pada audit; perubahan tim tidak
+menjadi pesan progres pelanggan. Notifikasi selesai ditujukan ke anggota tim yang
+masih berwenang, melalui antrean dan jeda WhatsApp existing, tanpa broadcast baru
+untuk setiap perubahan anggota/progres. Tiket lama tetap dapat dipakai satu petugas.
+
+Detail tiket dan tautan tiket menampilkan **Redaman terakhir OLT** beserta waktu
+pembacaan jika tersedia. Nilai negatif yang valid disimpan pada snapshot OLT yang
+sudah ada dan tidak dihapus hanya karena ONU offline. Identitas SN/MAC dan posisi
+harus cocok; modem pengganti atau posisi ambigu tidak mewarisi nilai modem lain.
+Jika belum pernah terbaca, ditampilkan belum tersedia, bukan angka nol palsu.
+Tidak menambah polling SNMP/ACS, tabel riwayat baru, atau query OLT per baris tiket.
 
 Role Keuangan dapat membuat tiket layanan tanpa hak menangani tiket atau
 mengelola OLT. Di tambah/edit User tersedia ceklis **Akses Tiket Layanan** untuk
@@ -752,7 +821,7 @@ Contoh konfigurasi repository tidak aktif secara otomatis. Updater mempertahanka
 Minimal setara Ubuntu 22.04:
 
 - Linux x86_64/arm64
-- Node.js 18+
+- Node.js 20.9+ (disarankan 22 LTS)
 - npm
 - PostgreSQL
 - Redis sebagai cache dan backend antrean BullMQ
@@ -813,8 +882,8 @@ Default install ke:
 
 Yang dikerjakan otomatis oleh `install.sh`:
 
-- Install paket OS yang dibutuhkan: Node.js 18+, npm, PostgreSQL, Redis, FreeRADIUS, FreeRADIUS utilities, SNMP tools, Docker, Git, curl, rsync, tar, gzip, procps, iproute, dan Tesseract OCR.
-- Jika Node.js bawaan sistem terlalu lama, installer mencoba memasang Node.js 20 dari repository NodeSource.
+- Install paket OS yang dibutuhkan: Node.js 20.9+ (disarankan 22 LTS), npm, PostgreSQL, Redis, FreeRADIUS, FreeRADIUS utilities, SNMP tools, Docker, Git, curl, rsync, tar, gzip, procps, iproute, dan Tesseract OCR.
+- Jika Node.js bawaan sistem terlalu lama, installer mencoba memasang Node.js 22 LTS dari repository NodeSource.
 - Copy source aplikasi ke `/opt/fakenet-billing` tanpa membawa data runtime.
 - Install dependency Node dari `package-lock.json`.
 - Memasang dan memverifikasi BullMQ; antrean WhatsApp memakai Redis yang sama tanpa field konfigurasi tambahan di UI.

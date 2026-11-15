@@ -3,8 +3,8 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/fakenet-billing}"
 SOURCE_DIR="${SOURCE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-18}"
-NODE_SETUP_MAJOR="${NODE_SETUP_MAJOR:-20}"
+NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-20}"
+NODE_SETUP_MAJOR="${NODE_SETUP_MAJOR:-22}"
 GENIEACS_VERSION="${GENIEACS_VERSION:-1.2.16}"
 GENIEACS_ENV_FILE="${GENIEACS_ENV_FILE:-/etc/fakenet-billing-genieacs.env}"
 GENIEACS_MONGODB_IMAGE_DEFAULT="${GENIEACS_MONGODB_IMAGE_DEFAULT:-docker.io/library/mongo:7}"
@@ -226,8 +226,13 @@ auto_skip_existing_genieacs() {
   fi
 }
 
+node_runtime_supported() {
+  command -v node >/dev/null 2>&1 || return 1
+  node -e 'const [major,minor]=process.versions.node.split(".").map(Number);const min=Math.max(20,Number(process.argv[1])||20);process.exit(major>=min&&(major>20||minor>=9)?0:1)' "$NODE_MIN_MAJOR"
+}
+
 install_node_runtime() {
-  if [ "$(node_major)" -ge "$NODE_MIN_MAJOR" ] && command -v npm >/dev/null 2>&1; then
+  if node_runtime_supported && command -v npm >/dev/null 2>&1; then
     return
   fi
 
@@ -252,10 +257,8 @@ check_node() {
     echo "Node.js belum terpasang" >&2
     exit 1
   fi
-  local major
-  major="$(node_major)"
-  if [ "$major" -lt "$NODE_MIN_MAJOR" ]; then
-    echo "Node.js minimal v$NODE_MIN_MAJOR. Versi saat ini: $(node -v)" >&2
+  if ! node_runtime_supported; then
+    echo "Node.js minimal v20.9 (disarankan v22 LTS). Versi saat ini: $(node -v)" >&2
     echo "Update Node.js dahulu, lalu ulangi install.sh." >&2
     exit 1
   fi
@@ -311,6 +314,11 @@ verify_repository_payload() {
     src/olt-ticketing.js
     src/service-tickets.js
     src/ticket-network.js
+    src/ticket-team.js
+    src/ticket-reference.js
+    src/ticket-recovery.js
+    src/ticket-templates.js
+    src/ticket-customer-notifications.js
     src/wifiku-modem-status.js
     public/index.html
     public/app.js
@@ -320,6 +328,9 @@ verify_repository_payload() {
     public/manifest.webmanifest
     public/olt.js
     public/olt.css
+    public/tkt.html
+    public/tkt.js
+    public/tkt.css
     public/olt-ticket.html
     public/olt-ticket.js
     public/olt-ticket.css
@@ -426,7 +437,7 @@ install_node_deps() {
     return 1
   fi
   [ "$install_status" -eq 0 ] || return "$install_status"
-  node -e "require('bullmq'); require('web-push'); require('sharp'); require('ssh2'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/customer-device-removal'); require('./src/network-address'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status'); require('./src/olt-vendors').loadLibrary().catch(error => { console.error(error.message); process.exitCode=1; })" >/dev/null
+  node -e "require('bullmq'); require('web-push'); require('sharp'); require('ssh2'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/customer-device-removal'); require('./src/network-address'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/ticket-team'); require('./src/ticket-reference'); require('./src/ticket-recovery'); require('./src/ticket-templates'); require('./src/ticket-customer-notifications'); require('./src/wifiku-modem-status'); require('./src/olt-vendors').loadLibrary().catch(error => { console.error(error.message); process.exitCode=1; })" >/dev/null
 }
 
 install_genieacs_runtime() {
@@ -1537,6 +1548,11 @@ main() {
   need_root
   require_debian_ubuntu_systemd
   case "${1:-install}" in
+    node-runtime)
+      install_node_runtime
+      check_node
+      return 0
+      ;;
     uninstall|--uninstall)
       shift || true
       uninstall_total "$@"

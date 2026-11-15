@@ -899,6 +899,14 @@ test('changelog summary defaults to ten newest release sections', () => {
   assert.doesNotMatch(summary, /\[1\.0\.1\]/);
 });
 
+test('archive updates detect same-version release notes without suggesting older versions',()=>{
+ assert.equal(serverInternals.archiveReleaseChanged('4.5.0','4.5.0','New changes','Old changes'),true);
+ assert.equal(serverInternals.archiveReleaseChanged('4.5.0','4.5.0',' Same notes\n','Same notes'),false);
+ assert.equal(serverInternals.archiveReleaseChanged('4.4.0','4.5.0','Older notes','Current notes'),false);
+ assert.equal(serverInternals.archiveReleaseChanged('4.6.0','4.5.0','',''),true);
+ assert.equal(serverInternals.archiveReleaseChanged('4.5.0','4.5.0','','Current notes'),false);
+});
+
 test('commit log summary formats same-version update fallback', () => {
   const summary = serverInternals.commitLogSummaryFromText(`abc1234 Fix updater status
 def5678 Add billing docs
@@ -6339,7 +6347,7 @@ test('monitoring members are sorted by newest created date first', () => {
   assert.deepEqual(az.members.map((member) => member.fullName), ['Alpha Old', 'Beta Fallback', 'Zeta New']);
 });
 
-test('member data validation requires identity, location, and house photo', () => {
+test('member data validation requires name, address, location and house photo, never KTP', () => {
   const completeCustomer = {
     id: 'member-complete',
     username: 'member-complete',
@@ -6358,7 +6366,10 @@ test('member data validation requires identity, location, and house photo', () =
   };
   const complete = serverInternals.memberDataValidation(completeCustomer);
   assert.equal(complete.valid, true);
-  assert.deepEqual(Object.values(complete.checks), [true, true, true, true, true, true]);
+  assert.deepEqual(Object.values(complete.checks), [true, true, true, true]);
+  const withoutKtp=serverInternals.memberDataValidation({...completeCustomer,ktpName:'',ktp:'',ktpPhoto:null});
+  assert.equal(withoutKtp.valid,true);
+  assert.deepEqual(Object.keys(withoutKtp.checks),['name','address','location','housePhoto']);
 
   const withoutKtpPhoto = serverInternals.memberDataValidation({
     ...completeCustomer,
@@ -6376,8 +6387,8 @@ test('member data validation requires identity, location, and house photo', () =
     longitude: '0.0'
   });
   assert.equal(incomplete.valid, false);
-  assert.equal(incomplete.checks.ktpName, false);
-  assert.equal(incomplete.checks.ktpNumber, false);
+  assert.equal(Object.hasOwn(incomplete.checks,'ktpName'), false);
+  assert.equal(Object.hasOwn(incomplete.checks,'ktpNumber'), false);
   assert.equal(incomplete.checks.location, false);
   assert.equal(incomplete.checks.housePhoto, false);
   assert.equal(Object.prototype.hasOwnProperty.call(incomplete.checks, 'ktpPhoto'), false);
