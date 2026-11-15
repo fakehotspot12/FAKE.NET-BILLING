@@ -276,6 +276,32 @@ verify_repository_payload() {
     src/olt-auto-identity.js
     src/olt-device-removal.js
     src/olt-planned-reboot.js
+    src/olt-vendors.js
+    src/olt-vendor-library/NOTICE.md
+    src/olt-vendor-library/adapters/base.adapter.js
+    src/olt-vendor-library/adapters/bdcom.adapter.js
+    src/olt-vendor-library/adapters/btpon.adapter.js
+    src/olt-vendor-library/adapters/cdata.adapter.js
+    src/olt-vendor-library/adapters/fiberhome.adapter.js
+    src/olt-vendor-library/adapters/hioso.adapter.js
+    src/olt-vendor-library/adapters/hsgq.adapter.js
+    src/olt-vendor-library/adapters/huawei.adapter.js
+    src/olt-vendor-library/adapters/index.js
+    src/olt-vendor-library/adapters/tarmoc.adapter.js
+    src/olt-vendor-library/adapters/templates/tarmoc.live-template.js
+    src/olt-vendor-library/adapters/vendor-normalization.js
+    src/olt-vendor-library/adapters/vsol.adapter.js
+    src/olt-vendor-library/adapters/zte.adapter.js
+    src/olt-vendor-library/config.js
+    src/olt-vendor-library/db/index.js
+    src/olt-vendor-library/package.json
+    src/olt-vendor-library/services/context.js
+    src/olt-vendor-library/services/crypto.js
+    src/olt-vendor-library/services/olt-snmp-detail.js
+    src/olt-vendor-library/services/olt-transport.js
+    src/olt-vendor-library/services/snmp.js
+    src/olt-vendor-library/utils/http-error.js
+    src/olt-vendor-library/utils/offline-cause.js
     src/olt-cli.js
     src/olt-monitor.js
     src/olt-ticketing.js
@@ -393,7 +419,7 @@ install_node_deps() {
     return 1
   fi
   [ "$install_status" -eq 0 ] || return "$install_status"
-  node -e "require('bullmq'); require('web-push'); require('sharp'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status')" >/dev/null
+  node -e "require('bullmq'); require('web-push'); require('sharp'); require('ssh2'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/wifiku-modem-status'); require('./src/olt-vendors').loadLibrary().catch(error => { console.error(error.message); process.exitCode=1; })" >/dev/null
 }
 
 install_genieacs_runtime() {

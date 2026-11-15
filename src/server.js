@@ -90,6 +90,7 @@ const ticketNetwork = require('./ticket-network');
 const oltAutoIdentity = require('./olt-auto-identity');
 const oltDeviceRemoval = require('./olt-device-removal');
 const oltPlannedReboot = require('./olt-planned-reboot');
+const oltVendors = require('./olt-vendors');
 const license = require('./license');
 const redisCache = require('./redis-cache');
 const secureSecrets = require('./secure-secrets');
@@ -23961,7 +23962,7 @@ async function handleApi(req, res, url) {
     const rows = await Promise.all(devices.map(async device => ({ ...oltMonitor.publicDevice(device, await oltMonitor.snapshotFor(device), { management: manage }),
       nasName: radiusNasRowsLocal(context.data).find(nas => nas.id === device.nasId)?.name || '',
       openTickets: (context.data.oltTickets || []).filter(ticket => ticket.oltId === device.id && ticket.status !== 'resolved').length })));
-    sendJson(res, 200, { devices: rows, tickets: [],
+    sendJson(res, 200, { devices: rows, tickets: [], vendors:oltVendors.options(),
       nasOptions: manage ? radiusNasRowsLocal(context.data).map(nas => ({ id: nas.id, name: nas.name })) : [],
       technicians: (context.data.users || []).filter(user => user.active !== false && ['admin','owner','noc','technician','secretary'].includes(user.role)).map(user => ({ id: user.id, name: user.name || user.username })),
       integrationEnabled: context.data.settings?.networkIntegrationEnabled === true,

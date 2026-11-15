@@ -23,6 +23,7 @@ function locations(observations,now){
     const at=Date.parse(snapshot?.checkedAt||'');
     if(!device?.id||device.enabled===false||snapshot?.status!=='online'||snapshot.stale||snapshot.pendingRefresh||!Number.isFinite(at)||now-at>360000||at>now+30000)continue;
     for(const onu of snapshot.onus||[]){
+      if(onu.identifierKind==='mac')continue;
       if(++count>32768)throw new Error('Pemetaan ONU melebihi batas aman');
       const sn=identity.serial(onu.serialNumber);if(!/^[A-Z0-9]{12}$/.test(sn))continue;
       const rows=map.get(sn)||[];rows.push({deviceId:device.id,signature:deviceSignature(device),index:String(onu.id),status:onu.status,pon:onu.ponKey||''});map.set(sn,rows);
@@ -56,6 +57,7 @@ async function refresh(data,observations=[],options={}){
   })();state.pending=pending;return pending;
 }
 function deviceFor(data,device,onu,now){
+  if(onu?.identifierKind==='mac')return null;
   if(!device||!available(data)||device.enabled===false)return null;
   const state=states.get(keyFor(data));if(!state||state.failed||now-state.checkedAt>TTL_MS||now<state.checkedAt-30000)return null;
   const sn=identity.serial(onu?.serialNumber),position=chosenPosition(state.positions.get(sn));

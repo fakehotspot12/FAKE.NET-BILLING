@@ -446,6 +446,30 @@ menit per OLT, sesi CLI dikunci, dan respons sukses perangkat wajib terbaca.
 Jika hasil belum pasti, periksa OLT sebelum mengulang. Konfigurasi koneksi
 billing yang diedit pada form disimpan terpisah dan bukan Save Config OLT.
 
+### Library Vendor OLT
+
+Vendor dipilih saat menambah OLT. Jenis vendor integrasi yang sudah tersimpan
+tidak dapat diganti agar format indeks dan identitas ONU lama tidak tercampur.
+
+| Vendor | Monitoring Pada Rilis Ini | Aksi Perangkat |
+| --- | --- | --- |
+| CDATA GPON | Jalur SNMP/CLI yang telah terverifikasi | Hapus, reboot, description dan Save Config dengan pengamanan |
+| Tarmoc, HSGQ GPON/EPON, HIOSO EPON, BTPON | Adapter inventory live baca-saja; kompatibilitas tetap bergantung model/firmware | Terkunci sampai aksi model terverifikasi |
+| ZTE, Huawei, VSOL, BDCOM/Baudcom, FiberHome | SNMP dasar: identitas sistem dan antarmuka; inventory ONU belum dinyatakan terverifikasi | Terkunci sampai aksi model terverifikasi |
+
+Semua library vendor disertakan, tetapi keberadaan nama vendor bukan jaminan
+setiap fitur firmware telah diuji. Inventory yang belum tersedia diberi status
+belum terverifikasi, bukan jumlah nol. Kegagalan pembacaan mempertahankan data
+terakhir dengan penanda data lama. Tiket LOS otomatis untuk driver baru belum
+diaktifkan; tiket manual tetap dapat digunakan.
+
+Library memakai kredensial terenkripsi dan poller/cache billing yang sama,
+tanpa aplikasi, database atau scheduler tambahan. SSH memakai dependency yang
+dipasang oleh installer/updater. Vendor baru dibatasi baca-saja di factory,
+API dan transport: raw command dari browser tidak diterima, target host/port
+dikunci, respons dan waktu dibatasi, serta pengayaan per-ONU massal tidak
+dijalankan saat membuka halaman. CDATA lama tidak dialihkan ke driver percobaan.
+
 Reboot melalui menu OLT, GenieACS dan WifiKu diberi penanda **Reboot terencana**
 selama lima menit. LOS sesaat pada perangkat yang tepat tidak membuat tiket/WA
 gangguan otomatis. Penanda tetap tersimpan saat service restart, tidak mengubah

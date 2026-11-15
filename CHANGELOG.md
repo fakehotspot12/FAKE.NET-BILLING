@@ -6,6 +6,8 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Added
 
+- Library sepuluh vendor OLT: CDATA, Tarmoc, HSGQ, HIOSO, BTPON, ZTE, Huawei, VSOL, BDCOM/Baudcom, dan FiberHome, dengan pilihan vendor serta transport Telnet/SSH. Adapter dari aplikasi lokal dipisahkan dari database, login, updater, dan scheduler asal. CDATA mempertahankan jalur terverifikasi; vendor lain dibatasi baca-saja dan kemampuan inventory ditampilkan sesuai kesiapan parser, bukan dianggap lengkap hanya karena ada di pilihan.
+- Pengaman library vendor: seluruh aksi tulis yang belum teruji terkunci di UI, API dan transport; target host/port, metode web, perintah, ukuran respons, jumlah permintaan dan waktu pembacaan dibatasi. Tidak ada pengayaan optik per-ONU pada polling rutin, tidak menambah scheduler, tidak menyamakan MAC EPON dengan bukti identitas ACS, dan kegagalan inventory tidak ditampilkan sebagai nol ONU palsu. Installer/updater memverifikasi seluruh modul dan dependency SSH.
 - Monitoring OLT CDATA dengan konfigurasi manual, ringkasan PON/ONU, status Online/LOS/Dying Gasp/Other, redaman, jarak, description, pencarian, pagination, dan terakhir aktif. Edit description, reboot, dan hapus ONU memakai pemeriksaan SN serta posisi OLT/PON/ONU yang dipilih.
 - Tiket Layanan terpisah untuk gangguan, permintaan dan PSB, termasuk laporan pelanggan melalui WifiKu, percakapan/foto privat, pengambilan tiket melalui tautan login, progres pelanggan, riwayat petugas, serta penutupan LOS setelah pemulihan terkonfirmasi.
 - Pemetaan otomatis SN OLT ke SN/akun ACS lalu member/NAS, dengan kontak, alamat, koordinat dan ODP dari member. Konflik identitas, SN ganda, modem pengganti dan riwayat pemilik dilindungi; description tidak dijadikan bukti kepemilikan.

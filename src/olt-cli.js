@@ -19,6 +19,7 @@ function onuAbsent(output=''){
 }
 
 function run(data, device, target = null, spawnProcess = spawn, options = {}) {
+  if(device.vendor&&device.vendor!=='cdata')return Promise.reject(new Error('Aksi CLI tulis vendor ini belum terverifikasi dan tetap terkunci'));
   if (!device.cliEnabled || !device.cliUsername || !device.cliPasswordEnc) return Promise.reject(new Error('Akses CLI OLT belum dikonfigurasi'));
   if (busy.has(device.id)) return Promise.reject(new Error('Akses OLT sedang digunakan, coba kembali'));
   if (target && (![target.slot,target.pon,target.onuId].every(Number.isSafeInteger) || target.slot < 0 || target.slot > 31 || target.pon < 1 || target.pon > 16 || target.onuId < 1 || target.onuId > 1024 || !/^[A-Z0-9]{12}$/.test(target.serialNumber) || !['delete','reboot','describe','inspect'].includes(target.action||'delete'))) return Promise.reject(new Error('Alamat ONU tidak valid'));
