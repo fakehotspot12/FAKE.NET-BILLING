@@ -12,6 +12,46 @@ const clean=value=>String(value||'').trim();
 const pointId=customer=>clean(customer?.fiberPointId||customer?.odpId||customer?.distributionPointId||customer?.distribution_point_id||customer?.odp);
 const serialTerms=sn=>[sn,...(/^[A-Z0-9]{4}[A-F0-9]{8}$/.test(sn)?[Buffer.from(sn.slice(0,4),'ascii').toString('hex').toUpperCase()+sn.slice(4)]:[])];
 
+function validOptical(reading,now=Date.now()){
+  return Boolean(reading&&typeof reading.rxPower==='number'&&Number.isFinite(reading.rxPower)&&reading.rxPower<0&&reading.rxPower>=-60&&Number.isFinite(Date.parse(reading.at))&&Date.parse(reading.at)<=now+30000);
+}
+function optical(data,ticket,options={}){
+  const now=options.now??Date.now(),device=options.device||(data.oltDevices||[]).find(row=>row.id===ticket.oltId);
+  const bound=saved=>saved&&saved.oltId===ticket.oltId&&saved.serialNumber===ticket.serialNumber&&(!ticket.onuIndex||saved.onuIndex===ticket.onuIndex)&&(!ticket.pon||!saved.pon||saved.pon===ticket.pon);
+  const oltReading=validOptical(options.oltReading,now)?options.oltReading:bound(ticket.oltOptical)&&validOptical(ticket.oltOptical,now)?ticket.oltOptical:null;
+  if(oltReading)return{rxPower:oltReading.rxPower,at:oltReading.at,stale:oltReading.stale!==false,source:'OLT'};
+  if(bound(ticket.acsOptical)&&ticket.acsOptical.customerId===(ticket.customerId||'')&&validOptical(ticket.acsOptical,now))return{rxPower:ticket.acsOptical.rxPower,at:ticket.acsOptical.at,stale:true,source:'ACS'};
+  if(!device||!ticket.serialNumber||autoIdentity.manualConflict(data,device,{serialNumber:ticket.serialNumber},now))return{rxPower:null,at:'',stale:true};
+  const modem=options.modem||autoIdentity.modemForTicket(data,ticket,device,now);
+  if(!modem)return{rxPower:null,at:'',stale:true};
+  const directory=identity.directory(data),sn=identity.serial(ticket.serialNumber),member=directory.customerForAcs(modem),reading={rxPower:modem.rxPowerValue,at:modem.rxPowerAt};
+  const registered=Date.parse(modem.registered||''),memberCreated=Date.parse(member?.createdAt||''),at=Date.parse(reading.at||''),incident=Date.parse(ticket.losDetection?.firstDetectedAt||ticket.createdAt||'');
+  const matches=identity.serial(modem.serialNumber)===sn||modem.interfaceMacs?.includes(sn);
+  if(!matches||!directory.compatible(modem,{nasId:device.nasId})||ticket.customerId&&member?.id!==ticket.customerId||!validOptical(reading,now)||Number.isFinite(registered)&&at<registered||Number.isFinite(memberCreated)&&at<memberCreated||Number.isFinite(incident)&&at>incident+30000)return{rxPower:null,at:'',stale:true};
+  return{...reading,stale:true,source:'ACS',deviceId:modem.id};
+}
+function captureOptical(data,ticket,candidates,now=Date.now()){
+  const device=(data.oltDevices||[]).find(row=>row.id===ticket.oltId);
+  if(ticket.serialNumber){const value=optical(data,ticket,{device,now});return value.source==='ACS'?{acsOptical:{...value,oltId:ticket.oltId,serialNumber:ticket.serialNumber,onuIndex:ticket.onuIndex||'',pon:ticket.pon||'',customerId:ticket.customerId||''}}:{};}
+  if(!['odp','pon','odc'].includes(ticket.scope))return{};
+  const values=[];
+  for(const candidate of(candidates||[]).slice(0,1024)){
+    const target={...ticket,serialNumber:candidate.serialNumber,onuIndex:candidate.onuIndex,pon:candidate.pon,customerId:''},value=optical(data,target,{device,oltReading:candidate.optical,now});
+    if(validOptical(value,now))values.push(value);
+  }
+  if(!values.length)return{};
+  return{opticalSummary:{oltId:ticket.oltId,pon:ticket.pon||'',fiberPointId:ticket.fiberPointId||'',minimum:Math.min(...values.map(row=>row.rxPower)),maximum:Math.max(...values.map(row=>row.rxPower)),count:values.length,total:ticket.affectedCount||ticket.affectedSerialNumbers?.length||values.length,sources:[...new Set(values.map(row=>row.source))].sort(),firstAt:new Date(Math.min(...values.map(row=>Date.parse(row.at)))).toISOString(),lastAt:new Date(Math.max(...values.map(row=>Date.parse(row.at)))).toISOString()}};
+}
+function opticalText(data,ticket){
+  const value=ticket.serialNumber?optical(data,ticket):null,summary=ticket.opticalSummary;
+  const zone=data.settings?.timezone||data.settings?.timeZone||'Asia/Makassar';
+  const date=at=>{try{const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:zone,day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(at)).map(row=>[row.type,row.value]));return`${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;}catch{return'-';}};
+  const number=rx=>new Intl.NumberFormat('id-ID',{maximumFractionDigits:2}).format(rx);
+  if(value?.source)return`${number(value.rxPower)} dBm (${value.source}; data ${date(value.at)})`;
+  if(!ticket.serialNumber&&summary&&summary.oltId===ticket.oltId&&summary.pon===(ticket.pon||'')&&summary.fiberPointId===(ticket.fiberPointId||'')&&Number.isInteger(summary.count)&&Number.isInteger(summary.total)&&Array.isArray(summary.sources)&&summary.count>0&&summary.count<=summary.total&&summary.total<=8192&&validOptical({rxPower:summary.minimum,at:summary.firstAt})&&validOptical({rxPower:summary.maximum,at:summary.lastAt}))return`${number(summary.minimum)}${summary.minimum===summary.maximum?'':' s/d '+number(summary.maximum)} dBm (${summary.count}/${summary.total} ONU; ${summary.sources.filter(source=>['OLT','ACS'].includes(source)).join('/')}; data terakhir ${date(summary.lastAt)})`;
+  return'-';
+}
+
 async function lookup(data,selector){
   if(process.env.MIGRATION_MODE==='1'||!acs.configured(data.settings||{}))return null;
   const {sn,customer,user,nasId}=selector,directory=identity.directory(data);
@@ -22,7 +62,7 @@ async function lookup(data,selector){
   if(!terms.length)return null;
   const cfg=acs.normalizeSettings(data.settings||{}),nasAliases=directory.aliasesFor(nasId||user?.nasId||customer?.nasId||customer?.nas||customer?.site);
   const knownNasAliases=[...(data.radiusNas||[]),...(data.monitoringTargets||[])].flatMap(row=>[row.id,row.name,row.address,row.host]).filter(Boolean);
-  const key=crypto.createHash('sha256').update(JSON.stringify([cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,cfg.usernameParameters,terms,username,boundDeviceIds,boundSerialNumbers,nasAliases,knownNasAliases])).digest('hex'),now=Date.now();
+  const key=crypto.createHash('sha256').update(JSON.stringify([cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,cfg.usernameParameters,cfg.rxPowerParameters,terms,username,boundDeviceIds,boundSerialNumbers,nasAliases,knownNasAliases])).digest('hex'),now=Date.now();
   for(const[key,row]of lookups)if(!row.pending&&row.until<=now)lookups.delete(key);
   const cached=lookups.get(key);if(cached?.pending)return structuredClone(await cached.pending);if(cached?.until>now)return structuredClone(cached.value);
   if([...lookups.values()].filter(row=>row.pending).length>=8)return null;
@@ -67,12 +107,11 @@ async function resolve(data,ticket,devices,options={}){
   if(!customer&&!conflicting&&link.customerId){const candidate=customers.get(link.customerId),account=candidate&&directory.userForCustomer(candidate);if(candidate&&directory.compatible(account||candidate,{nasId:device?.nasId})){customer=candidate;user=account;}}
   const odpIds=[link.fiberPointId,ticket.fiberPointId,pointId(customer)].filter(Boolean),odp=(data.fiberPoints||[]).find(row=>row.id===odpIds[0]);
   const knownUsername=user?.username||customer?.username||'';
-  const saved=ticket.oltOptical,stored=saved&&saved.oltId===ticket.oltId&&saved.serialNumber===ticket.serialNumber&&(!ticket.onuIndex||saved.onuIndex===ticket.onuIndex)?olt.lastOptical(null,{lastRxPower:saved.rxPower,lastRxPowerAt:saved.at}):{rxPower:null,at:'',stale:true};
-  const observed=hit&&(!ticket.customerId||!conflicting)?olt.lastOptical(hit.snapshot,hit.onu):null,optical=observed?.rxPower!==null&&observed?.rxPower!==undefined?observed:stored;
+  const observed=hit&&(!ticket.customerId||!conflicting)?olt.lastOptical(hit.snapshot,hit.onu):null,reading=optical(data,ticket,{device,oltReading:observed,modem:!conflicting?modem:null});
   return {customer:{name:customer?.name||customer?.customerName||'',memberId:customer?.code||customer?.memberCode||customer?.accountId||''},
     account:{username:knownUsername||modem?.username||'',type:user?.service||'',status:user?.status||customer?.status||''},
     modem:{serialNumber:sn||'',model:modem?.productClass||hit?.onu.model||''},
-    network:{olt:device?.name||'',pon:hit?.onu.ponKey||ticket.pon||'',odp:odp?[odp.code,odp.name].filter(Boolean).join(' - '):'',optical,...(require('./ticket-recovery').grouped(ticket)?{recovery:await require('./ticket-recovery').forTicket(data,ticket,options)}:{})},
+    network:{olt:device?.name||'',pon:hit?.onu.ponKey||ticket.pon||'',odp:odp?[odp.code,odp.name].filter(Boolean).join(' - '):'',optical:reading,...(require('./ticket-recovery').grouped(ticket)?{recovery:await require('./ticket-recovery').forTicket(data,ticket,options)}:{})},
     ownerVerified:Boolean(customer),acsMatched:Boolean(modem)};
 }
 
@@ -87,4 +126,4 @@ async function context(data,ticket,devices,options={}){
   try{const value=await pending;cache.rows.set(key,{until:Date.now()+ttl,value});while(cache.rows.size>256)cache.rows.delete(cache.rows.keys().next().value);return structuredClone(value);}finally{if(cache.pending.get(key)===pending)cache.pending.delete(key);}
 }
 
-module.exports={context};
+module.exports={context,optical,captureOptical,opticalText};

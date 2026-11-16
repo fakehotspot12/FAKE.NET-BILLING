@@ -1,9 +1,9 @@
 'use strict';
 
 const DEFAULTS=Object.freeze({
-  odpDetected:'*GANGGUAN ODP*\nTiket: [ticket_no]\nArea: [odp]\nKondisi: Sinyal fiber terputus (LOS)\nTerdampak: [affected] pelanggan\nPelanggan terpetakan: [total]\nReferensi: [network]\nWaktu: [time]',
+  odpDetected:'*GANGGUAN ODP*\nTiket: [ticket_no]\nArea: [odp]\nKondisi: Sinyal fiber terputus (LOS)\nRedaman terakhir: [last_rx]\nTerdampak: [affected] pelanggan\nPelanggan terpetakan: [total]\nReferensi: [network]\nWaktu: [time]',
   odpResolved:'*PENANGANAN ODP SELESAI*\nTiket: [ticket_no]\nArea: [odp]\nOnline: [online]/[eligible]\nModem kehilangan daya: [powered_off]\nSisa LOS: [remaining_los]\nPetugas: [technician]\nPendamping: [companions]\nCatatan: [progress]',
-  odcDetected:'*GANGGUAN JARINGAN / AREA ODC*\nTiket: [ticket_no]\nReferensi: [network]\nKondisi: Sinyal fiber terputus (LOS)\nTerdampak: [affected] pelanggan\nPelanggan terpetakan: [total]\nWaktu: [time]',
+  odcDetected:'*GANGGUAN JARINGAN / AREA ODC*\nTiket: [ticket_no]\nReferensi: [network]\nKondisi: Sinyal fiber terputus (LOS)\nRedaman terakhir: [last_rx]\nTerdampak: [affected] pelanggan\nPelanggan terpetakan: [total]\nWaktu: [time]',
   odcResolved:'*PENANGANAN AREA ODC SELESAI*\nTiket: [ticket_no]\nReferensi: [network]\nOnline: [online]/[eligible]\nModem kehilangan daya: [powered_off]\nSisa LOS: [remaining_los]\nPetugas: [technician]\nPendamping: [companions]\nCatatan: [progress]',
   psbDetected:'*PERMINTAAN PASANG BARU*\nTiket: [ticket_no]\nPelanggan: [customer]\nPaket PSB: [package]\nKontak: [phone]\nAlamat: [location]\nArah pelanggan: [map]\nKeterangan: [request]',
   psbResolved:'*PERMINTAAN PASANG BARU SELESAI*\nTiket: [ticket_no]\nPelanggan: [customer]\nPaket PSB: [package]\nAlamat: [location]\nPetugas: [technician]\nPendamping: [companions]\nCatatan: [progress]',

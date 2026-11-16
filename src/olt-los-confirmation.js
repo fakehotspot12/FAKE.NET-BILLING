@@ -6,11 +6,12 @@ const MAX_GAP_MS = INTERVAL_MS * 2 + 30000;
 const RETENTION_MS = 30 * 60000;
 const MAX_ROWS = 8192;
 const clean = value => String(value ?? '').trim();
-const key = row => JSON.stringify([row.oltId, row.revision, row.serialNumber, row.onuIndex, row.pon]);
+const key = row => JSON.stringify([row.oltId, row.revision, row.serialNumber, row.onuIndex, row.pon, row.kind]);
 
 function prepare(data, now = Date.now()) {
   const original = Array.isArray(data.oltLosObservations) ? data.oltLosObservations : [];
   const devices = new Map((data.oltDevices || []).filter(row => row.enabled !== false).map(row => [row.id, clean(row.updatedAt)]));
+  const maxGapMs = Math.min(RETENTION_MS - 60000, Math.max(MAX_GAP_MS, devices.size * 45000));
   const rows = new Map(), byDevice = new Map();
   function put(row) {
     const id = key(row);
@@ -21,25 +22,26 @@ function prepare(data, now = Date.now()) {
   for (const row of original.slice(-MAX_ROWS)) {
     if (!row || !devices.has(row.oltId) || devices.get(row.oltId) !== row.revision || !/^[A-Z0-9]{12}$/.test(row.serialNumber || '')
       || typeof row.onuIndex !== 'string' || row.onuIndex.length > 100 || typeof row.pon !== 'string' || row.pon.length > 100
+      || row.kind !== undefined && !['los', 'offline'].includes(row.kind)
       || !Number.isInteger(row.count) || row.count < 1 || row.count > READS
       || ![row.firstAt, row.countedAt, row.lastAt].every(Number.isFinite)
       || row.firstAt > row.countedAt || row.countedAt > row.lastAt || row.lastAt > now + 30000 || now - row.lastAt > RETENTION_MS
       || row.countedAt - row.firstAt < (row.count - 1) * INTERVAL_MS) continue;
     put({ oltId: row.oltId, revision: row.revision, serialNumber: row.serialNumber, onuIndex: row.onuIndex,
-      pon: row.pon, firstAt: row.firstAt, countedAt: row.countedAt, lastAt: row.lastAt, count: row.count });
+      pon: row.pon, kind: row.kind || 'los', firstAt: row.firstAt, countedAt: row.countedAt, lastAt: row.lastAt, count: row.count });
   }
-  function target(device, onu) {
+  function target(device, onu, kind = 'los') {
     return { oltId: device.id, revision: clean(device.updatedAt), serialNumber: onu.serialNumber,
-      onuIndex: clean(onu.id), pon: clean(onu.ponKey) };
+      onuIndex: clean(onu.id), pon: clean(onu.ponKey), kind };
   }
-  function observe(device, seen, checkedAt, isLos) {
+  function observe(device, seen, checkedAt, isCandidate, isLos = isCandidate) {
     const at = Date.parse(checkedAt), keep = new Set();
     for (const onu of seen.values()) {
-      if (!isLos(onu)) continue;
-      const identity = target(device, onu), id = key(identity), prior = rows.get(id);
+      if (!isCandidate(onu)) continue;
+      const identity = target(device, onu, isLos(onu) ? 'los' : 'offline'), id = key(identity), prior = rows.get(id);
       keep.add(id);
       if (prior && at <= prior.lastAt) continue;
-      if (!prior || at - prior.lastAt > MAX_GAP_MS) {
+      if (!prior || at - prior.lastAt > maxGapMs) {
         if (rows.size < MAX_ROWS || prior) put({ ...identity, firstAt: at, countedAt: at, lastAt: at, count: 1 });
         continue;
       }

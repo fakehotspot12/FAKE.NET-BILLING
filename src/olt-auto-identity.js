@@ -12,9 +12,9 @@ const clean=value=>String(value||'').trim();
 const onuKey=onu=>onu?.identifierKind==='mac'?(/^[A-F0-9]{12}$/.test(onu.serialNumber)?'mac:'+onu.serialNumber:''):identity.serial(onu?.serialNumber);
 const deviceSignature=device=>JSON.stringify([device.host,device.nasId,device.updatedAt]);
 function configuration(data){
-  const raw=data.settings?.genieAcs||{},signature=JSON.stringify([raw.enabled,raw.baseUrl,raw.token,raw.excludeUsernameSuffixes,raw.usernameParameters,process.env.GENIEACS_ENABLED,process.env.GENIEACS_BASE_URL,process.env.GENIEACS_TOKEN,process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES]),old=keys.get(data);
+  const raw=data.settings?.genieAcs||{},signature=JSON.stringify([raw.enabled,raw.baseUrl,raw.token,raw.excludeUsernameSuffixes,raw.usernameParameters,raw.rxPowerParameters,process.env.GENIEACS_ENABLED,process.env.GENIEACS_BASE_URL,process.env.GENIEACS_TOKEN,process.env.GENIEACS_EXCLUDE_USERNAME_SUFFIXES]),old=keys.get(data);
   if(old?.signature===signature)return old;
-  const cfg=acs.normalizeSettings(data.settings||{}),key=crypto.createHash('sha256').update(JSON.stringify([cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,cfg.usernameParameters])).digest('hex'),value={key,signature,configured:acs.configured(cfg)};keys.set(data,value);return value;
+  const cfg=acs.normalizeSettings(data.settings||{}),key=crypto.createHash('sha256').update(JSON.stringify([cfg.enabled,cfg.baseUrl,cfg.token,cfg.excludeUsernameSuffixes,cfg.usernameParameters,cfg.rxPowerParameters])).digest('hex'),value={key,signature,configured:acs.configured(cfg)};keys.set(data,value);return value;
 }
 const keyFor=data=>configuration(data).key;
 function available(data){return data.settings?.networkIntegrationEnabled===true&&configuration(data).configured&&(data.oltDevices||[]).some(device=>device.enabled!==false);}
@@ -43,11 +43,12 @@ async function refresh(data,observations=[],options={}){
   const state=previous||{rows:new Map(),positions:new Map(),checkedAt:0};state.positions=positions;state.revision=++revision;state.nextAt=now+INTERVAL_MS;states.set(key,state);while(states.size>4)states.delete(states.keys().next().value);
   const pending=(async()=>{
     try{
-      const rows=await(options.fetch||acs.identityDevices)(data.settings||{});if(!Array.isArray(rows)||rows.length>MAX_ROWS)throw new Error('Identitas ACS tidak valid');
+      const rows=await(options.fetch||acs.identityDevices)(data.settings||{},{optical:true});if(!Array.isArray(rows)||rows.length>MAX_ROWS)throw new Error('Identitas ACS tidak valid');
       const indexed=new Map(),accounts=new Map();
       for(const source of rows){const sn=identity.serial(source.serialNumber),username=clean(source.username);if(!/^[A-Z0-9]{6,32}$/.test(sn)||!source.id||!username)continue;
         const interfaceMacs=Array.isArray(source.interfaceMacs)?[...new Set(source.interfaceMacs.filter(value=>typeof value==='string'&&/^[A-F0-9]{12}$/.test(value)&&!/^0{12}$|^F{12}$/.test(value)&&(parseInt(value.slice(0,2),16)&1)===0))].slice(0,2):[];
-        const row={id:clean(source.id),serialNumber:sn,username,lastInform:clean(source.lastInform),registered:clean(source.registered),productClass:clean(source.productClass),nasId:clean(source.nasId),interfaceMacs,tags:Array.isArray(source.tags)?source.tags.map(clean).slice(0,32):[]};
+        const rxAt=Date.parse(source.rxPowerAt||''),registered=Date.parse(source.registered||''),validRx=typeof source.rxPowerValue==='number'&&Number.isFinite(source.rxPowerValue)&&source.rxPowerValue<0&&source.rxPowerValue>=-60&&Number.isFinite(rxAt)&&rxAt<=now+30000&&(!Number.isFinite(registered)||rxAt>=registered);
+        const row={id:clean(source.id),serialNumber:sn,username,lastInform:clean(source.lastInform),registered:clean(source.registered),productClass:clean(source.productClass),nasId:clean(source.nasId),interfaceMacs,tags:Array.isArray(source.tags)?source.tags.map(clean).slice(0,32):[],rxPowerValue:validRx?source.rxPowerValue:null,rxPowerAt:validRx?new Date(rxAt).toISOString():''};
         for(const key of [...(/^[A-Z0-9]{12}$/.test(sn)?[sn]:[]),...interfaceMacs.map(value=>'mac:'+value)])if(positions.has(key)){const group=indexed.get(key)||[];group.push(row);indexed.set(key,group);}
         const key=username.toLowerCase(),peers=accounts.get(key)||[];peers.push(row);accounts.set(key,peers);
       }

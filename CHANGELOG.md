@@ -6,6 +6,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Added
 
+- Pesan tiket LOS menampilkan redaman terakhir dengan sumber/waktu data: OLT diutamakan, lalu ACS yang identitasnya terverifikasi melalui batch/cache existing. Snapshot bertahan setelah restart; tiket kelompok menampilkan rentang dan cakupan data, nilai tidak tersedia tetap `-`. Template custom tetap dipertahankan dan baris redaman dilengkapi tanpa mengirim ulang pesan lama atau summon modem.
 - Tim pendamping tiket dengan satu penanggung jawab dan beberapa petugas, pemilihan anggota sesuai role/NAS, progres bersama serta riwayat perubahan tim. Pendamping tidak dapat mengubah tim atau mengambil alih penanggung jawab.
 - Redaman terakhir OLT beserta waktu pembacaan di informasi tiket melalui snapshot existing, tanpa polling baru. Pembacaan offline tidak menimpa nilai terakhir dan tidak ditebak menjadi nol.
 - Koordinat pelanggan otomatis pada form tiket dan pilihan paket PSB aktif. Paket dicatat sebagai informasi permintaan tanpa membuat akun/invoice; pesan PSB, permintaan lain dan gangguan disesuaikan kategorinya.
@@ -18,6 +19,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Memisahkan pemeriksaan reboot/LOS lintas vendor dari izin aksi tulis OLT. Seluruh vendor terdaftar memakai tiga pembacaan baru ketika inventory ONU valid; Down/Timeout tanpa penyebab diamati tanpa dianggap LOS atau membuat tiket. Bukti offline umum tidak diwariskan menjadi konfirmasi LOS, alias PWRDOWN dikenali sebagai kehilangan daya, dan toleransi putaran banyak OLT tetap dibatasi. Driver yang belum menyediakan inventory tidak dipalsukan siap; reboot/hapus vendor yang belum terverifikasi tetap terkunci.
 - Menahan tiket/WA LOS baru hingga tiga pembacaan baru berturut-turut dengan jarak hitungan minimal tiga menit. Cache/refresh cepat tidak dihitung; online, Dying Gasp, data hilang atau tidak diketahui pada inventory valid membatalkan pengamatan. Status pengamatan terbatas bertahan setelah restart, mengikat identitas/posisi/revisi OLT, dan melengkapi jeda reboot aplikasi tanpa mengubah tiket existing, pemulihan, parameter modem atau interval polling.
 - Membatasi penutupan manual tiket umum dan pembukaan kembali ke Admin/Sekretaris. Teknisi penanggung jawab/pendamping dapat menutup ODP/ODC/PON yang ditugaskan hanya setelah target pemulihan terbaru diperiksa server; tiket kelompok tidak ditutup otomatis.
 - Checklist Data Valid member hanya mensyaratkan nama pelanggan, alamat, koordinat dan foto rumah. Nama KTP, nomor KTP dan foto KTP tidak dihitung atau ditampilkan pada checklist; pengisian, OCR dan unggahan KTP tetap tersedia.

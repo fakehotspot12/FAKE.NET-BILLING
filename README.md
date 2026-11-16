@@ -325,6 +325,14 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   aplikasi lima menit tetap berlaku, lalu LOS harus dikonfirmasi kembali.
   Tiket yang sudah ada dan pemulihannya tetap berjalan; tidak mengubah status
   asli OLT, menambah polling, atau menebak gangguan listrik massal.
+- Pemeriksaan reboot berlaku lintas vendor dan tidak bergantung pada izin aksi
+  tulis OLT. Inventory ONU yang valid dengan status Down/Offline tanpa alasan
+  tetap diamati, tetapi tidak dianggap LOS dan tidak membuat tiket otomatis.
+  Bukti offline umum tidak dapat dipakai untuk melengkapi tiga pembacaan LOS.
+  Dying Gasp/PowerDown/PWRDOWN tidak dihitung sebagai LOS. Driver tanpa inventory
+  ONU yang terverifikasi tetap menyatakan data belum tersedia, bukan dianggap
+  lolos pemeriksaan. Putaran banyak OLT mendapat toleransi jeda pengamatan
+  terbatas tanpa menambah polling atau mengurangi minimum tiga pembacaan baru.
 - Saat ONU terkonfirmasi online kembali, tiket LOS satuan **ditutup otomatis**,
   dengan catatan pemulihan dan riwayat petugas tetap tersimpan. Untuk PON/ODP,
   target pemulihan kelompok mengikuti aturan per ODP di bawah; data kosong dan
@@ -332,6 +340,15 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   Jika tiket sudah selesai dan kemudian terjadi
   LOS baru setelah pemulihan, sistem dapat membuat tiket kejadian berikutnya.
   Pemeriksaan mengikuti cache/polling OLT yang sudah ada, tanpa polling tambahan.
+- Pesan tiket LOS menyertakan **Redaman terakhir** beserta sumber dan waktu data.
+  Pembacaan terakhir OLT yang valid diprioritaskan; jika tidak tersedia, gunakan
+  nilai ACS dari identitas modem/akun/NAS yang cocok. Data ACS ikut dalam batch
+  identitas background existing, bukan summon atau permintaan per pesan. Nilai
+  tanpa timestamp, positif/nol, ambigu atau milik modem pengganti tidak ditebak.
+  Jika keduanya tidak tersedia, tampil `-`. Tiket kelompok memakai rentang nilai
+  dan cakupan ONU yang datanya valid, bukan menganggap satu angka mewakili ODP.
+  Snapshot nilai disimpan pada tiket agar tetap terbaca setelah restart; waktu
+  data tidak diganti menjadi waktu kirim. Placeholder template: `[last_rx]`.
 - Tiket gangguan ODP menghitung anggota yang benar-benar terpetakan, bukan
   kapasitas tetap 8/16 port. Target pemulihan minimal **90% ONU layak hitung online**
   pada setiap ODP; modem yang terbukti kehilangan daya dipisahkan dari hitungan.
@@ -586,8 +603,10 @@ tidak dapat diganti agar format indeks dan identitas ONU lama tidak tercampur.
 Semua library vendor disertakan, tetapi keberadaan nama vendor bukan jaminan
 setiap fitur firmware telah diuji. Inventory yang belum tersedia diberi status
 belum terverifikasi, bukan jumlah nol. Kegagalan pembacaan mempertahankan data
-terakhir dengan penanda data lama. Tiket LOS otomatis untuk driver baru belum
-diaktifkan; tiket manual tetap dapat digunakan.
+terakhir dengan penanda data lama. Pemeriksaan reboot tiga pembacaan berlaku
+untuk seluruh vendor terdaftar ketika inventory ONU valid tersedia. Tiket LOS
+otomatis memerlukan penyebab LOS eksplisit yang terverifikasi, bukan sekadar
+status Down/Offline. Tiket manual tetap dapat digunakan tanpa menunggu bukti LOS.
 
 HIOSO 2 PON dan 4 PON dideteksi dari daftar port fisik web/CLI atau antarmuka
 SNMP, bukan nama OLT atau jumlah ONU terpasang. PON kosong tetap ditampilkan
@@ -600,8 +619,9 @@ tersedia setelah form native dikenali. Ganti nama diverifikasi kembali;
 hapus harus offline dan hilangnya record diperiksa sesudah perintah. Reboot
 memakai penanda jeda gangguan existing, bukan factory reset. Hasil ambigu tidak
 dicoba ulang otomatis. Save Config memakai jalur terverifikasi yang dijelaskan
-di bawah. Provisioning dan tiket LOS otomatis HIOSO belum diaktifkan;
-klasifikasi firmware yang belum pasti tidak dianggap LOS.
+di bawah. Provisioning HIOSO belum diaktifkan. Pemeriksaan reboot HIOSO memakai
+aturan lintas vendor yang sama; POWERDOWN tidak membuat tiket LOS, sedangkan
+Down/Timeout tanpa penyebab pasti hanya diamati, tidak dipaksakan menjadi LOS.
 MAC EPON tidak dianggap serial GPON. Penghapusan gabungan hanya memakai
 kecocokan tepat MAC antarmuka ONT asli pada satu record ACS, disertai pemeriksaan
 NAS, pemilik, posisi dan inform terakhir; MAC klien WiFi tidak dipakai.
