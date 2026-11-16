@@ -18,6 +18,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Menahan tiket/WA LOS baru hingga tiga pembacaan baru berturut-turut dengan jarak hitungan minimal tiga menit. Cache/refresh cepat tidak dihitung; online, Dying Gasp, data hilang atau tidak diketahui pada inventory valid membatalkan pengamatan. Status pengamatan terbatas bertahan setelah restart, mengikat identitas/posisi/revisi OLT, dan melengkapi jeda reboot aplikasi tanpa mengubah tiket existing, pemulihan, parameter modem atau interval polling.
 - Membatasi penutupan manual tiket umum dan pembukaan kembali ke Admin/Sekretaris. Teknisi penanggung jawab/pendamping dapat menutup ODP/ODC/PON yang ditugaskan hanya setelah target pemulihan terbaru diperiksa server; tiket kelompok tidak ditutup otomatis.
 - Checklist Data Valid member hanya mensyaratkan nama pelanggan, alamat, koordinat dan foto rumah. Nama KTP, nomor KTP dan foto KTP tidak dihitung atau ditampilkan pada checklist; pengisian, OCR dan unggahan KTP tetap tersedia.
 - Memperbarui patch keamanan pustaka pemrosesan gambar dan ekspansi pola. Installer/updater menyelaraskan prasyarat Node.js 20.9+ dan memakai Node.js 22 LTS bila runtime perlu diperbarui, sebelum memasang dependency di staging.

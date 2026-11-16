@@ -314,10 +314,21 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   Other, data lama, dan pembacaan gagal tidak membuat tiket LOS. Satu gangguan
   yang belum pulih tidak membuat tiket berulang, termasuk setelah restart.
   Tiket aktif yang sudah ada digunakan kembali, bukan digandakan.
+- LOS baru harus terbaca **tiga kali berturut-turut pada pembacaan baru**, dengan
+  jarak hitungan minimal tiga menit, sebelum membuat tiket atau mengantrekan WA.
+  Normalnya konfirmasi membutuhkan sekitar enam menit sejak pertama terdeteksi,
+  ditambah waktu menunggu polling pertama. Refresh cepat dan cache yang sama
+  tidak menambah hitungan. Online, Dying Gasp, status tidak diketahui atau ONU
+  hilang pada inventory yang valid membatalkan pengamatan; timeout tidak dihitung.
+  Pengamatan terbatas tersimpan saat restart, terikat OLT/revisi/posisi/serial,
+  dan jeda pembacaan terlalu panjang memulai konfirmasi ulang. Penanda reboot
+  aplikasi lima menit tetap berlaku, lalu LOS harus dikonfirmasi kembali.
+  Tiket yang sudah ada dan pemulihannya tetap berjalan; tidak mengubah status
+  asli OLT, menambah polling, atau menebak gangguan listrik massal.
 - Saat ONU terkonfirmasi online kembali, tiket LOS satuan **ditutup otomatis**,
   dengan catatan pemulihan dan riwayat petugas tetap tersimpan. Untuk PON/ODP,
-  seluruh ONU yang tercatat terdampak harus online; data kosong, timeout, dan
-  Dying Gasp bukan bukti pemulihan. Tiket manual tetap ditutup oleh petugas.
+  target pemulihan kelompok mengikuti aturan per ODP di bawah; data kosong dan
+  timeout bukan bukti pemulihan. Tiket manual tetap ditutup oleh petugas.
   Jika tiket sudah selesai dan kemudian terjadi
   LOS baru setelah pemulihan, sistem dapat membuat tiket kejadian berikutnya.
   Pemeriksaan mengikuti cache/polling OLT yang sudah ada, tanpa polling tambahan.

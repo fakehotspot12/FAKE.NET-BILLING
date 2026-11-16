@@ -281,6 +281,7 @@ verify_repository_payload() {
     src/customer-device-removal.js
     src/network-address.js
     src/olt-planned-reboot.js
+    src/olt-los-confirmation.js
     src/olt-vendors.js
     src/olt-hioso.js
     src/olt-telemetry.js

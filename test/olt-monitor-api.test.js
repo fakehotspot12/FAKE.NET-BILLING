@@ -159,10 +159,11 @@ test('ACS single and batch reboots use persistent serial-normalized guards; expl
 });
 test('background LOS reconciliation persists tickets once, audits creation and never enqueues WhatsApp',async()=>{
  reset();const created=await request('admin','POST','',{name:'Unit',host:'192.0.2.90',community:'unit'}),olt=require('../src/olt-monitor'),original=olt.snapshotFor;
- const before=structuredClone({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages}),savesBefore=saves;
- olt.snapshotFor=async()=>({status:'online',checkedAt:new Date().toISOString(),onus:[{serialNumber:'HWTCAABBCCDD',ponKey:'0/0/1',name:'Unit Client',status:'offline',condition:'los',causeKnown:true,downCause:'LOS'}],ports:[]});
- try{const result=await serverModule.exports.__test.syncOltLosTickets();assert.equal(result.created.length,1);assert.equal(saves,savesBefore+1);assert(fixture.activity.some(row=>row.meta?.action==='olt-los-ticket-auto'));assert.equal(fixture.oltTickets[0].source,'olt-los');assert.equal(fixture.oltTickets[0].assignedTo,'');
- await serverModule.exports.__test.syncOltLosTickets();assert.equal(saves,savesBefore+1);assert.equal(fixture.oltTickets.length,1);
+ const before=structuredClone({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages}),savesBefore=saves,at=Date.now();
+ const snapshot={status:'online',checkedAt:new Date(at-359000).toISOString(),onus:[{serialNumber:'HWTCAABBCCDD',ponKey:'0/0/1',name:'Unit Client',status:'offline',condition:'los',causeKnown:true,downCause:'LOS'}],ports:[]};olt.snapshotFor=async()=>snapshot;
+ try{for(const offset of[-359000,-179000]){snapshot.checkedAt=new Date(at+offset).toISOString();const waiting=await serverModule.exports.__test.syncOltLosTickets();assert.equal(waiting.created.length,0);assert.equal(fixture.oltTickets.length,0);assert.equal(fixture.waMessages.length,0);}
+ snapshot.checkedAt=new Date(at+1000).toISOString();const result=await serverModule.exports.__test.syncOltLosTickets();assert.equal(result.created.length,1);assert.equal(saves,savesBefore+3);assert(fixture.activity.some(row=>row.meta?.action==='olt-los-ticket-auto'));assert.equal(fixture.oltTickets[0].source,'olt-los');assert.equal(fixture.oltTickets[0].assignedTo,'');
+ await serverModule.exports.__test.syncOltLosTickets();assert.equal(saves,savesBefore+3);assert.equal(fixture.oltTickets.length,1);
  const listed=await request('secretary');assert.equal(listed.body.ticketAutomation.enabled,true);assert.equal(listed.body.ticketAutomation.whatsappEnabled,false);assert.equal((await request('secretary','GET','/tickets')).body.tickets[0].serialNumber,'HWTCAABBCCDD');
  const changed=await request('admin','PUT','/tickets/'+fixture.oltTickets[0].id,{serialNumber:'HWTCAABB0001'});assert.equal(changed.status,400);
  assert.deepEqual({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages},before);
@@ -201,6 +202,7 @@ test('notification switch is opt-in, CSRF-protected and cancels only ticket mess
 test('automatic tickets close only after confirmed recovery and record one audited resolution',async()=>{
  reset();await request('admin','POST','',{name:'Recovery',host:'192.0.2.95',community:'unit'});const olt=require('../src/olt-monitor'),original=olt.snapshotFor,at=Date.now();
  const snapshot={status:'online',checkedAt:new Date(at).toISOString(),onus:[{serialNumber:'HWTCAABBCCDD',ponKey:'0/0/1',name:'Unit Client',status:'offline',condition:'los',causeKnown:true,downCause:'LOS'}],ports:[]};olt.snapshotFor=async()=>snapshot;
+ require('./helpers/confirmed-los')(fixture,[{deviceId:fixture.oltDevices[0].id,snapshot}]);
  try{await serverModule.exports.__test.syncOltLosTickets();assert.equal(fixture.oltTickets.length,1);snapshot.checkedAt=new Date(at+1000).toISOString();snapshot.onus[0]={...snapshot.onus[0],status:'online',condition:'online'};const result=await serverModule.exports.__test.syncOltLosTickets();assert.equal(result.resolved.length,1);assert.equal(fixture.oltTickets[0].status,'resolved');assert.equal(fixture.oltTickets[0].autoResolved,true);assert(fixture.activity.some(row=>row.meta?.action==='olt-los-ticket-recovered'));const before=saves;await serverModule.exports.__test.syncOltLosTickets();assert.equal(saves,before);assert.equal(fixture.waMessages.length,0);}finally{olt.snapshotFor=original;}
 });
 test('WA worker blocks disabled ticket messages before any transport request',async()=>{

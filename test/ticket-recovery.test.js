@@ -31,6 +31,7 @@ test('manual close of automatic grouped faults uses fresh cached data, authoriza
 test('remaining individual LOS becomes its own ticket after a group meets the recovery target',()=>{
  const list=rows(10),device={id:'olt',enabled:true,updatedAt:'unit',links:Object.fromEntries(list.map(row=>[row.serialNumber,{fiberPointId:'odp'}]))},data={settings:{},users:[],customers:[],radiusUsers:[],fiberPoints:[{id:'odp'}],oltDevices:[device],oltTickets:[]};
  list.forEach(row=>Object.assign(row,{status:'offline',condition:'los',causeKnown:true,downCause:'LOS'}));const observation=offset=>({deviceId:'olt',deviceUpdatedAt:'unit',snapshot:{status:'online',checkedAt:new Date(NOW+offset).toISOString(),onus:structuredClone(list),ports:[]}});
+ require('./helpers/confirmed-los')(data,[observation(0)]);
  let result=olt.applyLosTicketPlan(data,olt.losTicketPlan(data,[observation(0)],{now:NOW}),NOW);assert.equal(result.created.length,1);
  list.slice(0,9).forEach(row=>Object.assign(row,{status:'online',condition:'online',downCause:''}));result=olt.applyLosTicketPlan(data,olt.losTicketPlan(data,[observation(1000)],{now:NOW+1000}),NOW+1000);assert.equal(result.resolved.length,0);assert.equal(data.oltTickets[0].affectedCount,1);assert(data.oltTickets[0].recovery.ready);assert.notEqual(data.oltTickets[0].status,'resolved');
  const waiting=olt.losTicketPlan(data,[observation(1500)],{now:NOW+1500});assert.equal(waiting.changes.length,0);

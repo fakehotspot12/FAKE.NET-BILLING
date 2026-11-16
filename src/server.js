@@ -20047,7 +20047,7 @@ async function syncOltLosTickets() {
   if(!observations.length)return {changed:false,created:[],observed:0};
   const plan=oltMonitor.losTicketPlan(data,observations);
   let result={changed:false,created:[],observed:0};
-  if(plan.changes.length) {
+  if(plan.changes.length||plan.confirmationChanged) {
     ({result}=await mutate(store=>{
       const currentPlan=oltMonitor.losTicketPlan(store,observations),result=oltMonitor.applyLosTicketPlan(store,currentPlan);
       for(const ticket of result.created){

@@ -357,6 +357,7 @@ test('OLT recovery never automatically resolves a customer service ticket', asyn
   const before = structuredClone(ticket);
   for (const condition of ['los', 'online']) {
     const observation = { deviceId: 'olt-a', deviceUpdatedAt: 'r1', snapshot: { status: 'online', checkedAt: new Date(NOW + (condition === 'online' ? 1000 : 0)).toISOString(), onus: [{ serialNumber: 'HWTCAABB0001', ponKey: '0/0/1', status: condition === 'los' ? 'offline' : 'online', condition, causeKnown: true, downCause: condition === 'los' ? 'LOS' : '' }] } };
+    if(condition==='los')require('./helpers/confirmed-los')(data,[observation]);
     olt.applyLosTicketPlan(data, olt.losTicketPlan(data, [observation], { now: NOW + 1000 }), NOW + 1000);
   }
   assert.deepEqual(data.oltTickets.find(row => row.id === ticket.id), before);

@@ -10,6 +10,7 @@ const cli = require('./olt-cli');
 const networkIdentity = require('./network-identity');
 const autoIdentity = require('./olt-auto-identity');
 const plannedReboot = require('./olt-planned-reboot');
+const losConfirmation = require('./olt-los-confirmation');
 const vendors = require('./olt-vendors');
 const hioso = require('./olt-hioso');
 const telemetry = require('./olt-telemetry');
@@ -573,6 +574,7 @@ function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey) {
 }
 function losTicketPlan(data, observations, options = {}) {
   const now = options.now ?? Date.now(), changes = [], activeByOnu = new Map(), observedByOnu = new Map();
+  const confirmation = losConfirmation.prepare(data, now);
   let available = Math.max(0,500-(data.oltTickets || []).filter(row=>row.status!=='resolved').length), creates = 0, deferred = 0;
   for (const ticket of data.oltTickets || []) {
     const key=incidentKey(ticket);if(!key)continue;
@@ -584,10 +586,11 @@ function losTicketPlan(data, observations, options = {}) {
     if(device&&!vendors.canWrite(device))continue;
     const simulated=options.allowSimulated===true&&/^demo-olt-\d{1,2}$/.test(device?.id||'')&&snapshot?.simulated===true;
     const checked=Date.parse(snapshot?.checkedAt||'');
-    if(!device?.enabled||device.updatedAt!==observation.deviceUpdatedAt||snapshot?.status!=='online'||snapshot.stale||snapshot.pendingRefresh||!Number.isFinite(checked)||checked>now+30000||(!simulated&&now-checked>CACHE_MS*2)||(!simulated&&snapshot.simulated))continue;
+    if(!device?.enabled||device.updatedAt!==observation.deviceUpdatedAt||snapshot?.status!=='online'||snapshot.stale||snapshot.pendingRefresh||snapshot.inventoryAvailable===false||!Number.isFinite(checked)||checked>now+30000||(!simulated&&now-checked>CACHE_MS*2)||(!simulated&&snapshot.simulated))continue;
     const seen=new Map(),duplicates=new Set(),maintenance=plannedReboot.index(data,now);
     for(const onu of (snapshot.onus||[]).slice(0,MAX_ONUS)){const serial=normalizeSerial(onu.serialNumber);if(!serial)continue;if(seen.has(serial))duplicates.add(serial);else{const reboot=maintenance.size&&plannedReboot.forOnu(data,device,onu,{now,checkedAt:snapshot.checkedAt,index:maintenance});seen.set(serial,reboot?{...onu,plannedReboot:true}:onu);}}
     for(const serial of duplicates)seen.delete(serial);
+    confirmation.observe(device,seen,snapshot.checkedAt,isConfirmedLos);
     for(const subject of losSubjects(data,device,snapshot,seen,activeByOnu,observedByOnu)) {
       const {key,los,recovered}=subject,previous=observedByOnu.get(key),detection=previous?.losDetection;
       if(!los&&!recovered)continue;
@@ -603,6 +606,8 @@ function losTicketPlan(data, observations, options = {}) {
       }
       const active=activeByOnu.get(key),nextDetection={state:'los',firstDetectedAt:active?.losDetection?.firstDetectedAt||snapshot.checkedAt,lastLosAt:snapshot.checkedAt,observedAt:snapshot.checkedAt,recoveredAt:'',occurrences:(active?.losDetection?.occurrences||0)+1};
       if(active){changes.push({kind:'observe',id:active.id,patch:active.source==='olt-los'?{affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers,...(subject.recovery?{recovery:subject.recovery}:{})}:{},losDetection:nextDetection});continue;}
+      const currentLos=subject.affectedSerialNumbers.map(serial=>seen.get(serial)).filter(row=>row&&isConfirmedLos(row));
+      if(!currentLos.length||!currentLos.every(onu=>confirmation.confirmed(device,onu,snapshot.checkedAt)))continue;
       if(!available)continue;
       if(creates>=50){deferred++;continue;}
       available--;creates++;
@@ -610,10 +615,12 @@ function losTicketPlan(data, observations, options = {}) {
       changes.push({kind:'create',payload:{oltId:device.id,serialNumber:subject.serialNumber,pon:subject.pon,title:subject.title.slice(0,160),description:'',assignedTo:'',status:'new',scope:subject.scope,fiberPointId:subject.fiberPointId||''},scope:subject.scope,recovery:subject.recovery,recoveryTargets:subject.recoveryTargets,onuIndex:subject.onuIndex||'',optical:subject.optical,affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers,losDetection:nextDetection,onuName:String(subject.onuName||'').slice(0,160),customerId:customer?.id||'',customerName:customer?.name||'',fiberPointId:subject.fiberPointId||link.fiberPointId||'',fiberPointName:subject.fiberPointName||'',simulated});
     }
   }
-  return {changes,creates,deferred};
+  const confirmedState=confirmation.result();
+  return {changes,creates,deferred,confirmationRows:confirmedState.rows,confirmationChanged:confirmedState.changed};
 }
 function applyLosTicketPlan(data, plan, now = Date.now()) {
-  if(!plan.changes.length)return {changed:false,created:[],resolved:[],observed:0};
+  if(plan.confirmationChanged)data.oltLosObservations=plan.confirmationRows;
+  if(!plan.changes.length)return {changed:plan.confirmationChanged===true,created:[],resolved:[],observed:0};
   const rows=[...(data.oltTickets||[])],byId=new Map(rows.map((row,index)=>[row.id,index])),created=[],resolved=[];let observed=0;
   for(const change of plan.changes) {
     if(change.kind==='observe') {

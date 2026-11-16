@@ -1,21 +1,22 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const olt=require('../src/olt-monitor'),{createDefaultStore}=require('../src/store');
+const priorLosReads=require('./helpers/confirmed-los');
 const NOW=Date.now();
 function onu(serialNumber='HWTCAABB0001',condition='los') {
  return {id:'4718593',serialNumber,name:'Pelanggan Unit',ponKey:'0/0/1',status:condition==='online'?'online':'offline',condition,causeKnown:condition==='los'||condition==='dying-gasp',downCause:condition==='los'?'LOS':condition==='dying-gasp'?'dying-gasp':'',rxPower:null};
 }
 function fixture(){const data=createDefaultStore();data.oltDevices=[{id:'olt-a',name:'OLT A',enabled:true,updatedAt:'revision-a',links:{HWTCAABB0001:{customerId:'member-a',fiberPointId:'odp-a'}}}];data.customers=[{id:'member-a',name:'Member Unit'}];data.fiberPoints=[{id:'odp-a'}];return data;}
 function observation(data,onus=[onu()],offset=0,extra={}){const device=data.oltDevices[0];return{deviceId:device.id,deviceUpdatedAt:device.updatedAt,snapshot:{status:'online',checkedAt:new Date(NOW+offset).toISOString(),onus,ports:[],...extra}};}
-function apply(data,obs,offset=0,options={}){const plan=olt.losTicketPlan(data,Array.isArray(obs)?obs:[obs],{now:NOW+offset,...options});return{plan,result:olt.applyLosTicketPlan(data,plan,NOW+offset)};}
+function apply(data,obs,offset=0,options={}){const observations=Array.isArray(obs)?obs:[obs];priorLosReads(data,observations);const plan=olt.losTicketPlan(data,observations,{now:NOW+offset,...options});return{plan,result:olt.applyLosTicketPlan(data,plan,NOW+offset)};}
 test('only explicit current LOS creates automatic unassigned tickets, leaving business and WA data untouched',()=>{
- const data=fixture(),before=JSON.stringify({...data,oltTickets:undefined});
+ const data=fixture(),before=JSON.stringify({...data,oltTickets:undefined,oltLosObservations:undefined});
  const obs=observation(data,[onu(),onu('HWTCAABB0002','dying-gasp'),onu('HWTCAABB0003','other'),onu('HWTCAABB0004','online')]);
- const {result}=apply(data,obs);assert.equal(result.created.length,1);const ticket=result.created[0];assert.equal(ticket.source,'olt-los');assert.equal(ticket.oltId,'olt-a');assert.equal(ticket.serialNumber,'HWTCAABB0001');assert.equal(ticket.pon,'0/0/1');assert.equal(ticket.assignedTo,'');assert.equal(ticket.status,'new');assert.equal(ticket.customerId,'member-a');assert.equal(ticket.fiberPointId,'odp-a');assert.equal(ticket.createdBy,'system-olt');assert.equal(ticket.losDetection.state,'los');assert.equal(data.waMessages.length,0);assert.equal(JSON.stringify({...data,oltTickets:undefined}),before);
+ const {result}=apply(data,obs);assert.equal(result.created.length,1);const ticket=result.created[0];assert.equal(ticket.source,'olt-los');assert.equal(ticket.oltId,'olt-a');assert.equal(ticket.serialNumber,'HWTCAABB0001');assert.equal(ticket.pon,'0/0/1');assert.equal(ticket.assignedTo,'');assert.equal(ticket.status,'new');assert.equal(ticket.customerId,'member-a');assert.equal(ticket.fiberPointId,'odp-a');assert.equal(ticket.createdBy,'system-olt');assert.equal(ticket.losDetection.state,'los');assert.equal(data.waMessages.length,0);assert.equal(JSON.stringify({...data,oltTickets:undefined,oltLosObservations:undefined}),before);
 });
 test('repeated polls and serialized restart do not create duplicates or rewrite tickets',()=>{
  const data=fixture();apply(data,observation(data));const before=JSON.stringify(data.oltTickets);
- for(const offset of [1000,3000,180000]){const result=apply(data,observation(data,[onu()],offset),offset);assert.equal(result.plan.changes.length,0);assert.equal(result.result.changed,false);}
+ for(const offset of [1000,3000,180000]){const result=apply(data,observation(data,[onu()],offset),offset);assert.equal(result.plan.changes.length,0);assert.equal(result.result.created.length,0);}
  const restarted=JSON.parse(JSON.stringify(data));assert.equal(apply(restarted,observation(restarted,[onu()],240000),240000).plan.changes.length,0);assert.equal(JSON.stringify(data.oltTickets),before);
 });
 test('closing a ticket while LOS remains does not open it again; new incident requires observed recovery',()=>{
