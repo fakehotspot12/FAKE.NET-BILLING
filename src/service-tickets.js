@@ -78,7 +78,8 @@ function visibilityFilter(data,user,devices) {
   const unrestricted=['admin','owner','noc','secretary'].includes(user.role);
   let allowed,locks;
   return ticket=>{
-    const billingRecipient=user.role==='collector'&&isServiceTicket(ticket)&&ticket.category==='billing'&&(data.settings?.oltTicketing?.recipientIds||[]).includes(user.id);
+    const settings=data.settings?.oltTicketing||{},billingRecipients=Array.isArray(settings.billingRecipientIds)?settings.billingRecipientIds:settings.recipientIds||[];
+    const billingRecipient=user.role==='collector'&&isServiceTicket(ticket)&&ticket.category==='billing'&&billingRecipients.includes(user.id);
     if(safe.ticketCreationLimited&&ticket.id&&!(ticket.source==='staff-service'&&ticket.createdBy===user.id)&&!billingRecipient)return false;
     if(user.role==='partner'&&ticket.customerId){const member=(data.customers||[]).find(row=>row.id===ticket.customerId),account=member&&networkIdentity.directory(data).userForCustomer(member),username=String(account?.username||member?.username||'').toLowerCase();if(!safe.partnerUsernameSuffixes.some(suffix=>username.endsWith(String(suffix).toLowerCase())))return false;}
     if(!isServiceTicket(ticket)){allowed??=new Set((devices||olt.visibleDevices(data,user)).map(device=>device.id));return allowed.has(ticket.oltId);}

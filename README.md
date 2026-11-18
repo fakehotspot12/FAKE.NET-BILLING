@@ -322,7 +322,12 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   Ceklis penerima tidak memberikan izin mengambil/menangani tiket teknis atau
   mengelola OLT. Akses menu tiket tetap mengikuti pengaturan user; tukang tagih
   terpilih dapat membaca tiket pembayaran pada NAS-nya tanpa melihat gangguan
-  pelanggan lain. Maksimal 25 penerima dipertahankan untuk membatasi antrean.
+  pelanggan lain. Admin, Owner dan Sekretaris memiliki ceklis Gangguan serta
+  Tagihan/Pembayaran yang terpisah; boleh memilih salah satu atau keduanya.
+  Pilihan tagihan untuk administrator default tidak dicentang dan tidak
+  membatasi hak superuser. Pilihan Keuangan/tukang tagih yang sudah diaktifkan
+  sebelumnya tetap dipertahankan. Maksimal 25 penerima per kategori dipertahankan
+  untuk membatasi antrean.
 - Satu pelanggan hanya memiliki satu penanganan **gangguan** aktif. Laporan
   gangguan berbeda kategori di WifiKu ditambahkan ke tiket layanan yang masih
   aktif; pengajuan berulang oleh petugas menunjukkan nomor tiket yang harus

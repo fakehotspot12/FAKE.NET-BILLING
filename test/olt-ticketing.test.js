@@ -19,8 +19,8 @@ test('OLT messages prioritize real customer without treating raw ONU description
 test('ticket notification defaults to disabled and validates explicit authorized recipients',()=>{
  const empty=createDefaultStore();assert.equal(ticketing.settingsFor(empty).whatsappEnabled,false);const data=fixture();assert.deepEqual(ticketing.eligibleUsers(data).map(row=>row.role),['admin','technician','secretary']);
  for(const recipientIds of [[],['unknown']])assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds}));
- assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds:['finance']}).recipientIds,['finance']);
- assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:'yes',recipientIds:['technician']}));assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:false,recipientIds:[]}),{whatsappEnabled:false,recipientIds:[],customerOutageEnabled:false});
+ assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds:['finance']}).billingRecipientIds,['finance']);
+ assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:'yes',recipientIds:['technician']}));assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:false,recipientIds:[]}),{whatsappEnabled:false,recipientIds:[],billingRecipientIds:[],customerOutageEnabled:false});
  data.users[1].phone='';assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds:['technician']}));
 });
 test('ticket URLs are fixed internal paths with no password or login bypass',()=>{
@@ -135,7 +135,7 @@ test('service ticket paging respects NAS and roles without OLT linkage and strip
 
 test('service fault dedup keys isolate customer and category, and notifications recheck NAS authorization',()=>{
  const data=fixture(),base={id:'service-a',number:'TKT-UNIT',source:'wifiku',scope:'service',kind:'request',category:'billing',customerId:'member-a',customerName:'Member A',nasId:'nas-a',nasName:'NAS A',oltId:'',status:'new',assignedTo:'',createdAt:new Date().toISOString(),messages:[{role:'customer',text:'Customer request'}],description:'PRIVATE_NOTE',history:[{note:'PRIVATE_HISTORY'}]};
- data.oltTickets=[base];data.users[1].lockedNasIds=['nas-b'];
+ data.oltTickets=[base];data.users[1].lockedNasIds=['nas-b'];data.settings.oltTicketing.billingRecipientIds=['secretary'];
  assert.deepEqual(ticketing.recipientsFor(data,base).map(row=>row.id),['secretary']);assert.equal(ticketing.enqueueNotifications(data,base,'detected','https://billing.example.test',enqueue).queued,1);
  const message=data.waMessages[0];assert(message.text.includes('Customer request'));assert(message.text.includes('Member A'));assert(!message.text.includes('PRIVATE_'));assert.equal(ticketing.deliveryAllowed(data,message),true);
  const key=ticketing.faultKeyFor(base,message.phone);assert.match(key,/^[a-f0-9]{64}$/);assert.equal(ticketing.faultKeyFor({...base,id:'new-ticket'},message.phone),key);

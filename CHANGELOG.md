@@ -6,6 +6,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
 ### Fixed
 
+- Memisahkan ceklis penerima Gangguan dan Tagihan/Pembayaran untuk Admin, Owner dan Sekretaris. Pilihan tagihan baru default tidak dicentang, tidak mengubah hak superuser, dan pilihan Keuangan/tukang tagih yang sebelumnya sudah diaktifkan tetap dipertahankan. Simpan/pengiriman memeriksa kategori dan cakupan NAS; aset browser diperbarui tanpa menaikkan nomor versi lagi.
 - Pengaturan penerima WhatsApp tiket menampilkan kelompok Petugas Gangguan dan Tagihan/Pembayaran, pencarian nama/nomor/NAS, filter Hanya Terpilih dan daftar ringkas responsif. Keuangan/tukang tagih dengan akses tiket dapat dipilih khusus notifikasi pembayaran sesuai NAS, tanpa memperoleh hak teknis atau aksi OLT; hak penerima diperiksa ulang sebelum pengiriman.
 - Satu penanganan gangguan aktif per pelanggan: laporan gangguan berbeda kategori mengikuti tiket layanan yang masih aktif, sedangkan input petugas yang berulang ditolak dengan nomor tiket yang harus dilanjutkan. Permintaan PSB, tambahan layanan, perubahan paket, tagihan, dan permintaan non-gangguan tetap dapat dibuat terpisah.
 - LOS saat penggantian modem mengikuti tiket gangguan existing berdasarkan ID pelanggan dan snapshot identitas/posisi modem terverifikasi. Tidak menggunakan kemiripan nama, tidak membuat tiket atau WhatsApp gangguan baru, dan tidak menutup tiket layanan secara otomatis. Modem berpindah pemilik/NAS/PON tidak mewarisi penanganan lama.
