@@ -284,11 +284,12 @@ test('resolved tickets reject customer and staff replies, and conversation and p
 
 test('active customer ceiling is five but continuing an existing category remains available', async () => {
   const data = fixture();
-  for (const category of service.CATEGORIES.slice(0, 5)) await opened(data, { category: category.id });
+  const requests=service.CATEGORIES.filter(row=>row.kind==='request');
+  for (const category of requests.slice(0, 5)) await opened(data, { category: category.id });
   const before = structuredClone(data);
-  await assert.rejects(opened(data, { category: service.CATEGORIES[5].id }), status(429));
+  await assert.rejects(opened(data, { category: requests[5].id }), status(429));
   assert.deepEqual(data, before);
-  assert.equal((await service.create(data, customer, post({ text: 'Follow up' }), { now: NOW + 10000 })).created, false);
+  assert.equal((await service.create(data, customer, post({ category:requests[0].id,text: 'Follow up' }), { now: NOW + 10000 })).created, false);
   assert.equal((await service.create(data, other, post(), { now: NOW })).created, true);
 });
 
@@ -361,7 +362,7 @@ test('OLT recovery never automatically resolves a customer service ticket', asyn
     olt.applyLosTicketPlan(data, olt.losTicketPlan(data, [observation], { now: NOW + 1000 }), NOW + 1000);
   }
   assert.deepEqual(data.oltTickets.find(row => row.id === ticket.id), before);
-  assert(data.oltTickets.some(row => row.source === 'olt-los' && row.status === 'resolved'));
+  assert.equal(data.oltTickets.length,1,'LOS must follow the existing customer fault instead of creating a second ticket');
 });
 
 test('private photos transcode JPG, PNG and WebP, strip metadata and use restrictive filesystem modes', async t => {

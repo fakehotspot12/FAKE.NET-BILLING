@@ -24050,7 +24050,7 @@ async function handleApi(req, res, url) {
       sendJson(res,200,{...page,devices:page.devices.map(device=>({...device,nasName:nasRows.find(nas=>nas.id===device.nasId)?.name||''})),
         nasOptions:nasRows.filter(nas=>nasIds.has(nas.id)).map(nas=>({id:nas.id,name:nas.name})),
         technicians:oltTicketing.eligibleUsers(data).map(user=>({id:user.id,name:user.name||user.username})),categories:serviceTickets.CATEGORIES,ticketTemplates:oltMonitor.ticketTemplates(data),
-        ...(manage?{ticketSettings:{...oltTicketing.settingsFor(data),gatewayEnabled:data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.eligibleUsers(data).map(user=>({id:user.id,name:user.name||user.username,role:user.role,phone:oltTicketing.phoneFor(user)}))}:{})});
+        ...(manage?{ticketSettings:{...oltTicketing.settingsFor(data),gatewayEnabled:data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.recipientOptions(data)}:{})});
     }catch(error){badRequest(res,error.message);}return;
   }
   if(pathname==='/api/monitoring/olt/service-options'&&method==='GET'){

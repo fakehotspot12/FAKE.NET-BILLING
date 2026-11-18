@@ -18,7 +18,8 @@ test('OLT messages prioritize real customer without treating raw ONU description
 });
 test('ticket notification defaults to disabled and validates explicit authorized recipients',()=>{
  const empty=createDefaultStore();assert.equal(ticketing.settingsFor(empty).whatsappEnabled,false);const data=fixture();assert.deepEqual(ticketing.eligibleUsers(data).map(row=>row.role),['admin','technician','secretary']);
- for(const recipientIds of [[],['finance'],['unknown']])assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds}));
+ for(const recipientIds of [[],['unknown']])assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds}));
+ assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds:['finance']}).recipientIds,['finance']);
  assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:'yes',recipientIds:['technician']}));assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:false,recipientIds:[]}),{whatsappEnabled:false,recipientIds:[],customerOutageEnabled:false});
  data.users[1].phone='';assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds:['technician']}));
 });
@@ -139,5 +140,5 @@ test('service fault dedup keys isolate customer and category, and notifications 
  const message=data.waMessages[0];assert(message.text.includes('Customer request'));assert(message.text.includes('Member A'));assert(!message.text.includes('PRIVATE_'));assert.equal(ticketing.deliveryAllowed(data,message),true);
  const key=ticketing.faultKeyFor(base,message.phone);assert.match(key,/^[a-f0-9]{64}$/);assert.equal(ticketing.faultKeyFor({...base,id:'new-ticket'},message.phone),key);
  assert.notEqual(ticketing.faultKeyFor({...base,customerId:'member-b'},message.phone),key);assert.notEqual(ticketing.faultKeyFor({...base,category:'addon'},message.phone),key);
- data.users[2].role='finance';assert.equal(ticketing.deliveryAllowed(data,message),false);assert.equal(ticketing.cancelQueued(data),1);
+ data.users[2].role='viewer';assert.equal(ticketing.deliveryAllowed(data,message),false);assert.equal(ticketing.cancelQueued(data),1);
 });

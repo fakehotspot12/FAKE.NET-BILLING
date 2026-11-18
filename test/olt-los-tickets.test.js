@@ -45,7 +45,7 @@ test('missing data and power loss cannot falsely mark LOS as recovered',()=>{
 });
 test('duplicate serial within one snapshot is ignored; same serial on different OLTs stays separate',()=>{
  const data=fixture();assert.equal(apply(data,observation(data,[onu(),onu()])).plan.changes.length,0);
- data.oltDevices.push({...data.oltDevices[0],id:'olt-b',name:'B'});const a=observation(data),b={...a,deviceId:'olt-b'};assert.equal(apply(data,[a,b]).result.created.length,2);
+ data.oltDevices.push({...data.oltDevices[0],id:'olt-b',name:'B',links:{}});const a=observation(data),b={...a,deviceId:'olt-b'};assert.equal(apply(data,[a,b]).result.created.length,2);
 });
 test('stale recovery observation cannot overwrite a newer LOS episode',()=>{
  const data=fixture();apply(data,observation(data,[onu()],2000),2000);assert.equal(apply(data,observation(data,[onu('HWTCAABB0001','online')],1000),3000).plan.changes.length,0);assert.equal(data.oltTickets[0].losDetection.state,'los');

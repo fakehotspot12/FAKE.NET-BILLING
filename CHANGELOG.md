@@ -2,6 +2,16 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.5.1] - 2026-11-18
+
+### Fixed
+
+- Pengaturan penerima WhatsApp tiket menampilkan kelompok Petugas Gangguan dan Tagihan/Pembayaran, pencarian nama/nomor/NAS, filter Hanya Terpilih dan daftar ringkas responsif. Keuangan/tukang tagih dengan akses tiket dapat dipilih khusus notifikasi pembayaran sesuai NAS, tanpa memperoleh hak teknis atau aksi OLT; hak penerima diperiksa ulang sebelum pengiriman.
+- Satu penanganan gangguan aktif per pelanggan: laporan gangguan berbeda kategori mengikuti tiket layanan yang masih aktif, sedangkan input petugas yang berulang ditolak dengan nomor tiket yang harus dilanjutkan. Permintaan PSB, tambahan layanan, perubahan paket, tagihan, dan permintaan non-gangguan tetap dapat dibuat terpisah.
+- LOS saat penggantian modem mengikuti tiket gangguan existing berdasarkan ID pelanggan dan snapshot identitas/posisi modem terverifikasi. Tidak menggunakan kemiripan nama, tidak membuat tiket atau WhatsApp gangguan baru, dan tidak menutup tiket layanan secara otomatis. Modem berpindah pemilik/NAS/PON tidak mewarisi penanganan lama.
+- Snapshot perangkat dibatasi per penanganan, bertahan setelah restart dan memakai cache/pembacaan OLT/ACS existing tanpa polling, dependency atau migrasi database tambahan. Gangguan pelanggan lain, konfirmasi reboot/LOS, pembatasan NAS dan permintaan non-gangguan tetap dipertahankan.
+- Installer dan updater memverifikasi modul pengaman tiket sebelum aktivasi rilis. Tidak mengubah parameter ACS, konfigurasi ONU/OLT, invoice, transaksi, jadwal billing atau pacing WhatsApp.
+
 ## [4.5.0] - 2026-11-15
 
 ### Added

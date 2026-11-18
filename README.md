@@ -314,6 +314,29 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   Other, data lama, dan pembacaan gagal tidak membuat tiket LOS. Satu gangguan
   yang belum pulih tidak membuat tiket berulang, termasuk setelah restart.
   Tiket aktif yang sudah ada digunakan kembali, bukan digandakan.
+- Penerima WhatsApp dipilih melalui ceklis di **Pengaturan Tiket**. Daftar
+  dikelompokkan menjadi Petugas Gangguan dan Tagihan/Pembayaran, dilengkapi
+  pencarian nama/nomor/NAS dan filter Hanya Terpilih. Keuangan/tukang tagih hanya
+  menerima kategori Tagihan/Pembayaran sesuai cakupan NAS. Nomor mengikuti data
+  user; akses tiket dan nomor WhatsApp harus valid sebelum dapat dipilih.
+  Ceklis penerima tidak memberikan izin mengambil/menangani tiket teknis atau
+  mengelola OLT. Akses menu tiket tetap mengikuti pengaturan user; tukang tagih
+  terpilih dapat membaca tiket pembayaran pada NAS-nya tanpa melihat gangguan
+  pelanggan lain. Maksimal 25 penerima dipertahankan untuk membatasi antrean.
+- Satu pelanggan hanya memiliki satu penanganan **gangguan** aktif. Laporan
+  gangguan berbeda kategori di WifiKu ditambahkan ke tiket layanan yang masih
+  aktif; pengajuan berulang oleh petugas menunjukkan nomor tiket yang harus
+  dilanjutkan. Jika gangguan sudah ditangani pada tiket OLT, pengajuan pelanggan
+  diarahkan untuk menghubungi admin tanpa membuka tiket kedua atau mengekspos
+  catatan teknis internal. PSB, tambahan layanan, perubahan paket, pembayaran,
+  serta permintaan non-gangguan tetap dapat dibuat terpisah.
+- Saat modem diganti, LOS mengikuti penanganan gangguan pelanggan yang masih
+  aktif jika ID pelanggan atau snapshot modem/posisi sebelumnya terverifikasi.
+  Snapshot dibatasi delapan perangkat per tiket dan mengikuti pembacaan/cache
+  existing, bukan polling tambahan. Modem yang tidak diketahui pemiliknya tidak
+  dicocokkan dari nama/description; gangguannya tetap diproses normal. Perubahan
+  pemilik, NAS atau posisi tidak mewarisi snapshot lama. Tiket layanan tetap
+  diselesaikan oleh petugas, bukan otomatis akibat modem kembali online.
 - LOS baru harus terbaca **tiga kali berturut-turut pada pembacaan baru**, dengan
   jarak hitungan minimal tiga menit, sebelum membuat tiket atau mengantrekan WA.
   Normalnya konfirmasi membutuhkan sekitar enam menit sejak pertama terdeteksi,

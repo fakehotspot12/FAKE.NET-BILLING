@@ -14,6 +14,7 @@ const losConfirmation = require('./olt-los-confirmation');
 const vendors = require('./olt-vendors');
 const hioso = require('./olt-hioso');
 const telemetry = require('./olt-telemetry');
+const ticketIncidents = require('./ticket-incidents');
 
 const exec = promisify(execFile);
 const OIDS = Object.freeze({
@@ -544,7 +545,7 @@ function incidentKey(ticket) {
   if(ticket.scope==='odp'&&ticket.fiberPointId)return `${ticket.oltId}:odp:${ticket.fiberPointId}`;
   return ticket.pon?`${ticket.oltId}:pon:${ticket.pon}`:'';
 }
-function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey) {
+function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey,covered=new Set()) {
   const groups=new Map(),consumed=new Set(),subjects=[],recovery=require('./ticket-recovery');
   const needsGroups=[...seen.values()].some(isConfirmedLos)||[...activeByKey.values(),...observedByKey.values()].some(ticket=>ticket.oltId===device.id&&recovery.grouped(ticket));
   const topology=needsGroups?recovery.topology(data,device,[...seen.values()]):[];
@@ -559,7 +560,7 @@ function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey) {
     const qualifies=(lost.length>=(group.scope==='pon'?3:2)&&lost.length*2>=members.length)||(ponDown&&lost.length>0);
     const ongoing=Boolean(active||previous?.losDetection?.state==='los');
     if(!qualifies&&!ongoing)continue;
-    if(!ongoing&&lost.some(row=>activeByKey.has(incidentKey({oltId:device.id,serialNumber:row.serialNumber}))))continue;
+    if(!ongoing&&lost.some(row=>covered.has(row.serialNumber)||activeByKey.has(incidentKey({oltId:device.id,serialNumber:row.serialNumber}))))continue;
     const previousSerials=tracked?.affectedSerialNumbers||[],affectedSerialNumbers=[...new Set([...previousSerials,...lost.map(row=>row.serialNumber)])].sort().slice(0,1024);
     const measured=recovery.measure({...tracked,scope:group.scope,fiberPointId:group.fiberPointId,pon:group.pon||tracked?.pon||''},seen,group.members.map(row=>bySerial.get(row.serialNumber))),recovered=measured.ready;
     const pon=group.pon||([...new Set(members.map(row=>row.ponKey))].length===1?members[0]?.ponKey:'')||'';
@@ -567,6 +568,7 @@ function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey) {
     if(lost.length||ongoing)for(const row of members)consumed.add(row.serialNumber);
   }
   for(const onu of seen.values())if(!consumed.has(onu.serialNumber)||onu.status==='online'){
+    if(covered.has(onu.serialNumber))continue;
     const key=incidentKey({oltId:device.id,serialNumber:onu.serialNumber}),prior=activeByKey.get(key)||observedByKey.get(key),los=isConfirmedLos(onu);
     if(!los&&!(onu.status==='online'&&prior?.losDetection?.state==='los'))continue;
     subjects.push({key,scope:'onu',serialNumber:onu.serialNumber,onuIndex:String(onu.id||''),optical:lastOptical(snapshot,onu),pon:onu.ponKey||'',los,recovered:onu.status==='online',affectedSerialNumbers:[onu.serialNumber],affectedCount:los?1:0,title:`LOS - ${onu.name||onu.serialNumber}`,onuName:onu.name});
@@ -576,6 +578,7 @@ function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey) {
 function losTicketPlan(data, observations, options = {}) {
   const now = options.now ?? Date.now(), changes = [], activeByOnu = new Map(), observedByOnu = new Map();
   const confirmation = losConfirmation.prepare(data, now);
+  const incidents = ticketIncidents.observationGuard(data, now), pendingCustomers = new Map();
   let available = Math.max(0,500-(data.oltTickets || []).filter(row=>row.status!=='resolved').length), creates = 0, deferred = 0;
   for (const ticket of data.oltTickets || []) {
     const key=incidentKey(ticket);if(!key)continue;
@@ -592,7 +595,8 @@ function losTicketPlan(data, observations, options = {}) {
     for(const onu of (snapshot.onus||[]).slice(0,MAX_ONUS)){const serial=normalizeSerial(onu.serialNumber);if(!serial)continue;if(seen.has(serial))duplicates.add(serial);else{const reboot=maintenance.size&&plannedReboot.forOnu(data,device,onu,{now,checkedAt:snapshot.checkedAt,index:maintenance});seen.set(serial,reboot?{...onu,plannedReboot:true}:onu);}}
     for(const serial of duplicates)seen.delete(serial);
     confirmation.observe(device,seen,snapshot.checkedAt,isRebootCandidate,isConfirmedLos);
-    for(const subject of losSubjects(data,device,snapshot,seen,activeByOnu,observedByOnu)) {
+    const covered=incidents.cover(device,seen,snapshot.checkedAt,onu=>isConfirmedLos(onu)&&confirmation.confirmed(device,onu,snapshot.checkedAt));
+    for(const subject of losSubjects(data,device,snapshot,seen,activeByOnu,observedByOnu,covered)) {
       const {key,los,recovered}=subject,previous=observedByOnu.get(key),detection=previous?.losDetection;
       if(!los&&!recovered)continue;
       if(detection&&Date.parse(detection.observedAt)>=checked)continue;
@@ -611,26 +615,32 @@ function losTicketPlan(data, observations, options = {}) {
       if(!currentLos.length||!currentLos.every(onu=>confirmation.confirmed(device,onu,snapshot.checkedAt)))continue;
       if(!available)continue;
       if(creates>=50){deferred++;continue;}
+      const link=device.links?.[subject.serialNumber]||{},customer=subject.serialNumber?ticketIncidents.owner(data,device,{serialNumber:subject.serialNumber,id:subject.onuIndex},now).customer:null;
+      if(customer&&pendingCustomers.has(customer.id))continue;
       available--;creates++;
-      const link=device.links?.[subject.serialNumber]||{},automatic=autoIdentity.customerFor(data,device,{serialNumber:subject.serialNumber}),customer=autoIdentity.manualCustomerFor(data,device,{serialNumber:subject.serialNumber})||automatic?.customer;
       const opticalCandidates=subject.serialNumber?[]:subject.affectedSerialNumbers.map(sn=>seen.get(sn)).filter(onu=>onu&&isConfirmedLos(onu)).map(onu=>({serialNumber:onu.serialNumber,onuIndex:String(onu.id),pon:onu.ponKey,optical:lastOptical(snapshot,onu)}));
       changes.push({kind:'create',payload:{oltId:device.id,serialNumber:subject.serialNumber,pon:subject.pon,title:subject.title.slice(0,160),description:'',assignedTo:'',status:'new',scope:subject.scope,fiberPointId:subject.fiberPointId||''},scope:subject.scope,recovery:subject.recovery,recoveryTargets:subject.recoveryTargets,onuIndex:subject.onuIndex||'',optical:subject.optical,opticalCandidates,affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers,losDetection:nextDetection,onuName:String(subject.onuName||'').slice(0,160),customerId:customer?.id||'',customerName:customer?.name||'',fiberPointId:subject.fiberPointId||link.fiberPointId||'',fiberPointName:subject.fiberPointName||'',simulated});
+      if(customer)pendingCustomers.set(customer.id,changes.at(-1));
     }
   }
   const confirmedState=confirmation.result();
-  return {changes,creates,deferred,confirmationRows:confirmedState.rows,confirmationChanged:confirmedState.changed};
+  return {changes:[...incidents.changes(),...changes],creates,deferred,confirmationRows:confirmedState.rows,confirmationChanged:confirmedState.changed};
 }
 function applyLosTicketPlan(data, plan, now = Date.now()) {
   if(plan.confirmationChanged)data.oltLosObservations=plan.confirmationRows;
   if(!plan.changes.length)return {changed:plan.confirmationChanged===true,created:[],resolved:[],observed:0};
   const rows=[...(data.oltTickets||[])],byId=new Map(rows.map((row,index)=>[row.id,index])),created=[],resolved=[];let observed=0;
   for(const change of plan.changes) {
-    if(change.kind==='observe') {
+    if(change.kind==='incident') {
+      const index=byId.get(change.id);if(index===undefined)continue;
+      rows[index]={...rows[index],incidentDevices:change.records,updatedAt:new Date(now).toISOString()};observed++;
+      for(const note of change.events)rows[index].history=ticketHistory(rows[index],{id:'system-olt',name:'Sistem OLT'},'network-incident',note,rows[index].status,now);
+    } else if(change.kind==='observe') {
       const index=byId.get(change.id);if(index===undefined)continue;
       const becameReady=change.patch?.recovery?.ready===true&&rows[index].recovery?.ready!==true;
       rows[index]={...rows[index],...change.patch,losDetection:change.losDetection,updatedAt:new Date(now).toISOString()};observed++;
       if(becameReady&&rows[index].status!=='resolved')rows[index].history=ticketHistory(rows[index],{id:'system-olt',name:'Sistem OLT'},'recovery-ready','Target pemulihan jaringan tercapai. Menunggu konfirmasi selesai oleh penanggung jawab/tim.',rows[index].status,now);
-      if(rows[index].source==='olt-los'&&rows[index].status!=='resolved'&&change.losDetection.state==='online'&&!require('./ticket-recovery').grouped(rows[index])){
+      if(rows[index].source==='olt-los'&&rows[index].status!=='resolved'&&change.losDetection.state==='online'&&!rows[index].incidentDevices?.some(row=>row.state==='los')&&!require('./ticket-recovery').grouped(rows[index])){
         rows[index]={...rows[index],status:'resolved',resolvedAt:new Date(now).toISOString(),updatedBy:'system-olt',autoResolved:true,
           history:ticketHistory(rows[index],{id:'system-olt',name:'Sistem OLT'},'recovered',rows[index].recovery?`Target pemulihan ${rows[index].recovery.threshold}% tercapai: ${rows[index].recovery.online}/${rows[index].recovery.eligible} ONU online; ${rows[index].recovery.poweredOff} modem kehilangan daya, ${rows[index].recovery.remainingLos} sisa LOS.`:'ONU terdampak terkonfirmasi online kembali','resolved',now)};
         resolved.push(rows[index]);
@@ -644,6 +654,14 @@ function applyLosTicketPlan(data, plan, now = Date.now()) {
         if(parents.length===1){const parent=parents[0],team=require('./ticket-team'),allowed=id=>{const user=(data.users||[]).find(row=>row.id===id);return user&&team.canHandle(parent,user)&&require('./service-tickets').visible(data,user,ticket);};ticket.parentTicketId=parent.id;if(allowed(parent.assignedTo)){ticket.assignedTo=parent.assignedTo;ticket.companionIds=team.companionIds(parent).filter(allowed);ticket.status='assigned';}ticket.history=ticketHistory(ticket,{id:'system-olt',name:'Sistem OLT'},'followup','Pemeriksaan lanjutan setelah perbaikan gangguan kelompok '+require('./ticket-reference').number(parent),ticket.status,now);}
       }
       rows.push(ticket);created.push(ticket);
+    }
+  }
+  for(let index=0;index<rows.length;index++){
+    const ticket=rows[index];
+    if(ticket.source==='olt-los'&&ticket.scope==='onu'&&ticket.status!=='resolved'&&ticket.losDetection?.state==='online'&&ticket.incidentDevices?.length&&ticket.incidentDevices.every(row=>row.state==='online')){
+      rows[index]={...ticket,status:'resolved',resolvedAt:new Date(now).toISOString(),updatedAt:new Date(now).toISOString(),updatedBy:'system-olt',autoResolved:true,
+        history:ticketHistory(ticket,{id:'system-olt',name:'Sistem OLT'},'recovered','Seluruh modem pada penanganan gangguan terkonfirmasi online kembali','resolved',now)};
+      resolved.push(rows[index]);observed++;
     }
   }
   data.oltTickets=pruneTickets(rows);return {changed:Boolean(created.length||observed),created,resolved,observed};
@@ -669,6 +687,9 @@ function saveTicket(data, payload, actor, previous = {}) {
   const assignedTo = text(payload.assignedTo ?? previous.assignedTo ?? '', 100);
   if (assignedTo && !(data.users || []).some(user => user.id === assignedTo && user.active !== false && ['admin','owner','noc','technician','secretary'].includes(user.role))) throw new Error('Petugas tiket tidak valid');
   if (!previous.id) {
+    const customer=ticketIncidents.owner(data,device,{serialNumber},Date.now()).customer;
+    const existing=customer&&ticketIncidents.activeFault(data,customer);
+    if(existing)throw ticketAccessError('Pelanggan sudah memiliki tiket gangguan aktif '+require('./ticket-reference').number(existing)+'. Lanjutkan penanganan pada tiket tersebut.');
     const key=incidentKey({oltId:device.id,serialNumber,pon,scope,fiberPointId});
     const active = (data.oltTickets || []).find(row => row.oltId === device.id && row.status !== 'resolved' && (key?incidentKey(row)===key:!row.serialNumber&&!row.pon));
     if (active) throw new Error(`Gangguan ini sudah memiliki tiket ${active.number}`);

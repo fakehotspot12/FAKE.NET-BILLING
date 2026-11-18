@@ -8,6 +8,7 @@ const auth = require('./auth');
 const olt = require('./olt-monitor');
 const networkIdentity=require('./network-identity');
 const autoIdentity=require('./olt-auto-identity');
+const incidents=require('./ticket-incidents');
 const {addressFromTags}=require('./network-address');
 const PHOTO_ROOT = path.join(__dirname, '..', 'data', 'private', 'service-tickets');
 const CATEGORIES = Object.freeze([
@@ -38,7 +39,7 @@ function ticketLocation(data,ticket){
 function publicProgress(ticket){
   const rows=[{stage:'received',at:ticket.createdAt}],add=(stage,at,note='')=>{if(!PUBLIC_STAGES[stage]||!Number.isFinite(Date.parse(at)))return;const previous=rows.at(-1);if(previous?.stage===stage&&(previous.note||'')===note)return;rows.push({stage,at,...(note?{note}:{})});};
   for(const entry of (ticket.history||[]).slice(-50)){
-    if(entry.kind==='team')continue;
+    if(entry.kind==='team'||entry.kind==='network-incident')continue;
     const previousStage=rows.at(-1)?.stage,keepStage=entry.kind==='updated'&&entry.status==='working'&&['on-way','checking','handling','waiting-customer'].includes(previousStage);
     const sameStatus=entry.status===(['on-way','checking','handling','waiting-customer'].includes(previousStage)?'working':{received:'new',assigned:'assigned',resolved:'resolved'}[previousStage]);
     if(entry.kind==='updated'&&!entry.publicStage&&!entry.publicNote&&sameStatus)continue;
@@ -77,10 +78,11 @@ function visibilityFilter(data,user,devices) {
   const unrestricted=['admin','owner','noc','secretary'].includes(user.role);
   let allowed,locks;
   return ticket=>{
-    if(safe.ticketCreationLimited&&ticket.id&&!(ticket.source==='staff-service'&&ticket.createdBy===user.id))return false;
+    const billingRecipient=user.role==='collector'&&isServiceTicket(ticket)&&ticket.category==='billing'&&(data.settings?.oltTicketing?.recipientIds||[]).includes(user.id);
+    if(safe.ticketCreationLimited&&ticket.id&&!(ticket.source==='staff-service'&&ticket.createdBy===user.id)&&!billingRecipient)return false;
     if(user.role==='partner'&&ticket.customerId){const member=(data.customers||[]).find(row=>row.id===ticket.customerId),account=member&&networkIdentity.directory(data).userForCustomer(member),username=String(account?.username||member?.username||'').toLowerCase();if(!safe.partnerUsernameSuffixes.some(suffix=>username.endsWith(String(suffix).toLowerCase())))return false;}
     if(!isServiceTicket(ticket)){allowed??=new Set((devices||olt.visibleDevices(data,user)).map(device=>device.id));return allowed.has(ticket.oltId);}
-    if(ticket.source==='staff-service'&&!ticket.nasId&&!ticket.customerId||unrestricted)return true;
+    if(ticket.source==='staff-service'&&!ticket.nasId&&!ticket.customerId&&(!billingRecipient||ticket.createdBy===user.id)||unrestricted)return true;
     if(!locks){locks=new Set([...(Array.isArray(user.lockedNasIds)?user.lockedNasIds:[]),user.lockedNasId].filter(Boolean));for(const nas of [...(data.radiusNas||[]),...(data.monitoringTargets||[])])if([nas.id,nas.monitoringTargetId,nas.monitoringId].some(id=>locks.has(id)))for(const id of [nas.id,nas.monitoringTargetId,nas.monitoringId])if(id)locks.add(id);}
     return !locks.size||locks.has('all')||Boolean(ticket.nasId&&locks.has(ticket.nasId));
   };
@@ -141,7 +143,9 @@ async function appendMessage(data,ticket,payload,actor,{customer=false,now=Date.
 }
 async function create(data,customer,payload,context = {}) {
   const category=categoryFor(payload.category),now=context.now??Date.now(),all=customerTickets(data,customer);
-  const previous=all.find(row=>row.status!=='resolved'&&row.category===category.id);
+  const fault=incidents.isFault({source:'wifiku',scope:'service',category:category.id})?incidents.activeFault(data,customer,now):null;
+  if(fault&&(!isServiceTicket(fault)||fault.customerId!==customer.id))throw error('Gangguan Anda sudah ditangani pada tiket '+require('./ticket-reference').number(fault)+'. Silakan hubungi admin untuk melanjutkan penanganan.',409);
+  const previous=fault||all.find(row=>row.status!=='resolved'&&row.category===category.id);
   if(previous){const result=await appendMessage(data,previous,payload,customer,{customer:true,now,photoRoot:context.photoRoot});return {...result,created:false};}
   if(all.filter(row=>row.status!=='resolved').length>=5)throw error('Masih ada 5 laporan aktif. Lanjutkan pada laporan yang sesuai.',429);
   if(all.filter(row=>now-Date.parse(row.createdAt)<86400000).length>=10)throw error('Batas pengajuan hari ini tercapai. Silakan hubungi admin.',429);
@@ -151,6 +155,7 @@ async function create(data,customer,payload,context = {}) {
     title:category.label,description:'',customerId:customer.id,customerName:customer.name||customer.username||'Pelanggan',username:customer.username||'',
     nasId:context.nasId||'',nasName:context.nasName||'',oltId:'',pon:'',serialNumber:'',assignedTo:'',status:'new',createdAt:at,updatedAt:at,createdBy:'customer:'+customer.id,messages:[]};
   await appendMessage(data,ticket,payload,customer,{customer:true,now,photoRoot:context.photoRoot});
+  incidents.captureInitial(data,ticket,now);
   data.oltTickets=olt.pruneTickets([...(data.oltTickets||[]),ticket]);return {ticket,created:true,changed:true};
 }
 function installationPackages(data,actor,customer=null) {
@@ -176,8 +181,10 @@ async function createStaff(data,payload,actor) {
   if(packageId&&!requestedPackage)throw error('Pilih paket PSB aktif yang sesuai kewenangan dan pelanggan');
   const now=Date.now(),at=new Date(now).toISOString(),previous=(data.oltTickets||[]).find(row=>row.source==='staff-service'&&row.createdBy===actor.id&&row.status!=='resolved'&&now-Date.parse(row.createdAt)<120000&&row.customerId===preview.customerId&&row.customerName===name&&row.category===category.id&&(row.requestedPackage?.id||'')===packageId&&row.messages?.[0]?.text===text);
   if(previous)return previous;
+  if(category.kind==='fault'&&customer){const active=incidents.activeFault(data,customer,now);if(active)throw error('Pelanggan sudah memiliki tiket gangguan aktif '+require('./ticket-reference').number(active)+'. Lanjutkan penanganan pada tiket tersebut.',409);}
   if((data.oltTickets||[]).filter(row=>row.status!=='resolved').length>=500)throw error('Batas tiket aktif tercapai',429);
   const ticket={...preview,id:crypto.randomUUID(),number:'TKT-'+at.slice(0,10).replaceAll('-','')+'-'+crypto.randomBytes(3).toString('hex').toUpperCase(),kind:category.kind,category:category.id,title:category.label,description:'',customerName:name,username:account.username||customer?.username||'',nasName:nas?.name||'',oltId:'',pon:'',serialNumber:'',status:'new',assignedTo:'',createdAt:at,updatedAt:at,createdBy:actor.id,contactPhone:phone,contactAddress:address,...(point||{}),...(requestedPackage?{requestedPackage}:{}),lastStaffMessageAt:at,customerReadAt:'',messages:[{id:crypto.randomUUID(),role:'staff',name:actor.name||actor.username||'Petugas',text,at,photos:[]}]};
+  incidents.captureInitial(data,ticket,now);
   data.oltTickets=olt.pruneTickets([...(data.oltTickets||[]),ticket]);return ticket;
 }
 function update(data,payload,actor,previous) {

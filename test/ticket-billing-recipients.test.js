@@ -1,0 +1,31 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),notifications=require('../src/olt-ticketing'),service=require('../src/service-tickets'),auth=require('../src/auth');
+function fixture(){
+ const users=[{id:'tech',name:'Technician',role:'technician',active:true,phone:'081200000001',lockedNasIds:['nas-a']},{id:'collector',name:'Collector',role:'collector',active:true,ticketCreationAllowed:true,phone:'081200000002',lockedNasIds:['nas-a']},{id:'finance',name:'Finance',role:'finance',active:true,phone:'081200000003',lockedNasIds:['nas-a']},{id:'blocked',name:'No ticket access',role:'collector',active:true,phone:'081200000004'}];
+ const ticket={id:'billing',source:'wifiku',scope:'service',category:'billing',kind:'request',customerId:'member',nasId:'nas-a',status:'new',assignedTo:'',number:'TKT-UNIT',createdAt:new Date().toISOString(),messages:[]};
+ const data={users,settings:{waGateway:{enabled:true},oltTicketing:{whatsappEnabled:true,recipientIds:['tech','collector','finance']}},customers:[{id:'member',name:'Member',nasId:'nas-a'}],radiusUsers:[],radiusNas:[],monitoringTargets:[{id:'nas-a',name:'Area A'},{id:'nas-b',name:'Area B'}],oltDevices:[{id:'olt',nasId:'nas-a'}],oltTickets:[ticket],waMessages:[]};return{data,users,ticket};
+}
+const enqueue=(data,payload)=>{const row={...payload,id:'wa-'+data.waMessages.length,status:'queued'};data.waMessages.push(row);return row;};
+test('settings offer billing recipients with role, phone, NAS and disabled access state, without adding technical assignees',()=>{
+ const{data}=fixture(),options=notifications.recipientOptions(data);assert.equal(options.length,4);assert.equal(options.find(row=>row.id==='collector').scope,'billing');assert.deepEqual(options.find(row=>row.id==='collector').nasNames,['Area A']);assert.equal(options.find(row=>row.id==='blocked').canReceive,false);assert.deepEqual(notifications.eligibleUsers(data).map(row=>row.id),['tech']);
+ assert.throws(()=>notifications.validateSettings(data,{whatsappEnabled:true,recipientIds:['blocked']}));assert.doesNotThrow(()=>notifications.validateSettings(data,{whatsappEnabled:true,recipientIds:['collector','finance']}));
+});
+test('collector and finance receive billing only, never faults, PSB, add-ons or OLT LOS',()=>{
+ const{data,ticket}=fixture();assert.deepEqual(notifications.recipientsFor(data,ticket).map(row=>row.id),['tech','collector','finance']);
+ for(const category of['internet-down','wifi-modem','new-installation','addon','package-change'])assert.deepEqual(notifications.recipientsFor(data,{...ticket,category}).map(row=>row.id),['tech'],category);
+ assert.deepEqual(notifications.recipientsFor(data,{...ticket,source:'olt-los',scope:'onu',category:undefined,oltId:'olt',serialNumber:'HWTCAABB0001'}).map(row=>row.id),['tech']);
+});
+test('selected collector can read billing in its NAS but cannot read another NAS or other staff/customer technical tickets',()=>{
+ const{data,users,ticket}=fixture(),collector=users[1];assert(service.visible(data,collector,ticket));assert(!service.visible(data,collector,{...ticket,nasId:'nas-b'}));assert(!service.visible(data,collector,{...ticket,category:'wifi-modem'}));assert(!service.visible(data,collector,{...ticket,source:'olt-los',scope:'onu',oltId:'olt'}));
+ assert(!service.visible(data,collector,{...ticket,source:'staff-service',nasId:'',customerId:'',createdBy:'someone-else'}));
+ data.settings.oltTicketing.recipientIds=['tech'];assert(!service.visible(data,collector,ticket));
+});
+test('billing recipients do not gain claim, progress, technical writes or OLT actions from a checkbox',()=>{
+ const{users}=fixture();for(const user of users.filter(row=>['finance','collector'].includes(row.role)))for(const permission of['olt:tickets:write','olt:manage','olt:onu:reboot','olt:onu:delete'])assert(!auth.hasPermission(auth.publicUser(user),permission),user.role+': '+permission);
+});
+test('queued delivery rechecks recipient selection, active state, access grant and NAS',()=>{
+ for(const type of['removed','inactive','access','nas']){const{data,users,ticket}=fixture();notifications.enqueueNotifications(data,ticket,'detected','https://billing.example.test',enqueue);const message=data.waMessages.find(row=>row.oltTicketRecipientId==='collector');assert(message);assert(notifications.deliveryAllowed(data,message));if(type==='removed')data.settings.oltTicketing.recipientIds=['tech','finance'];if(type==='inactive')users[1].active=false;if(type==='access')users[1].ticketCreationAllowed=false;if(type==='nas')users[1].lockedNasIds=['nas-b'];assert(!notifications.deliveryAllowed(data,message),type);}
+});
+test('phone deduplication spans technical and billing recipients without changing financial or user data',()=>{
+ const{data,users,ticket}=fixture();users[2].phone=users[1].phone;const before=JSON.stringify(data.users);assert.equal(notifications.enqueueNotifications(data,ticket,'detected','https://billing.example.test',enqueue).queued,2);assert.equal(JSON.stringify(data.users),before);assert.equal(data.waMessages.filter(row=>row.phone===users[1].phone).length,1);
+});

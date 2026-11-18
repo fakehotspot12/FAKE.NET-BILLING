@@ -39,6 +39,20 @@ function eligibleUsers(data) {
     && auth.hasPermission(auth.publicUser(user), 'olt:tickets:write'));
 }
 
+function recipientOptions(data) {
+  const directory=require('./network-identity').directory(data);
+  return (data.users||[]).filter(user=>user.active!==false&&(auth.hasPermission(auth.publicUser(user),'olt:tickets:write')||['finance','collector'].includes(user.role))).map(user=>{
+    const safe=auth.publicUser(user),billing=['finance','collector'].includes(user.role),locks=safe.lockedNasIds||[];
+    const nasNames=!locks.length||locks.includes('all')?['Semua NAS']:[...new Set([...(data.radiusNas||[]),...(data.monitoringTargets||[])].filter(row=>locks.some(id=>directory.aliasesFor(id).includes(String(row.id).toLowerCase()))).map(row=>row.name).filter(Boolean))];
+    return{id:user.id,name:user.name||user.username,role:user.role,phone:phoneFor(user),scope:billing?'billing':'technical',canReceive:auth.hasPermission(safe,billing?'olt:tickets:read':'olt:tickets:write'),nasNames};
+  });
+}
+
+function notificationUsers(data) {
+  const allowed=new Set(recipientOptions(data).filter(row=>row.canReceive).map(row=>row.id));
+  return (data.users||[]).filter(user=>allowed.has(user.id));
+}
+
 function settingsFor(data) {
   const value = data.settings?.oltTicketing || {};
   return { whatsappEnabled: value.whatsappEnabled === true,
@@ -52,7 +66,7 @@ function validateSettings(data, payload) {
     || payload.recipientIds.length > 25 || payload.recipientIds.some(id => typeof id !== 'string')) {
     throw new Error('Pengaturan notifikasi tiket tidak valid');
   }
-  const ids = [...new Set(payload.recipientIds)], users = new Map(eligibleUsers(data).map(user => [user.id, user]));
+  const ids = [...new Set(payload.recipientIds)], users = new Map(notificationUsers(data).map(user => [user.id, user]));
   if (ids.some(id => !users.has(id) || !phoneFor(users.get(id)))) throw new Error('Penerima wajib user berwenang dengan nomor WhatsApp valid');
   if (payload.whatsappEnabled && !ids.length) throw new Error('Pilih minimal satu penerima notifikasi tiket');
   return { whatsappEnabled: payload.whatsappEnabled, recipientIds: ids,customerOutageEnabled:payload.customerOutageEnabled??settingsFor(data).customerOutageEnabled };
@@ -61,7 +75,8 @@ function validateSettings(data, payload) {
 function recipientsFor(data, ticket, kind = 'detected') {
   if(!NOTIFICATION_KINDS.includes(kind))return [];
   const ids = new Set(kind==='resolved' ? ticketTeam.memberIds(ticket) : settingsFor(data).recipientIds);
-  return eligibleUsers(data).filter(user => ids.has(user.id) && phoneFor(user)
+  return (kind==='resolved'?eligibleUsers(data):notificationUsers(data)).filter(user => ids.has(user.id) && phoneFor(user)
+    && (!['finance','collector'].includes(user.role)||serviceTickets.isServiceTicket(ticket)&&ticket.category==='billing')
     && serviceTickets.visible(data, auth.publicUser(user),ticket));
 }
 
@@ -240,4 +255,4 @@ function ticketPage(data, user, query = {}) {
     devices: devices.map(device => ({id:device.id,name:device.name,nasId:device.nasId || ''})) };
 }
 
-module.exports = { KINDS, NOTIFICATION_KINDS, TICKET_QUEUE_VERSION, FAULT_COOLDOWN_MS, phoneFor, eligibleUsers, settingsFor, validateSettings, recipientsFor, ticketLink, eventKey, messageText, enqueueNotifications, deliveryAllowed, cancelQueued, ticketPage, ticketSchedule, normalizeQueuedTicketMessages, faultKeyFor, recordDelivery };
+module.exports = { KINDS, NOTIFICATION_KINDS, TICKET_QUEUE_VERSION, FAULT_COOLDOWN_MS, phoneFor, eligibleUsers, recipientOptions, notificationUsers, settingsFor, validateSettings, recipientsFor, ticketLink, eventKey, messageText, enqueueNotifications, deliveryAllowed, cancelQueued, ticketPage, ticketSchedule, normalizeQueuedTicketMessages, faultKeyFor, recordDelivery };

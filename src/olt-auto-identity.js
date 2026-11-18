@@ -107,6 +107,21 @@ function customerForTicket(data,ticket,device,now=Date.now()){
   return match;
 }
 function modemFor(data,device,onu,now=Date.now()){return deviceFor(data,device,onu,now)?.modem||null;}
+function currentForCustomer(data,customer,now=Date.now()){
+  if(!available(data))return null;
+  const state=states.get(keyFor(data));if(!state||state.failed||now-state.checkedAt>TTL_MS||now<state.checkedAt-30000)return null;
+  const directory=identity.directory(data),account=directory.userForCustomer(customer),username=clean(account?.username||customer?.username).toLowerCase();
+  if(!username)return null;
+  const candidates=(state.accounts.get(username)||[]).map(row=>({...row,online:Number.isFinite(Date.parse(row.lastInform))&&now-Date.parse(row.lastInform)<=900000&&Date.parse(row.lastInform)<=now+30000}));
+  const modem=identity.strictDeviceCandidate(candidates,{username,nasAliases:directory.aliasesFor(account?.nasId||customer?.nasId),knownNasAliases:[...(data.radiusNas||[]),...(data.monitoringTargets||[])].flatMap(row=>[row.id,row.name,row.address,row.host]).filter(Boolean)});
+  if(!modem||directory.customerForAcs(modem)?.id!==customer.id)return null;
+  for(const key of[modem.serialNumber,...(modem.interfaceMacs||[]).map(value=>'mac:'+value)]){
+    const position=chosenPosition(state.positions.get(key));if(!position||position.status!=='online')continue;
+    const device=(data.oltDevices||[]).find(row=>row.id===position.deviceId),onu={serialNumber:key.replace(/^mac:/,''),identifierKind:key.startsWith('mac:')?'mac':'serial',id:position.index};
+    const match=customerFor(data,device,onu,now);if(match?.customer.id===customer.id)return{device,position,serialNumber:onu.serialNumber,checkedAt:new Date(state.checkedAt).toISOString()};
+  }
+  return null;
+}
 function modemForTicket(data,ticket,device,now=Date.now()){
   if(!device||!ticket.serialNumber||ticket.status==='resolved')return null;
   const proof=deviceFor(data,device,{serialNumber:ticket.serialNumber},now);if(!proof||ticket.pon&&ticket.pon!==proof.position.pon||ticket.onuIndex&&String(ticket.onuIndex)!==proof.position.index)return null;
@@ -116,4 +131,4 @@ function modemForTicket(data,ticket,device,now=Date.now()){
 }
 function cacheVersion(data){const key=keyFor(data),state=states.get(key);return key+':'+(state?.revision||revision)+':'+Boolean(available(data)&&state&&!state.failed&&Date.now()-state.checkedAt<=TTL_MS);}
 function invalidate(){states.clear();revision++;}
-module.exports={refresh,customerFor,customerForTicket,modemFor,modemForTicket,manualConflict,manualCustomerFor,cacheVersion,available,invalidate,INTERVAL_MS,TTL_MS};
+module.exports={refresh,customerFor,customerForTicket,modemFor,modemForTicket,currentForCustomer,manualConflict,manualCustomerFor,cacheVersion,available,invalidate,INTERVAL_MS,TTL_MS};
