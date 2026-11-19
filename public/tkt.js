@@ -11,18 +11,6 @@
   const date = value => { const parsed = new Date(value);return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat('id-ID',{timeZone:zone,day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(parsed) : '-'; };
   function login() { location.replace('/?tkt=' + encodeURIComponent(id)); }
   function notice(message = '', error = false) { $('notice').textContent = message;$('notice').classList.toggle('error', error); }
-  function networkFields(data={}){
-    const states={active:'Aktif',isolated:'Isolir',suspend:'Isolir',terminated:'Terminated',disabled:'Nonaktif',inactive:'Nonaktif'};
-    const fields=[
-      ['Pelanggan',esc(data.customer?.name||'-')+(data.customer?.memberId?`<small>ID ${esc(data.customer.memberId)}</small>`:'')],
-      ['Akun Internet',esc(data.account?.username||'-')+(data.account?.status?`<small>${esc(states[data.account.status]||data.account.status)}${data.account.type?' / '+esc(data.account.type.toUpperCase()):''}</small>`:'')],
-      ['Modem / SN',esc(data.modem?.serialNumber||'-')+(data.modem?.model?`<small>${esc(data.modem.model)}</small>`:'')],
-      ['OLT',esc(data.network?.olt||'-')],['PON',esc(data.network?.pon||'-')],['ODP',esc(data.network?.odp||'-')]
-    ],render=rows=>rows.map(([label,value])=>`<dt>${label}</dt><dd>${value}</dd>`).join('');
-    const optical=data.network?.optical,known=typeof optical?.rxPower==='number'&&Number.isFinite(optical.rxPower),reading=known?`${esc(new Intl.NumberFormat('id-ID',{maximumFractionDigits:2}).format(optical.rxPower))} dBm<small>${optical.at?'Tercatat '+esc(date(optical.at)):'Waktu pembacaan belum tersedia'}</small>`:'Belum tersedia';
-    const recovery=data.network?.recovery,summary=recovery?`<div class="ticket-recovery"><strong>Pemulihan jaringan</strong><span>${recovery.available?`${esc(recovery.online)} / ${esc(recovery.eligible)} ONU online · Target ${esc(recovery.threshold)}% per ODP`:'Menunggu data OLT terbaru'}</span>${recovery.available?`<small>Modem kehilangan daya: ${esc(recovery.poweredOff)} · Sisa LOS: ${esc(recovery.remainingLos)} · Belum terverifikasi: ${esc(recovery.unknown)}</small>`:''}</div>`:'';
-    return `<dl>${render(fields.slice(0,2))}${render([['Redaman terakhir OLT',reading]])}</dl>${summary}<details class="network-extra"><summary>Modem dan Jaringan</summary><dl>${render(fields.slice(2))}</dl></details>`;
-  }
   async function api(path, options = {}) {
     const response = await fetch(path, { cache:'no-store', credentials:'same-origin', ...options,
       headers:{'Content-Type':'application/json','x-csrf-token':csrf,...options.headers} });
@@ -33,15 +21,15 @@
   }
   async function render() {
     const payload = await api(endpoint), t = payload.ticket;
-    const generic = t.scope === 'service';
+    const generic = t.scope === 'service', contextKind = window.FakenetTicketContext.kind(t);
     const currentStage=t.progress?.at(-1)?.stage,selectedStage=stages.some(([id])=>id===currentStage)?currentStage:'handling';
     const shownStatus=generic?(currentStage==='customer-replied'?'Balasan pelanggan diterima':stages.find(([id])=>id===currentStage)?.[1]||labels[t.status]||t.status):(labels[t.status]||t.status);
     const details = generic ? [['Jenis',t.kind==='request'?'Permintaan':'Gangguan'],['Sumber',t.source==='wifiku'?'WifiKu':'Petugas']] : [['Lingkup',scopes[t.scope] || 'ONU']];
     if(t.category==='new-installation'&&t.requestedPackage)details.push(['Paket PSB',t.requestedPackage.name+' / '+new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(t.requestedPackage.price)]);
-    details.push(['Pelanggan',t.customerName||'-'],['Kontak',t.contactPhone||'-'],['Alamat',t.contactAddress||'-']);
+    if(contextKind!=='affected')details.push(['Pelanggan',t.customerName||'-'],['Kontak',t.contactPhone||'-'],['Alamat',t.contactAddress||'-']);
     details.push(['Penanggung jawab',payload.assignee || 'Belum diambil'],['Pendamping',(payload.team||[]).filter(row=>!row.lead).map(row=>row.name).join(', ')||'-'],['Diperbarui',date(t.updatedAt)]);
-    $('ticket').innerHTML = `<h1>${esc(t.number)}</h1><p>${esc(t.title)}</p><span class="badge ${esc(t.status)}">${esc(shownStatus)}</span>${t.autoResolved?'<p class="done">Ditutup otomatis setelah target pemulihan terverifikasi.</p>':''}${generic&&t.messages?.[0]?`<div class="report-excerpt"><strong>Laporan Pelanggan</strong><p>${esc(t.messages[0].text)}</p></div>`:''}<dl>${details.map(([label,value])=>`<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl><div id="networkDetails" class="network-details">${networkFields()}</div>${t.locationUrl?`<a href="${esc(t.locationUrl)}" target="_blank" rel="noopener noreferrer">Buka arah pelanggan</a>`:''}${t.description?`<details class="private-notes"><summary>Catatan Internal</summary><p>${esc(t.description)}</p></details>`:''}`;
-    const network=$('networkDetails');api(endpoint+'/network').then(result=>{if(network.isConnected)network.innerHTML=networkFields(result.context);}).catch(()=>{});
+    $('ticket').innerHTML = `<h1>${esc(t.number)}</h1><p>${esc(t.title)}</p><span class="badge ${esc(t.status)}">${esc(shownStatus)}</span>${t.autoResolved?'<p class="done">Ditutup otomatis setelah target pemulihan terverifikasi.</p>':''}${generic&&t.messages?.[0]?`<div class="report-excerpt"><strong>${t.kind==='request'?'Keterangan Permintaan':'Laporan Gangguan'}</strong><p>${esc(t.messages[0].text)}</p></div>`:''}<dl>${details.map(([label,value])=>`<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>${contextKind!=='none'?'<div id="networkDetails" class="network-details"></div>':''}${contextKind!=='affected'&&t.locationUrl?`<a href="${esc(t.locationUrl)}" target="_blank" rel="noopener noreferrer">Buka arah pelanggan</a>`:''}${t.description?`<details class="private-notes"><summary>Catatan Internal</summary><p>${esc(t.description)}</p></details>`:''}`;
+    const network=$('networkDetails');if(network)window.FakenetTicketContext.mount(network,t,{api,date});
     $('ticket').hidden = false;
     $('conversation').hidden = !generic;
     if (generic) {

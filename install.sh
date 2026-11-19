@@ -330,6 +330,8 @@ verify_repository_payload() {
     public/manifest.webmanifest
     public/olt.js
     public/olt.css
+    public/ticket-context.js
+    public/ticket-context.css
     public/tkt.html
     public/tkt.js
     public/tkt.css

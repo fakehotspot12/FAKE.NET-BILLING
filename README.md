@@ -335,6 +335,13 @@ Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Rec
   diarahkan untuk menghubungi admin tanpa membuka tiket kedua atau mengekspos
   catatan teknis internal. PSB, tambahan layanan, perubahan paket, pembayaran,
   serta permintaan non-gangguan tetap dapat dibuat terpisah.
+- Ringkasan permintaan non-gangguan berisi data pemohon, kontak, alamat dan
+  rincian permintaan, tanpa informasi modem atau pembacaan ACS. Gangguan per
+  pelanggan tetap menampilkan akun internet dan redaman terakhir jika tersedia.
+  Gangguan ODP/ODC/PON menampilkan daftar pelanggan terdampak yang sudah
+  terpetakan, bukan satu identitas modem; daftar memakai pencarian dan pagination
+  dari snapshot existing. Data lama ditandai belum terverifikasi, tidak ditebak
+  menjadi online. Aturan pemulihan dan konfirmasi selesai tetap berlaku.
 - Saat modem diganti, LOS mengikuti penanganan gangguan pelanggan yang masih
   aktif jika ID pelanggan atau snapshot modem/posisi sebelumnya terverifikasi.
   Snapshot dibatasi delapan perangkat per tiket dan mengikuti pembacaan/cache

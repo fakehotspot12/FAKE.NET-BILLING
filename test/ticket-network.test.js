@@ -19,7 +19,7 @@ test('ticket joins exact SN, ACS account, member, OLT PON and mapped ODP without
 });
 
 test('member-origin report resolves its device and cached OLT location without requiring a manually selected OLT',async()=>{
- const data=fixture(),report={id:'service-a',scope:'service',source:'wifiku',customerId:'member-a',nasId:'n1'};
+ const data=fixture(),report={id:'service-a',scope:'service',source:'wifiku',kind:'fault',category:'internet-down',customerId:'member-a',nasId:'n1'};
  const result=await network.context(data,report,data.oltDevices,{snapshot,lookup:async()=>({id:'acs-a',username:'alpha@isp',serialNumber:sn,productClass:'HG8145V5'})});
  assert.equal(result.customer.name,'Real Customer');assert.equal(result.modem.serialNumber,sn);assert.equal(result.network.olt,'OLT A');assert.equal(result.network.odp,'ODP-01 - Area A');
 });
@@ -34,7 +34,7 @@ test('missing mappings stay empty and neither ONU description nor similar names 
  const data=fixture();data.oltDevices[0].links={};
  const result=await network.context(data,ticket(),data.oltDevices,{snapshot,lookup:async()=>null});
  assert.equal(result.customer.name,'');assert.equal(result.account.username,'');assert.equal(result.network.odp,'');assert.equal(result.ownerVerified,false);assert.equal(result.network.olt,'OLT A');
- const empty=await network.context(data,{id:'prospect-a',customerName:'Prospect Name',scope:'service'},[],{snapshot,lookup:async()=>{throw new Error('Should not read ACS');}});assert.deepEqual(empty.network,{olt:'',pon:'',odp:'',optical:{rxPower:null,at:'',stale:true}});assert.equal(empty.modem.serialNumber,'');
+ const empty=await network.context(data,{id:'prospect-a',customerName:'Prospect Name',scope:'service'},[],{snapshot,lookup:async()=>{throw new Error('Should not read ACS');}});assert.deepEqual(empty,{kind:'none'});
 });
 
 test('non-member RADIUS account is shown without inventing a member and a missing OLT cache does not hide ACS identity',async()=>{
@@ -57,7 +57,7 @@ test('foreign NAS modem/member cannot be disclosed through an accessible OLT tic
 
 test('duplicate modem location is not guessed and member ODP aliases use exact IDs only',async()=>{
  const data=fixture();delete data.customers[0].fiberPointId;data.customers[0].odpId='odp-a';data.oltDevices.push({...data.oltDevices[0],id:'olt-b',name:'OLT B'});
- const result=await network.context(data,{id:'service-b',customerId:'member-a',scope:'service'},data.oltDevices,{snapshot,lookup:async()=>({id:'acs-a',serialNumber:sn,username:'alpha@isp'})});
+ const result=await network.context(data,{id:'service-b',source:'wifiku',kind:'fault',category:'internet-down',customerId:'member-a',scope:'service'},data.oltDevices,{snapshot,lookup:async()=>({id:'acs-a',serialNumber:sn,username:'alpha@isp'})});
  assert.equal(result.network.olt,'');assert.equal(result.network.pon,'');assert.equal(result.network.odp,'ODP-01 - Area A');
 });
 

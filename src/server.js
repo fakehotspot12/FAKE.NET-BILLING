@@ -24079,17 +24079,17 @@ async function handleApi(req, res, url) {
     const context=await requirePermission(req,res,'olt:tickets:read');if(!context)return;
     const ticket=(context.data.oltTickets||[]).find(row=>row.id===oltTicketNetwork[1]);
     if(!ticket||!serviceTickets.visible(context.data,context.user,ticket)){notFound(res);return;}
-    try{sendJson(res,200,{context:await ticketNetwork.context(context.data,ticket,oltMonitor.visibleDevices(context.data,context.user))});}catch{sendJson(res,503,{error:'Identitas jaringan belum dapat dibaca'});}return;
+    try{sendJson(res,200,{context:await ticketNetwork.context(context.data,ticket,oltMonitor.visibleDevices(context.data,context.user),Object.fromEntries(['page','limit','search'].map(key=>[key,url.searchParams.get(key)||''])))});}catch{sendJson(res,503,{error:'Ringkasan tiket belum dapat dibaca'});}return;
   }
   const oltTicketRead=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([^/]+)$/);
   if(oltTicketRead&&method==='GET') {
     const context=await requirePermission(req,res,'olt:tickets:read');if(!context)return;
     const ticket=(context.data.oltTickets||[]).find(row=>row.id===oltTicketRead[1]),device=ticket&&oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===ticket.oltId);
     if(!ticket||!serviceTickets.visible(context.data,context.user,ticket)){notFound(res);return;}
-    const {waNotifications,notificationError,recoveryTargets,customerNoticeReceipts,...publicTicket}=ticket;publicTicket.number=require('./ticket-reference').number(ticket);
-    const location=serviceTickets.ticketLocation(context.data,ticket);
+    const publicTicket=ticketNetwork.presentation(ticket),grouped=publicTicket.contextKind==='affected';
+    const location=grouped?{}:serviceTickets.ticketLocation(context.data,ticket);
     const writable=auth.hasPermission(context.user,'olt:tickets:write');
-    sendJson(res,200,{ticket:{...publicTicket,customerName:location.name,contactPhone:normalizeLocalPhone(location.phone),contactAddress:location.address,locationUrl:location.locationUrl,coordinates:location.coordinates,...(serviceTickets.isServiceTicket(ticket)?{progress:serviceTickets.publicProgress(ticket)}:{})},device:{name:device?.name||ticket.nasName||'Layanan Pelanggan'},assignee:(context.data.users||[]).find(row=>row.id===ticket.assignedTo)?.name||'',team:ticketTeam.publicTeam(context.data,ticket),canManageTeam:ticketTeam.canManage(ticket,context.user),canClose:ticketTeam.canClose(context.user,ticket),canClaim:writable&&ticket.status!=='resolved'&&!ticket.assignedTo,canProgress:ticket.status!=='resolved'&&ticketTeam.canHandle(ticket,context.user)});return;
+    sendJson(res,200,{ticket:{...publicTicket,...(!grouped?{customerName:location.name,contactPhone:normalizeLocalPhone(location.phone),contactAddress:location.address,locationUrl:location.locationUrl,coordinates:location.coordinates}:{}),...(serviceTickets.isServiceTicket(ticket)?{progress:serviceTickets.publicProgress(ticket)}:{})},device:{name:device?.name||ticket.nasName||'Layanan Pelanggan'},assignee:(context.data.users||[]).find(row=>row.id===ticket.assignedTo)?.name||'',team:ticketTeam.publicTeam(context.data,ticket),canManageTeam:ticketTeam.canManage(ticket,context.user),canClose:ticketTeam.canClose(context.user,ticket),canClaim:writable&&ticket.status!=='resolved'&&!ticket.assignedTo,canProgress:ticket.status!=='resolved'&&ticketTeam.canHandle(ticket,context.user)});return;
   }
   const oltTicketTeam=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([^/]+)\/team$/);
   if(oltTicketTeam&&['GET','PUT'].includes(method)){

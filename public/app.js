@@ -26823,13 +26823,24 @@ async function renderPartnerReport(kind = 'report', options = {}) {
 let oltUiLoadPromise = null;
 async function renderMonitoringOlt(mode = 'olt') {
   const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
-  if (!window.FakenetOltUI) {
-    if (!oltUiLoadPromise) oltUiLoadPromise = new Promise((resolve,reject) => {
-      const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/olt.css?ui=ticket-category-recipients-20261118'; document.head.appendChild(style);
-      const script = document.createElement('script'); script.src = '/olt.js?ui=ticket-category-recipients-20261118';
-      script.onload = resolve; script.onerror = () => { oltUiLoadPromise = null; script.remove(); reject(new Error('Tampilan OLT belum dapat dimuat')); };
-      document.head.appendChild(script);
-    });
+  if (!window.FakenetOltUI || !window.FakenetTicketContext) {
+    if (!oltUiLoadPromise) oltUiLoadPromise = (async () => {
+      const version = 'ticket-summary-20261119';
+      for (const path of ['/olt.css', '/ticket-context.css']) {
+        const href = path + '?ui=' + version;
+        if (document.querySelector(`link[href="${href}"]`)) continue;
+        const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.appendChild(style);
+      }
+      for (const [path, loaded] of [['/ticket-context.js', 'FakenetTicketContext'], ['/olt.js', 'FakenetOltUI']]) {
+        if (window[loaded]) continue;
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script'); script.src = path + '?ui=' + version;
+          script.onload = () => window[loaded] ? resolve() : reject(new Error('Tampilan tiket belum dapat dimuat'));
+          script.onerror = () => { script.remove(); reject(new Error('Tampilan tiket belum dapat dimuat')); };
+          document.head.appendChild(script);
+        });
+      }
+    })().catch(error => { oltUiLoadPromise = null; throw error; });
     await oltUiLoadPromise;
   }
   if (state.view !== currentView) return;

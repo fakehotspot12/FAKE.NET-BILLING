@@ -12,6 +12,63 @@ const clean=value=>String(value||'').trim();
 const pointId=customer=>clean(customer?.fiberPointId||customer?.odpId||customer?.distributionPointId||customer?.distribution_point_id||customer?.odp);
 const serialTerms=sn=>[sn,...(/^[A-Z0-9]{4}[A-F0-9]{8}$/.test(sn)?[Buffer.from(sn.slice(0,4),'ascii').toString('hex').toUpperCase()+sn.slice(4)]:[])];
 
+function contextKind(ticket={}){
+  if(ticket.kind==='request')return'none';
+  if(require('./ticket-recovery').grouped(ticket))return'affected';
+  if(ticket.scope==='service')return require('./ticket-incidents').isFault(ticket)?'device':'none';
+  return ticket.scope==='onu'||ticket.serialNumber?'device':'none';
+}
+function presentation(ticket){
+  const {waNotifications,notificationError,recoveryTargets,customerNoticeReceipts,incidentDevices,...result}=ticket;
+  result.number=require('./ticket-reference').number(ticket);result.contextKind=contextKind(ticket);
+  if(result.contextKind==='none')for(const key of['username','oltId','pon','serialNumber','onuIndex','onuName','fiberPointId','fiberPointName','losDetection','affectedCount','affectedSerialNumbers','recovery','oltOptical','acsOptical','opticalSummary'])delete result[key];
+  if(result.contextKind==='affected')for(const key of['customerId','customerName','username','contactPhone','contactAddress','latitude','longitude','locationUrl','coordinates','serialNumber','onuIndex','onuName','oltOptical','acsOptical','opticalSummary'])delete result[key];
+  return result;
+}
+
+async function affectedContext(data,ticket,devices,options={}){
+  const recovery=require('./ticket-recovery'),device=devices.find(row=>row.id===ticket.oltId),directory=identity.directory(data),now=options.now??Date.now();
+  const limit=[10,25,50].includes(Number(options.limit))?Number(options.limit):10,search=clean(options.search).toLocaleLowerCase('id-ID').slice(0,100);
+  let snapshot=null;if(device)try{snapshot=await(options.snapshot||olt.snapshotFor)(device);}catch{}
+  const at=Date.parse(snapshot?.checkedAt||''),fresh=Boolean(device&&device.enabled!==false&&Array.isArray(snapshot?.onus)&&snapshot.status==='online'&&!snapshot.stale&&!snapshot.pendingRefresh&&snapshot.inventoryAvailable!==false&&(!snapshot.simulated||process.env.MIGRATION_MODE==='1')&&Number.isFinite(at)&&at<=now+30000&&now-at<=olt.CACHE_MS*2);
+  const seen=new Map(),ambiguous=new Set(),targets=new Map();
+  if(fresh)for(const row of snapshot.onus.slice(0,8192)){if(!row?.serialNumber)continue;const sn=identity.serial(row.serialNumber);if(seen.has(sn))ambiguous.add(sn);else seen.set(sn,row);}
+  for(const row of(Array.isArray(ticket.recoveryTargets)?ticket.recoveryTargets:[]).slice(0,recovery.MAX_TARGETS)){
+    if(!row?.serialNumber)continue;
+    const sn=identity.serial(row.serialNumber),old=targets.get(sn);if(old&&JSON.stringify([old.id,old.pon,old.customerId])!==JSON.stringify([row.id,row.pon,row.customerId]))ambiguous.add(sn);else targets.set(sn,row);
+  }
+  const raw=Array.isArray(ticket.affectedSerialNumbers)&&ticket.affectedSerialNumbers.length?ticket.affectedSerialNumbers:[...targets.keys()];
+  const serials=[...new Set(raw.slice(0,recovery.MAX_TARGETS).map(identity.serial).filter(sn=>/^[A-Z0-9]{12}$/.test(sn)))];
+  const customers=new Map();let unmapped=0;
+  const rank={online:0,'power-off':1,unknown:2,los:3};
+  for(const sn of serials){
+    const target=targets.get(sn),row=seen.get(sn);let customer=null,state='unknown';
+    const positionMatches=row&&!ambiguous.has(sn)&&(!target?.id||String(target.id)===String(row.id))&&(!target?.pon||target.pon===row.ponKey)&&(!ticket.pon||ticket.pon===row.ponKey);
+    if(device&&!ambiguous.has(sn)){
+      if(fresh&&positionMatches){
+        customer=require('./ticket-incidents').owner(data,device,row,now).customer;
+        if(target?.customerId&&customer?.id!==target.customerId)customer=null;
+        const mappedOdp=device.links?.[sn]?.fiberPointId||pointId(customer)||target?.odp;
+        if(ticket.scope==='odp'&&mappedOdp!==ticket.fiberPointId)customer=null;
+        if(row.status==='online')state='online';
+        else if(row.status==='offline'&&row.causeKnown===true&&row.condition==='dying-gasp')state='power-off';
+        else if(row.status==='offline'&&row.causeKnown===true&&row.condition==='los'&&!row.plannedReboot)state='los';
+      }else if((!fresh||!row)&&target?.customerId&&(!ticket.pon||target.pon===ticket.pon)&&(ticket.scope!=='odp'||target.odp===ticket.fiberPointId)){
+        const current=require('./ticket-incidents').owner(data,device,{serialNumber:sn,...(target.id?{id:target.id}:{})},now);
+        if(!current.conflict&&(!current.customer||current.customer.id===target.customerId))customer=directory.customerById(target.customerId);
+      }
+    }
+    if(!customer||!directory.compatible(directory.userForCustomer(customer)||customer,{nasId:device?.nasId})){unmapped++;continue;}
+    const previous=customers.get(customer.id),entry={id:customer.id,name:customer.name||customer.customerName||'Nama belum dilengkapi',memberId:customer.code||customer.memberCode||customer.accountId||'',state};
+    if(!previous||rank[state]>rank[previous.state])customers.set(customer.id,entry);
+  }
+  const all=[...customers.values()].sort((a,b)=>a.name.localeCompare(b.name,'id',{numeric:true,sensitivity:'base'})||a.id.localeCompare(b.id)),filtered=all.filter(row=>!search||[row.name,row.memberId].some(value=>String(value).toLocaleLowerCase('id-ID').includes(search)));
+  const pages=Math.max(1,Math.ceil(filtered.length/limit)),page=Math.max(1,Math.min(pages,parseInt(options.page,10)||1));
+  const measured=device&&fresh?await recovery.forTicket(data,ticket,{...options,now,snapshot:async()=>snapshot}):{available:false,ready:false,threshold:recovery.THRESHOLD};
+  const safeRecovery=Object.fromEntries(['available','ready','threshold','online','eligible','poweredOff','remainingLos','unknown'].filter(key=>measured[key]!==undefined).map(key=>[key,measured[key]]));
+  return{kind:'affected',affected:{rows:filtered.slice((page-1)*limit,page*limit),total:filtered.length,mappedTotal:all.length,connections:serials.length,unmappedConnections:unmapped,page,pages,limit,available:fresh,checkedAt:fresh?snapshot.checkedAt:'',truncated:raw.length>recovery.MAX_TARGETS},recovery:safeRecovery};
+}
+
 function validOptical(reading,now=Date.now()){
   return Boolean(reading&&typeof reading.rxPower==='number'&&Number.isFinite(reading.rxPower)&&reading.rxPower<0&&reading.rxPower>=-60&&Number.isFinite(Date.parse(reading.at))&&Date.parse(reading.at)<=now+30000);
 }
@@ -116,14 +173,16 @@ async function resolve(data,ticket,devices,options={}){
 }
 
 async function context(data,ticket,devices,options={}){
+  const kind=contextKind(ticket);if(kind==='none')return{kind};
+  options={...options,page:Math.max(1,Math.min(4096,parseInt(options.page,10)||1)),limit:[10,25,50].includes(Number(options.limit))?Number(options.limit):10,search:clean(options.search).slice(0,100)};
   let cache=caches.get(data);
   if(!cache||cache.revision!==data.updatedAt||cache.customers!==data.customers||cache.users!==data.radiusUsers||cache.olts!==data.oltDevices||cache.points!==data.fiberPoints){cache={revision:data.updatedAt,customers:data.customers,users:data.radiusUsers,olts:data.oltDevices,points:data.fiberPoints,rows:new Map(),pending:new Map()};caches.set(data,cache);}
-  const key=JSON.stringify([ticket.id,ticket.updatedAt,devices.map(row=>[row.id,row.updatedAt]),autoIdentity.cacheVersion(data)]);
+  const key=JSON.stringify([ticket.id,ticket.updatedAt,kind,options.page,options.limit,options.search,devices.map(row=>[row.id,row.updatedAt]),autoIdentity.cacheVersion(data)]);
   const previous=cache.rows.get(key);if(!options.lookup&&previous?.until>Date.now())return structuredClone(previous.value);
   if(!options.lookup&&cache.pending.has(key))return structuredClone(await cache.pending.get(key));
   if(cache.pending.size>=16)throw new Error('Pembacaan identitas sedang penuh. Coba kembali.');
-  const pending=resolve(data,ticket,devices,options);cache.pending.set(key,pending);
-  try{const value=await pending;cache.rows.set(key,{until:Date.now()+ttl,value});while(cache.rows.size>256)cache.rows.delete(cache.rows.keys().next().value);return structuredClone(value);}finally{if(cache.pending.get(key)===pending)cache.pending.delete(key);}
+  const pending=kind==='affected'?affectedContext(data,ticket,devices,options):resolve(data,ticket,devices,options).then(value=>({kind,...value}));cache.pending.set(key,pending);
+  try{const value=await pending;cache.rows.set(key,{until:Date.now()+(kind==='affected'?5000:ttl),value});while(cache.rows.size>256)cache.rows.delete(cache.rows.keys().next().value);return structuredClone(value);}finally{if(cache.pending.get(key)===pending)cache.pending.delete(key);}
 }
 
-module.exports={context,optical,captureOptical,opticalText};
+module.exports={context,contextKind,presentation,optical,captureOptical,opticalText};
