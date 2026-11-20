@@ -24119,7 +24119,7 @@ function accountSettingsFormBody(user = {}) {
         </label>
         <label class="field">
           <span>Jabatan</span>
-          <select name="position" autocomplete="organization-title">
+          <select name="position" autocomplete="organization-title" ${can('users:manage') ? '' : 'disabled'}>
             ${userPositionOptions(user.role || 'viewer', user.position || '')}
           </select>
         </label>
@@ -24212,7 +24212,6 @@ function openAccountSettingsModal() {
       name: payload.name,
       employeeId: payload.employeeId,
       nik: payload.employeeId,
-      position: payload.position,
       email: payload.email,
       phone: payload.phone,
       address: payload.address,
@@ -24220,6 +24219,7 @@ function openAccountSettingsModal() {
       currentPassword: payload.currentPassword,
       newPassword: payload.newPassword
     };
+    if (can('users:manage')) body.position = payload.position;
     if (photoFile) {
       body.photoUrl = await uploadImageFile(photoFile, 'profile', { label: 'Foto profil' });
     }
@@ -26823,15 +26823,15 @@ async function renderPartnerReport(kind = 'report', options = {}) {
 let oltUiLoadPromise = null;
 async function renderMonitoringOlt(mode = 'olt') {
   const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
-  if (!window.FakenetOltUI || !window.FakenetTicketContext) {
+  if (!window.FakenetOltUI || !window.FakenetTicketContext || !window.FakenetOltRegistration || !window.FakenetOltCatalogue || !window.FakenetOltBridge || !window.FakenetOltBandwidth) {
     if (!oltUiLoadPromise) oltUiLoadPromise = (async () => {
-      const version = 'ticket-summary-20261119';
+      const version = 'olt-ticket-audit-20261120-r13';
       for (const path of ['/olt.css', '/ticket-context.css']) {
         const href = path + '?ui=' + version;
         if (document.querySelector(`link[href="${href}"]`)) continue;
         const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.appendChild(style);
       }
-      for (const [path, loaded] of [['/ticket-context.js', 'FakenetTicketContext'], ['/olt.js', 'FakenetOltUI']]) {
+      for (const [path, loaded] of [['/ticket-context.js', 'FakenetTicketContext'], ['/olt-catalogue.js', 'FakenetOltCatalogue'], ['/olt-registration.js', 'FakenetOltRegistration'], ['/olt-bridge.js', 'FakenetOltBridge'], ['/olt-bandwidth.js', 'FakenetOltBandwidth'], ['/olt.js', 'FakenetOltUI']]) {
         if (window[loaded]) continue;
         await new Promise((resolve, reject) => {
           const script = document.createElement('script'); script.src = path + '?ui=' + version;

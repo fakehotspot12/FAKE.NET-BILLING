@@ -20,6 +20,15 @@ test('ODC/PON requires each mapped ODP to recover, not an aggregate that hides a
  for(const row of list.slice(18))Object.assign(row,{status:'offline',condition:'los'});let result=recovery.measure(pon,list,targets);assert.equal(result.online,18);assert.equal(result.ready,false);assert.equal(result.groups.find(row=>row.id==='b').ready,false);
  Object.assign(list[18],{status:'online',condition:'online'});Object.assign(list[9],{status:'offline',condition:'los'});result=recovery.measure(pon,list,targets);assert(result.ready);assert.equal(result.groups.length,2);
 });
+test('moving the same serial to another ONU address cannot count as recovery of the original incident',()=>{
+ const list=rows(3),targets=topology(list).map((row,i)=>({...row,id:list[i].id})),incident={...ticket,recoveryTargets:targets};
+ const moved=list.map(row=>({...row,id:'moved-'+row.id}));const result=recovery.measure(incident,moved,topology(moved));assert.equal(result.online,0);assert.equal(result.unknown,3);assert.equal(result.ready,false);
+ assert.equal(recovery.measure(incident,list,targets).ready,true);
+});
+test('moving ownership or ODP while preserving the serial and native address cannot complete the former customer incident',()=>{
+ const list=rows(3),targets=topology(list).map((row,i)=>({...row,id:list[i].id,customerId:'owner-'+i})),incident={...ticket,recoveryTargets:targets};
+ for(const change of[row=>({...row,customerId:'new-owner'}),row=>({...row,odp:'other-odp'})]){const result=recovery.measure(incident,list,targets.map(change));assert.equal(result.ready,false);assert.equal(result.online,0);assert.equal(result.unknown,3);}
+});
 test('manual close of automatic grouped faults uses fresh cached data, authorization remains external and no polling is triggered',async()=>{
  const list=rows(10),device={id:'olt',enabled:true,links:Object.fromEntries(list.map(row=>[row.serialNumber,{fiberPointId:'odp'}]))},data={settings:{},customers:[],radiusUsers:[],fiberPoints:[{id:'odp'}],oltDevices:[device]},snapshot={status:'online',checkedAt:new Date(NOW).toISOString(),onus:list};let reads=0;const options={now:NOW,snapshot:async()=>{reads++;return snapshot;}};
  assert((await recovery.validateResolution(data,ticket,{status:'resolved'},options)).ready);assert.equal(reads,1);

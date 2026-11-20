@@ -268,6 +268,163 @@ Untuk role reseller voucher, data dibuat terpisah berdasarkan pembuat voucher da
 
 Expired mode mengikuti profile Hotspot, misalnya `None`, `Remove`, `Remove & Record`, `Notice`, dan `Notice & Record`. Mode `Remove & Record` akan menghapus user voucher setelah masa aktif habis tetapi tetap menyimpan record laporan, sedangkan mode notice mempertahankan data user dengan status yang sesuai.
 
+## Terminal CLI Per OLT
+
+Saat membuka **Daftar ONU**, ikon Terminal tersedia pada aksi OLT terpilih bagi
+pengguna dengan hak pengelolaan OLT atau hapus ONU, termasuk teknisi. Hak terminal
+tidak memberi izin reboot seluruh OLT atau pengelolaan akun OLT. Berlaku juga
+untuk CDATA. Koneksi memakai
+IP, protokol Telnet/SSH, port dan akun CLI yang sudah disimpan pada OLT tersebut,
+bukan alamat atau password yang dikirim dari browser. Klik ikon CLI untuk membuka
+jendela terminal khusus dan menghubungkan sesi. Browser harus mengizinkan pop-up.
+Tidak ada perintah konfigurasi otomatis ketika sesi dibuka.
+
+Terminal ini merupakan akses manual langsung ke perangkat, termasuk mode
+konfigurasi dengan perintah lengkap yang dikenali. Batas keamanan aksi otomatis
+vendor tetap berlaku di luar terminal.
+Periksa OLT/PON/ONU sebelum mengirim perubahan. Gunakan HTTPS/VPN untuk akses
+aplikasi; Telnet dari server ke OLT tetap tidak terenkripsi.
+
+- Satu sesi per OLT dan per sesi login, maksimal dua terminal aktif pada server.
+- Terminal berakhir setelah lima menit tanpa input, maksimal 30 menit per sesi.
+  Menutup popup atau logout menutup koneksi. Perubahan target/akun OLT menuntut
+  koneksi ulang; sesi milik pengguna lain tidak dapat dibaca atau dikendalikan.
+- Monitoring memakai cache selama terminal aktif; aksi otomatis pada OLT yang
+  sama ditahan agar tidak bertabrakan. Tidak menambah polling perangkat global.
+- Output dibatasi di memori dan tidak disimpan ke database. Audit mencatat
+  pembukaan akses, bukan isi perintah/password atau salinan konfigurasi perangkat.
+- Sesi PTY meneruskan ketikan sebelum Enter serta mempertahankan kursor, warna,
+  backspace dan tampilan asli perangkat. Tab, `?` dan riwayat panah mengikuti
+  kemampuan firmware OLT, bukan daftar perintah dari browser. Prompt diperiksa
+  sebelum Enter dijalankan; pemeriksaan hapus/reboot tetap berlaku. Ketikan yang
+  masuk saat bantuan belum selesai diantrekan, bukan dibuang atau dieksekusi ulang.
+- Pada layar sentuh, terminal memenuhi layar dan tinggi mengikuti keyboard.
+  Bar utama satu baris berisi Ctrl, Tab, bantuan dan panah; tombol tambahan
+  menyediakan Esc, Ctrl+C/Z, Space dan Enter. Tidak menggeser halaman horizontal.
+  Tempelan banyak baris ditolak. Password `enable` disembunyikan; terminal tidak
+  menyimpan riwayat perintah di browser/database. Riwayat pada OLT tetap mengikuti
+  firmware dan kebijakan perangkatnya. Tidak menjalankan shell sistem server.
+- xterm.js, addon ukuran, parser terminal dan node-pty menggunakan versi terpin.
+  Aset browser disajikan lokal, bukan CDN. Installer/updater memeriksa dependency
+  dan menyiapkan compiler build bila belum tersedia sebelum aktivasi. Parser/PTY
+  hanya dimuat saat terminal digunakan, bukan saat membuka dashboard/member.
+  Pembacaan output memakai long-poll terbatas pada sesi aktif, tanpa service atau
+  port publik tambahan. Kegagalan jaringan tidak mengirim ulang perintah otomatis.
+- Perintah hapus ONU yang dikenali **tidak dikirim mentah ke perangkat**. Target
+  dicocokkan ke satu PON/ID/SN, terminal ditutup, lalu pratinjau Hapus ONU web
+  dibuka. Konfirmasi, pemeriksaan offline/identitas, izin NAS dan hasil per tahap
+  memakai alur yang sama. Integrasi aktif mengikuti OLT -> ACS; jika nonaktif,
+  hanya OLT. Member/invoice/transaksi tidak ikut dihapus dari perintah hapus ONU.
+- Pada ZTE, perintah lengkap `no shutdown` dapat dipakai setelah masuk ke
+  interface PON dengan perintah lengkap dan respons berhasil. Mengaktifkan PON
+  tidak menghapus ONU; perintah ini tidak membuka akses hapus atau reboot mentah.
+- Alur tiga lapis tetap dimulai dari Hapus Pelanggan ketika pengaturannya aktif,
+  bukan dari hapus modem. Perintah ambigu, singkatan hapus, script/separator dan
+  reset tidak diteruskan. Aksi vendor yang belum terverifikasi tetap tidak dapat
+  diterapkan melalui terminal, meskipun pratinjau dapat dibuka.
+
+## Reboot OLT
+
+### Kontrol PON
+
+Pilih satu PON pada **Daftar ONU**, lalu buka **Aktifkan PON / Nonaktifkan PON**.
+Kontrol hanya tersedia untuk Admin, Sekretaris dan Kepala Teknisi sesuai NAS.
+Pembatasan berlaku pada tombol, API, serta perintah `no shutdown` di terminal;
+peran lain yang memiliki akses monitoring tetap dapat membaca status PON.
+Status dibaca dari konfigurasi administratif OLT, bukan disimpulkan dari jumlah
+ONU: port **OFF** berwarna abu-abu gelap, sedangkan port aktif yang belum berisi
+ONU diberi keterangan **Kosong**. Data yang belum terbaca tidak dianggap OFF.
+
+Popup memeriksa ONU terdaftar, online dan belum terdaftar. Ketik alamat PON
+lengkap dan setujui dampaknya sebelum menerapkan. Jika masih ada ONU online,
+penonaktifan memerlukan konfirmasi tambahan dengan jumlah ONU yang sama seperti
+pratinjau. Perubahan jumlah/status atau identitas sebelum aksi menahan perintah.
+Server memeriksa ulang port fisik,
+PON dan identitas ONU dalam sesi CLI yang sama sebelum perubahan serta membaca
+hasilnya kembali. Perubahan tidak menghapus ONU/member/invoice, tidak melakukan
+reboot kartu/OLT dan tidak otomatis menyimpan seluruh konfigurasi ke startup.
+
+Nonaktif terencana menahan tiket LOS otomatis baru hanya pada PON tersebut.
+Tiket sebelumnya dan laporan manual tetap ada. Setelah aktif kembali, jeda
+pemulihan lima menit memberi waktu ONU tersambung. Hasil pengiriman yang belum
+pasti tidak dikirim ulang otomatis; gunakan **Periksa Ulang** dahulu. Status
+ringkasan memakai cache lima menit melalui polling existing, bukan query per ONU.
+Aturan peran dan pengaman yang sama berlaku untuk driver OLT lainnya ketika
+kontrol PON-nya sudah terverifikasi. Saat ini jalur kontrol terverifikasi tersedia
+untuk ZTE dan CDATA GPON melalui jalur masing-masing; vendor lain tetap terkunci,
+bukan memakai tebakan perintah ZTE. Pada CDATA, format autofind baru yang belum
+terverifikasi menahan kontrol, bukan dianggap nol ONU. Pembacaan administratif
+CDATA dibatasi empat PON per putaran dengan cache lima menit dan anggaran waktu
+existing; tidak menambah scheduler atau pembacaan per ONU.
+Jalur CLI CDATA, kontrol PON dan terminal memakai pengunci perangkat yang sama,
+sehingga perubahan pada satu OLT tidak berjalan bersamaan.
+Jika login CLI macet sebelum perintah pertama, koneksi PON dibatasi enam detik
+dan boleh disambung ulang satu kali setelah izin serta target diperiksa ulang.
+Seluruh operasi tetap memiliki anggaran waktu 18 detik. Setelah ada perintah
+CLI terkirim atau hasil perubahan belum pasti, tidak ada pengiriman ulang
+otomatis. Kode kegagalan dan tahap terakhir dicatat tanpa isi kredensial.
+
+Pada **Daftar ONU**, tombol dengan ikon daya me-reboot seluruh OLT terpilih,
+bukan satu ONU. Akses tersedia bagi Admin/Owner, Sekretaris, serta Kepala
+Teknisi; Staf Teknisi tidak mendapat menu maupun izin API. Cakupan NAS kepala
+teknisi tetap diperiksa server, termasuk bila memakai role NOC.
+
+- Tampilan tombol seragam lintas vendor/model. Kesiapan dibaca saat popup dibuka,
+  bukan ketika memuat daftar ONU. Bantuan CLI diperiksa tanpa mengirim Enter
+  pada perintah reboot; firmware yang belum terverifikasi tidak dipaksa.
+- Konfirmasi nama OLT dan persetujuan konfigurasi sudah disimpan wajib diisi.
+  Tidak melakukan Save Config otomatis, factory reset atau reset kartu/PON.
+- Sebelum perintah dikirim, penanda pemeliharaan tersimpan untuk OLT tersebut
+  selama 15 menit. Tiket/WhatsApp LOS baru akibat reboot dijeda, observasi LOS
+  dimulai ulang setelah jeda, dan tiket gangguan sebelumnya tidak dihapus.
+  Perlindungan ini hanya satu record OLT, bukan seribu record per ONU.
+- Satu pengiriman per konfirmasi, tanpa retry otomatis. Jika koneksi terputus
+  setelah perintah terkirim, status tidak dipalsukan menjadi reboot terverifikasi;
+  tunggu perangkat kembali online sebelum mencoba tindakan lain.
+- Dev/tester boleh memeriksa kesiapan, tetapi tidak menjalankan reboot OLT asli.
+  Tidak menambah scheduler, dependency atau polling global baru.
+
+## Pratinjau Profil ZTE
+
+Inventory ZTE C320 yang sudah diverifikasi dibaca melalui SNMP sistem dan CLI
+baca-saja: kartu/port fisik, status serta identitas ONU per PON. Posisi memakai
+frame/slot/port asli, termasuk PON kosong. Tabel yang tidak lengkap tidak
+menimpa snapshot terakhir; nama dan redaman yang belum tersedia tetap `-`.
+Satu tabel dibaca per PON, bukan satu koneksi per ONU. Status offline umum
+tidak ditebak sebagai LOS atau dijadikan tiket gangguan otomatis.
+
+Redaman sisi ONU dibaca melalui CLI per kelompok maksimal empat PON, lalu
+serial dan posisi diperiksa ulang. Timeout metadata SNMP tidak menghapus
+redaman yang berhasil diverifikasi. Nama dan jarak menggunakan cache terbatas
+dengan retry SNMP maksimal tiga percobaan; pembacaan opsional tidak menghabiskan
+anggaran waktu optik. Cache tidak menempel ke serial/posisi ONU yang berubah.
+ONU yang kembali online diprioritaskan pada putaran pembacaan berikutnya, tanpa
+menambah scheduler atau melebihi batas empat PON. Nilai native `N/A` tetap kosong.
+CPU/RAM C320 memakai kartu pengendali aktif yang terverifikasi, bukan kartu PON,
+dan dibaca maksimal sekali per lima menit. Model ONU dari type konfigurasi OLT
+ditandai sumbernya; kolom pelanggan/ODP yang belum dipetakan tetap tidak ditebak.
+
+Pada OLT ZTE yang sudah ditambahkan, ikon **Profil Layanan ZTE** membuka mode
+Otomatis dan Manual. Tahap uji ini membaca profil melalui CLI, menggunakan cache
+terbatas dan hanya melakukan pembacaan atas permintaan pengguna. Tidak menambah
+polling background atau memakai SNMP SET.
+
+- Otomatis merancang profil bandwidth berdasarkan angka Kbps, bukan nama profil.
+  Profil yang cocok dapat digunakan kembali; nama bertabrakan tidak ditimpa.
+- Manual memilih profil existing dan memeriksa apakah kapasitasnya mencukupi.
+- Ikon profil pada baris ONU mengunci alamat dan SN terpilih. Baca Layanan ONU
+  menampilkan kapasitas dan konfigurasi existing. Pratinjau edit bandwidth
+  mempertahankan VLAN, service-port, T-CONT dan GEM; resource yang dipakai
+  bersama layanan lain tidak diubah otomatis.
+- Alamat ONU opsional memungkinkan pemeriksaan slot T-CONT/GEM yang terpakai.
+  Batas efektif memakai nilai terendah kemampuan fisik dan ONU-type. VLAN yang
+  sudah terikat dan slot yang penuh ditolak, bukan diambil alih.
+- Beberapa VLAN satu layanan berbagi batas upload agregat pada satu T-CONT.
+  Downstream dibaca sebagai batas per GEM/VLAN, bukan total agregat yang ditebak.
+- Editor perancangan ini tetap **pratinjau**. Penerapan registrasi SN dan profil
+  60/120 Mbps menggunakan alur konfirmasi terpisah di **Registrasi ONU** atau
+  profil ONU. Dukungan baca C3xx tidak berarti seluruh C6xx sudah terverifikasi.
+
 ## Monitoring OLT CDATA
 
 - Menu **Monitoring > OLT** menyediakan tambah/edit OLT secara manual: nama,
@@ -554,7 +711,7 @@ di hasil tes. Tombol **Baca OLT** menyegarkan satu OLT; **Baca ulang semua OLT**
 memasukkan OLT berizin ke antrean worker secara bergiliran dengan pembatasan
 klik, tanpa summon ACS atau scan SNMP serentak.
 
-**Simpan Config OLT** merupakan aksi pengelola untuk menyimpan seluruh
+**Simpan Konfigurasi OLT** merupakan aksi pengelola untuk menyimpan seluruh
 konfigurasi berjalan ke penyimpanan permanen perangkat, tanpa reboot. Periksa
 semua perubahan OLT terlebih dahulu, lalu konfirmasikan nama perangkat. Aksi
 ini tidak berjalan otomatis saat refresh atau tes koneksi. Save dibatasi satu
@@ -661,6 +818,235 @@ MAC EPON tidak dianggap serial GPON. Penghapusan gabungan hanya memakai
 kecocokan tepat MAC antarmuka ONT asli pada satu record ACS, disertai pemeriksaan
 NAS, pemilik, posisi dan inform terakhir; MAC klien WiFi tidak dipakai.
 
+**VLAN dan Profil (ZTE)**
+
+Ikon pengaturan pada OLT membuka satu panel dengan tiga tab. Data perangkat
+dibaca saat diperlukan dan dicache lima menit, maksimal 16 OLT/8 MB. Pergantian
+tab, pencarian dan halaman berjalan lokal tanpa query OLT atau ACS tambahan.
+
+- **VLAN** menampilkan jumlah dan ID VLAN asli OLT. Nama, kegunaan (manajemen,
+  internet, hotspot, IPTV, VoIP atau lainnya) dan keterangan dapat diisi sebagai
+  metadata billing. Isian ini tidak menambah, menghapus atau mengganti VLAN
+  maupun tagging uplink pada perangkat.
+- **Profil Bandwidth** menampilkan profil upload/T-CONT dan downstream asli,
+  serta katalog preset upload/download yang dapat berbeda kecepatannya.
+  Preset baru memakai Type 4, fixed/assured 0 dan downstream SIR 0. **Siapkan di
+  OLT** memeriksa, mengonfirmasi dan membuat hanya profil yang belum ada, tanpa
+  mengikat atau mengubah ONU existing. Preset dapat dipilih di Registrasi ONU;
+  perubahan kecepatan/penghapusan ditahan jika masih dipakai preset PON.
+  Menghapus preset katalog tidak menghapus profil fisik dari OLT.
+- **Tipe ONU** menampilkan template OLT beserta kapasitas T-CONT/GEM,
+  pemetaan nama model auto-learning dan vendor. Mode **Otomatis** mencocokkan
+  model persis atau pemetaan yang telah disimpan, bukan menebak dari SN atau
+  nama vendor. Model yang belum dikenal memakai cadangan GPON OMCI netral dan
+  kapasitas fisiknya diperiksa sebelum layanan diterapkan. Pemetaan ambigu
+  atau template yang hilang menahan penerapan; ONU existing tidak diubah massal.
+
+Identifikasi WiFi 2,4/5 GHz memakai parameter radio eksplisit dalam cache ACS
+untuk SN yang tepat, atau katalog model dengan spesifikasi radio terverifikasi.
+Cache ACS hanya dipakai bila inform dan parameter radionya tidak lebih dari 15
+menit; waktu inform baru tidak memperbarui umur parameter lama. Bukti beberapa
+proyeksi digabungkan tanpa menebak band yang tidak dilaporkan. Identitas SN ganda
+atau waktu yang tidak valid membuat bukti tersebut tidak dipakai.
+Nama template `5G`, indeks SSID maupun jumlah klien nol bukan bukti kemampuan
+radio. Data belum tersedia tetap belum terdeteksi, bukan dianggap single-band.
+Pembacaan ini tidak melakukan summon atau mengubah parameter/pengaturan WiFi.
+Katalog dapat dikelola Admin, Sekretaris dan Kepala Teknisi dalam cakupan NAS.
+Perubahan katalog/preset ditahan selama registrasi atau penyiapan profil aktif.
+Konfirmasi perangkat, revisi metadata, CSRF dan pemeriksaan izin server tetap
+berlaku. Installer/updater memverifikasi modul dan aset tanpa dependency baru.
+
+Pengaturan **Registrasi ONU** pada OLT ZTE menyediakan **Registrasi Otomatis ONU**
+per PON. Fitur default nonaktif dan tidak mengubah OLT saat halaman dibuka.
+Pilih PON, bandwidth dan 1-16 VLAN existing, lalu **Simpan**. Untuk
+mengaktifkannya, centang registrasi otomatis, simpan, **Periksa Pengaturan**,
+dan konfirmasi **Terapkan** satu kali untuk PON tersebut. Pilihan tersimpan
+di server; badge menunjukkan status pengendali registrasi, bukan hanya ceklis.
+Perubahan preset, koneksi OLT atau hak operator memerlukan pemeriksaan ulang.
+
+Opsi **TR069 DHCP - VLAN100** tersedia pada preset PON ZTE, default nonaktif.
+Isi URL CWMP ACS (bukan port NBI), pilih VLAN100 yang sudah tersedia, lalu simpan.
+Jalur GEM dan service-port VLAN100 dipakai kembali, bukan dibuat ganda; WAN
+Internet, LAN dan WiFi tidak diubah. Setelah pengendali registrasi diaktifkan,
+ONU baru mengikuti preset tersebut. Untuk ONU lama dari riwayat registrasi,
+gunakan **Terapkan TR069** pada SN yang dipilih dengan konfirmasi terpisah.
+Menonaktifkan opsi menghentikan penerapan pada pendaftaran berikutnya, bukan
+menghapus WAN existing. IP Host atau WAN manajemen yang ambigu/dipakai layanan
+lain ditahan. Hasil konfigurasi dibaca ulang; status tersimpan tidak berarti
+DHCP sudah mendapat IP atau Inform sudah diterima ACS. Dukungan firmware/model
+OMCI harus diverifikasi pada perangkat; tidak ada penggantian ke WAN Internet
+atau konfigurasi global sebagai jalur cadangan.
+Firmware yang memisahkan status, URL ACS dan tag VLAN dalam beberapa baris
+tetap dikenali sebagai satu konfigurasi TR069. Kapasitas IP Host/VEIP fisik
+diperiksa; permintaan yang melampaui kemampuan atau belum pasti ditahan.
+Diagnostik API tidak memuat rencana internal, kredensial atau output CLI mentah.
+
+Registrasi dijalankan oleh server billing berdasarkan SN ONU baru yang
+terdeteksi OLT. Server memilih ID kosong, memeriksa ulang SN dan posisi, lalu
+menerapkan bandwidth serta VLAN preset tanpa konfirmasi per modem. Deteksi
+SN tetap diperlukan; PnP/auto-authorize native tidak dijalankan bersamaan agar
+kedua jalur tidak berebut pendaftaran. Server billing dan koneksi CLI ke OLT
+harus tersedia untuk pendaftaran baru. ONU existing tidak dikonfigurasi ulang.
+
+Model fisik dari discovery tetap dibedakan dari nama template konfigurasi.
+Template GPON OMCI otomatis tidak menebak kemampuan WiFi berdasarkan SN atau
+vendor. Kapasitas T-CONT/GEM fisik diperiksa kembali sebelum layanan diterapkan;
+profil cadangan dapat dipilih pada pengaturan lanjutan. Hanya VLAN pilihan
+yang dibuatkan layanan, dalam batch terbatas, tanpa membuka trunk semua VLAN
+atau diam-diam memakai VLAN pertama saja.
+
+**Daftarkan Manual** tetap tersedia pada SN yang terdeteksi. Operator memilih
+SN, memeriksa preset dan menyetujui pendaftaran; alamat/nomor ONU dialokasikan
+server, bukan diketik manual. Hasil yang ambigu atau gagal ditandai **Perlu
+diperiksa**, tanpa mengulang mutasi secara otomatis. **Periksa Manual** dapat
+melanjutkan layanan ONU milik proses sebelumnya yang sudah terdaftar: SN,
+posisi, preset dan batch layanan yang lengkap wajib cocok sebelum pengiriman.
+Pendaftaran yang sudah berhasil tidak diulang. Konfigurasi asing atau batch
+parsial yang tidak dapat diverifikasi tetap ditahan.
+
+Pemindaian discovery paling cepat setiap 20 detik untuk satu OLT per giliran,
+hanya jika ada PON dengan registrasi otomatis aktif. Saat tidak ada yang aktif,
+tidak ada timer registrasi. Pembacaan detail berjalan ketika ada ONU baru,
+bukan query per pelanggan pada setiap pemindaian. Riwayat proses dibatasi 128
+record per OLT selama 30 hari; popup menampilkan status terbaru delapan SN.
+Implementasi ini dibatasi ke firmware ZTE V2.1.0 yang dikenali. Registrasi dan
+verifikasi layanan bukan pengujian akses internet: WAN/PPPoE dan jalur upstream
+tetap harus benar. Aksi tidak mengatur akun PPPoE atau password WiFi pelanggan.
+
+Daftar ONU membuka PON pertama dengan delapan baris per halaman. Pencarian dan
+pagination tetap memakai snapshot cache PON terpilih tanpa query OLT tambahan.
+
+**Bridge / Trunk per ONU (ZTE V2.1.0)**
+
+Mode **Access** mengikat satu VLAN untagged ke port, sedangkan **Trunk** hanya
+meneruskan daftar VLAN tagged yang dipilih. Pratinjau membandingkan binding lama
+dengan perubahan pada port terpilih; perubahan mode tidak membuat WAN routing
+baru. Service-port/VLAN ganda atau ambigu ditahan. VLAN management yang terbaca
+dari IP-host, TR069 atau VEIP tetap dilindungi, termasuk jika bukan VLAN 100.
+
+Ikon **Port LAN dan WiFi** pada ONU online menampilkan binding setiap
+antarmuka. Satu ONU dapat mempunyai banyak binding: satu VLAN boleh dipakai pada
+beberapa LAN/SSID, sementara setiap port trunk dapat membawa beberapa VLAN
+terpilih. **Trunk** membawa VLAN tagged; **Bridge Access** membawa satu VLAN
+untagged. Setiap antarmuka disimpan dan diverifikasi tersendiri tanpa menimpa
+binding lainnya. Hasil terverifikasi memperbarui daftar tanpa membaca ulang OLT.
+
+Pilihan **SSID WiFi** hanya memakai antarmuka yang benar-benar dilaporkan melalui
+OMCI, termasuk nama SSID. Nomor indeks maupun tulisan `5G` pada nama SSID bukan
+bukti band radio atau kecocokan antarmuka. Nama kosong, data ambigu dan backhaul
+ditahan; kapasitas WiFi saja tidak dijadikan daftar SSID buatan. Bridge SSID
+menggunakan satu VLAN access per SSID. Nama/password WiFi, radio dan SSID lain
+dipertahankan serta diperiksa sebelum/sesudah penerapan. Modem yang tidak
+melaporkan pemetaan SSID melalui OMCI memerlukan konfigurasi WiFi lewat ACS;
+editor ini tidak menebak pemetaan indeks ACS ke OMCI.
+
+VLAN harus sudah tersedia dalam layanan ONU. Editor tidak membuat
+GEM/service-port tambahan, membuka semua VLAN, atau mengubah WAN PPPoE, WiFi,
+IP-host/VEIP dan preset PON. VLAN management 100 serta VLAN management yang
+teridentifikasi pada konfigurasi ONU dilindungi; binding LAN lanjutan ditahan
+untuk pemeriksaan manual.
+
+Admin, Sekretaris dan Kepala Teknisi sesuai cakupan NAS dapat membaca port,
+memeriksa perubahan, lalu mengonfirmasi SN dan dampaknya. Identitas, posisi,
+model fisik OMCI dan konfigurasi diperiksa ulang dalam sesi penerapan yang sama.
+Hasil memerlukan kecocokan konfigurasi OLT, mode port serta whitelist VLAN yang
+dibaca melalui OMCI. Dukungan bergantung pada model/firmware ONU, bukan nama
+template merek. Respons yang belum dikenali atau hasil yang belum pasti ditahan
+tanpa pengiriman ulang otomatis; uji trafik LAN tetap diperlukan. Penyimpanan
+permanen mengikuti prosedur Save Config OLT, bukan otomatis menulis konfigurasi
+global. Pembacaan hanya saat popup dipakai, dengan cache terbatas dan tanpa
+scheduler baru. Saat jalur CLI sedang dipakai, pembacaan editor menunggu secara
+terbatas melalui antrean per OLT; discovery memberi giliran selama editor
+bekerja. Pergantian LAN/SSID menggunakan satu snapshot, sementara tombol baca
+ulang mengambil data baru. Antrean berbatas waktu tidak menjalankan permintaan
+yang telah kedaluwarsa. Konfigurasi yang hasilnya belum pasti tetap tidak
+dikirim ulang otomatis.
+
+Saat daftar ONU ZTE dibuka, status PON yang sedang dilihat diperiksa kembali
+dengan jeda lima detik setelah pembacaan sebelumnya selesai. Hanya tabel
+identitas/status PON terkait yang dibaca; pembacaan berhenti sementara ketika
+tab browser tidak terlihat atau popup konfigurasi dibuka. Waktu pembacaan
+ditampilkan hingga detik. Jika VPN gagal atau konfigurasi masih berjalan, data
+lama diberi penanda, bukan diubah menjadi nol, LOS, atau mati listrik buatan.
+Pembacaan ini hanya untuk tampilan dan tidak membuat tiket otomatis dari
+snapshot parsial. Status tetap mengikuti laporan perangkat, bukan dugaan.
+
+**Daftar ONU** langsung membuka PON pertama dari OLT yang dipilih, untuk semua
+vendor. Daftar dibatasi delapan ONU per halaman, termasuk filter **Semua status**;
+PON lain dibuka melalui tombol PON masing-masing, tanpa pilihan Semua PON.
+Tampilan hanya memakai daftar ONU, tanpa deretan kotak nomor ONU tambahan.
+Pindah PON/OLT kembali ke halaman pertama.
+Jika data port belum tersedia, pembacaan seluruh ONU tidak dipakai sebagai
+pengganti. **Registrasi ONU** memuat pendaftaran
+manual dan otomatis, sementara **VLAN dan Profil** mengatur daftar VLAN,
+bandwidth serta tipe ONU.
+
+**Profil Bandwidth ONU** pada aksi setiap ONU menyediakan profil katalog,
+pilihan standar 60/120 Mbps, atau pasangan profil upload/download best-effort
+yang tersedia di OLT. Kecepatan tidak disimpulkan dari nama profil; nilai asli
+dibaca ulang sebelum penerapan. Pilihan upload dan download boleh berbeda.
+Editor tidak mengubah paket/harga billing pelanggan, tipe ONU, VLAN maupun
+preset PON. Profil dengan reservasi bandwidth tidak dipilih otomatis.
+
+Jika beberapa VLAN memakai satu T-CONT, perubahan upload memengaruhi batas
+bersama VLAN tersebut pada ONU yang sama. Pratinjau menampilkan VLAN terdampak
+dan memerlukan persetujuan tambahan. Download hanya diubah pada GEM layanan
+terpilih; GEM yang dipakai beberapa layanan atau belum terpetakan ditahan.
+Tidak ada penambahan T-CONT/GEM, perubahan profil global, atau Save Config OLT
+otomatis. Admin, Sekretaris dan Kepala Teknisi mengikuti izin dan cakupan NAS.
+Identitas SN unik, posisi, profil katalog dan konfigurasi diperiksa ulang;
+hasil tidak pasti tidak dikirim ulang. Pembacaan hanya saat popup digunakan,
+memakai katalog cache berbatas tanpa worker/polling baru.
+
+Pembacaan pengaturan yang datang bersamaan untuk ONU yang sama memakai satu
+sesi. Penulisan tetap berurutan: satu sesi aktif dan paling banyak empat sesi
+menunggu per OLT, dengan batas tunggu delapan detik dalam anggaran permintaan.
+Batas ini bukan jumlah ONU yang dapat didaftarkan. Pendaftaran otomatis
+memproses ONU bertahap berdasarkan SN; perintah banyak tidak dikirim sebagai
+satu script tanpa pemeriksaan. Permintaan manual yang belum dapat diterima
+ditolak sebelum status diterima dikirim, dan permintaan kedaluwarsa tidak
+dijalankan belakangan.
+
+Menyimpan preset yang tidak berubah mempertahankan revisi dan status registrasi
+otomatis. Kelanjutan manual menerima preset yang disimpan ulang hanya apabila
+VLAN, profil dan identitas tetap sama serta batch existing terverifikasi.
+Pemulihan koneksi registrasi dibatasi satu sambung ulang sebelum perintah
+pertama, setelah izin/preset diperiksa ulang. Tidak mengulang perintah setelah
+pembacaan parsial, mutasi, atau hasil ambigu.
+
+**Profil bandwidth best-effort (ZTE V2.1.0)**
+
+- Preset otomatis menggunakan batas upload 60 Mbps, T-CONT Type 4 dengan
+  fixed/assured 0. Tidak menggunakan nilai dari nama profil atau mewarisi
+  profil default fixed 10 Mbps.
+- **Profil 60/120 Mbps** memeriksa dan membuat profil yang belum tersedia,
+  tanpa menimpa profil existing, mengubah ONU atau mengaktifkan PnP. Profil
+  downstream terpisah menggunakan SIR 0. Konfirmasi dan pembacaan ulang wajib.
+- Pada baris ONU, ikon profil menyediakan perubahan 60/120 Mbps untuk satu
+  layanan existing. VLAN, T-CONT, GEM dan service-port dipertahankan; resource
+  bersama, identitas berubah atau konfigurasi gagal menahan penerapan.
+- Profil dipakai ulang oleh seluruh ONU, bukan dibuat 128 kali. Batas 60/120
+  Mbps adalah maksimum best-effort, bukan reservasi atau jaminan kecepatan
+  serentak untuk 128 ONU. Kapasitas kartu/PON, optical budget dan uplink tetap
+  harus diperiksa. Kecepatan paket pelanggan tetap mengikuti billing/RADIUS.
+- Registrasi server mengikat upload dan downstream pada layanan ONU baru dan
+  membaca ulang pemetaan T-CONT/GEM/VLAN. Memiliki profil saja belum berarti
+  seluruh ONU sudah menggunakannya. Perubahan paket besar per ONU tidak
+  menaikkan preset PON lain. Upload dibatasi agregat per T-CONT, sedangkan
+  downstream dibatasi per GEM/VLAN, bukan total agregat beberapa VLAN.
+- Perubahan bandwidth existing berjalan hanya saat diminta, dibatasi per OLT,
+  memakai pratinjau berumur pendek dan tidak mengulang otomatis ketika hasil
+  pengiriman belum pasti. Pemindaian registrasi baru terpisah dan opt-in.
+
+Kontrol tersedia bagi Admin, Sekretaris dan Kepala Teknisi sesuai cakupan NAS.
+PnP native yang masih aktif menahan registrasi server; mode global dan aturan
+UNI lanjutan tidak ditimpa. Aksi tidak mematikan port PON, menghapus ONU existing
+atau menyimpan konfigurasi seluruh OLT secara otomatis. Setelah hasil konfigurasi
+diperiksa, penyimpanan permanen OLT tetap mengikuti prosedur **Save Config**.
+Hasil dibaca ulang; pengiriman yang belum pasti tidak dicoba ulang otomatis.
+Dukungan model/firmware harus diuji sebelum dipakai pada jaringan aktif;
+provisioning manual existing tetap dipertahankan.
+
 Model dan bar CPU/RAM ada pada **Ringkasan**. Pembacaan berjalan di background
 dan disimpan pada snapshot/cache: resource paling cepat setiap lima menit,
 model setiap 24 jam, serta jeda ulang 15 menit saat gagal. Membuka daftar PON/ONU
@@ -687,7 +1073,7 @@ atau reset. Pengiriman dibatasi satu kali dengan jeda ulang satu menit; hasil
 yang belum terkonfirmasi tidak otomatis dicoba ulang. Model/firmware lain tetap
 terkunci bila jalur penyimpanannya belum dikenali.
 
-Daftar **PON / ONU** membaca satu OLT yang dipilih, bukan gabungan seluruh ONU.
+Daftar **Daftar ONU** membaca satu OLT yang dipilih, bukan gabungan seluruh ONU.
 Ringkasan boleh menampilkan total cache antar-OLT, tetapi masuk ke daftar akan
 memilih satu OLT. Filter/pagination dikerjakan pada snapshot lokal; perangkat
 OLT tidak dihubungi saat mengetik pencarian atau berpindah halaman. Pengayaan

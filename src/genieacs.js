@@ -3,6 +3,7 @@
 const genieAcsWan = require('./genieacs-wan');
 const genieAcsWifi = require('./genieacs-wifi');
 const networkIdentity = require('./network-identity');
+const crypto = require('node:crypto');
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:7557';
 const HTTP_TIMEOUT_MS = Math.max(3000, Number(process.env.GENIEACS_HTTP_TIMEOUT_MS || 10000) || 10000);
@@ -388,16 +389,46 @@ function clearDeviceListCache() {
   deviceListCache.clear();
   deviceListInflight.clear();
   bestDeviceCache.clear();
+  radioCapabilityLookups.clear();
 }
 
+function deviceCacheScope(cfg = {}) {
+  return [cfg.baseUrl, 'token:' + crypto.createHash('sha256').update(String(cfg.token || '')).digest('hex')].join('|') + '|';
+}
 function deviceListCacheKey(cfg = {}, query = {}, projection = '', requestQuery = {}) {
-  return [
-    cfg.baseUrl,
-    cfg.token ? `token:${cfg.token.length}:${cfg.token.slice(-6)}` : 'token:',
-    JSON.stringify(query),
-    projection,
-    JSON.stringify(requestQuery)
-  ].join('|');
+  return deviceCacheScope(cfg) + [JSON.stringify(query), projection, JSON.stringify(requestQuery)].join('|');
+}
+
+const radioCapabilityLookups = new Map();
+function cachedRadioCapabilities(settings = {}, serials = []) {
+  const cfg = normalizeSettings(settings), wanted = new Set(serials.filter(value => typeof value === 'string').slice(0, 128));
+  const prefix = deviceCacheScope(cfg), lookupKey = prefix + [...wanted].sort().join(','), previous = radioCapabilityLookups.get(lookupKey);
+  const matches = new Map(), identities = new Map(), ambiguous = new Set(), now = Date.now();
+  let budget = 30000;
+  if (!configured(cfg) || !wanted.size) return matches;
+  if (previous?.expiresAt > now) return structuredClone(previous.rows);
+  for (const [key, entry] of deviceListCache) {
+    if (!key.startsWith(prefix) || entry.staleUntil <= now) continue;
+    for (const raw of entry.rows || []) {
+      if (--budget < 0) return new Map();
+      const sn = normalizeSerialNumber(cleanText(raw._deviceId?._SerialNumber) || getPathValue(raw, 'InternetGatewayDevice.DeviceInfo.SerialNumber') || getPathValue(raw, 'Device.DeviceInfo.SerialNumber'));
+      if (!wanted.has(sn) || !raw._id) continue;
+      const informed = Date.parse(raw._lastInform || '');
+      if (!Number.isFinite(informed) || now - informed > 900000 || informed > now + 30000) continue;
+      if (identities.has(sn) && identities.get(sn) !== raw._id) ambiguous.add(sn);
+      identities.set(sn, raw._id);
+      const evidence = require('./ont-radio-capability').radioEvidence(raw, { now, requireFresh: true });
+      if (!evidence.bands.length) continue;
+      const old = matches.get(sn);
+      const checkedAt = old ? new Date(Math.min(Date.parse(old.checkedAt), Date.parse(evidence.measuredAt))).toISOString() : evidence.measuredAt;
+      matches.set(sn, { ...evidence, bands: [...new Set([...(old?.bands || []), ...evidence.bands])].sort(), checkedAt });
+    }
+  }
+  for (const sn of ambiguous) matches.delete(sn);
+  const rows = matches, expiresAt = Math.min(now + 5000, ...[...rows.values()].map(row => Date.parse(row.checkedAt) + 900000));
+  radioCapabilityLookups.set(lookupKey, { rows, expiresAt });
+  while (radioCapabilityLookups.size > 16) radioCapabilityLookups.delete(radioCapabilityLookups.keys().next().value);
+  return structuredClone(rows);
 }
 
 function projectionChunks(projection = '', maxChars = DEVICE_PROJECTION_MAX_CHARS) {
@@ -3451,6 +3482,7 @@ module.exports = {
   DEFAULT_WIFI_PASSWORD_PARAMETERS,
   DEFAULT_WIFI_SSID_PARAMETERS,
   configured,
+  cachedRadioCapabilities,
   configureWan,
   addWifiSsid,
   deleteDevice,

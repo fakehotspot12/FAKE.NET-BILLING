@@ -92,7 +92,7 @@ function position(index) {
   const slot = (offset >>> 16) + (modern ? 1 : 0), pon = ((offset >>> 12) & 15) + 1, onuId = offset & 4095;
   return onuId >= 1 && onuId <= 1024 ? { slot, pon, onuId, ponKey: `0/${slot}/${pon}` } : null;
 }
-function actionPosition(device,index){return vendors.normalize(device.vendor)==='hioso'?hioso.position(index):position(index);}
+function actionPosition(device,index){return vendors.normalize(device.vendor)==='hioso'?hioso.position(index):vendors.normalize(device.vendor)==='zte'?require('./olt-zte-inventory').position(index):position(index);}
 function optical(row) {
   const value = number(row);
   if (value === null || [-1, -65535, 65535, 2147483647].includes(value)) return null;
@@ -152,7 +152,7 @@ function preserveLastOnline(snapshot,previous=null) {
 }
 function lastOptical(snapshot,onu={}) {
   const valid=value=>typeof value==='number'&&Number.isFinite(value)&&value<0&&value>=-60;
-  const at=Date.parse(snapshot?.checkedAt||''),saved=Date.parse(onu.lastRxPowerAt||'');
+  const at=Date.parse(onu.rxPowerAt||snapshot?.checkedAt||''),saved=Date.parse(onu.lastRxPowerAt||'');
   if(onu.status==='online'&&snapshot?.status==='online'&&!snapshot.stale&&valid(onu.rxPower)&&Number.isFinite(at)&&at<=Date.now()+30000)return{rxPower:onu.rxPower,at:new Date(at).toISOString(),stale:false};
   if(valid(onu.lastRxPower)&&Number.isFinite(saved)&&saved<=Date.now()+30000)return{rxPower:onu.lastRxPower,at:new Date(saved).toISOString(),stale:true};
   return{rxPower:valid(onu.rxPower)?onu.rxPower:null,at:'',stale:true};
@@ -238,10 +238,11 @@ function publicDevice(device, snapshot = null, options = {}) {
   const actions=vendors.capabilities(device,snapshot);
   const simulated=process.env.MIGRATION_MODE==='1'&&/^demo-olt-\d{1,2}$/.test(device.id)&&snapshot?.simulated===true;
   return { id: device.id, name: device.name, vendor: device.vendor, nasId: device.nasId, enabled: device.enabled,
-    simulated,
+    simulated,pnpAvailable:Boolean(device.vendor==='zte'&&device.enabled&&device.cliEnabled&&device.cliUsername&&device.cliPasswordEnc&&!simulated),
+    ...(options.management || options.terminal ? { revision:device.updatedAt||'', terminalAvailable:Boolean(device.enabled&&device.cliEnabled&&device.cliUsername&&device.cliPasswordEnc), cliProtocol:device.cliProtocol||'telnet', cliPort:device.cliPort||23 } : {}),
     ...(options.management ? { host: device.host, port: device.port, revision:device.updatedAt||'', communityConfigured: Boolean(device.communityEnc), cliEnabled: Boolean(device.cliEnabled), cliProtocol:device.cliProtocol||'telnet', webPort:device.webPort||80, cliUsername: device.cliUsername || '', cliPort: device.cliPort || 23, cliPasswordConfigured: Boolean(device.cliPasswordEnc) } : {}),
-    vendorLabel:vendors.profile(device.vendor)?.label||device.vendor,driverMode:vendors.canWrite(device)?'verified':Object.values(actions).some(Boolean)?'web-managed':'read-only',inventoryAvailable:Boolean(snapshot&&Array.isArray(snapshot.onus)&&snapshot.inventoryAvailable!==false),
-    onuDeleteAvailable:actions.delete,onuRebootAvailable:actions.reboot,onuRenameAvailable:actions.rename,saveConfigAvailable:actions.saveConfig,
+    vendorLabel:vendors.profile(device.vendor)?.label||device.vendor,driverMode:vendors.canWrite(device)?'verified':Object.entries(actions).some(([key,value])=>key!=='ponControl'&&value)?'web-managed':'read-only',inventoryAvailable:Boolean(snapshot&&Array.isArray(snapshot.onus)&&snapshot.inventoryAvailable!==false),
+    onuDeleteAvailable:actions.delete,onuRebootAvailable:actions.reboot,onuRenameAvailable:actions.rename,saveConfigAvailable:actions.saveConfig,ponControlAvailable:actions.ponControl,
     refreshPending: pending.has(cacheKey(device)) || refreshQueue.has(device.id),
     latitude: device.latitude, longitude: device.longitude,
     status: !device.enabled ? 'disabled' : snapshot?.status || 'checking', checkedAt: snapshot?.checkedAt || '',
@@ -250,10 +251,10 @@ function publicDevice(device, snapshot = null, options = {}) {
     modelSource:snapshot?.telemetry?.modelSource||(snapshot?.telemetry?.family?'web-firmware-family':''),
     resources:{cpuPercent:snapshot?.telemetry?.cpuPercent??null,ramPercent:snapshot?.telemetry?.ramPercent??null,checkedAt:snapshot?.telemetry?.checkedAt||'',stale:Boolean(snapshot?.stale||snapshot?.status&&snapshot.status!=='online'||snapshot?.telemetry?.stale||snapshot?.telemetry?.checkedAt&&Date.now()-Date.parse(snapshot.telemetry.checkedAt)>telemetry.INTERVAL_MS*2)},
     ponPorts: snapshot ? (snapshot.ports || []).filter(port => port.kind === 'pon').length : null,
-    ponOverview: (snapshot?.ports || []).filter(row => row.kind === 'pon').slice(0,64),
+    ponOverview: require('./olt-pon').decorate(null,device,snapshot?.ports||[]).filter(row => row.kind === 'pon').slice(0,64),
     summary: snapshot?.summary || null, warnings: snapshot?.warnings || [] };
 }
-function fingerprint(device) { const fields=[device.host,device.port,device.communityEnc,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.cliPort];if(vendors.normalize(device.vendor)!=='cdata')fields.push(device.vendor,device.cliProtocol,device.webPort,'hioso-actions-v1');return crypto.createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0,24); }
+function fingerprint(device) { const fields=[device.host,device.port,device.communityEnc,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.cliPort];if(vendors.normalize(device.vendor)!=='cdata')fields.push(device.vendor,device.cliProtocol,device.webPort,'hioso-actions-v1');if(vendors.normalize(device.vendor)==='zte')fields.push('zte-inventory-v1');return crypto.createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0,24); }
 function cacheKey(device) { return `fakenet-billing:olt:v2:${device.id}:${fingerprint(device)}`; }
 async function snapshotFor(device) {
   if(process.env.MIGRATION_MODE==='1'&&/^demo-olt-\d{1,2}$/.test(device.id)&&device.demoSnapshot?.simulated===true&&Array.isArray(device.demoSnapshot.onus)&&device.demoSnapshot.onus.length<=128)return device.demoSnapshot;
@@ -265,18 +266,34 @@ async function snapshotFor(device) {
   return null;
 }
 async function executeTable(target, name, oid) {
+  if(name==='system'&&target.vendor==='zte')return readSystemIdentity(target);
   const address = net.isIP(target.host) === 6 ? `udp6:[${target.host}]:${target.port}` : `${target.host}:${target.port}`;
   const { stdout } = await exec('snmpbulkwalk', ['-v2c', '-c', target.community, '-t', '2', '-r', '0', '-Cr20', '-On', '-Ox', address, oid],
     { timeout: 8000, maxBuffer: 2 * 1024 * 1024, windowsHide: true });
   if (/No Such Object/i.test(stdout)) throw new Error(`Tabel ${name} tidak tersedia`);
   return parseRows(stdout);
 }
-async function collect(data, device, transport = executeTable, causeTransport = cli.readCauses) {
-  const target = { host: device.host, port: device.port, community: secrets.decryptSecret(data, device.communityEnc) }, tables = {}, warnings = [], started = Date.now();
+async function readSystemIdentity(target, execute = exec) {
+  const address=net.isIP(target.host)===6?`udp6:[${target.host}]:${target.port}`:`${target.host}:${target.port}`;
+  for(let attempt=0;attempt<3;attempt++){
+    try {
+      const {stdout}=await execute('snmpget',['-v2c','-c',target.community,'-t','1','-r','0','-On',address,...['2.0','1.0','3.0','5.0'].map(suffix=>OIDS.system+'.'+suffix)],{timeout:2000,maxBuffer:32768,windowsHide:true});
+      return parseRows(stdout);
+    } catch(error){if(error.code!==1||! /Timeout: No Response/i.test(error.stderr||''))break;}
+  }
+  const error=new Error('Identitas OLT belum dapat diverifikasi: SNMP belum merespons. Periksa koneksi lalu coba kembali.');error.status=503;throw error;
+}
+async function collect(data, device, transport = executeTable, causeTransport = cli.readCauses, options = {}) {
+  const target = { host: device.host, port: device.port, community: secrets.decryptSecret(data, device.communityEnc), vendor: vendors.normalize(device.vendor) }, tables = {}, warnings = [], started = Date.now();
   if(vendors.normalize(device.vendor)!=='cdata'){
-    for(const name of ['system','interfaces','interfaceStatus']){try{tables[name]=await transport(target,name,OIDS[name]);}catch{if(name==='system')throw new Error('SNMP OLT belum merespons');warnings.push(`Data ${name} belum tersedia`);}}
+    const isZte=vendors.normalize(device.vendor)==='zte';
+    // Verified ZTE CLI cards supply physical PONs; avoid unsupported IF-MIB walks.
+    const tableNames=isZte&&device.cliEnabled&&device.cliPasswordEnc?['system']:['system','interfaces','interfaceStatus'];
+    for(const name of tableNames){try{tables[name]=await transport(target,name,OIDS[name]);}catch{if(name==='system')throw new Error('SNMP OLT belum merespons');warnings.push(`Data ${name} belum tersedia`);}}
     const system=column(tables.system||[],OIDS.system);if(!system.has('2.0'))throw new Error('Identitas SNMP OLT belum terverifikasi');
-    let inventory;try{inventory=await vendors.readInventory(data,device,{normalizeSerial,classifyCause});}catch{inventory={available:false,rows:[],warning:'Pembacaan inventory vendor belum berhasil. Aksi tulis tetap terkunci.'};}
+    if(isZte&&!/^\.?1\.3\.6\.1\.4\.1\.3902(?:\.|$)/.test(string(system.get('2.0'))))throw new Error('Identitas SNMP bukan OLT ZTE');
+    let inventory;try{inventory=await vendors.readInventory(data,device,{normalizeSerial,classifyCause},{allowZteDevRead:options.allowZteDevRead===true,includeTelemetry:isZte,previousSnapshot:options.previousSnapshot});}catch{inventory={available:false,rows:[],warning:isZte?'Inventory ZTE belum terbaca lengkap. Data terakhir dipertahankan; coba baca ulang setelah sesi OLT selesai.':'Pembacaan inventory vendor belum berhasil. Aksi tulis tetap terkunci.'};}
+    if(isZte){const model=string(system.get('1.0')).match(/\bC(?:300|320|350|600|620|650)\b/i)?.[0];if(model)inventory.modelLabel='ZTE '+model.toUpperCase();}
     if(inventory.warning)warnings.push(inventory.warning);if(device.vendor!=='hioso'||!Object.values(inventory.hiosoActions||{}).some(Boolean))warnings.push('Aksi tulis vendor yang belum terverifikasi tetap terkunci. Pemeriksaan reboot berlaku pada inventory ONU valid; tiket otomatis hanya untuk LOS dengan penyebab terverifikasi.');
     const states=column(tables.interfaceStatus||[],OIDS.interfaceStatus),onus=inventory.rows||[];
     const interfaces=[...column(tables.interfaces||[],OIDS.interfaces)].map(([id,row])=>{const value=number(states.get(id));return{id,name:string(row),status:value===1?'online':value===2?'offline':'unknown'};});
@@ -294,6 +311,10 @@ async function collect(data, device, transport = executeTable, causeTransport = 
   if (device.cliEnabled && result.summary.offline > 0) {
     try { applyCauses(result, parseCauseRows(await causeTransport(data, device))); }
     catch { warnings.push('Penyebab putus belum terbaca; ONU terkait masuk Other'); }
+  }
+  if(transport===executeTable&&device.cliEnabled&&device.cliUsername&&device.cliPasswordEnc&&process.env.MIGRATION_MODE!=='1'){
+    const deadline=started+20000,pon=require('./olt-pon');
+    if(deadline-Date.now()>3000)result.ports=await pon.readPortStates(device,result.ports,options.previousSnapshot?.ports,async commands=>{const[,context,cliTransport]=await vendors.loadLibrary(),timeoutMs=Math.min(6000,deadline-Date.now());return context.withContext(data,device,()=>cliTransport.executeOltCommands({olt:vendors.legacyDevice(device),password:context.decryptSecret(device.cliPasswordEnc),commands,timeoutMs}),{timeoutMs});},deadline);
   }
   result.warnings = warnings; return result;
 }
@@ -316,11 +337,21 @@ function parseCauseRows(stdout = '') {
   return causes;
 }
 async function onuPage(data, devices, options = {}, management = false) {
-  const limit = [10,25,50,100].includes(Number(options.limit)) ? Number(options.limit) : 25;
+  const limit = [8,10,16,25,32,50,64,100].includes(Number(options.limit)) ? Number(options.limit) : 8;
   const candidates=devices.filter(device=>(!options.nasId||options.nasId==='all'||options.nasId===device.nasId));
   const explicit=options.oltId&&options.oltId!=='all',device=explicit?candidates.find(row=>row.id===options.oltId):candidates.length===1?candidates[0]:null;
   if(!device)return{device:null,devices:[],ports:[],summary:null,onus:[],total:0,page:1,pages:1,limit,selectionRequired:!explicit&&candidates.length>1};
-  const snapshot=await snapshotFor(device),publicRow=publicDevice(device,snapshot,{management});
+  let snapshot=await snapshotFor(device),statusRead=null;
+  if(device.vendor==='zte'&&device.cliEnabled&&!/^demo-olt-/.test(device.id)&&options.live==='1'&&(options.livePon||options.pon)){
+    const key=require('./olt-pon').ponKey(options.livePon||options.pon);
+    if((snapshot?.ports||[]).some(row=>row.ponKey===key)){
+      const inventory=require('./olt-zte-inventory'),value=await inventory.readStatus(data,device,key,{allowZteDevRead:process.env.MIGRATION_MODE==='1'});
+      snapshot=inventory.overlayStatus(snapshot,value);
+      if(snapshot?.onus)snapshot={...snapshot,summary:summarizeOnus(snapshot.onus)};
+      statusRead={ponKey:key,checkedAt:value.checkedAt||snapshot?.checkedAt||'',stale:value.stale,message:value.message||''};
+    }
+  }
+  const publicRow=publicDevice(device,snapshot,{management});
   const search = String(options.search || '').slice(0,100).toLowerCase();
   const raw=(snapshot?.onus||[]).filter(row=>matchesState(row,options.status)&&(!options.pon||row.ponKey===options.pon));
   // Cached state/PON filters precede enrichment; a normal page projects at most 100 ONUs.
@@ -328,7 +359,7 @@ async function onuPage(data, devices, options = {}, management = false) {
   const pages = Math.max(1,Math.ceil(filtered.length/limit));
   const page = Math.max(1,Math.min(pages,parseInt(options.page,10)||1));
   const selected=filtered.slice((page-1)*limit,page*limit),rows=search?selected:linkedOnus(data,device,selected,snapshot);
-  return { device:publicRow,devices:[publicRow],ports:(snapshot?.ports||[]).map(row=>({...row,oltId:device.id,oltName:device.name})),summary:publicRow.inventoryAvailable!==false?publicRow.summary:null,onus:rows.map(row=>({...row,oltId:device.id,oltName:device.name})),total:filtered.length,page,pages,limit,selectionRequired:false };
+  return { device:publicRow,devices:[publicRow],ports:require('./olt-pon').decorate(data,device,snapshot?.ports||[]).map(row=>({...row,oltId:device.id,oltName:device.name})),summary:publicRow.inventoryAvailable!==false?publicRow.summary:null,onus:require('./olt-zte-catalogue').identifyOnus(data,device,rows).map(row=>({...row,oltId:device.id,oltName:device.name})),total:filtered.length,page,pages,limit,selectionRequired:false,...(statusRead?{statusRead}:{}) };
 }
 async function liveSerial(data,device,onu) {
   const address=net.isIP(device.host)===6?`udp6:[${device.host}]:${device.port}`:`${device.host}:${device.port}`;
@@ -431,7 +462,8 @@ async function renameOnu(data,device,serial,payload,transport={serial:liveSerial
   const key=cacheKey(device);remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}
   return {serialNumber:sn,description,confirmed:true,message:'Description ONU diperbarui dan terverifikasi di OLT.'};
 }
-async function poll(data, device, transport) {
+async function poll(data, device, transport, options = {}) {
+  if(require('./olt-terminal').isOpen(device.id))return snapshotFor(device);
   const key = cacheKey(device);
   if (pending.has(key)) return pending.get(key);
   if (pending.size >= 2) return snapshotFor(device);
@@ -439,7 +471,7 @@ async function poll(data, device, transport) {
   const promise = (async () => {
     remember(lastAttempt, key, Date.now());
     const previous = await snapshotFor(device); let value;
-    try { value = preserveLastOnline(await collect(data, device, transport),previous);if(value.inventoryAvailable===false&&previous?.onus?.length)value={...value,onus:previous.onus,summary:previous.summary,stale:true,lastSuccessAt:previous.lastSuccessAt||(previous.inventoryAvailable!==false?previous.checkedAt:'')};if(!transport&&process.env.MIGRATION_MODE!=='1')value.telemetry=await telemetry.read(data,device,previous?.telemetry); }
+    try { value = preserveLastOnline(await collect(data, device, transport, undefined, {...options,previousSnapshot:previous}),previous);if(value.inventoryAvailable===false&&previous?.onus?.length)value={...value,onus:previous.onus,summary:previous.summary,ports:previous.ports,stale:true,lastSuccessAt:previous.lastSuccessAt||(previous.inventoryAvailable!==false?previous.checkedAt:'')};if(!transport&&(process.env.MIGRATION_MODE!=='1'||device.vendor==='zte'&&options.allowZteDevRead===true))value.telemetry=await telemetry.read(data,device,previous?.telemetry,options); }
     catch { value = { ...(previous || {}), pendingRefresh:false, status: 'unreachable', stale: Boolean(previous?.onus), checkedAt: new Date().toISOString(),
       lastSuccessAt: previous?.lastSuccessAt || (previous?.status === 'online' ? previous.checkedAt : ''), error: 'SNMP tidak merespons lengkap. Periksa daya, jaringan, dan community.' }; }
     remember(cache, key, value);
@@ -460,10 +492,11 @@ async function pollNext(data) {
   if (!candidates.length) return { skipped: true };
   await poll(data, candidates[0].device); return { id: candidates[0].device.id };
 }
-function requestRefresh(data, device) {
+function requestRefresh(data, device, options = {}) {
+  if(process.env.MIGRATION_MODE==='1'&&!(vendors.normalize(device.vendor)==='zte'&&options.allowZteDevRead===true))throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
   const key = cacheKey(device), now = Date.now();
-  if (!device.enabled || pending.has(key) || pending.size >= 2 || now - (refreshTimes.get(key) || 0) < 30000) return false;
-  remember(refreshTimes, key, now);refreshQueue.delete(device.id); poll(data, device).catch(() => {}); return true;
+  if (!device.enabled || require('./olt-terminal').isOpen(device.id) || pending.has(key) || pending.size >= 2 || now - (refreshTimes.get(key) || 0) < 30000) return false;
+  remember(refreshTimes, key, now);refreshQueue.delete(device.id); poll(data, device, undefined, options).catch(() => {}); return true;
 }
 function requestRefreshAll(data,devices) {
   if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
@@ -524,9 +557,9 @@ function linkedOnus(data, device, rows, snapshot=null) {
   const maintenance=plannedReboot.index(data);
   return rows.map(onu => {
     const link = device.links?.[onu.serialNumber] || {};
-    const automatic=autoIdentity.customerFor(data,device,onu);
-    const modem=autoIdentity.modemFor(data,device,onu);
-    let customer=link.customerId&&!autoIdentity.manualConflict(data,device,onu)?customers.get(link.customerId):automatic?.customer;
+    const automatic=onu.identityAmbiguous?null:autoIdentity.customerFor(data,device,onu);
+    const modem=onu.identityAmbiguous?null:autoIdentity.modemFor(data,device,onu);
+    let customer=onu.identityAmbiguous?null:link.customerId&&!autoIdentity.manualConflict(data,device,onu)?customers.get(link.customerId):automatic?.customer;
     const user=customer&&identities.userForCustomer(customer);
     if(customer&&!identities.compatible(user||customer,{nasId:device.nasId}))customer=null;
     const point = points.get(link.fiberPointId||customer?.fiberPointId||customer?.odpId||customer?.distributionPointId||customer?.distribution_point_id||customer?.odp);
@@ -577,6 +610,7 @@ function losSubjects(data,device,snapshot,seen,activeByKey,observedByKey,covered
 }
 function losTicketPlan(data, observations, options = {}) {
   const now = options.now ?? Date.now(), changes = [], activeByOnu = new Map(), observedByOnu = new Map();
+  const ponControl=require('./olt-pon'),ponReconciliation=ponControl.reconciliation(data,observations,now),ponData=ponReconciliation.changed?{...data,settings:{...data.settings,plannedPonChanges:ponReconciliation.rows}}:data;
   const confirmation = losConfirmation.prepare(data, now);
   const incidents = ticketIncidents.observationGuard(data, now), pendingCustomers = new Map();
   let available = Math.max(0,500-(data.oltTickets || []).filter(row=>row.status!=='resolved').length), creates = 0, deferred = 0;
@@ -592,7 +626,10 @@ function losTicketPlan(data, observations, options = {}) {
     const checked=Date.parse(snapshot?.checkedAt||'');
     if(!device?.enabled||device.updatedAt!==observation.deviceUpdatedAt||snapshot?.status!=='online'||snapshot.stale||snapshot.pendingRefresh||snapshot.inventoryAvailable===false||!Number.isFinite(checked)||checked>now+30000||(!simulated&&now-checked>CACHE_MS*2)||(!simulated&&snapshot.simulated))continue;
     const seen=new Map(),duplicates=new Set(),maintenance=plannedReboot.index(data,now);
-    for(const onu of (snapshot.onus||[]).slice(0,MAX_ONUS)){const serial=normalizeSerial(onu.serialNumber);if(!serial)continue;if(seen.has(serial))duplicates.add(serial);else{const reboot=maintenance.size&&plannedReboot.forOnu(data,device,onu,{now,checkedAt:snapshot.checkedAt,index:maintenance});seen.set(serial,reboot?{...onu,plannedReboot:true}:onu);}}
+    const ponMaintenance=new Map(ponControl.markerRows(ponData,now).filter(row=>row.oltId===device.id&&row.connection===ponControl.connection(device)).map(row=>[row.ponKey,ponControl.maintenance(ponData,device,row.ponKey,snapshot.checkedAt,now)]));
+    const disabledPons=new Set(ponControl.decorate(ponData,device,snapshot.ports||[],now).filter(port=>port.kind==='pon'&&port.adminState==='disabled').map(port=>port.ponKey));
+    if(plannedReboot.forOlt(data,device,{now,checkedAt:snapshot.checkedAt,index:maintenance}))continue;
+    for(const onu of (snapshot.onus||[]).slice(0,MAX_ONUS)){const serial=normalizeSerial(onu.serialNumber);if(!serial)continue;if(seen.has(serial))duplicates.add(serial);else{const reboot=maintenance.size&&plannedReboot.forOnu(data,device,onu,{now,checkedAt:snapshot.checkedAt,index:maintenance})||ponMaintenance.get(onu.ponKey)||disabledPons.has(onu.ponKey);seen.set(serial,reboot?{...onu,plannedReboot:true}:onu);}}
     for(const serial of duplicates)seen.delete(serial);
     confirmation.observe(device,seen,snapshot.checkedAt,isRebootCandidate,isConfirmedLos);
     const covered=incidents.cover(device,seen,snapshot.checkedAt,onu=>isConfirmedLos(onu)&&confirmation.confirmed(device,onu,snapshot.checkedAt));
@@ -624,11 +661,12 @@ function losTicketPlan(data, observations, options = {}) {
     }
   }
   const confirmedState=confirmation.result();
-  return {changes:[...incidents.changes(),...changes],creates,deferred,confirmationRows:confirmedState.rows,confirmationChanged:confirmedState.changed};
+  return {changes:[...incidents.changes(),...changes],creates,deferred,confirmationRows:confirmedState.rows,confirmationChanged:confirmedState.changed,ponMaintenanceRows:ponReconciliation.rows,ponMaintenanceChanged:ponReconciliation.changed};
 }
 function applyLosTicketPlan(data, plan, now = Date.now()) {
   if(plan.confirmationChanged)data.oltLosObservations=plan.confirmationRows;
-  if(!plan.changes.length)return {changed:plan.confirmationChanged===true,created:[],resolved:[],observed:0};
+  if(plan.ponMaintenanceChanged){data.settings??={};data.settings.plannedPonChanges=plan.ponMaintenanceRows;}
+  if(!plan.changes.length)return {changed:plan.confirmationChanged===true||plan.ponMaintenanceChanged===true,created:[],resolved:[],observed:0};
   const rows=[...(data.oltTickets||[])],byId=new Map(rows.map((row,index)=>[row.id,index])),created=[],resolved=[];let observed=0;
   for(const change of plan.changes) {
     if(change.kind==='incident') {
@@ -773,7 +811,7 @@ function pruneTickets(rows) {
   return [...active,...closed];
 }
 
-module.exports = { OIDS, CACHE_MS, MAX_DEVICES, parseRows, normalizeSerial, normalizeSnapshot, position, optical, validateDevice,
+module.exports = { OIDS, CACHE_MS, MAX_DEVICES, parseRows, normalizeSerial, normalizeSnapshot, position, optical, validateDevice, readSystemIdentity,
   classifyCause, summarizeOnus, applyCauses, matchesState, lastOnlineAt, lastOptical, preserveLastOnline, parseCauseRows, onuPage, removeOnu, rebootOnu, renameOnu, readOnuDescription, readRemovalState,
   deviceRows, publicDevice, snapshotFor, collect, poll, pollNext, requestRefresh, requestRefreshAll, testConnection, saveConfig, visibleDevices, mappingNodes, linkCustomer, linkedOnus,actionPosition,
   saveTicket, pruneTickets, ticketMessage, TICKET_STATUSES, losTicketPlan, applyLosTicketPlan, TICKET_SCOPE_LABELS, claimTicket, progressTicket, requireTicketEditor, ticketTemplates, validateTicketTemplates, renderTicketTemplate };

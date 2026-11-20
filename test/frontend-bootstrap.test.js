@@ -58,9 +58,43 @@ test('versions the bootstrap entry point and matches fresh application asset rev
   assert.match(bootstrap, /const appScriptUrl = `\/app\.js\?v=fakenet-billing-\$\{appVersion\}&ui=\$\{assetRevision\}`/);
   assert.match(bootstrap, /const appStyleUrl = `\/styles\.css\?v=fakenet-billing-\$\{appVersion\}&ui=\$\{assetRevision\}`/);
 });
+test('OLT asset changes refresh the HTML, bootstrap and full application loader together', () => {
+  const html = publicSource('index.html');
+  const bootstrap = publicSource('bootstrap.js');
+  const app = publicSource('app.js');
+  const revision = bootstrap.match(/const assetRevision = '([^']+)'/)[1];
+  const entry = new URL(html.match(/src="(\/bootstrap\.js\?[^"]+)"/)[1], 'https://billing.example.test');
+  const loader = app.slice(app.indexOf('async function renderMonitoringOlt('), app.indexOf('async function render(options'));
+  assert.equal(entry.searchParams.get('ui'), revision);
+  assert.equal(loader.match(/const version = '([^']+)'/)[1], revision);
+  assert.match(loader, /script\.src = path \+ '\?ui=' \+ version/);
+});
 test('ticket center has its own role-gated navigation and reuses the lazy OLT workflow',()=>{
  const html=publicSource('index.html'),app=publicSource('app.js'),olt=publicSource('olt.js'),style=publicSource('styles.css');
  assert.match(html,/data-view="monitoringTickets">Tiket Layanan/);assert.match(app,/monitoringTickets: 'olt:tickets:read'/);assert.match(app,/state.view === 'monitoringTickets'\) await renderMonitoringOlt\('tickets'\)/);assert.match(style,/\[data-view="monitoringTickets"\]/);assert.doesNotMatch(olt,/\['tickets','Tiket Gangguan'\]|open-ticket-center|openTicketCenter|Lihat Tiket/);assert.match(olt,/ticketFilters/);assert.match(olt,/loadTicketRows/);
+});
+
+test('ONU lists open the first physical PON and stay bounded to eight for every vendor', () => {
+  const source = publicSource('olt.js');
+  const style = publicSource('olt.css');
+  assert.doesNotMatch(source, /onuSlots|focusedOnu|data-onu-focus|olt-onu-grid|olt-onu-slot/);
+  assert.match(source, /device\?\.ponOverview/);
+  assert.match(source, /view\.pon=ports\[0\]\?\.ponKey\|\|''/);
+  assert.match(source, /if\(!view\.pon\)\{latestDetails=null;[\s\S]*?return;\}/);
+  assert.doesNotMatch(source, /id="oltLimit"|>Semua PON</);
+  assert.match(source, /view\.deviceId=event\.target\.value;view\.pon='';view\.page=1;view\.limit=8/);
+  assert.match(source, /view\.pon=button\.dataset\.pon;view\.page=1;view\.limit=8/);
+  assert.doesNotMatch(style, /olt-onu-grid|olt-onu-slot|olt-onu-selected/);
+  assert.match(source, /Registrasi ONU/);
+  assert.doesNotMatch(source, />Tambah Modem</);
+});
+
+test('per-ONU profiles are lazy-loaded with shared-upload consent and packaged for installs and updates',()=>{
+ const app=publicSource('app.js'),ui=publicSource('olt.js'),bandwidth=publicSource('olt-bandwidth.js');
+ assert.match(app,/\['\/olt-bandwidth\.js', 'FakenetOltBandwidth'\]/);assert.match(ui,/FakenetOltBandwidth\.open/);
+ assert.match(bandwidth,/profileMode: 'catalogue'/);assert.match(bandwidth,/profileMode: 'native'/);assert.match(bandwidth,/confirmSharedUpload/);assert.match(bandwidth,/allocation\.sharedUpload/);
+ assert.doesNotMatch(bandwidth,/setTimeout|setInterval/);
+ for(const file of[['install.sh'],['deploy','bin','fakenet-billing-update']])assert(sourceFile(...file).includes('public/olt-bandwidth.js'));
 });
 
 test('keeps the login viewport dark through bootstrap and authenticated app handoff', () => {

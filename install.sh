@@ -125,6 +125,13 @@ install_olt_cli_runtime() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y telnet
 }
 
+install_terminal_build_runtime() {
+  if command -v make >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then return 0; fi
+  echo "Instal dependency build terminal PTY..."
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential python3 make g++
+}
+
 ensure_required_commands() {
   local missing=() cmd
   for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker pgrep snmpwalk snmpget snmpbulkwalk telnet radclient tesseract; do
@@ -283,6 +290,31 @@ verify_repository_payload() {
     src/olt-planned-reboot.js
     src/olt-los-confirmation.js
     src/olt-vendors.js
+    src/olt-zte-profiles.js
+    src/olt-zte-pnp.js
+    src/olt-zte-bandwidth.js
+    src/olt-zte-registration.js
+    src/olt-zte-catalogue.js
+    src/olt-zte-bridge.js
+    src/olt-zte-tr069.js
+    src/ont-radio-capability.js
+    public/olt-registration.js
+    public/olt-catalogue.js
+    public/olt-bridge.js
+    public/olt-bandwidth.js
+    public/olt-plus.svg
+    src/olt-zte-inventory.js
+    src/olt-terminal.js
+    src/olt-terminal-native.js
+    src/olt-terminal-policy.js
+    src/olt-reboot.js
+    src/olt-pon.js
+    src/olt-cdata-pon.js
+    public/olt-power.svg
+    public/olt-terminal.js
+    public/olt-terminal.html
+    public/olt-terminal.css
+    public/olt-terminal.svg
     src/olt-hioso.js
     src/olt-telemetry.js
     src/olt-vendor-library/NOTICE.md
@@ -442,6 +474,9 @@ install_node_deps() {
   fi
   [ "$install_status" -eq 0 ] || return "$install_status"
   node -e "require('bullmq'); require('web-push'); require('sharp'); require('ssh2'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/customer-device-removal'); require('./src/network-address'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-incidents'); require('./src/ticket-network'); require('./src/ticket-team'); require('./src/ticket-reference'); require('./src/ticket-recovery'); require('./src/ticket-templates'); require('./src/ticket-customer-notifications'); require('./src/wifiku-modem-status'); require('./src/olt-vendors').loadLibrary().catch(error => { console.error(error.message); process.exitCode=1; })" >/dev/null
+  node -e "const fs=require('fs'),path=require('path'); for(const file of[require.resolve('@xterm/xterm'),require.resolve('@xterm/addon-fit'),path.join(path.dirname(require.resolve('@xterm/xterm')),'../css/xterm.css')])fs.accessSync(file)"
+  node -e "require('node-pty'); const {Terminal}=require('@xterm/headless'); const terminal=new Terminal({cols:80,rows:24,allowProposedApi:true}); terminal.dispose(); require('./src/olt-terminal-native')"
+  node -e "require('./src/olt-pon'); require('./src/olt-cdata-pon'); require('./src/olt-zte-pnp'); require('./src/olt-zte-bandwidth'); require('./src/olt-zte-registration'); require('./src/olt-zte-tr069'); require('./src/olt-zte-catalogue'); require('./src/olt-zte-bridge'); require('./src/ont-radio-capability')"
 }
 
 install_genieacs_runtime() {
@@ -1555,6 +1590,7 @@ main() {
     node-runtime)
       install_node_runtime
       check_node
+      install_terminal_build_runtime
       return 0
       ;;
     uninstall|--uninstall)

@@ -361,6 +361,9 @@ function publicUser(user) {
 
   const role = normalizeRole(user.role);
   const permissions = [...permissionsForRole(role)];
+  const headTechnician=['technician','noc'].includes(role)&&/^Kepala Teknisi(?: dan Perlengkapan)?$/i.test(String(user.position||user.jobTitle||'').trim().replace(/\s+/g,' '));
+  if(['admin','owner','secretary'].includes(role)||headTechnician)permissions.push('olt:reboot');
+  if(['admin','secretary'].includes(role)||headTechnician)permissions.push('olt:pon:manage','olt:pnp:manage');
   const technicalTickets = permissions.includes('olt:tickets:write');
   const ticketCreationAllowed = technicalTickets || (typeof user.ticketCreationAllowed === 'boolean'
     ? user.ticketCreationAllowed : permissions.includes('olt:tickets:create'));
@@ -730,6 +733,12 @@ function updateOwnProfile(data, userId, payload = {}) {
   const user = (data.users || []).find((item) => item.id === userId);
   if (!user) {
     return null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'position')
+    && cleanText(payload.position, 80) !== cleanText(user.position || user.jobTitle, 80)
+    && !hasPermission(publicUser(user), 'users:manage')) {
+    throw new Error('Jabatan hanya dapat diubah melalui pengelolaan user');
   }
 
   if (typeof payload.name === 'string') {

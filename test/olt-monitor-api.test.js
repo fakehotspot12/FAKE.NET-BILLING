@@ -16,6 +16,82 @@ async function request(role,method='GET',suffix='',body={},validCsrf=true,handle
  const res=apiResponse();await handler(req,res,new URL(uri,'http://localhost:8891'));return res;
 }
 function apiResponse(){return{writeHead(status,headers={}){this.status=status;this.headers=headers;},end(data){this.body=Buffer.isBuffer(data)?data:JSON.parse(data);}};}
+test('OLT catalogue is cache-only on GET and preserves CSRF, current role/NAS, bounded payloads and billing data',async()=>{
+ reset();const catalogue=require('../src/olt-zte-catalogue'),original={view:catalogue.view,read:catalogue.read,save:catalogue.save},device=require('../src/olt-monitor').validateDevice(fixture,{name:'Catalogue Unit',vendor:'zte',host:'192.0.2.44',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let reads=0,writes=0;
+ catalogue.view=()=>({counts:{vlans:4,models:2},profiles:[],models:[],vlans:[]});catalogue.read=async()=>{reads++;};catalogue.save=(data,current,actor,input)=>{writes++;current.provisioningCatalogue={revision:'unit',vlans:[]};return{item:{id:input.id}};};
+ try{const endpoint='/'+device.id+'/catalogue',input={action:'save',kind:'vlan',id:100,label:'Unit',purpose:'internet',revision:''},before={customers:structuredClone(fixture.customers),payments:structuredClone(fixture.payments),invoices:structuredClone(fixture.invoices)};
+ assert.equal((await request('','GET',endpoint)).status,401);for(const role of['owner','technician','noc','finance','collector','reseller_voucher'])assert.equal((await request(role,'GET',endpoint)).status,403);assert.equal((await request('admin','GET',endpoint)).status,200);assert.equal(reads,0);
+ assert.equal((await request('admin','POST',endpoint,input,false)).status,419);assert.equal(writes,0);const oversized=await request('admin','POST',endpoint,{...input,label:'a'.repeat(20000)});assert.equal(oversized.status,400);assert.match(oversized.body.error,/Body terlalu besar/);assert.equal(writes,0);
+ const head=fixture.users.find(row=>row.role==='technician');head.position='Kepala Teknisi';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','GET',endpoint)).status,404);head.lockedNasIds=['nas-a'];assert.equal((await request('technician','GET',endpoint)).status,200);assert.equal((await request('secretary','POST',endpoint,input)).status,200);
+ assert.equal((await request('admin','POST',endpoint,{action:'read'})).status,200);assert.equal(reads,1);assert.equal(writes,1);assert.equal(lastSaveOptions.includeCore,true);assert(fixture.activity.some(row=>row.meta?.action==='olt-catalogue-save'));assert.deepEqual({customers:fixture.customers,payments:fixture.payments,invoices:fixture.invoices},before);
+ }finally{Object.assign(catalogue,original);}
+});
+test('SN registration API preserves role/NAS/CSRF boundaries and rejects a bad manual confirmation before queue acknowledgement',async()=>{
+ reset();const registration=require('../src/olt-zte-registration'),original={prepare:registration.prepare,activate:registration.activate,executeManual:registration.executeManual},device=require('../src/olt-monitor').validateDevice(fixture,{name:'Registration Unit',vendor:'zte',host:'192.0.2.43',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let prepared=0,activated=0;
+ registration.prepare=async()=>{prepared++;return{token:'unit',kind:'automation',value:{ponKey:'1/1/13'}};};registration.activate=()=>{activated++;return{ok:true,ponKey:'1/1/13',enabled:true,message:'Unit automation'};};registration.executeManual=()=>{throw Object.assign(Error('Konfirmasi tidak sesuai'),{status:409});};
+ try{const endpoint='/'+device.id+'/registration',before={customers:structuredClone(fixture.customers),payments:structuredClone(fixture.payments),invoices:structuredClone(fixture.invoices)};
+ for(const role of['owner','technician','noc','finance','collector','reseller_voucher'])assert.equal((await request(role,'POST',endpoint,{action:'prepare'})).status,403);assert.equal((await request('admin','POST',endpoint,{action:'prepare'},false)).status,419);assert.equal(prepared,0);assert.equal((await request('admin','GET',endpoint)).status,200);assert.equal(prepared,0);
+ const actor=fixture.users.find(row=>row.role==='technician');actor.position='Kepala Teknisi';actor.lockedNasIds=['nas-b'];assert.equal((await request('technician','GET',endpoint)).status,404);actor.lockedNasIds=['nas-a'];assert.equal((await request('technician','POST',endpoint,{action:'prepare'})).status,200);assert.equal((await request('secretary','POST',endpoint,{action:'prepare'})).status,200);
+ assert.equal((await request('admin','POST',endpoint,{action:'activate'})).status,200);assert.equal(activated,1);assert.equal((await request('admin','POST',endpoint,{action:'register',token:'bad'})).status,409);assert.deepEqual({customers:fixture.customers,payments:fixture.payments,invoices:fixture.invoices},before);
+ }finally{Object.assign(registration,original);}
+});
+test('TR069 existing-ONU API preserves role/NAS/CSRF and writes a durable audit before any device operation',async()=>{
+ reset();const registration=require('../src/olt-zte-registration'),original=registration.applyExistingTr069,device=require('../src/olt-monitor').validateDevice(fixture,{name:'Management Unit',vendor:'zte',host:'192.0.2.46',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let calls=0;
+ registration.applyExistingTr069=async(data,current,actor,input,options)=>{calls++;const job={id:'tr069-unit',kind:'tr069',actorId:actor.id,ponKey:'1/1/13',serialNumber:'HWTCAABBCCDD',address:'1/1/13:1',status:'configuring',message:'Management preflight'};await options.persist(job);assert(fixture.activity.some(row=>row.meta?.jobId===job.id));return{...job,status:'held',message:'Read-only test'};};
+ try{const endpoint='/'+device.id+'/registration',input={action:'tr069-existing'},before=businessState();
+  for(const role of['finance','collector','reseller_voucher','technician'])assert.equal((await request(role,'POST',endpoint,input)).status,403);
+  assert.equal((await request('admin','POST',endpoint,input,false)).status,419);assert.equal((await request('admin','POST',endpoint,{...input,padding:'x'.repeat(5000)})).status,400);assert.equal(calls,0);
+  const head=fixture.users.find(row=>row.role==='technician');head.position='Kepala Teknisi';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','POST',endpoint,input)).status,404);head.lockedNasIds=['nas-a'];assert.equal((await request('technician','POST',endpoint,input)).status,200);assert.equal((await request('secretary','POST',endpoint,input)).status,200);assert.equal(calls,2);assert.deepEqual(businessState(),before);
+ }finally{registration.applyExistingTr069=original;}
+});
+test('bridge API preserves role/NAS/CSRF, private configuration boundaries and durable audits without customer changes',async()=>{
+ reset();const bridge=require('../src/olt-zte-bridge'),original={read:bridge.read,prepare:bridge.prepare,execute:bridge.execute},device=require('../src/olt-monitor').validateDevice(fixture,{name:'Bridge Unit',vendor:'zte',host:'192.0.2.45',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let reads=0,writes=0;
+ bridge.read=async()=>{reads++;return{model:'HG-UNIT',ports:[]};};bridge.prepare=async()=>{reads++;return{token:'unit'};};bridge.execute=async(data,target,actor,input,options)=>{const value={target:{address:'1/1/13:1',serialNumber:'HWTCAABBCCDD'},port:'eth_0/4',mode:'trunk',vlans:[101],previous:{mode:''}};await options.beforeSend(value);writes++;const result={verified:true,submitted:true,message:'Unit bridge result'};await options.afterSend(result,value);return result;};
+ try{const endpoint='/'+device.id+'/bridge',before={customers:structuredClone(fixture.customers),payments:structuredClone(fixture.payments),invoices:structuredClone(fixture.invoices)};
+ assert.equal((await request('','POST',endpoint,{action:'read'})).status,419);for(const role of['owner','technician','noc','finance','collector','reseller_voucher'])assert.equal((await request(role,'POST',endpoint,{action:'read'})).status,403);
+ assert.equal((await request('admin','POST',endpoint,{action:'read'},false)).status,419);assert.equal(reads,0);assert.equal((await request('admin','POST',endpoint,{action:'read',padding:'a'.repeat(5000)})).status,400);
+ const head=fixture.users.find(row=>row.role==='technician');head.position='Kepala Teknisi';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','POST',endpoint,{action:'read'})).status,404);head.lockedNasIds=['nas-a'];assert.equal((await request('technician','POST',endpoint,{action:'read'})).status,200);
+ assert.equal((await request('secretary','POST',endpoint,{action:'prepare'})).status,200);assert.equal((await request('admin','POST',endpoint,{action:'apply'})).status,200);assert.equal(writes,1);assert(fixture.activity.some(row=>row.meta?.action==='olt-bridge-request'));assert(fixture.activity.some(row=>row.meta?.action==='olt-bridge-result'));assert.equal(lastSaveOptions.includeCore,false);
+ bridge.read=async()=>{fixture.users.find(row=>row.role==='admin').active=false;return{ports:[]};};assert.equal((await request('admin','POST',endpoint,{action:'read'})).status,403);assert.deepEqual({customers:fixture.customers,payments:fixture.payments,invoices:fixture.invoices},before);
+ }finally{Object.assign(bridge,original);}
+});
+test('bandwidth API enforces role/NAS/CSRF and audits without changing customer/payment records',async()=>{
+ reset();const bandwidth=require('../src/olt-zte-bandwidth'),original={prepare:bandwidth.prepare,execute:bandwidth.execute},device=require('../src/olt-monitor').validateDevice(fixture,{name:'Bandwidth Unit',vendor:'zte',host:'192.0.2.42',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let reads=0,writes=0;
+ bandwidth.prepare=async()=>{reads++;return{token:'unit',value:{kind:'standards'}};};bandwidth.execute=async(data,target,actor,input,options)=>{writes++;const value={kind:'standards',target:null,policies:[{kbps:60000},{kbps:120000}],profiles:[{kind:'tcont',name:'UNIT-UP'},{kind:'traffic',name:'UNIT-DOWN'}],allocation:null};await options.beforeSend(value);const result={verified:true,submitted:true,message:'Unit bandwidth result'};await options.afterSend(result,value);return result;};
+ try{const endpoint='/'+device.id+'/bandwidth',before={customers:structuredClone(fixture.customers),payments:structuredClone(fixture.payments),invoices:structuredClone(fixture.invoices)};
+ for(const role of['owner','technician','noc','finance','collector','reseller_voucher'])assert.equal((await request(role,'POST',endpoint,{action:'prepare',kind:'standards'})).status,403);assert.equal((await request('admin','POST',endpoint,{action:'prepare',kind:'standards'},false)).status,419);assert.equal(reads,0);
+ const head=fixture.users.find(row=>row.role==='technician');head.position='Kepala Teknisi';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','POST',endpoint,{action:'prepare',kind:'standards'})).status,404);head.lockedNasIds=['nas-a'];assert.equal((await request('technician','POST',endpoint,{action:'prepare',kind:'standards'})).status,200);assert.equal((await request('secretary','POST',endpoint,{action:'prepare',kind:'standards'})).status,200);
+ const result=await request('admin','POST',endpoint,{action:'apply',token:'unit'});assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(writes,1);assert(fixture.activity.some(row=>row.meta?.action==='olt-bandwidth-result'));assert.deepEqual({customers:fixture.customers,payments:fixture.payments,invoices:fixture.invoices},before);assert.equal(lastSaveOptions.includeCore,false);
+ }finally{Object.assign(bandwidth,original);}
+});
+test('head technicians can inspect per-ONU profiles within NAS scope, with forced reads and current-role revalidation',async()=>{
+ reset();const profiles=require('../src/olt-zte-profiles'),old=profiles.readOnu,device=require('../src/olt-monitor').validateDevice(fixture,{name:'ONU Profiles Unit',vendor:'zte',host:'192.0.2.46',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let reads=0,forced=false;
+ profiles.readOnu=async(data,current,address,options)=>{reads++;forced=options.force;return{address,serialNumber:'HWTCAABBCCDD',type:'UNIT',services:[]};};
+ try{const endpoint='/'+device.id+'/service-profiles',input={action:'inspect',address:'1/1/13:1',serialNumber:'HWTCAABBCCDD',force:true};
+  for(const role of['technician','finance','collector','reseller_voucher'])assert.equal((await request(role,'POST',endpoint,input)).status,403);
+  const head=fixture.users.find(row=>row.role==='technician');head.position='Kepala Teknisi';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','POST',endpoint,input)).status,404);head.lockedNasIds=['nas-a'];
+  assert.equal((await request('technician','POST',endpoint,input,false)).status,419);assert.equal(reads,0);assert.equal((await request('technician','POST',endpoint,input)).status,200);assert(forced);assert.equal((await request('secretary','POST',endpoint,input)).status,200);
+  profiles.readOnu=async()=>{head.position='Staf Teknisi';return{address:input.address,serialNumber:input.serialNumber};};assert.equal((await request('technician','POST',endpoint,input)).status,403);
+  profiles.readOnu=async()=>{fixture.users.find(row=>row.role==='admin').active=false;return{address:input.address,serialNumber:input.serialNumber};};assert.equal((await request('admin','POST',endpoint,input)).status,403);
+ }finally{profiles.readOnu=old;}
+});
+test('native ONU-PnP API is role/NAS/CSRF guarded and persists audit without changing billing collections',async()=>{
+ reset();const pnp=require('../src/olt-zte-pnp'),original={read:pnp.read,prepare:pnp.prepare,execute:pnp.execute};const device=require('../src/olt-monitor').validateDevice(fixture,{name:'Unit PnP',vendor:'zte',host:'192.0.2.40',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let reads=0,writes=0;
+ pnp.read=async()=>{reads++;return{ports:[{ponKey:'1/1/13',enabled:false}]};};pnp.prepare=async()=>({token:'unit',canSubmit:true});pnp.execute=async(data,target,actor,input,options)=>{writes++;await options.beforeSend({ponKey:'1/1/13',enabled:false});const result={verified:true,submitted:true,message:'Unit result'};await options.afterSend(result,{ponKey:'1/1/13',enabled:false});return result;};
+ try{const endpoint='/'+device.id+'/onu-pnp';for(const role of['owner','technician','noc','finance','collector','reseller_voucher'])assert.equal((await request(role,'POST',endpoint,{action:'read',ponKey:'1/1/13'})).status,403);
+ const before=structuredClone(fixture.customers),paid=structuredClone(fixture.payments);assert.equal((await request('admin','GET',endpoint)).status,200);assert.equal(reads,0);assert.equal((await request('admin','POST',endpoint,{action:'read',ponKey:'1/1/13'},false)).status,419);assert.equal(reads,0);
+ const head=fixture.users.find(row=>row.role==='technician');head.position='Kepala Teknisi';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','POST',endpoint,{action:'read',ponKey:'1/1/13'})).status,404);head.lockedNasIds=['nas-a'];assert.equal((await request('technician','POST',endpoint,{action:'read',ponKey:'1/1/13'})).status,200);assert.equal(reads,1);
+ assert.equal((await request('admin','POST',endpoint,{action:'prepare',ponKey:'1/1/13'})).status,200);assert.equal((await request('admin','POST',endpoint,{action:'apply',token:'unit'})).status,200);assert.equal(writes,1);assert(fixture.activity.some(row=>row.action==='olt-pnp-request'||row.details?.action==='olt-pnp-request'||row.meta?.action==='olt-pnp-request'));assert.deepEqual(fixture.customers,before);assert.deepEqual(fixture.payments,paid);
+ }finally{Object.assign(pnp,original);}
+});
+test('PON preset save is role/NAS/CSRF guarded, serialized in core and audited without configuring hardware',async()=>{
+ reset();const pnp=require('../src/olt-zte-pnp'),original=pnp.savePreset,monitor=require('../src/olt-monitor'),device=monitor.validateDevice(fixture,{name:'Unit Preset',vendor:'zte',host:'192.0.2.41',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let saved=0;
+ pnp.savePreset=(data,current,actor,input)=>{saved++;assert(data.oltDevices.some(row=>row.id===device.id));assert.equal(current.id,device.id);current.onuPnpPresets={fixture:true};return{ponKey:input.ponKey,vlanMode:'selected',vlans:[100,200],revision:'unit',updatedAt:new Date().toISOString()};};
+ try{const endpoint='/'+device.id+'/onu-pnp',input={action:'save-preset',ponKey:'1/1/13',vlans:[100,200],vlanMode:'selected',presetRevision:''},before={customers:structuredClone(fixture.customers),payments:structuredClone(fixture.payments),invoices:structuredClone(fixture.invoices)};
+ for(const role of['finance','collector','technician','owner','reseller_voucher'])assert.equal((await request(role,'POST',endpoint,input)).status,403);assert.equal((await request('admin','POST',endpoint,input,false)).status,419);assert.equal(saved,0);
+ const response=await request('admin','POST',endpoint,input);assert.equal(response.status,200,JSON.stringify(response.body));assert.deepEqual(response.body.preset.vlans,[100,200]);assert.match(response.body.message,/belum diubah/);assert.equal(saved,1);assert.equal(lastSaveOptions.includeCore,true);assert(fixture.activity.some(row=>row.meta?.action==='olt-pnp-preset-save'));assert.deepEqual({customers:fixture.customers,payments:fixture.payments,invoices:fixture.invoices},before);
+ }finally{pnp.savePreset=original;}
+});
 test('finance can open ticket menu and create a service ticket but cannot manage OLT or handle tickets',async()=>{
  reset();assert.equal((await request('finance','GET','/service-options')).status,200);assert.equal((await request('finance','GET','/tickets')).status,200);
  const payload={category:'billing',customerName:'Unit Customer',text:'Please check payment',address:'Unit Address'};
@@ -36,6 +112,58 @@ test('per-user ticket grants take effect in an existing session, keep own-ticket
  fixture.users.find(row=>row.role==='collector').ticketCreationAllowed=false;assert.equal((await request('collector','GET','/tickets')).status,403);
 });
 test.after(()=>{for(const id of sessions.values())auth.destroySession(id);fs.rmSync(directory,{recursive:true,force:true});});
+test('manual terminal delete handoff permits technicians without management rights and never executes raw deletion',async()=>{
+ reset();const terminal=require('../src/olt-terminal'),removal=require('../src/olt-device-removal'),original={input:terminal.input,deletionTarget:terminal.deletionTarget,remove:removal.remove};
+ fixture.oltDevices=[{id:'terminal-fixture',name:'Unit',vendor:'cdata',enabled:true}];let inputs=0,selections=0,deletes=0;
+ const target={ponKey:'0/1/1',onuId:1},onu={id:'4718593',oltId:'terminal-fixture',oltName:'Unit',ponKey:'0/1/1',onuId:1,serialNumber:'HWTCAABBCCDD'};
+ terminal.input=(owner,device,id,payload)=>{inputs++;assert(owner);assert.equal(device.id,'terminal-fixture');assert.equal(id,'11111111-1111-4111-8111-111111111111');assert.equal(payload.value,'ont delete 1 1');return{ok:true,action:'preview-delete-onu',target};};
+ terminal.deletionTarget=async(data,device,position)=>{selections++;assert.equal(data,fixture);assert.equal(device.id,'terminal-fixture');assert.deepEqual(position,target);return onu;};removal.remove=async()=>{deletes++;throw Error('Delete must require web confirmation');};
+ try{const suffix='/terminal-fixture/terminal/11111111-1111-4111-8111-111111111111';for(const role of['finance','collector','reseller_voucher'])assert.equal((await request(role,'POST',suffix,{kind:'line',value:'ont delete 1 1'})).status,403);assert.equal(inputs,0);
+ const response=await request('admin','POST',suffix,{kind:'line',value:'ont delete 1 1',host:'127.0.0.1',serialNumber:'OTHERWRONGSN'});assert.equal(response.status,200);assert.equal(response.body.action,'preview-delete-onu');assert.deepEqual(response.body.onu,onu);assert.equal(inputs,1);assert.equal(selections,1);assert.equal(deletes,0);
+ assert.equal((await request('admin','POST','/missing/terminal/11111111-1111-4111-8111-111111111111',{kind:'line',value:'ont delete 1 1'})).status,404);assert.equal(inputs,1);
+ assert.equal((await request('technician','POST',suffix,{kind:'line',value:'ont delete 1 1'})).status,200);assert.equal(inputs,2);assert.equal(deletes,0);
+ fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-a'];fixture.oltDevices[0].nasId='nas-b';assert.equal((await request('technician','POST',suffix,{kind:'line',value:'ont delete 1 1'})).status,404);assert.equal(inputs,2);
+ }finally{terminal.input=original.input;terminal.deletionTarget=original.deletionTarget;removal.remove=original.remove;}
+});
+test('terminal deletion selection fails closed when snapshot identity is uncertain',async()=>{
+ reset();const terminal=require('../src/olt-terminal'),original={input:terminal.input,deletionTarget:terminal.deletionTarget};fixture.oltDevices=[{id:'terminal-fixture',name:'Unit',vendor:'cdata',enabled:true}];
+ terminal.input=()=>({action:'preview-delete-onu',target:{ponKey:'0/1/1',onuId:1}});terminal.deletionTarget=async()=>{const error=Error('SN belum pasti');error.status=409;throw error;};
+ try{const response=await request('admin','POST','/terminal-fixture/terminal/11111111-1111-4111-8111-111111111111',{kind:'line',value:'ont delete 1 1'});assert.equal(response.status,409);assert.equal(response.body.error,'SN belum pasti');assert.equal(response.body.onu,undefined);}finally{terminal.input=original.input;terminal.deletionTarget=original.deletionTarget;}
+});
+test('whole-OLT reboot API permits only admin/secretary/head technicians and rechecks CSRF and NAS without hardware commands',async()=>{
+ reset();const reboot=require('../src/olt-reboot'),original={prepare:reboot.prepare,execute:reboot.execute};const device=require('../src/olt-monitor').validateDevice(fixture,{name:'Unit Reboot',host:'192.0.2.40',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let prepared=0,executed=0;
+ reboot.prepare=async()=>{prepared++;return{available:true,canSubmit:true,token:'test',model:'Unit Model'};};reboot.execute=async(data,target,actor,payload,options)=>{executed++;assert.equal(payload.token,'test');assert.equal(target.id,device.id);assert.equal(actor.id,'admin');assert.equal((await options.beforeSend()).oltId,device.id);return{submitted:true,acknowledged:true,verified:false,message:'Permintaan reboot diterima.'};};
+ try{const endpoint='/'+device.id+'/reboot';for(const role of['technician','noc','finance','collector','reseller_voucher'])assert.equal((await request(role,'GET',endpoint)).status,403);assert.equal(prepared,0);
+ const head=fixture.users.find(row=>row.role==='technician');head.position='Kepala Teknisi dan Perlengkapan';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','GET',endpoint)).status,404);head.lockedNasIds=['nas-a'];assert.equal((await request('technician','GET',endpoint)).status,200);assert.equal((await request('secretary','GET',endpoint)).status,200);assert.equal((await request('admin','GET',endpoint)).status,200);
+ assert.equal((await request('admin','POST',endpoint,{token:'test'},false)).status,419);assert.equal(executed,0);
+ const response=await request('admin','POST',endpoint,{token:'test'});assert.equal(response.status,202);assert.equal(executed,1);assert.equal(fixture.settings.plannedOltReboots.length,1);assert.equal(fixture.settings.plannedOltReboots[0].oltId,device.id);
+ fixture.users.find(row=>row.role==='technician').position='Staf Teknisi dan Perlengkapan';assert.equal((await request('technician','POST',endpoint,{token:'test'})).status,403);assert.equal(executed,1);
+ }finally{reboot.prepare=original.prepare;reboot.execute=original.execute;}
+});
+test('staff cannot elevate reboot permission through the self-profile API',async()=>{
+ reset();const before=structuredClone(fixture);
+ const result=await request('technician','PUT','/api/auth/profile',{position:'Kepala Teknisi dan Perlengkapan',name:'MUST NOT CHANGE'});
+ assert.equal(result.status,400);assert.match(result.body.error,/Jabatan hanya/);assert.deepEqual(fixture,before);assert.equal(saves,0);
+ assert.equal(auth.hasPermission(auth.publicUser(fixture.users.find(row=>row.role==='technician')),'olt:reboot'),false);
+ assert.equal(auth.hasPermission(auth.publicUser(fixture.users.find(row=>row.role==='technician')),'olt:pon:manage'),false);
+});
+test('PON-control API enforces role, NAS, confirmation callbacks and CSRF without configuring hardware',async()=>{
+ reset();const pon=require('../src/olt-pon'),original={prepare:pon.prepare,execute:pon.execute};const device=require('../src/olt-monitor').validateDevice(fixture,{name:'Unit PON',vendor:'zte',host:'192.0.2.40',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let reads=0,writes=0;
+ pon.prepare=async(data,target,actor,key)=>{reads++;assert.equal(key,'1/1/13');return{ponKey:key,adminState:'enabled',checkedAt:new Date().toISOString(),token:'unit',canSubmit:true};};
+ pon.execute=async(data,target,actor,payload,options)=>{writes++;const marker=await options.beforeSend('1/1/13',false),value={submitted:true,verified:true,uncertain:false,ponKey:'1/1/13',state:{adminState:'disabled',checkedAt:new Date().toISOString()},message:'Unit result'};await options.afterSend(marker,value,false);return value;};
+ try{const endpoint='/'+device.id+'/pon-control';for(const role of['owner','technician','noc','finance','collector','reseller_voucher']){assert.equal((await request(role,'GET',endpoint+'?pon=1/1/13')).status,403);assert.equal((await request(role,'POST',endpoint,{token:'unit'})).status,403);}assert.equal(reads,0);assert.equal(writes,0);assert.equal((await request('owner','GET')).status,200);
+ const head=fixture.users.find(user=>user.role==='technician');head.position='Kepala Teknisi';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','GET',endpoint+'?pon=1/1/13')).status,404);head.lockedNasIds=['nas-a'];assert.equal((await request('technician','GET',endpoint+'?pon=1/1/13')).status,200);assert.equal((await request('secretary','GET',endpoint+'?pon=1/1/13')).status,200);
+ assert.equal((await request('admin','POST',endpoint,{token:'unit'},false)).status,419);assert.equal(writes,0);const paid=structuredClone(fixture.payments);assert.equal((await request('admin','POST',endpoint,{token:'unit'})).status,200);assert.equal(writes,1);assert.equal(fixture.settings.plannedPonChanges[0].state,'disabled');assert.deepEqual(fixture.payments,paid);
+ }finally{pon.prepare=original.prepare;pon.execute=original.execute;}
+});
+test('terminal API forwards trusted PON permission, never browser-supplied grants, and updates it after a role change',async()=>{
+ reset();const terminal=require('../src/olt-terminal'),original=terminal.input;fixture.oltDevices=[{id:'pon-terminal-unit',name:'Unit',vendor:'zte',enabled:true}];let accepted=0;
+ terminal.input=(owner,device,id,payload,access)=>{assert.equal(payload.value,'no shutdown');if(!access.permissions.includes('olt:pon:manage'))throw Object.assign(Error('No PON permission'),{status:403});accepted++;return{ok:true};};
+ try{const endpoint='/pon-terminal-unit/terminal/11111111-1111-4111-8111-111111111111',payload={kind:'line',value:'no shutdown',permissions:['olt:pon:manage']};
+ assert.equal((await request('technician','POST',endpoint,payload)).status,403);assert.equal((await request('admin','POST',endpoint,payload)).status,200);assert.equal((await request('secretary','POST',endpoint,payload)).status,200);assert.equal((await request('owner','POST',endpoint,payload)).status,403);
+ const head=fixture.users.find(user=>user.role==='technician');head.position='Kepala Teknisi';assert.equal((await request('technician','POST',endpoint,payload)).status,200);head.position='Staf Teknisi dan Perlengkapan';assert.equal((await request('technician','POST',endpoint,payload)).status,403);assert.equal(accepted,3);
+ }finally{terminal.input=original;}
+});
 test('automatic network integration defaults off and old stored values cannot accidentally opt in',()=>{
  assert.equal(storeModule.createDefaultStore().settings.networkIntegrationEnabled,false);
  for(const value of [undefined,false,'true',1,null,{},[]]){const data=storeModule.ensureShape({settings:{networkIntegrationEnabled:value}});assert.equal(data.settings.networkIntegrationEnabled,false);assert.equal(storeModule.publicSettings(data.settings).networkIntegrationEnabled,false);}
@@ -432,6 +560,13 @@ test('staff can create PSB or fault without NAS/OLT, claim and complete without 
  assert.equal((await request('admin','POST','/tickets',body)).body.ticket.id,ticket.id);assert.equal(fixture.oltTickets.length,1);
  fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-b'];assert.equal((await request('technician','GET','/tickets/'+ticket.id)).status,200);assert.equal((await request('technician','POST','/tickets/'+ticket.id+'/claim')).status,200);assert.equal((await request('secretary','POST','/tickets/'+ticket.id+'/progress',{status:'resolved',note:'Survey completed'})).status,200);assert.deepEqual(businessState(),before);
  const fault=await request('secretary','POST','/tickets',{...body,category:'internet-down',text:'Fault report without identified NAS'});assert.equal(fault.status,201);assert.equal(fault.body.ticket.kind,'fault');assert.equal((await request('collector','POST','/tickets',body)).status,403);assert.equal((await request('admin','POST','/tickets',body,false)).status,419);
+});
+test('oversized ticket edits and settings fail before any store mutation',async()=>{
+ serviceFixture();const before=structuredClone(fixture),saved=saves;
+ for(const [path,method,padding]of[['/api/tickets','POST',9000],['/api/tickets/settings','PUT',132000],['/api/tickets/templates','PUT',132000]]){
+  try{const response=await request('admin',method,path,{padding:'x'.repeat(padding)});assert.equal(response.status,400);assert.match(response.body.error,/Body terlalu besar/);}catch(error){assert.match(error.message,/Body terlalu besar/);}
+ }
+ assert.equal(saves,saved);assert.deepEqual(fixture,before);
 });
 test('staff customer selection auto maps NAS and prevents forged identity or out-of-scope member selection',async()=>{
  serviceFixture();const options=await request('admin','GET','/service-options?search=');assert.equal(options.status,200);const customer=fixture.customers[0];fixture.users.find(row=>row.role==='technician').lockedNasIds=['nas-b'];

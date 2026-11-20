@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="same-origin">
+  <title>Terminal OLT</title>
+  <link rel="stylesheet" href="/vendor/xterm.css?v=6.0.0">
+  <link rel="stylesheet" href="/olt-terminal.css?v=20261119-mobile2">
+  <script defer src="/vendor/xterm.js?v=6.0.0"></script>
+  <script defer src="/vendor/xterm-fit.js?v=0.11.0"></script>
+  <script defer src="/olt-terminal.js?v=20261119-native3"></script>
+</head>
+<body>
+  <main id="oltTerminalScreen" aria-label="Terminal CLI OLT"></main>
+  <div id="oltTerminalKeys" class="terminal-keys" role="toolbar" aria-label="Tombol terminal">
+    <button type="button" id="oltTerminalCtrl" aria-pressed="false">Ctrl</button>
+    <button type="button" data-key="tab" title="Lengkapi perintah">Tab</button>
+    <button type="button" data-text="?" title="Bantuan perintah">?</button>
+    <button type="button" data-key="left" aria-label="Kursor kiri">&#8592;</button>
+    <button type="button" data-key="right" aria-label="Kursor kanan">&#8594;</button>
+    <button type="button" data-key="up" aria-label="Perintah sebelumnya">&#8593;</button>
+    <button type="button" data-key="down" aria-label="Perintah berikutnya">&#8595;</button>
+    <button type="button" id="oltTerminalMore" title="Tombol tambahan" aria-label="Tombol tambahan" aria-expanded="false" aria-controls="oltTerminalExtra">&#8943;</button>
+    <div id="oltTerminalExtra" class="terminal-extra" role="group" aria-label="Tombol tambahan" hidden>
+      <button type="button" data-key="escape" title="Escape">Esc</button>
+      <button type="button" data-key="interrupt" title="Hentikan perintah (Ctrl+C)" aria-label="Ctrl+C">^C</button>
+      <button type="button" data-key="suspend" title="Kembali dari mode konfigurasi (Ctrl+Z)" aria-label="Ctrl+Z">^Z</button>
+      <button type="button" data-key="more" title="Spasi / halaman berikutnya" aria-label="Spasi">&#9251;</button>
+      <button type="button" data-key="enter" title="Enter" aria-label="Enter">&#8629;</button>
+      <button type="button" data-text="|">|</button>
+      <button type="button" data-text="-">-</button>
+      <button type="button" data-text="/">/</button>
+      <button type="button" data-text=":">:</button>
+    </div>
+  </div>
+  <footer class="terminal-footer">
+    <strong id="oltTerminalName">Terminal OLT</strong>
+    <span id="oltTerminalStatus" role="status">Menghubungkan...</span>
+    <button type="button" id="oltTerminalReconnect" title="Hubungkan ulang" aria-label="Hubungkan ulang" hidden><img src="/olt-refresh.svg" alt=""></button>
+    <button type="button" id="oltTerminalClose" title="Tutup terminal" aria-label="Tutup terminal">&#215;</button>
+  </footer>
+</body>
+</html>

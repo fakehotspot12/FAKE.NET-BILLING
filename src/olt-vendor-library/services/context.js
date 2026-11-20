@@ -7,10 +7,45 @@ export function remaining(){const context=current(),time=context.deadline-Date.n
 export function request(){const context=current();remaining();if(++context.requests>24)throw new Error('Vendor request limit reached');return context;}
 export function decryptSecret(value){return value?secrets.decryptSecret(current().data,value):'';}
 export async function withContext(data,device,operation,options={}){
-  if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
-  const context={data,device,controller:new AbortController(),deadline:Date.now()+Math.min(options.timeoutMs||16000,18000),requests:0,transports:options.transports||{},hiosoActionAllowed:options.hiosoActionAllowed===true,hiosoGrant:null};
+  if(process.env.MIGRATION_MODE==='1'&&!(device.vendor==='zte'&&options.allowZteDevRead===true)&&!(options.rebootProbe===true&&options.allowDevRebootProbe===true))throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
+  const context={data,device,controller:new AbortController(),deadline:Date.now()+Math.min(options.timeoutMs||16000,18000),requests:0,transports:options.transports||{},hiosoActionAllowed:options.hiosoActionAllowed===true,hiosoGrant:null,rebootProbe:options.rebootProbe===true,oltRebootAllowed:options.oltRebootAllowed===true,oltRebootGrant:null,ponActionAllowed:options.ponActionAllowed===true,explicitDevPonAction:options.explicitDevPonAction===true,ponGrant:null};
+  context.pnpActionAllowed=options.pnpActionAllowed===true;context.explicitDevPnpAction=options.explicitDevPnpAction===true;context.pnpGrant=null;
+  context.bandwidthActionAllowed=options.bandwidthActionAllowed===true;context.explicitDevBandwidthAction=options.explicitDevBandwidthAction===true;context.bandwidthGrant=null;
+  context.registrationActionAllowed=options.registrationActionAllowed===true;context.explicitDevRegistrationAction=options.explicitDevRegistrationAction===true;context.registrationGrant=null;
+  context.bridgeActionAllowed=options.bridgeActionAllowed===true;context.explicitDevBridgeAction=options.explicitDevBridgeAction===true;context.bridgeGrant=null;
+  context.cliQueue=options.cliQueue===true&&device.vendor==='zte';
   const timer=setTimeout(()=>context.controller.abort(),context.deadline-Date.now());
   try{return await contexts.run(context,operation);}finally{clearTimeout(timer);context.controller.abort();}
+}
+export function authorizeOltReboot(commands){
+  const context=current(),prefix=commands?.slice(0,-1),command=commands?.at(-1);
+  if(!context.oltRebootAllowed||process.env.MIGRATION_MODE==='1'||context.oltRebootGrant||!Array.isArray(commands)||!['reboot','reload','system reboot'].includes(command)||!['["enable"]','["enable","config"]','["enable","configure terminal"]','["enable","system-view"]'].includes(JSON.stringify(prefix)))throw new Error('OLT reboot authorization rejected');
+  context.oltRebootGrant={commands:[...commands],used:false,submitted:false,acknowledged:false};
+}
+export function authorizePonOperation({ponKey,enabled,proof}){
+  const context=current(),pon=require('../../olt-pon');
+  if(!pon.supports(context.device)||!context.ponActionAllowed||context.ponGrant||typeof enabled!=='boolean'||!/^[0-9a-f]{64}$/.test(proof)||process.env.MIGRATION_MODE==='1'&&!(context.device.vendor==='zte'&&context.explicitDevPonAction))throw new Error('PON operation authorization rejected');
+  pon.ponKey(ponKey);context.ponGrant={vendor:context.device.vendor,ponKey,enabled,proof,commands:pon.writeCommands(ponKey,enabled,context.device.vendor),used:false,submitted:false,verified:false};
+}
+export function authorizePnpOperation(state,value){
+  const context=current(),pnp=require('../../olt-zte-pnp');
+  if(context.device.vendor!=='zte'||!context.pnpActionAllowed||context.pnpGrant||process.env.MIGRATION_MODE==='1'&&!context.explicitDevPnpAction)throw new Error('ONU-PnP authorization rejected');
+  pnp.desired(state,value);context.pnpGrant={state,value,commands:pnp.writeCommands(state,value),mutationStart:pnp.readCommands(state.ports.map(row=>row.ponKey)).length+2,used:false,submitted:false,verified:false};
+}
+export function authorizeBandwidthOperation(state,value){
+  const context=current();
+  if(context.device.vendor!=='zte'||!context.bandwidthActionAllowed||context.bandwidthGrant||process.env.MIGRATION_MODE==='1'&&!context.explicitDevBandwidthAction)throw new Error('Bandwidth authorization rejected');
+  context.bandwidthGrant=require('../../olt-zte-bandwidth').authorize(state,value);
+}
+export function authorizeRegistrationOperation(spec){
+  const context=current();
+  if(context.device.vendor!=='zte'||!context.registrationActionAllowed||context.registrationGrant||spec.device.id!==context.device.id||process.env.MIGRATION_MODE==='1'&&!context.explicitDevRegistrationAction)throw new Error('ONU registration authorization rejected');
+  context.registrationGrant=require('../../olt-zte-registration').authorize(spec);
+}
+export function authorizeBridgeOperation(state,value){
+  const context=current();
+  if(context.device.vendor!=='zte'||!context.bridgeActionAllowed||context.bridgeGrant||process.env.MIGRATION_MODE==='1'&&!context.explicitDevBridgeAction)throw new Error('ONU bridge authorization rejected');
+  context.bridgeGrant=require('../../olt-zte-bridge').authorize(state,value);
 }
 export function authorizeHiosoOperation({address,operation,name=''}){
   const context=current();

@@ -6,7 +6,7 @@ const PROFILES=Object.freeze([
   {value:'hsgq',label:'HSGQ GPON / EPON',inventory:'adapter',writes:false},
   {value:'hioso',label:'HIOSO EPON',inventory:'adapter',writes:false},
   {value:'btpon',label:'BTPON',inventory:'adapter',writes:false},
-  {value:'zte',label:'ZTE',inventory:'basic',writes:false},
+  {value:'zte',label:'ZTE',inventory:'adapter',writes:false},
   {value:'huawei',label:'Huawei',inventory:'basic',writes:false},
   {value:'vsol',label:'VSOL',inventory:'basic',writes:false},
   {value:'bdcom',label:'BDCOM / Baudcom',inventory:'basic',writes:false},
@@ -18,7 +18,7 @@ function profile(value){return PROFILES.find(row=>row.value===normalize(value));
 function canWrite(device){return profile(device.vendor)?.writes===true&&(device.cliProtocol||'telnet')==='telnet';}
 function capabilities(device,snapshot){
   const configured=Boolean(device.enabled&&device.cliEnabled&&device.cliPasswordEnc),native=canWrite(device),hioso=normalize(device.vendor)==='hioso'?snapshot?.hiosoActions||{}:{};
-  return{rename:configured&&(native||hioso.rename===true),reboot:configured&&(native||hioso.reboot===true),delete:configured&&(native||hioso.delete===true),saveConfig:configured&&(native||hioso.saveConfig===true)};
+  return{rename:configured&&(native||hioso.rename===true),reboot:configured&&(native||hioso.reboot===true),delete:configured&&(native||hioso.delete===true),saveConfig:configured&&(native||hioso.saveConfig===true),ponControl:configured&&Boolean(device.cliUsername)&&require('./olt-pon').supports(device)};
 }
 function options(){return PROFILES.map(row=>({...row,mode:row.writes?'verified':'read-only',note:row.writes?'Jalur CDATA terverifikasi':row.inventory==='basic'?'Monitoring SNMP dasar; inventory dan aksi ONU belum terverifikasi':'Monitoring ONU baca-saja; aksi tulis belum terverifikasi'}));}
 let library;
@@ -40,6 +40,12 @@ function normalizeOnus(rows,helpers={}){
 }
 function ponPosition(name, vendor) {
   const value=String(name||'').trim();
+  if(normalize(vendor)==='zte'){
+    const match=value.match(/^(?:gpon-olt_|gpon_olt-)(\d{1,2})\/(\d{1,2})\/(\d{1,2})$/i);
+    if(!match)return null;
+    const[frame,slot,pon]=match.slice(1).map(Number);
+    return frame<=31&&slot<=31&&pon>=1&&pon<=32?{frame,slot,pon,ponKey:`${frame}/${slot}/${pon}`}:null;
+  }
   const full=value.match(/^(?:xgpon|gpon|epon)\s+(0)\/(\d+)\/(\d+)$/i);
   const compact=value.match(/^(?:xgpon|gpon|epon)\s+(0)\/(\d+)$/i);
   const hioso=normalize(vendor)==='hioso'&&value.match(/^Pon-Nni\s*(\d+)$/i);
@@ -49,12 +55,23 @@ function ponPosition(name, vendor) {
 function monitoringPorts(device, interfaces, inventory={}) {
   const vendor=normalize(device.vendor),ports=[],seen=new Map();
   for(const row of interfaces){
+    if(vendor==='zte'&&/^(?:gpon-onu_|gpon_onu-)/i.test(row.name))continue;
     const position=ponPosition(row.name,vendor);
     const port={...row,kind:position?'pon':'uplink',ponKey:position?.ponKey||''};
     if(!position){ports.push(port);continue;}
     const previous=seen.get(position.ponKey);
     if(previous){if(previous.status!==port.status)previous.status='unknown';continue;}
     seen.set(position.ponKey,port);ports.push(port);
+  }
+  if(vendor==='zte'){
+    for(const row of inventory.ports||[]){
+      const position=ponPosition(row.name,vendor);if(!position||position.ponKey!==row.ponKey)continue;
+      const previous=seen.get(row.ponKey);
+      if(previous){if(previous.status==='unknown')previous.status=row.status;continue;}
+      const port={...row,kind:'pon'};seen.set(row.ponKey,port);ports.push(port);
+    }
+    ports.sort((a,b)=>a.kind===b.kind?String(a.ponKey).localeCompare(b.ponKey,undefined,{numeric:true}):a.kind==='pon'?-1:1);
+    return{ports,modelLabel:inventory.modelLabel||'',warning:''};
   }
   if(vendor!=='hioso')return{ports,modelLabel:'',warning:''};
   const physical=[...seen.keys()],reported=inventory.ponNumbers||[],observed=(inventory.rows||[]).map(row=>row.ponKey);
@@ -72,6 +89,7 @@ function monitoringPorts(device, interfaces, inventory={}) {
 async function readInventory(data,device,helpers={},transportOptions={}){
   const cfg=profile(device.vendor);if(!cfg||cfg.inventory==='basic')return {available:false,rows:[],warning:'Inventory ONU belum terverifikasi untuk model ini. Monitoring SNMP dasar tetap aktif; aksi tulis terkunci.'};
   if(!device.cliEnabled||!device.cliPasswordEnc)return {available:false,rows:[],warning:'Aktifkan akses CLI baca untuk melengkapi inventory ONU. Aksi tulis tetap terkunci.'};
+  if(cfg.value==='zte')return require('./olt-zte-inventory').read(data,device,helpers,transportOptions);
   const[factory,context]=await loadLibrary();
   return context.withContext(data,device,async()=>{
     const adapter=factory.createOltAdapter(legacyDevice(device));
@@ -108,7 +126,7 @@ async function readInventory(data,device,helpers={},transportOptions={}){
 }
 async function testConnection(data,device,transportOptions={}){
   const[,context,transport]=await loadLibrary();return context.withContext(data,device,async()=>{
-    const olt=legacyDevice(device),command=['huawei','tarmoc'].includes(normalize(device.vendor))?'display version':'show version';const result=await transport.executeOltCommands({olt,password:context.decryptSecret(device.cliPasswordEnc),commands:['enable',command]});if(!result.success)throw new Error('Koneksi CLI vendor belum terverifikasi');return result;
+    const vendor=normalize(device.vendor),olt=legacyDevice(device),command=vendor==='zte'?'show version-running':['huawei','tarmoc'].includes(vendor)?'display version':'show version';const result=await transport.executeOltCommands({olt,password:context.decryptSecret(device.cliPasswordEnc),commands:['enable',command]});if(!result.success)throw new Error('Koneksi CLI vendor belum terverifikasi');return result;
   },transportOptions);
 }
 module.exports={PROFILES,normalize,profile,options,canWrite,capabilities,loadLibrary,legacyDevice,normalizeOnus,ponPosition,monitoringPorts,readInventory,testConnection};

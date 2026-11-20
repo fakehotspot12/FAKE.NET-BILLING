@@ -8097,6 +8097,7 @@ test('auth lets any active user update own profile without changing role', () =>
     username: 'teknisi-profil',
     name: 'Teknisi Lama',
     role: 'technician',
+    position: 'Teknisi Lapangan',
     password: 'rahasia2'
   });
   const stored = data.users.find((user) => user.id === technician.id);
@@ -8143,6 +8144,28 @@ test('auth lets any active user update own profile without changing role', () =>
     newPassword: 'password-baru'
   });
   assert.equal(verifyPassword('password-baru', stored.passwordHash), true);
+});
+
+test('own profile cannot promote staff to a privileged job title or partially change their data', () => {
+  const data = createDefaultStore();
+  createUser(data, { username: 'unit-admin', role: 'admin', password: 'rahasia2' });
+  for (const role of ['technician', 'noc']) {
+    const user = createUser(data, {
+      username: `staff-${role}`, role, position: 'Staf Teknisi dan Perlengkapan', password: 'rahasia2'
+    });
+    const before = structuredClone(data);
+    assert.throws(() => updateOwnProfile(data, user.id, {
+      name: 'Changed', phone: '081234567890', position: 'Kepala Teknisi dan Perlengkapan'
+    }), /Jabatan hanya/);
+    assert.deepEqual(data, before);
+    const unchanged = updateOwnProfile(data, user.id, { position: user.position, phone: '081234567890' });
+    assert.equal(unchanged.phone, '081234567890');
+    assert.equal(hasPermission(unchanged, 'olt:reboot'), false);
+    updateUser(data, user.id, { position: 'Kepala Teknisi dan Perlengkapan' });
+    assert.equal(hasPermission(publicUser(data.users.find(row => row.id === user.id)), 'olt:reboot'), true);
+  }
+  const admin = data.users.find(user => user.role === 'admin');
+  assert.equal(updateOwnProfile(data, admin.id, { position: 'Direktur' }).position, 'Direktur');
 });
 
 test('startup migration moves legacy base64 user and house photos to upload folders only', async () => {

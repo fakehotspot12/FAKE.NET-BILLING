@@ -242,25 +242,28 @@ function ticketPage(data, user, query = {}) {
   if (!['', 'open', ...olt.TICKET_STATUSES].includes(status)) throw new Error('Status tiket tidak valid');
   const search = String(query.search || '').trim().toLocaleLowerCase('id-ID').slice(0, 100);
   const limit = [10,25,50,100].includes(Number(query.limit)) ? Number(query.limit) : 25;
-  const visible=(data.oltTickets||[]).filter(serviceTickets.visibilityFilter(data,user,devices));
-  const scoped = visible.filter(ticket => {
+  const isVisible=serviceTickets.visibilityFilter(data,user,devices),nasIds=new Set(devices.map(row=>row.nasId).filter(Boolean)),filtered=[];
+  const counts=Object.fromEntries(olt.TICKET_STATUSES.map(key=>[key,0]));counts.all=0;
+  for(const ticket of data.oltTickets||[]){
+    if(!isVisible(ticket))continue;
+    if(ticket.nasId)nasIds.add(ticket.nasId);
     const device = byId.get(ticket.oltId);
-    return (!query.oltId || query.oltId === 'all' || ticket.oltId === query.oltId)
+    const matches=(!query.oltId || query.oltId === 'all' || ticket.oltId === query.oltId)
       && (!query.nasId || query.nasId === 'all' || (device?.nasId||ticket.nasId) === query.nasId)
       && (!query.kind || (ticket.kind||'fault') === query.kind)
       && (!query.scope || ticket.scope === query.scope) && (!query.pon || ticket.pon === query.pon)
       && (!search || [ticket.number,ticket.title,ticket.serialNumber,ticket.customerName,ticket.fiberPointName,ticket.description,device?.name,ticket.nasName]
         .some(value => String(value || '').toLocaleLowerCase('id-ID').includes(search)));
-  });
-  const counts = Object.fromEntries(olt.TICKET_STATUSES.map(key => [key,0]));
-  for(const ticket of scoped)if(Object.hasOwn(counts,ticket.status))counts[ticket.status]++;
-  counts.all = scoped.length; counts.open = counts.new + counts.assigned + counts.working;
-  const filtered = scoped.filter(ticket => (!query.bucket||(query.bucket==='resolved'?ticket.status==='resolved':ticket.status!=='resolved'))&&(!status || (status === 'open' ? ticket.status !== 'resolved' : ticket.status === status)));
+    if(!matches)continue;
+    counts.all++;if(Object.hasOwn(counts,ticket.status)&&ticket.status!=='all')counts[ticket.status]++;
+    if((!query.bucket||(query.bucket==='resolved'?ticket.status==='resolved':ticket.status!=='resolved'))&&(!status||(status==='open'?ticket.status!=='resolved':ticket.status===status)))filtered.push(ticket);
+  }
+  counts.open=counts.new+counts.assigned+counts.working;
   filtered.sort((a,b) => String(b.updatedAt).localeCompare(String(a.updatedAt)) || String(a.id).localeCompare(String(b.id)));
   const pages = Math.max(1,Math.ceil(filtered.length / limit)), page = Math.max(1,Math.min(pages,parseInt(query.page,10) || 1));
   const fields = ['id','number','oltId','title','scope','source','kind','category','nasId','nasName','pon','serialNumber','fiberPointId','fiberPointName','customerName','assignedTo','companionIds','status','updatedAt','createdAt','autoResolved','affectedCount','losDetection'];
   const tickets = filtered.slice((page-1)*limit,page*limit).map(ticket => require('./ticket-network').presentation({...Object.fromEntries(fields.filter(key => ticket[key] !== undefined).map(key => [key,ticket[key]])),...(ticket.recovery?{recovery:Object.fromEntries(['ready','threshold','total','online','eligible','poweredOff','remainingLos','unknown'].map(key=>[key,ticket.recovery[key]]))}:{}),affectedTotal:ticket.affectedSerialNumbers?.length || ticket.affectedCount || (ticket.serialNumber ? 1 : 0)}));
-  return { tickets, counts, page, limit, pages, total: filtered.length,nasIds:[...new Set([...devices.map(row=>row.nasId),...visible.map(row=>row.nasId)].filter(Boolean))],
+  return { tickets, counts, page, limit, pages, total: filtered.length,nasIds:[...nasIds],
     devices: devices.map(device => ({id:device.id,name:device.name,nasId:device.nasId || ''})) };
 }
 

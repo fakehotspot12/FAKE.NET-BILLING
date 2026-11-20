@@ -21,3 +21,14 @@ test('source failure retains last real values marked stale and applies retry bac
 test('demo mode cannot read real telemetry, and public summary never exposes credentials',async()=>{
  const{data,device}=fixture();process.env.MIGRATION_MODE='1';try{let reads=0;await telemetry.read(data,device,{}, {transports:{fetch:async()=>{reads++;}}});assert.equal(reads,0);}finally{process.env.MIGRATION_MODE='0';}const publicRow=monitor.publicDevice(device,{telemetry:{cpuPercent:5,ramPercent:10,model:'HA7302CST',source:'web',signature:'private-secret',checkedAt:new Date().toISOString()}});assert.equal(publicRow.systemLabel,'HIOSO HA7302CST');assert.equal(publicRow.resources.cpuPercent,5);assert(!JSON.stringify(publicRow).includes('private-secret'));assert(!JSON.stringify(publicRow).includes('unit-password'));
 });
+test('ZTE resources use the uniquely verified active controller, not the PON board or a made-up average',()=>{
+ const card='Rack Shelf Slot CfgType RealType Port HardVer SoftVer Status\n1 1 1 GTGH GTGHG 16 V1 V2 INSERVICE\n1 1 3 SMXA SMXA 3 V1 V2 INSERVICE\n1 1 4 SMXA 3 V1 V2 OFFLINE',processor='Rack Shelf Slot CPU(5s) CPU(1m) CPU(5m) PhyMem(MB) Memory\n1 1 1 19% 22% 22% 512 39%\n1 1 3 8% 9% 9% 2048 26%';
+ const outputs=[{command:'show card',stdout:card},{command:'show processor',stdout:processor}],result=telemetry.parseZte(outputs);assert.equal(result.cpuPercent,9);assert.equal(result.ramPercent,26);assert.equal(result.source,'cli-control-board');
+ assert.throws(()=>telemetry.parseZte([{command:'show card',stdout:card.replace('OFFLINE','INSERVICE')},outputs[1]]),/belum pasti/);assert.throws(()=>telemetry.parseZte([outputs[0],{command:'show processor',stdout:processor.replace('9% 9% 2048 26%','9% 9% 2048 126%')}]),/belum lengkap/);
+});
+test('manual ZTE telemetry in isolated Dev requires the existing explicit grant and stays cached for five minutes',async()=>{
+ const{data,device}=fixture('zte'),now=Date.now();let calls=0;process.env.MIGRATION_MODE='1';
+ try{const options={now,allowZteDevRead:true,transports:{commands:async({commands})=>{calls++;assert.deepEqual(commands,['enable','terminal length 0','show card','show processor']);return{success:true,outputs:[{command:'show card',stdout:'Rack Shelf Slot CfgType RealType Port HardVer SoftVer Status\n1 1 3 SMXA SMXA 3 V1 V2 INSERVICE'},{command:'show processor',stdout:'Rack Shelf Slot CPU(5s) CPU(1m) CPU(5m) PhyMem(MB) Memory\n1 1 3 8% 9% 9% 2048 26%'}]};}}};
+ const denied=await telemetry.read(data,device,{}, {...options,allowZteDevRead:false});assert.equal(calls,0);assert.equal(denied.cpuPercent,undefined);const first=await telemetry.read(data,device,{},options);assert.equal(first.cpuPercent,9);assert.equal(first.nextReadAt,now+telemetry.INTERVAL_MS);assert.equal((await telemetry.read(data,device,first,{...options,now:now+1000})),first);assert.equal(calls,1);
+ }finally{process.env.MIGRATION_MODE='0';}
+});

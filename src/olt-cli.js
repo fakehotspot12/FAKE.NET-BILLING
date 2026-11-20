@@ -18,7 +18,8 @@ function onuAbsent(output=''){
   return /(?:^|\n)[ \t]*(?:%[ \t]*)?(?:(?:error|failure|failed)[ \t]*:[ \t]*)?(?:(?:the[ \t]+)?(?:ont|onu)[ \t]+(?:does[ \t]+not[ \t]+exist|not[ \t]+(?:exist|found)|is[ \t]+not[ \t]+(?:configured|registered|found))\b|there[ \t]+is[ \t]+no[ \t]+(?:ont|onu)[ \t]+available[.!]?[ \t]*(?:\r?$))/im.test(output);
 }
 
-function run(data, device, target = null, spawnProcess = spawn, options = {}) {
+async function run(data, device, target = null, spawnProcess = spawn, options = {}) {
+  if(require('./olt-terminal').isOpen(device.id))return Promise.reject(new Error('Terminal OLT sedang digunakan, tutup terminal terlebih dahulu'));
   if(device.vendor&&device.vendor!=='cdata')return Promise.reject(new Error('Aksi CLI tulis vendor ini belum terverifikasi dan tetap terkunci'));
   if (!device.cliEnabled || !device.cliUsername || !device.cliPasswordEnc) return Promise.reject(new Error('Akses CLI OLT belum dikonfigurasi'));
   if (busy.has(device.id)) return Promise.reject(new Error('Akses OLT sedang digunakan, coba kembali'));
@@ -27,12 +28,15 @@ function run(data, device, target = null, spawnProcess = spawn, options = {}) {
   const password = secrets.decryptSecret(data,device.cliPasswordEnc);
   const commands = options.saveConfig===true ? ['enable','config','save'] : options.connectionTest===true ? ['enable','show version'] : target ? ['enable','config',`interface gpon 0/${target.slot}`,`show ont info ${target.pon} ${target.onuId}`,...(target.action==='inspect'?[]:[rename?`ont description ${target.pon} ${target.onuId} ${description(target.description)}`:`ont ${target.action||'delete'} ${target.pon} ${target.onuId}`,...(target.action==='reboot'?[]:[`show ont info ${target.pon} ${target.onuId}`])])] : ['enable','show ont status-count'];
   busy.add(device.id);
+  let shared;
+  try{[,,shared]=await require('./olt-vendors').loadLibrary();if(!shared.claimOlt(device.id))throw new Error('Akses OLT sedang digunakan, coba kembali');}
+  catch(error){busy.delete(device.id);throw error;}
   return new Promise((resolve,reject) => {
     let process,deadline,inactivity,settled=false,stage='login',buffer='',output='',bytes=0,index=-1,enablePassword=false,confirmation=false,alreadyAbsent=false;
     const outputs=[];
     const finish = error => {
       if (settled) return; settled=true; clearTimeout(deadline);clearTimeout(inactivity);busy.delete(device.id);
-      process?.kill(); if (error) reject(error); else resolve({outputs,saveConfirmed:options.saveConfig===true&&saveConfirmed(outputs.at(-1)?.stdout),descriptionConfirmed:rename&&readDescription(outputs.at(-1)?.stdout)===description(target.description),deleteConfirmed:deleting&&(alreadyAbsent||onuAbsent(outputs.at(-1)?.stdout)),alreadyAbsent});
+      process?.kill();shared.releaseOlt(device.id); if (error) reject(error); else resolve({outputs,saveConfirmed:options.saveConfig===true&&saveConfirmed(outputs.at(-1)?.stdout),descriptionConfirmed:rename&&readDescription(outputs.at(-1)?.stdout)===description(target.description),deleteConfirmed:deleting&&(alreadyAbsent||onuAbsent(outputs.at(-1)?.stdout)),alreadyAbsent});
     };
     const send = value => process.stdin.write(value+'\n');
     const next = () => {
@@ -86,4 +90,4 @@ async function renameOnu(data,device,target) {return run(data,device,{...target,
 async function inspectOnu(data,device,target) {return run(data,device,{...target,action:'inspect'});}
 async function testConnection(data,device) {return run(data,device,null,spawn,{connectionTest:true});}
 async function saveConfig(data,device) {return run(data,device,null,spawn,{saveConfig:true});}
-module.exports={readCauses,deleteOnu,rebootOnu,renameOnu,inspectOnu,testConnection,saveConfig,saveConfirmed,description,readDescription,readRunState,onuDescription,onuAbsent,run};
+module.exports={readCauses,deleteOnu,rebootOnu,renameOnu,inspectOnu,testConnection,saveConfig,saveConfirmed,description,readDescription,readRunState,onuDescription,onuAbsent,run,isBusy:id=>busy.has(id)};

@@ -18,13 +18,16 @@ function targetsFor(ticket,topologyRows){
 }
 function measure(ticket,rows,currentTargets){
   const current=rows instanceof Map?rows:new Map(),duplicates=new Set();if(!(rows instanceof Map))for(const row of rows){const sn=identity.serial(row.serialNumber);if(current.has(sn))duplicates.add(sn);else current.set(sn,row);}
+  const latestTargets=new Map(currentTargets.map(row=>[row.serialNumber,row]));
   const targets=new Map();
   for(const row of [...(ticket.recoveryTargets||[]),...currentTargets])if(row?.serialNumber&&!targets.has(row.serialNumber))targets.set(row.serialNumber,row);
   // Old incidents may have no saved membership: missing affected devices still count as unknown.
   for(const sn of ticket.affectedSerialNumbers||[])if(!targets.has(sn))targets.set(sn,{serialNumber:sn,pon:ticket.pon||'',odp:ticket.fiberPointId||''});
   const groups=new Map(),residualSerialNumbers=[],poweredOffSerialNumbers=[];let total=0,online=0,poweredOff=0,remainingLos=0,unknown=0;
   for(const target of targets.values()){
-    total++;const raw=duplicates.has(target.serialNumber)?null:current.get(target.serialNumber),row=raw&&(!target.pon||target.pon===raw.ponKey)?raw:null;
+    total++;const raw=duplicates.has(target.serialNumber)?null:current.get(target.serialNumber),latest=latestTargets.get(target.serialNumber);
+    const ownershipMatches=(!target.customerId||target.customerId===latest?.customerId)&&(!target.odp||target.odp===latest?.odp);
+    const row=raw&&ownershipMatches&&(!target.pon||target.pon===raw.ponKey)&&(!target.id||String(target.id)===String(raw.id))?raw:null;
     const key=ticket.scope==='odp'?ticket.fiberPointId:target.odp||'unmapped',part=groups.get(key)||{id:key,total:0,online:0,poweredOff:0,remainingLos:0,unknown:0};groups.set(key,part);part.total++;
     if(row?.status==='online'){online++;part.online++;}
     else if(row?.status==='offline'&&row.causeKnown===true&&row.condition==='dying-gasp'){poweredOff++;part.poweredOff++;if(poweredOffSerialNumbers.length<MAX_TARGETS)poweredOffSerialNumbers.push(target.serialNumber);}
