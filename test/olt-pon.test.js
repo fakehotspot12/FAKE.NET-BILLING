@@ -96,7 +96,7 @@ test('port state cache never turns an empty port OFF and newer snapshots win ove
  const f=fixture(),now=Date.now();pon.remember(f.device,{ponKey,adminState:'disabled',checkedAt:new Date(now-1000).toISOString()});let rows=pon.decorate(null,f.device,[{kind:'pon',ponKey,total:0,adminState:'enabled',adminCheckedAt:new Date(now).toISOString()}],now);assert.equal(rows[0].adminState,'enabled');rows=pon.decorate(null,f.device,[{kind:'pon',ponKey:'1/1/12',total:0}],now);assert.equal(rows[0].adminState,'unknown');
 });
 test('installer and updater include PON runtime and manual control is role/NAS/CSRF protected',()=>{
- for(const file of['install.sh','deploy/bin/fakenet-billing-update'])for(const runtime of['olt-pon','olt-cdata-pon'])assert(fs.readFileSync(path.join(__dirname,'..',file),'utf8').includes('    src/'+runtime+'.js\n'));
+ for(const file of['install.sh','deploy/bin/fakenet-billing-update'])for(const runtime of['olt-pon','olt-cdata-pon'])assert(require('./helpers/install-payload').payloadSource(file).includes('    src/'+runtime+'.js\n'));
  const api=fs.readFileSync(path.join(__dirname,'../src/server.js'),'utf8');assert(api.includes("requirePermission(req,res,'olt:pon:manage')"));assert(auth.publicUser({role:'secretary'}).permissions.includes('olt:pon:manage'));
 });
 test('admin-state enrichment is bounded to sixteen PONs, uses cache and never adds queries on an exhausted budget',async()=>{

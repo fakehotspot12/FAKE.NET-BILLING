@@ -90,7 +90,7 @@ test('current role/NAS, explicit consent, bounded read cache, persistent audits 
 });
 test('editor assets are included in installer/updater and contain no timer or automatic retry', () => {
   for (const file of ['../install.sh', '../deploy/bin/fakenet-billing-update']) {
-    const source = fs.readFileSync(require.resolve(file), 'utf8'); assert(source.includes('src/olt-zte-bridge.js')); assert(source.includes('public/olt-bridge.js'));
+    const source = require('./helpers/install-payload').payloadSource(file.replace(/^\.\.\//, '')); assert(source.includes('src/olt-zte-bridge.js')); assert(source.includes('public/olt-bridge.js'));
   }
   const source = fs.readFileSync(require.resolve('../public/olt-bridge.js'), 'utf8'); assert(!source.includes('setInterval')); assert(!source.includes('setTimeout'));
 });

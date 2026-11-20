@@ -143,5 +143,5 @@ test('prepared native PnP is bound to actor/revision/confirmation, audited and n
 });
 test('endpoint uses stored roles/NAS, bounded body, before-send audit and cache-only GET; scripts include runtime',()=>{
  const server=fs.readFileSync(require.resolve('../src/server.js'),'utf8'),part=server.slice(server.indexOf('const oltZtePnp='),server.indexOf('const oltZteProfiles='));for(const text of["requirePermission(req,res,'olt:pnp:manage')",'scopedDevices','readBody(req,4096)','beforeSend:','afterSend:','pnp.signature(latest)','state:pnp.saved(device)'])assert(part.includes(text),text);
- for(const file of['../install.sh','../deploy/bin/fakenet-billing-update'])assert(fs.readFileSync(require.resolve(file),'utf8').includes('src/olt-zte-pnp.js'));
+ for(const file of['../install.sh','../deploy/bin/fakenet-billing-update'])assert(require('./helpers/install-payload').payloadSource(file.replace(/^\.\.\//,'')).includes('src/olt-zte-pnp.js'));
 });

@@ -10,6 +10,8 @@ function publicSource(filename) {
 }
 
 function sourceFile(...segments) {
+  const file = segments.join('/');
+  if (['install.sh', 'deploy/bin/fakenet-billing-update'].includes(file)) return require('./helpers/install-payload').payloadSource(file);
   return fs.readFileSync(path.join(__dirname, '..', ...segments), 'utf8');
 }
 

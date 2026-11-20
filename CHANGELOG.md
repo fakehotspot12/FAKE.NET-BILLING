@@ -2,10 +2,21 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
-## [4.6.0] - 2026-11-20
+## [4.6.1] - 2026-11-21
+
+### Added
+
+- Template web GenieACS generik untuk ACS yang baru diinisialisasi: ringkasan, daftar/filter perangkat, WAN PPP/IP, WiFi TR098/TR181, klien LAN/WLAN, kredensial terpisah, dan Semua Parameter di bagian terakhir. Tabel mengikuti instance asli tanpa menebak nomor WAN/SSID; data yang tidak tersedia tidak dibuat-buat. Pemasangan diverifikasi dan dipulihkan bila gagal, tidak menjalankan konfigurasi modem. Update mempertahankan tampilan ACS yang sudah ada; tidak menyalin konfigurasi produksi atau data pelanggan.
 
 ### Fixed
 
+- Akun awal web ACS baru mengikuti akun awal billing dan password acak hasil installer; tidak memakai password tetap bersama. Akun ACS existing dan autentikasi Inform modem tetap terpisah serta tidak direset ketika update.
+
+- Memperkuat installer/updater untuk Ubuntu 24.04 LTS dan Debian 12: satu manifest rilis, preflight resource/port, staging source/dependency, backup dan rollback kode tanpa menimpa transaksi, serta pemeriksaan portal/database/Redis/RADIUS/ACS. Bootstrap ACS baru gagal tertutup bila akun atau autentikasi Inform gagal, memasang pengamanan setelah inisialisasi, dan mengaktifkan preset harian terbatas; akun dan kebijakan preset ACS existing dipertahankan. Pengiriman WA aktif ditunggu sebelum pergantian runtime, tanpa restart paksa ACS/gateway yang sudah berjalan.
+
+## [4.6.0] - 2026-11-20
+
+### Fixed
 - Audit OLT/tiket: pemulihan kelompok memeriksa identitas posisi ONU agar modem pindah tidak dihitung pulih. Payload perubahan tiket dibatasi, diagnostik registrasi hanya menampilkan field aman, dan kapasitas IP Host/VEIP fisik diperiksa sebelum konfigurasi TR069. Pembacaan kolom Password kosong tidak lagi menghentikan terminal. Daftar tiket diproses satu lintasan dan status registrasi yang tidak berubah tidak merender ulang tombol.
 - Pengaturan TR069 DHCP VLAN100 opsional per PON ZTE, default nonaktif. Jalur VLAN/GEM/service-port existing digunakan kembali tanpa membuat WAN Internet atau mengubah port LAN/WiFi. Penerapan ONU existing terpisah dengan konfirmasi SN; pemetaan ambigu ditahan, identitas dan hasil konfigurasi dibaca ulang, koneksi ACS tidak diklaim sebelum ada Inform.
 - Mematangkan Access/Trunk per port ONU dengan perbandingan binding sebelum/sesudah, validasi service-port/VLAN ambigu dan perlindungan VLAN management IP-host selain 100. Profil bandwidth per ONU dapat dipilih dari katalog atau pasangan profil best-effort asli OLT, termasuk upload/download berbeda. T-CONT bersama menampilkan dampak VLAN dan membutuhkan persetujuan terpisah; download hanya pada layanan terpilih, tanpa menambah resource atau mengubah paket billing/preset PON. Pembacaan dan penerapan tetap terikat SN/posisi, izin NAS/role, audit, preflight dan verifikasi hasil. Aset popup disertakan dalam installer/updater.

@@ -80,7 +80,7 @@ test('600 ONU synthetic tables parse without reducing counts or flattening physi
  const rows=Array.from({length:600},(_,index)=>[`1/1/${Math.floor(index/60)+1}:${index%60+1}`,index%10?'working':'DyingGasp']);const states=inventory.states(status(rows)),ids=new Map();for(let pon=1;pon<=10;pon++)for(const[id,row]of inventory.base(base(`1/1/${pon}`,Array.from({length:60},(_,index)=>[index+1,'HWTC'+((pon-1)*60+index).toString(16).padStart(8,'0')])),`1/1/${pon}`))ids.set(id,row);const result=inventory.join(states,ids,inventory.cards(card()));assert.equal(result.rows.length,600);assert.equal(result.rows.filter(row=>row.status==='online').length,540);assert.equal(result.ports.length,16);
 });
 test('installer and updater both verify new inventory and preview modules before activation',()=>{
- for(const name of['install.sh','deploy/bin/fakenet-billing-update']){const script=fs.readFileSync(path.join(__dirname,'..',name),'utf8');for(const module of['src/olt-zte-inventory.js','src/olt-zte-profiles.js'])assert(script.includes('    '+module+'\n'));}
+ for(const name of['install.sh','deploy/bin/fakenet-billing-update']){const script=require('./helpers/install-payload').payloadSource(name);for(const module of['src/olt-zte-inventory.js','src/olt-zte-profiles.js'])assert(script.includes('    '+module+'\n'));}
  const source=fs.readFileSync(path.join(__dirname,'../src/server.js'),'utf8'),part=source.slice(source.indexOf("if (action === 'refresh' && method === 'POST')"),source.indexOf("if (action === 'link-options'"));assert(part.includes("device?.vendor === 'zte'"));assert(part.includes("auth.hasPermission(context.user,'olt:manage')"));
 });
 test('ONU RX parser keeps the native signed dBm value, never OLT-side power or N/A as zero',()=>{

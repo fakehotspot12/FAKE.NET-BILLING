@@ -47,7 +47,7 @@ test('catalog reads coalesce and cache bounded parsed data without credentials o
 });
 test('profile endpoint is management/NAS guarded, preview-only, bounded and verified by the installer',()=>{
  const server=fs.readFileSync(path.join(__dirname,'../src/server.js'),'utf8'),part=server.slice(server.indexOf('const oltZteProfiles='),server.indexOf('const oltSaveConfig='));assert(part.includes("requireAnyPermission(req,res,['olt:manage','olt:pnp:manage'])"));assert(part.includes('oltMonitor.visibleDevices'));assert(part.includes("row.vendor==='zte'"));assert(part.includes('readBody(req,8192)'));assert(part.includes("payload.action!=='preview'"));assert(part.includes('writeAvailable:false'));assert(part.includes('profiles.key(current)!==profiles.key(device)'));
- assert(fs.readFileSync(path.join(__dirname,'../install.sh'),'utf8').includes('src/olt-zte-profiles.js'));
+ assert(require('./helpers/install-payload').payloadSource('install.sh').includes('src/olt-zte-profiles.js'));
 });
 test('existing service bandwidth preview retains VLAN translations and every allocated ID, using no new T-CONT slot',()=>{
  const cat=profiles.parseCatalogue(catalogue()),unit=profiles.parseOnu(onu(),'1/1/1:1'),before=structuredClone(unit);unit.services[0].userVlan=1101;

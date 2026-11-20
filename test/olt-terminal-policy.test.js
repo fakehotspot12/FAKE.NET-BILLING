@@ -57,6 +57,6 @@ test('unverified ZTE deletion stays unavailable in the same web preview rather t
  const data=store.createDefaultStore(),actor={id:'admin',role:'admin',active:true};data.users=[actor];const device=olt.validateDevice(data,{name:'Unit ZTE',vendor:'zte',host:'192.0.2.80',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit'});data.oltDevices=[device];const preview=await removal.preview(data,device,'HWTCAABBCCDD',{onuIndex:'1/1/13:1'},actor);assert.equal(preview.canSubmit,false);assert.equal(preview.olt.state,'unavailable');assert.equal(preview.token,'');
 });
 test('installer/update verify policy and browser handoff goes through the existing deletion form',()=>{
- for(const file of['install.sh','deploy/bin/fakenet-billing-update'])assert(fs.readFileSync(path.join(__dirname,'..',file),'utf8').includes('    src/olt-terminal-policy.js\n'));
+ for(const file of['install.sh','deploy/bin/fakenet-billing-update'])assert(require('./helpers/install-payload').payloadSource(file).includes('    src/olt-terminal-policy.js\n'));
  const ui=fs.readFileSync(path.join(__dirname,'../public/olt.js'),'utf8'),terminalUi=fs.readFileSync(path.join(__dirname,'../public/olt-terminal.js'),'utf8');assert(ui.includes('await deleteOnuForm(message.onu)'));assert(ui.includes('event.source!==popup'));assert(terminalUi.includes('await disconnect(true)'));assert(terminalUi.includes("value.action === 'preview-delete-onu'"));assert(terminalUi.includes("type: 'fakenet-olt-terminal-delete'"));
 });

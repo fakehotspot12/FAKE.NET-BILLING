@@ -3,17 +3,20 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { installFreshTemplate } = require('./ui-template');
 
 const uiBase = `http://127.0.0.1:${Number(process.env.GENIEACS_UI_PORT || 7568)}`;
 const nbiBase = `http://127.0.0.1:${Number(process.env.GENIEACS_NBI_PORT || 7557)}`;
-const uiUsername = String(process.env.GENIEACS_UI_USERNAME || 'billing');
-const uiPassword = String(process.env.GENIEACS_UI_PASSWORD || 'billing123');
+const uiUsername = String(process.env.GENIEACS_UI_USERNAME || process.env.APP_ADMIN_USERNAME || 'admin');
+const uiPassword = String(process.env.GENIEACS_UI_PASSWORD || process.env.APP_ADMIN_PASSWORD || '');
 const cwmpUsername = String(process.env.GENIEACS_CWMP_AUTH_USERNAME || 'admin');
 const cwmpPassword = String(process.env.GENIEACS_CWMP_AUTH_PASSWORD || '1sampai10');
 const mongoUrl = String(process.env.GENIEACS_MONGODB_CONNECTION_URL || 'mongodb://127.0.0.1:27017/genieacs');
 const assetsDir = path.join(__dirname, 'virtual-parameters');
 const externalBootstrap = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BOOTSTRAP_EXTERNAL || '').toLowerCase());
-const autoProvisionEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_AUTO_VP_PROVISION || '').toLowerCase());
+const autoProvisionSetting = process.env.GENIEACS_AUTO_VP_PROVISION;
+const autoProvisionEnabled = autoProvisionSetting === undefined ? !externalBootstrap
+  : ['1', 'true', 'yes', 'on'].includes(String(autoProvisionSetting).toLowerCase());
 const dryRun = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BOOTSTRAP_DRY_RUN || '').toLowerCase());
 const informGuardOnly = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_INFORM_GUARD_ONLY || '').toLowerCase());
 const backfillOnly = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BACKFILL_ONLY || '').toLowerCase());
@@ -102,6 +105,21 @@ const safeSummonButtonBases = [
   'ui.index.2'
 ];
 
+function mongoShell() {
+  for (const command of ['mongosh', 'mongo']) {
+    if (spawnSync(command, ['--version'], { stdio: 'ignore', timeout: 5000 }).status === 0) return { command, prefix: [] };
+  }
+  if (process.env.FAKENET_BUNDLED_GENIEACS === '1' || !externalBootstrap) {
+    const prefix = ['exec', 'fakenet-billing-genieacs-mongodb', 'mongosh'];
+    if (spawnSync('docker', [...prefix, '--version'], { stdio: 'ignore', timeout: 5000 }).status === 0) return { command: 'docker', prefix };
+  }
+  return null;
+}
+
+function runMongo(shell, script) {
+  return spawnSync(shell.command, [...shell.prefix, '--quiet', mongoUrl, '--eval', script], { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+}
+
 async function request(url, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(options.timeoutMs || requestTimeoutMs) || requestTimeoutMs));
@@ -189,9 +207,9 @@ async function bootstrapUser() {
     await uiPut(token, `users/${encodeURIComponent(uiUsername)}/password`, { newPassword: uiPassword });
     token = await login(uiUsername, uiPassword);
     if (uiUsername !== 'admin') await uiDelete(token, 'users/admin');
-    return token;
+    return { token, initialized: true };
   }
-  return login(uiUsername, uiPassword);
+  return { token: await login(uiUsername, uiPassword), initialized: false };
 }
 
 function virtualParameterScripts() {
@@ -219,17 +237,11 @@ async function readVirtualParametersViaNbi() {
 }
 
 function readVirtualParametersViaMongo() {
-  const command = ['mongosh', 'mongo'].find((candidate) => {
-    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-    return result.status === 0;
-  });
+  const command = mongoShell();
   if (!command) throw new Error('mongosh/mongo tidak tersedia untuk membaca Virtual Parameters');
 
   const script = 'print(JSON.stringify(db.getCollection("virtualParameters").find({}, { _id: 1, script: 1 }).toArray()))';
-  const args = command === 'mongosh'
-    ? ['--quiet', mongoUrl, '--eval', script]
-    : ['--quiet', mongoUrl, '--eval', script];
-  const result = spawnSync(command, args, { encoding: 'utf8' });
+  const result = runMongo(command, script);
   if (result.status !== 0) {
     throw new Error((result.stderr || result.stdout || 'baca Virtual Parameters via MongoDB gagal').trim());
   }
@@ -284,10 +296,7 @@ async function installVirtualParametersViaUi(token, rows = []) {
 }
 
 function installVirtualParametersViaMongo(rows = []) {
-  const command = ['mongosh', 'mongo'].find((candidate) => {
-    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-    return result.status === 0;
-  });
+  const command = mongoShell();
   if (!command) throw new Error('mongosh/mongo tidak tersedia untuk fallback Virtual Parameters');
 
   const script = [
@@ -297,10 +306,7 @@ function installVirtualParametersViaMongo(rows = []) {
     '}',
     'print("Virtual Parameters aktif: " + rows.map((row) => row.name).join(", "));'
   ].join('\n');
-  const args = command === 'mongosh'
-    ? ['--quiet', mongoUrl, '--eval', script]
-    : ['--quiet', mongoUrl, '--eval', script];
-  const result = spawnSync(command, args, { encoding: 'utf8' });
+  const result = runMongo(command, script);
   if (result.status !== 0) {
     throw new Error((result.stderr || result.stdout || 'fallback MongoDB gagal').trim());
   }
@@ -308,10 +314,7 @@ function installVirtualParametersViaMongo(rows = []) {
 }
 
 function backfillVirtualParameterValuesViaMongo() {
-  const command = ['mongosh', 'mongo'].find((candidate) => {
-    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-    return result.status === 0;
-  });
+  const command = mongoShell();
   if (!command) return;
 
   const script = [
@@ -551,10 +554,7 @@ function backfillVirtualParameterValuesViaMongo() {
     '});',
     'print("Backfill Virtual Parameters devices: " + updated);'
   ].join('\n');
-  const args = command === 'mongosh'
-    ? ['--quiet', mongoUrl, '--eval', script]
-    : ['--quiet', mongoUrl, '--eval', script];
-  const result = spawnSync(command, args, { encoding: 'utf8' });
+  const result = runMongo(command, script);
   if (result.status !== 0) {
     process.stderr.write(`Peringatan: backfill Virtual Parameters gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
     return;
@@ -563,10 +563,7 @@ function backfillVirtualParameterValuesViaMongo() {
 }
 
 function hardenSummonButtonsViaMongo() {
-  const command = ['mongosh', 'mongo'].find((candidate) => {
-    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-    return result.status === 0;
-  });
+  const command = mongoShell();
   if (!command) return;
 
   const script = [
@@ -600,10 +597,7 @@ function hardenSummonButtonsViaMongo() {
     process.stdout.write('Audit Summon GenieACS: tombol ringkasan akan dibatasi ke parameter aman.\n');
     return;
   }
-  const args = command === 'mongosh'
-    ? ['--quiet', mongoUrl, '--eval', script]
-    : ['--quiet', mongoUrl, '--eval', script];
-  const result = spawnSync(command, args, { encoding: 'utf8' });
+  const result = runMongo(command, script);
   if (result.status !== 0) {
     process.stderr.write(`Peringatan: hardening Summon GenieACS gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
     return;
@@ -612,10 +606,7 @@ function hardenSummonButtonsViaMongo() {
 }
 
 function hardenHuaweiFirewallLevelUiViaMongo() {
-  const command = ['mongosh', 'mongo'].find((candidate) => {
-    const result = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-    return result.status === 0;
-  });
+  const command = mongoShell();
   if (!command) return;
 
   const firewallPath = 'InternetGatewayDevice.X_HW_Security.X_HW_FirewallLevel';
@@ -627,19 +618,20 @@ function hardenHuaweiFirewallLevelUiViaMongo() {
     '  op[setKey] = { value };',
     '  db.getCollection("config").updateOne({ _id: id }, op, { upsert: true });',
     '}',
-    'setValue("ui.device.3.components.15.parameters.0.components.0.parameters.0", firewallPath);',
-    'setValue("ui.device.3.components.15.parameters.1.label", String.fromCharCode(39) + "Firewall Level" + String.fromCharCode(39));',
-    'setValue("ui.device.3.components.15.parameters.1.parameter", firewallPath);',
-    'print("Firewall Huawei UI GenieACS diarahkan ke " + firewallPath);'
+    'const targets = ["ui.device.3.components.15.parameters.0.components.0.parameters.0", "ui.device.3.components.15.parameters.1.parameter"];',
+    'const existing = db.getCollection("config").find({ _id: { $in: targets } }).toArray();',
+    'if (existing.some(row => String(row.value || "").includes("InternetGatewayDevice.X_HW_Security."))) {',
+    '  setValue(targets[0], firewallPath);',
+    '  setValue("ui.device.3.components.15.parameters.1.label", String.fromCharCode(39) + "Firewall Level" + String.fromCharCode(39));',
+    '  setValue(targets[1], firewallPath);',
+    '  print("Firewall Huawei UI GenieACS diarahkan ke " + firewallPath);',
+    '} else print("Bagian Firewall Huawei custom tidak ditemukan; tata letak UI dipertahankan.");'
   ].join('\n');
   if (dryRun) {
     process.stdout.write(`Audit Firewall Huawei UI: section Firewall akan diarahkan ke ${firewallPath}.\n`);
     return;
   }
-  const args = command === 'mongosh'
-    ? ['--quiet', mongoUrl, '--eval', script]
-    : ['--quiet', mongoUrl, '--eval', script];
-  const result = spawnSync(command, args, { encoding: 'utf8' });
+  const result = runMongo(command, script);
   if (result.status !== 0) {
     process.stderr.write(`Peringatan: hardening Firewall Huawei UI gagal: ${(result.stderr || result.stdout || '').trim()}\n`);
     return;
@@ -731,6 +723,11 @@ async function installVirtualParameters(token, baselineRows = []) {
     'const daily = Date.now() - 86400000;',
     declarations
   ].join('\n');
+  const presets = await request(`${nbiBase}/presets`);
+  const previous = (presets || []).find(row => row._id === 'fakenet-virtual-parameters');
+  const precondition = externalBootstrap && autoProvisionSetting === undefined && previous
+    ? previous.precondition
+    : autoProvisionEnabled ? '{}' : JSON.stringify({ _id: '__disabled_by_fakenet_billing__' });
   try {
     await request(`${nbiBase}/provisions/fakenet-virtual-parameters`, {
       method: 'PUT',
@@ -740,13 +737,14 @@ async function installVirtualParameters(token, baselineRows = []) {
     await request(`${nbiBase}/presets/fakenet-virtual-parameters`, {
       method: 'PUT',
       body: JSON.stringify({
-        weight: 10,
-        precondition: autoProvisionEnabled ? '{}' : JSON.stringify({ _id: '__disabled_by_fakenet_billing__' }),
+        ...(previous ? Object.fromEntries(Object.entries(previous).filter(([key]) => key !== '_id')) : {}),
+        weight: previous?.weight ?? 10,
+        precondition,
         configurations: [{ type: 'provision', name: 'fakenet-virtual-parameters', args: [] }]
       })
     });
   } catch (error) {
-    process.stderr.write(`Peringatan: provision auto Virtual Parameters via NBI dilewati: ${error.message || error}\n`);
+    throw new Error(`Provision Virtual Parameters gagal disimpan: ${error.message || error}`);
   }
   backfillVirtualParameterValuesViaMongo();
   let currentRows = [];
@@ -859,8 +857,7 @@ async function main() {
     return;
   }
   await waitForNbi();
-  await hardenInformProvision();
-  if (informGuardOnly) return;
+  if (informGuardOnly) { await hardenInformProvision(); return; }
   const sourceRows = virtualParameterScripts();
   const baselineRows = await readVirtualParametersViaNbi();
   if (dryRun) {
@@ -870,26 +867,36 @@ async function main() {
     if (audit.changed.length) process.stdout.write(`Parameter billing perlu diperbarui: ${audit.changed.join(', ')}.\n`);
     return;
   }
+  let token = '';
+  let initialized = false;
+  if (externalBootstrap) {
+    process.stdout.write('GenieACS existing terdeteksi: akun dan konfigurasi UI dipertahankan.\n');
+  } else {
+    if (!uiPassword || uiPassword.startsWith('CHANGE_ME_')) throw new Error('Password akun awal ACS belum disiapkan oleh installer');
+    await waitForUi();
+    ({ token, initialized } = await bootstrapUser());
+    if (!token) throw new Error('Bootstrap akun GenieACS tidak menghasilkan sesi valid');
+    await uiPut(token, 'config/cwmp.auth', {
+      value: `AUTH(${JSON.stringify(cwmpUsername)}, ${JSON.stringify(cwmpPassword)})`
+    });
+    if (!await login(uiUsername, uiPassword)) throw new Error('Login akun GenieACS baru gagal diverifikasi');
+  }
+  await hardenInformProvision();
   await disableDestructiveRootClearPresets();
   hardenSummonButtonsViaMongo();
   hardenHuaweiFirewallLevelUiViaMongo();
   patchGenieacsFirewallDropdownUi();
-  let token = '';
-  if (externalBootstrap) {
-    process.stdout.write('GenieACS existing terdeteksi: akun dan konfigurasi UI dipertahankan.\n');
-  } else {
-    try {
-      await waitForUi();
-      token = await bootstrapUser();
-      await uiPut(token, 'config/cwmp.auth', {
-        value: `AUTH(${JSON.stringify(cwmpUsername)}, ${JSON.stringify(cwmpPassword)})`
-      });
-    } catch (error) {
-      process.stderr.write(`Peringatan: bootstrap UI GenieACS dilewati: ${error.message || error}\n`);
-    }
-  }
   await installVirtualParameters(token, baselineRows);
-  process.stdout.write('Bootstrap GenieACS selesai: akun UI, autentikasi Inform, dan Virtual Parameters aktif.\n');
+  const template = await installFreshTemplate({
+    initialized,
+    summonParameters: safeSummonButtonParameters,
+    read: () => request(`${uiBase}/api/config`, { headers: { Cookie: `genieacs-ui-jwt=${encodeURIComponent(token)}` } }),
+    put: (id, value) => uiPut(token, `config/${encodeURIComponent(id)}`, value),
+    remove: id => uiDelete(token, `config/${encodeURIComponent(id)}`)
+  });
+  if (template.installed) process.stdout.write(`Template web GenieACS generik terverifikasi: v${template.version}, ${template.entries} konfigurasi.\n`);
+  process.stdout.write(externalBootstrap ? 'Sinkron GenieACS selesai: Virtual Parameters terverifikasi; akun dan konfigurasi existing dipertahankan.\n'
+    : 'Bootstrap GenieACS selesai: akun UI, autentikasi Inform, dan Virtual Parameters terverifikasi.\n');
 }
 
 if (require.main === module) {
@@ -907,5 +914,7 @@ module.exports = {
   hardenInformProvisionScript,
   patchGenieacsFirewallDropdownUi,
   safeSummonButtonBases,
-  safeSummonButtonParameters
+  safeSummonButtonParameters,
+  main,
+  mongoShell
 };

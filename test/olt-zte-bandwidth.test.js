@@ -50,7 +50,7 @@ test('prepared action requires matching actor/revision/impact and is audited wit
 });
 test('bandwidth endpoint is role/NAS/CSRF bounded and included in installer/updater without a new worker',()=>{
  const server=fs.readFileSync(require.resolve('../src/server.js'),'utf8'),part=server.slice(server.indexOf('const oltZteBandwidth='),server.indexOf('const oltZtePnp='));for(const text of["requirePermission(req,res,'olt:pnp:manage')",'scopedDevices','readBody(req,4096)','beforeSend:','afterSend:','pnp.signature(latest)'])assert(part.includes(text));
- for(const file of['../install.sh','../deploy/bin/fakenet-billing-update'])assert(fs.readFileSync(require.resolve(file),'utf8').includes('src/olt-zte-bandwidth.js'));
+ for(const file of['../install.sh','../deploy/bin/fakenet-billing-update'])assert(require('./helpers/install-payload').payloadSource(file.replace(/^\.\.\//,'')).includes('src/olt-zte-bandwidth.js'));
 });
 
 test('per-ONU native profiles support asymmetric best-effort rates and never alter profile definitions',()=>{

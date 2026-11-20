@@ -2,6 +2,11 @@
 set -euo pipefail
 umask 077
 
+if ! ( . /etc/os-release; { [ "$ID" = ubuntu ] && [ "$VERSION_ID" = 24.04 ]; } || { [ "$ID" = debian ] && [ "$VERSION_ID" = 12 ]; } ); then
+  echo "ERROR: update hanya mendukung Ubuntu 24.04 LTS atau Debian 12." >&2
+  exit 1
+fi
+
 APP_DIR="${APP_DIR:-/opt/fakenet-billing}"
 BACKUP_DIR="${FAKENET_BACKUP_DIR:-/var/backups/fakenet-billing}"
 LOG_DIR="${FAKENET_LOG_DIR:-/var/log/fakenet-billing}"
@@ -62,7 +67,7 @@ acquire_update_lock() {
     fi
     lock_pid="$(cat "$LOCK_FILE" 2>/dev/null || true)"
     lock_age="$(lock_age_seconds)"
-    if lock_process_is_updater "$lock_pid" && [ "$lock_age" -lt "$LOCK_MAX_AGE_SECONDS" ]; then
+    if lock_process_is_updater "$lock_pid"; then
       echo "Update lain masih berjalan: $LOCK_FILE (pid $lock_pid)"
       return 1
     fi
@@ -84,15 +89,48 @@ release_update_lock() {
 tmp_backup_dir=""
 tmpdir=""
 dependency_stage=""
+source_stage=""
+rollback_dir=""
+activation_started=0
+queue_state=""
+active_units=()
 cleanup_update() {
+  local status=$? keep_stage=0
+  if [ "$status" -ne 0 ] && [ "$activation_started" = 1 ]; then
+    echo "Aktivasi gagal; memulihkan source dan dependency. Database transaksi tidak ditimpa."
+    systemctl stop "${active_units[@]}" || true
+    if [ ! -f "$rollback_dir/activation.json" ]; then
+      echo "Aktivasi belum mengubah source; menjalankan kembali service lama."
+      [ "${#active_units[@]}" -eq 0 ] || systemctl start "${active_units[@]}" || true
+    elif node "$source_stage/deploy/activate-release.js" rollback "$APP_DIR" "$rollback_dir"; then
+      if [ -d "$rollback_dir/systemd" ]; then
+        for unit in "$rollback_dir/systemd/"*; do [ ! -f "$unit" ] || cp -a "$unit" /etc/systemd/system/; done
+      fi
+      for command in fakenet-billing-update fakenet-billing-stack; do
+        [ ! -f "$APP_DIR/deploy/bin/$command" ] || install -m 0755 "$APP_DIR/deploy/bin/$command" "/usr/local/bin/$command"
+      done
+      systemctl daemon-reload || true
+      [ "${#active_units[@]}" -eq 0 ] || systemctl start "${active_units[@]}" || true
+      echo "Kode/dependency lama dipulihkan. Periksa log sebelum mengulangi update."
+    else
+      keep_stage=1
+      echo "ERROR: rollback belum lengkap. Backup tetap tersedia: $rollback_dir" >&2
+      echo "Helper pemulihan tetap tersedia: $source_stage/deploy/activate-release.js" >&2
+    fi
+  elif [ "$status" -ne 0 ] && [ "${#active_units[@]}" -gt 0 ]; then
+    systemctl start "${active_units[@]}" || true
+  fi
+  if [ -n "$queue_state" ] && [ -f "$queue_state" ]; then
+    node "$source_stage/deploy/queue-guard.js" resume "$APP_DIR" "$queue_state" || echo "ERROR: periksa pemulihan antrean WA secara manual." >&2
+  fi
   release_update_lock
   if [ -n "$tmp_backup_dir" ]; then
     rm -rf "$tmp_backup_dir"
   fi
-  if [ -n "$tmpdir" ]; then
+  if [ -n "$tmpdir" ] && [ "$keep_stage" = 0 ]; then
     rm -rf "$tmpdir"
   fi
-  if [ -n "$dependency_stage" ]; then
+  if [ -n "$dependency_stage" ] && [ "$keep_stage" = 0 ]; then
     rm -rf "$dependency_stage"
   fi
   return 0
@@ -100,6 +138,8 @@ cleanup_update() {
 
 acquire_update_lock
 trap cleanup_update EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ ! -d "$APP_DIR" ]; then
   echo "APP_DIR tidak ditemukan: $APP_DIR"
@@ -270,164 +310,11 @@ cleanup_obsolete_worker_runtime() {
 }
 
 verify_update_payload() {
-  local missing=() file
-  local required_files=(
-    package.json
-    package-lock.json
-    src/server.js
-    src/subweb-server.js
-    src/radius-connector-service.js
-    src/whatsapp-queue.js
-    src/payment-promise.js
-    src/login-turnstile.js
-    src/network-identity.js
-    src/olt-auto-identity.js
-    src/olt-device-removal.js
-    src/customer-device-removal.js
-    src/network-address.js
-    src/olt-planned-reboot.js
-    src/olt-los-confirmation.js
-    src/olt-vendors.js
-    src/olt-zte-profiles.js
-    src/olt-zte-pnp.js
-    src/olt-zte-bandwidth.js
-    src/olt-zte-registration.js
-    src/olt-zte-catalogue.js
-    src/olt-zte-bridge.js
-    src/olt-zte-tr069.js
-    src/ont-radio-capability.js
-    public/olt-registration.js
-    public/olt-catalogue.js
-    public/olt-bridge.js
-    public/olt-bandwidth.js
-    public/olt-plus.svg
-    src/olt-zte-inventory.js
-    src/olt-terminal.js
-    src/olt-terminal-native.js
-    src/olt-terminal-policy.js
-    src/olt-reboot.js
-    src/olt-pon.js
-    src/olt-cdata-pon.js
-    public/olt-power.svg
-    public/olt-terminal.js
-    public/olt-terminal.html
-    public/olt-terminal.css
-    public/olt-terminal.svg
-    src/olt-hioso.js
-    src/olt-telemetry.js
-    src/olt-vendor-library/NOTICE.md
-    src/olt-vendor-library/adapters/base.adapter.js
-    src/olt-vendor-library/adapters/bdcom.adapter.js
-    src/olt-vendor-library/adapters/btpon.adapter.js
-    src/olt-vendor-library/adapters/cdata.adapter.js
-    src/olt-vendor-library/adapters/fiberhome.adapter.js
-    src/olt-vendor-library/adapters/hioso.adapter.js
-    src/olt-vendor-library/adapters/hsgq.adapter.js
-    src/olt-vendor-library/adapters/huawei.adapter.js
-    src/olt-vendor-library/adapters/index.js
-    src/olt-vendor-library/adapters/tarmoc.adapter.js
-    src/olt-vendor-library/adapters/templates/tarmoc.live-template.js
-    src/olt-vendor-library/adapters/vendor-normalization.js
-    src/olt-vendor-library/adapters/vsol.adapter.js
-    src/olt-vendor-library/adapters/zte.adapter.js
-    src/olt-vendor-library/config.js
-    src/olt-vendor-library/db/index.js
-    src/olt-vendor-library/package.json
-    src/olt-vendor-library/services/context.js
-    src/olt-vendor-library/services/crypto.js
-    src/olt-vendor-library/services/olt-snmp-detail.js
-    src/olt-vendor-library/services/olt-transport.js
-    src/olt-vendor-library/services/snmp.js
-    src/olt-vendor-library/utils/http-error.js
-    src/olt-vendor-library/utils/offline-cause.js
-    src/olt-cli.js
-    src/olt-monitor.js
-    src/olt-ticketing.js
-    src/service-tickets.js
-    src/ticket-network.js
-    src/ticket-team.js
-    src/ticket-reference.js
-    src/ticket-recovery.js
-    src/ticket-templates.js
-    src/ticket-customer-notifications.js
-    src/wifiku-modem-status.js
-    public/index.html
-    public/app.js
-    public/login-verification.js
-    public/styles.css
-    public/service-worker.js
-    public/manifest.webmanifest
-    public/olt.js
-    public/olt.css
-    public/tkt.html
-    public/tkt.js
-    public/tkt.css
-    public/olt-ticket.html
-    public/olt-ticket.js
-    public/olt-ticket.css
-    public/olt-trash.svg
-    public/olt-reboot.svg
-    public/olt-refresh.svg
-    public/olt-back.svg
-    public/olt-link.svg
-    public/olt-save.svg
-    public/olt-icons-license.txt
-    public/support-chat.svg
-    deploy/fakenet-billing.env
-    deploy/fakenet-billing-turnstile.env.example
-    deploy/fakenet-billing-isolir-context.env.example
-    deploy/fakenet-billing-waha.env
-    deploy/fakenet-billing-genieacs.env
-    deploy/genieacs/bootstrap.js
-    deploy/genieacs/virtual-parameters/IPTR069.js
-    deploy/genieacs/virtual-parameters/LANActiveClients.js
-    deploy/genieacs/virtual-parameters/LANClients.js
-    deploy/genieacs/virtual-parameters/PonMac.js
-    deploy/genieacs/virtual-parameters/RXPower.js
-    deploy/genieacs/virtual-parameters/WlanPassword.js
-    deploy/genieacs/virtual-parameters/activedevices.js
-    deploy/genieacs/virtual-parameters/getSerialNumber.js
-    deploy/genieacs/virtual-parameters/getdeviceuptime.js
-    deploy/genieacs/virtual-parameters/getponmode.js
-    deploy/genieacs/virtual-parameters/getpppuptime.js
-    deploy/genieacs/virtual-parameters/gettemp.js
-    deploy/genieacs/virtual-parameters/ip.js
-    deploy/genieacs/virtual-parameters/pppoe.js
-    deploy/genieacs/virtual-parameters/pppoeIP.js
-    deploy/genieacs/virtual-parameters/pppoeMac.js
-    deploy/genieacs/virtual-parameters/pppoePassword.js
-    deploy/genieacs/virtual-parameters/pppoeUsername.js
-    deploy/genieacs/virtual-parameters/pppoeUsername2.js
-    deploy/genieacs/virtual-parameters/superAdmin.js
-    deploy/genieacs/virtual-parameters/superPassword.js
-    deploy/genieacs/virtual-parameters/userAdmin.js
-    deploy/genieacs/virtual-parameters/userPassword.js
-    deploy/genieacs/virtual-parameters/wanVlan.js
-    deploy/genieacs/virtual-parameters/wifiSsid24.js
-    deploy/genieacs/virtual-parameters/wifiSsid5.js
-    deploy/sql/freeradius-postgresql.sql
-    deploy/bin/fakenet-billing-stack
-    deploy/bin/fakenet-billing-update
-    deploy/systemd/fakenet-billing.service
-    deploy/systemd/fakenet-billing-isolir.service
-    deploy/systemd/fakenet-billing-voucher.service
-    deploy/systemd/fakenet-billing-wifiku.service
-    deploy/systemd/fakenet-billing-radius-connector.service
-    deploy/systemd/fakenet-billing-waha.service
-    deploy/systemd/fakenet-billing-stack.target
-    deploy/systemd/fakenet-billing-genieacs-mongodb.service
-    deploy/systemd/fakenet-billing-genieacs-cwmp.service
-    deploy/systemd/fakenet-billing-genieacs-nbi.service
-    deploy/systemd/fakenet-billing-genieacs-fs.service
-    deploy/systemd/fakenet-billing-genieacs-ui.service
-  )
-  for file in "${required_files[@]}"; do
-    [ -f "$APP_DIR/$file" ] || missing+=("$file")
-  done
-  if [ "${#missing[@]}" -gt 0 ]; then
-    echo "Update dibatalkan: repository tidak lengkap. File berikut tidak ditemukan: ${missing[*]}" >&2
-    exit 1
-  fi
+  local root="${1:-$APP_DIR}"
+  [ -f "$root/deploy/lib/installer-common.sh" ] || { echo "ERROR: helper rilis tidak tersedia." >&2; return 1; }
+  . "$root/deploy/lib/installer-common.sh"
+  verify_release_payload "$root"
+  node "$root/deploy/verify-release.js" "$root"
 }
 
 database_url_for_name() {
@@ -484,7 +371,7 @@ safe_copy_if_exists() {
 }
 
 snapshot_genieacs_configuration() {
-  local env_file nbi_port resource target
+  local env_file nbi_port resource target status
   if ! genieacs_sync_required; then
     echo "Lewati snapshot GenieACS: integrasi tidak aktif."
     return 0
@@ -506,7 +393,13 @@ snapshot_genieacs_configuration() {
   mkdir -p "$tmp_backup_dir/genieacs"
   for resource in virtualParameters presets provisions config; do
     target="$tmp_backup_dir/genieacs/${resource}.json"
-    curl -fsS --max-time 20 "http://127.0.0.1:${nbi_port}/${resource}" -o "$target"
+    status="$(curl -sS --max-time 20 -w '%{http_code}' "http://127.0.0.1:${nbi_port}/${resource}" -o "$target")" || return 1
+    if [ "$status" = 404 ] && [ "$resource" = config ]; then
+      node "$source_stage/deploy/genieacs/snapshot-config.js" "$target" || return 1
+    elif [ "$status" != 200 ]; then
+      echo "Backup dibatalkan: resource ACS $resource HTTP $status." >&2
+      return 1
+    fi
     node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (!Array.isArray(value)) process.exit(1);' "$target" || {
       echo "Backup dibatalkan: respons GenieACS ${resource} bukan JSON array yang valid." >&2
       return 1
@@ -559,7 +452,7 @@ create_pre_update_backup() {
 }
 
 harden_sensitive_permissions
-create_pre_update_backup
+load_env_file
 
 # Refresh update source after backup because /etc/fakenet-billing.env is loaded
 # inside create_pre_update_backup(). Older installs can be archive-based without
@@ -584,10 +477,8 @@ run_with_timeout() {
 }
 
 install_node_dependencies() {
-  local install_status previous_modules
-  dependency_stage="$(mktemp -d "$APP_DIR/.update-deps.XXXXXX")"
-  cp "$APP_DIR/package.json" "$dependency_stage/package.json"
-  [ ! -f "$APP_DIR/package-lock.json" ] || cp "$APP_DIR/package-lock.json" "$dependency_stage/package-lock.json"
+  local install_status
+  dependency_stage="$source_stage"
 
   echo "Instal dependency di staging (timeout ${NPM_INSTALL_TIMEOUT_SECONDS}s)"
   set +e
@@ -610,27 +501,8 @@ install_node_dependencies() {
   (cd "$dependency_stage" && node -e "require('bullmq'); require('web-push'); require('sharp')") >/dev/null
   (cd "$dependency_stage" && node -e "const fs=require('fs'),path=require('path'); for(const file of[require.resolve('@xterm/xterm'),require.resolve('@xterm/addon-fit'),path.join(path.dirname(require.resolve('@xterm/xterm')),'../css/xterm.css')])fs.accessSync(file)")
   (cd "$dependency_stage" && node -e "require('node-pty'); const {Terminal}=require('@xterm/headless'); const terminal=new Terminal({cols:80,rows:24,allowProposedApi:true}); terminal.dispose()")
-  previous_modules="$APP_DIR/.node_modules.previous.$$"
-  if [ -d "$APP_DIR/node_modules" ]; then
-    mv "$APP_DIR/node_modules" "$previous_modules"
-  fi
-  if mv "$dependency_stage/node_modules" "$APP_DIR/node_modules"; then
-    :
-  else
-    [ ! -d "$previous_modules" ] || mv "$previous_modules" "$APP_DIR/node_modules"
-    echo "Aktivasi dependency baru gagal; dependency lama dipulihkan." >&2
-    return 1
-  fi
-  rm -rf "$dependency_stage"
-  dependency_stage=""
-  if ! node -e "require('bullmq'); require('web-push'); require('sharp'); require('ssh2'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-pon'); require('./src/olt-zte-pnp'); require('./src/olt-zte-bandwidth'); require('./src/olt-zte-registration'); require('./src/olt-zte-tr069'); require('./src/olt-zte-catalogue'); require('./src/olt-zte-bridge'); require('./src/ont-radio-capability'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/customer-device-removal'); require('./src/network-address'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-network'); require('./src/ticket-team'); require('./src/ticket-reference'); require('./src/ticket-recovery'); require('./src/ticket-templates'); require('./src/ticket-customer-notifications'); require('./src/wifiku-modem-status'); require('./src/olt-vendors').loadLibrary().catch(error => { console.error(error.message); process.exitCode=1; })" >/dev/null; then
-    rm -rf "$APP_DIR/node_modules"
-    [ ! -d "$previous_modules" ] || mv "$previous_modules" "$APP_DIR/node_modules"
-    echo "Verifikasi dependency baru gagal; dependency lama dipulihkan." >&2
-    return 1
-  fi
-  rm -rf "$previous_modules"
-  echo "Dependency baru berhasil diverifikasi dan diaktifkan"
+  node "$source_stage/deploy/verify-release.js" "$source_stage" --runtime
+  echo "Dependency staging berhasil diverifikasi; dependency aktif belum diubah."
 }
 
 download_update_archive() {
@@ -657,92 +529,79 @@ download_update_archive() {
   fi
 }
 
+tmpdir="$(mktemp -d "$APP_DIR/.update-source.XXXXXX")"
+source_stage="$tmpdir/source"
+mkdir -p "$source_stage"
+target_commit=""
 if [ -d "$APP_DIR/.git" ]; then
-  echo "Update via git pull"
-  git -C "$APP_DIR" fetch --all --prune
-  if [ -n "$BRANCH" ]; then
-    git -C "$APP_DIR" checkout "$BRANCH"
-  fi
-  dirty_status="$(git -C "$APP_DIR" status --short --untracked-files=normal 2>/dev/null || true)"
-  if [ -n "$dirty_status" ]; then
-    echo "Worktree memiliki perubahan lokal source; simpan sementara ke git stash"
-    git -C "$APP_DIR" stash push --include-untracked -m "fakenet-billing-pre-update-$(date +%Y%m%d%H%M%S)" -- . || true
-  fi
-  git -C "$APP_DIR" pull --ff-only
-elif [ -n "$ARCHIVE_URL" ]; then
-  echo "Update via archive $ARCHIVE_URL"
-  tmpdir="$(mktemp -d)"
-  download_update_archive "$ARCHIVE_URL" "$tmpdir/source.tar.gz"
-  mkdir -p "$tmpdir/source"
-  tar -xzf "$tmpdir/source.tar.gz" -C "$tmpdir/source" --strip-components=1
-  rsync -a --delete \
-    --exclude data \
-    --exclude node_modules \
-    --exclude .env \
-    --exclude deploy/fakenet-billing.env \
-    --exclude deploy/fakenet-billing-waha.env \
-    "$tmpdir/source/" "$APP_DIR/"
-else
-  echo "Tidak ada .git atau FAKENET_UPDATE_ARCHIVE_URL. Source tidak berubah."
-fi
-
-cd "$APP_DIR"
-verify_update_payload
-if [ -f "$APP_DIR/install.sh" ]; then
-  bash "$APP_DIR/install.sh" node-runtime
-fi
-if command -v npm >/dev/null 2>&1; then
-  install_node_dependencies
-fi
-
-if [ -f "$APP_DIR/deploy/bin/fakenet-billing-update" ]; then
-  install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-update" /usr/local/bin/fakenet-billing-update || true
-fi
-if [ -f "$APP_DIR/deploy/bin/fakenet-billing-stack" ]; then
-  install -m 0755 "$APP_DIR/deploy/bin/fakenet-billing-stack" /usr/local/bin/fakenet-billing-stack || true
-fi
-
-if [ -f "$APP_DIR/install.sh" ]; then
-  load_env_file
-  INSTALL_GENIEACS_FOR_REPAIR=0
-  if [ "${FAKENET_BUNDLED_GENIEACS:-0}" = "1" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
-    INSTALL_GENIEACS_FOR_REPAIR=1
-  fi
-  if ! APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 SKIP_GENIEACS_SYNC=1 GENIEACS_BOOTSTRAP_EXTERNAL=1 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair; then
-    echo "Repair instalasi gagal; update dihentikan sebelum restart service." >&2
+  echo "Mengambil source Git ke staging; source aktif tidak diubah."
+  BRANCH="${BRANCH:-$(git -C "$APP_DIR" branch --show-current)}"
+  git -C "$APP_DIR" check-ref-format --branch "$BRANCH" >/dev/null
+  git -C "$APP_DIR" fetch --no-auto-gc origin "refs/heads/$BRANCH"
+  target_commit="$(git -C "$APP_DIR" rev-parse FETCH_HEAD)"
+  git -C "$APP_DIR" merge-base --is-ancestor HEAD "$target_commit" || {
+    echo "ERROR: riwayat Git bercabang; source lokal tidak dipaksa ditimpa." >&2
     exit 1
-  fi
+  }
+  git -C "$APP_DIR" archive "$target_commit" | tar -xf - -C "$source_stage"
+elif [ -n "$ARCHIVE_URL" ]; then
+  echo "Mengambil archive ke staging."
+  download_update_archive "$ARCHIVE_URL" "$tmpdir/source.tar.gz"
+  tar -tzf "$tmpdir/source.tar.gz" | awk 'BEGIN {ok=1} /^\// || /(^|\/)\.\.(\/|$)/ {ok=0} END {exit !ok}' || {
+    echo "ERROR: jalur archive tidak aman." >&2; exit 1;
+  }
+  tar -xzf "$tmpdir/source.tar.gz" -C "$source_stage" --strip-components=1
+else
+  echo "ERROR: sumber update Git/archive tidak tersedia." >&2
+  exit 1
 fi
 
-sync_genieacs_virtual_parameters
+verify_update_payload "$source_stage"
+installation_preflight "$APP_DIR" update "${FAKENET_BUNDLED_GENIEACS:-0}"
+create_pre_update_backup
+bash "$source_stage/install.sh" node-runtime
+install_node_dependencies
 
+rollback_dir="$BACKUP_DIR/activation-$(date +%Y%m%d%H%M%S)-$$"
+mkdir -p "$rollback_dir"
+mkdir -p "$rollback_dir/systemd"
+for file in "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.target; do
+  unit="$(basename "$file")"
+  [ ! -f "/etc/systemd/system/$unit" ] || cp -a "/etc/systemd/system/$unit" "$rollback_dir/systemd/"
+done
+queue_state="$rollback_dir/queue.json"
+node "$source_stage/deploy/queue-guard.js" pause "$APP_DIR" "$queue_state"
+for unit in fakenet-billing fakenet-billing-isolir fakenet-billing-voucher fakenet-billing-wifiku fakenet-billing-radius-connector; do
+  if systemctl is-active --quiet "$unit.service"; then active_units+=("$unit.service"); fi
+done
+[ "${#active_units[@]}" -gt 0 ] || { echo "ERROR: tidak ada service Billing aktif untuk diupdate." >&2; exit 1; }
+systemctl stop "${active_units[@]}"
+activation_started=1
+node "$source_stage/deploy/activate-release.js" activate "$APP_DIR" "$source_stage" "$rollback_dir"
+cd "$APP_DIR"
+node "$APP_DIR/deploy/verify-release.js" "$APP_DIR" --runtime
+
+load_env_file
+INSTALL_GENIEACS_FOR_REPAIR=0
+if [ "${FAKENET_BUNDLED_GENIEACS:-0}" = 1 ] && [ -f "$GENIEACS_ENV_FILE" ]; then INSTALL_GENIEACS_FOR_REPAIR=1; fi
+APP_DIR="$APP_DIR" REPAIR_FREERADIUS=0 SKIP_GENIEACS_SYNC=1 SKIP_GENIEACS_RUNTIME_RESTART=1 \
+  GENIEACS_BOOTSTRAP_EXTERNAL=1 INSTALL_GENIEACS="$INSTALL_GENIEACS_FOR_REPAIR" bash "$APP_DIR/install.sh" repair
+sync_genieacs_virtual_parameters
 cleanup_obsolete_worker_runtime
 
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl daemon-reload || true
-  if [ -x "$STACK_CMD" ]; then
-    "$STACK_CMD" restart-app
-  else
-    systemctl restart fakenet-billing.service
-  fi
-else
-  echo "Update membutuhkan systemd pada Debian/Ubuntu." >&2
-  exit 1
+systemctl daemon-reload
+systemctl start "${active_units[@]}"
+load_env_file
+if [ -f "$GENIEACS_ENV_FILE" ]; then set -a; . "$GENIEACS_ENV_FILE"; set +a; fi
+verify_runtime_health "$APP_DIR"
+node "$source_stage/deploy/activate-release.js" commit "$APP_DIR" "$rollback_dir" "$target_commit"
+activation_started=0
+dependency_stage=""
+if [ -f "$queue_state" ]; then
+  node "$source_stage/deploy/queue-guard.js" resume "$APP_DIR" "$queue_state" || {
+    echo "ERROR: runtime baru sehat, tetapi antrean WA belum berhasil dipulihkan." >&2
+    exit 1
+  }
 fi
-
-health_ok=0
-for attempt in $(seq 1 30); do
-  health_payload="$(curl -fsS --max-time 3 http://127.0.0.1:8891/api/health 2>/dev/null || true)"
-  if printf '%s' "$health_payload" | grep -q '"ok":true'; then
-    health_ok=1
-    break
-  fi
-  sleep 1
-done
-if [ "$health_ok" -ne 1 ]; then
-  echo "Health check Billing/BullMQ gagal setelah update." >&2
-  exit 1
-fi
-echo "Health check Billing dan BullMQ berhasil"
-
-echo "Update selesai"
+queue_state=""
+echo "Update selesai. Seluruh komponen lulus pemeriksaan. Backup: $rollback_dir"

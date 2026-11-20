@@ -464,7 +464,7 @@ test('UI toggle stays beside merge, promise actions are feature/permission gated
   assert.match(source, /cancelActivePromises = true/);
   assert.match(fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8'), /automation\?\.paymentPromiseUpdates\?\.length/);
   for (const file of ['install.sh', 'deploy/bin/fakenet-billing-update']) {
-    assert.match(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), /src\/payment-promise\.js/);
+    assert.match(require('./helpers/install-payload').payloadSource(file), /src\/payment-promise\.js/);
   }
 });
 

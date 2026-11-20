@@ -6,7 +6,7 @@ Data runtime tidak disertakan ke repository. Folder `data/` diabaikan oleh Git k
 
 ## Quick Install
 
-Gunakan VM/VPS Debian/Ubuntu baru berbasis systemd. Minimal yang disarankan adalah Ubuntu 22.04 LTS atau Debian 12. Jalankan semua perintah sebagai `root`.
+Gunakan VM/VPS baru **Ubuntu 24.04 LTS atau Debian 12**, berbasis systemd. Hanya dua versi OS tersebut yang didukung untuk install, repair dan update. Jalankan semua perintah sebagai `root`.
 
 ### Ubuntu/Debian
 
@@ -16,6 +16,7 @@ apt install -y git curl
 cd /root
 git clone https://github.com/fakehotspot12/FAKE.NET-BILLING.git
 cd FAKE.NET-BILLING
+bash install.sh preflight
 bash install.sh
 ```
 
@@ -53,7 +54,13 @@ GenieACS NBI  : 127.0.0.1:7557
 GenieACS UI   : http://IP-SERVER:7568
 ```
 
-Login awal GenieACS UI adalah `billing` / `billing123`. Autentikasi Inform CPE adalah `admin` / `1sampai10`. Ubah kredensial awal setelah instalasi dan batasi akses UI menggunakan firewall/VPN atau reverse proxy ber-HTTPS.
+Pada instalasi baru, login web GenieACS memakai akun awal billing yang sama:
+`admin` dengan password acak yang ditampilkan pada akhir installer. Tidak ada
+password web ACS tetap yang berlaku untuk semua instalasi. Perubahan password
+setelah instalasi dikelola masing-masing; ini bukan sinkronisasi password akun.
+ACS existing tetap menggunakan akunnya sendiri dan tidak direset.
+Autentikasi Inform CPE tetap terpisah, yaitu `admin` / `1sampai10`.
+Ubah kredensial awal dan batasi akses UI melalui firewall/VPN atau HTTPS.
 
 Cek status service:
 
@@ -1270,7 +1277,7 @@ Contoh konfigurasi repository tidak aktif secara otomatis. Updater mempertahanka
 
 ## Kebutuhan Sistem
 
-Minimal setara Ubuntu 22.04:
+Paket otomatis untuk Ubuntu 24.04 LTS dan Debian 12:
 
 - Linux x86_64/arm64
 - Node.js 20.9+ (disarankan 22 LTS)
@@ -1316,7 +1323,7 @@ sudo INSTALL_GENIEACS=0 bash install.sh
 
 Untuk instalasi penuh dengan GenieACS lokal, gunakan VM biasa. Rekomendasi minimalnya 2 vCPU dan 4 GB RAM, lebih aman 4 vCPU dan 8 GB RAM jika jumlah ONU/CPE besar.
 
-`install.sh` hanya mendukung Debian/Ubuntu dengan `apt` dan systemd agar jalur dependency, service, updater, FreeRADIUS, dan GenieACS tetap konsisten.
+`install.sh` dan updater hanya mendukung **Ubuntu 24.04 LTS dan Debian 12** dengan `apt` dan systemd. Versi/distro lain ditolak sebelum perubahan sistem; uninstall tetap dapat membersihkan instalasi lama.
 
 ## Install
 
@@ -1384,12 +1391,73 @@ Konfigurasi awal:
 
 | Komponen | Nilai awal |
 | --- | --- |
-| Login UI | `billing` / `billing123` |
+| Login UI | Sama dengan akun awal billing; password acak ditampilkan installer |
 | Inform CPE | `admin` / `1sampai10` |
 | URL Inform | `http://IP-SERVER:7547` |
 | NBI untuk Billing | `http://127.0.0.1:7557` |
 
 Virtual Parameters `RXPower`, `gettemp`, `wanVlan`, `wifiSsid24`, dan `wifiSsid5` dipasang bersama provision harian agar aplikasi dapat membaca redaman, suhu, VLAN WAN, dan SSID dari beberapa keluarga ONU termasuk beberapa modem CDATA/CDTC FDxxx. Nilai tetap berasal dari parameter perangkat yang tersedia di GenieACS; perangkat yang tidak mengekspos parameter terkait akan tampil kosong.
+
+Pada instalasi ACS baru, provision harian milik billing diaktifkan setelah akun
+UI dan autentikasi Inform berhasil disiapkan. Pengamanan Inform dipasang setelah
+inisialisasi, bukan sebelumnya. Pada ACS existing, akun, autentikasi dan kebijakan
+aktif/nonaktif preset yang sudah ada tetap dipertahankan. Jika dibutuhkan,
+`GENIEACS_AUTO_VP_PROVISION=0` menonaktifkan preset harian milik billing.
+Shell MongoDB untuk ACS bawaan dapat memakai `mongosh` dalam container miliknya;
+tidak perlu memasang shell MongoDB terpisah pada host.
+
+#### Template Web GenieACS
+
+Repository menyertakan template **generik** untuk web GenieACS pada ACS yang baru
+diinisialisasi, bukan salinan konfigurasi atau data dari server tertentu:
+
+| Bagian | Isi |
+| --- | --- |
+| Daftar perangkat | Serial, model, PPPoE, IP TR069, redaman, suhu, klien aktif, inform terakhir, dan tag |
+| Ringkasan perangkat | Identitas, firmware, akun/IP, mode PON, redaman, suhu, uptime, klien aktif, dan Summon |
+| WAN | Koneksi PPP/IP mengikuti instance perangkat, termasuk tabel TR098 dan TR181 |
+| WiFi | SSID, status, keamanan, kanal, serta radio yang benar-benar dilaporkan modem |
+| Perangkat LAN/WiFi | Nama perangkat, IP, MAC, status aktif, antarmuka, dan port LAN jika tersedia |
+| Kredensial | Bagian tertutup untuk admin modem, PPPoE dan kunci WiFi; tidak ditampilkan di daftar perangkat |
+| Diagnostik | Fault, aksi perangkat, lalu **Semua Parameter** di bagian paling bawah |
+
+Tabel lebar dapat digeser di dalam bagiannya. Template memakai komponen native
+GenieACS 1.2, tanpa JavaScript pihak ketiga, indeks WAN/SSID tetap, polling tambahan
+atau perubahan konfigurasi CPE otomatis. Status inform bukan jaminan koneksi
+internet pelanggan. Kelengkapan data tetap mengikuti firmware, parameter yang
+diekspos, dan Inform perangkat; parameter kosong tidak diganti nilai perkiraan.
+
+Template hanya dipasang setelah inisialisasi ACS baru berhasil. **ACS existing,
+termasuk yang dahulu dipasang installer ini, tidak ditimpa template saat update**;
+akun, layout kustom dan data modem dipertahankan. Virtual Parameters billing tetap
+ikut diverifikasi/diperbarui secara terpisah. Login UI harus dilindungi dan hak
+aksesnya dibatasi karena parameter native dapat memuat kredensial perangkat.
+
+### Pemeriksaan Install Dan Update
+
+`bash install.sh preflight` memeriksa OS, kelengkapan source, CPU, RAM, disk dan
+konflik port aplikasi tanpa memasang paket. MongoDB 7 pada x86_64 memerlukan AVX;
+gunakan CPU host/passthrough pada VM yang mendukung. Default instalasi lengkap
+memerlukan minimal 6 GB disk kosong untuk tahap awal; kebutuhan produksi tetap
+mengikuti tabel spesifikasi. Preflight bukan pengganti uji unduhan paket.
+
+Installer dan updater menggunakan satu manifest `deploy/release-files.list`.
+Tes rilis menolak berkas Git yang tertinggal, sedangkan validasi runtime memeriksa
+versi/lockfile/changelog, dependency dan modul/aset yang diperlukan. Data, `.env`,
+session WA dan konfigurasi privat bukan bagian payload rilis.
+
+Update menyiapkan source serta dependency di staging, membuat backup, menunggu
+pesan WA aktif selesai, lalu menghentikan hanya service billing terkait untuk
+aktivasi. ACS existing dan gateway WA tidak direstart paksa. Pemeriksaan akhir
+mencakup empat portal, versi aplikasi, tabel PostgreSQL billing/RADIUS, Redis,
+dependency antrean, konfigurasi FreeRADIUS, serta definisi Virtual Parameters.
+Jika aktivasi gagal, kode dan dependency lama dipulihkan; transaksi dan database
+tidak ditimpa dengan backup lama. Backup pemulihan tetap tersedia secara privat.
+
+Pemeriksaan ini tidak mengklaim modem sudah menerima Inform, akses internet sudah
+berjalan, atau WA sudah tertaut. Tetap tambahkan NAS/profile, arahkan Inform CPE,
+aktifkan layanan yang diperlukan dan uji satu pelanggan. UI ACS dan port admin
+harus dibatasi melalui firewall/VPN/HTTPS; installer tidak membuka firewall umum.
 
 Bootstrap installer dan updater hanya melakukan upsert Virtual Parameters yang dimiliki billing. Virtual Parameters, preset, provision, dan konfigurasi UI existing yang tidak dimiliki billing tidak dihapus atau ditulis ulang. Sinkronisasi diverifikasi kembali melalui NBI sebelum proses dinyatakan berhasil.
 
@@ -1676,7 +1744,7 @@ Default user untuk install baru dibuat otomatis jika data masih kosong:
 
 ```text
 username: admin
-password: billing123
+password: password acak dari output installer
 ```
 
 Segera ubah password setelah login pertama.

@@ -63,5 +63,5 @@ test('browser and backend classify requests/faults/groups consistently and canon
  const sandbox={window:{}};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../public/ticket-context.js'),'utf8'),sandbox);
  for(const t of[{kind:'request',scope:'service',source:'staff-service',category:'payment'}, {kind:'fault',scope:'service',source:'wifiku',category:'internet-down'}, {scope:'odp'}, {scope:'onu',serialNumber:serial(0)}, {scope:'service',kind:'fault',category:'unknown'}])assert.equal(sandbox.window.FakenetTicketContext.kind(t),network.contextKind(t));
  for(const file of['tkt.html','olt-ticket.html']){const html=fs.readFileSync(path.join(__dirname,'../public',file),'utf8');assert(html.indexOf('src="/ticket-context.js')<html.indexOf('src="/tkt.js'));assert(html.includes('/ticket-context.css'));}
- const installer=fs.readFileSync(path.join(__dirname,'../install.sh'),'utf8');assert(installer.includes('public/ticket-context.js'));assert(installer.includes('public/ticket-context.css'));
+ const installer=require('./helpers/install-payload').payloadSource('install.sh');assert(installer.includes('public/ticket-context.js'));assert(installer.includes('public/ticket-context.css'));
 });

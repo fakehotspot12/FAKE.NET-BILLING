@@ -78,7 +78,7 @@ test('different domains use their own widget and secret, including more specific
  assert(!JSON.stringify(verificationPolicy('billing.other.test',true,multi)).includes('other-secret'));
 });
 test('installer updater service and private-file lifecycle include every new component without embedded keys',()=>{
- const root=path.join(__dirname,'..'),read=name=>fs.readFileSync(path.join(root,name),'utf8');
+ const root=path.join(__dirname,'..'),read=name=>['install.sh','deploy/bin/fakenet-billing-update'].includes(name)?require('./helpers/install-payload').payloadSource(name):fs.readFileSync(path.join(root,name),'utf8');
  for(const file of ['install.sh','deploy/bin/fakenet-billing-update']){
   assert(read(file).includes('src/login-turnstile.js'));assert(read(file).includes('public/login-verification.js'));assert(read(file).includes('/etc/fakenet-billing-turnstile.env'));
  }

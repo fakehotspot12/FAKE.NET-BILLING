@@ -46,26 +46,8 @@ detect_pm() {
 }
 
 require_debian_ubuntu_systemd() {
-  local os_id os_like
-  if ! command -v apt-get >/dev/null 2>&1; then
-    echo "Installer ini hanya mendukung Debian/Ubuntu berbasis apt." >&2
-    exit 1
-  fi
-  if ! command -v systemctl >/dev/null 2>&1; then
-    echo "Installer ini membutuhkan systemd. CT/LXC tanpa systemd tidak direkomendasikan." >&2
-    exit 1
-  fi
-  if [ -r /etc/os-release ]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    os_id="${ID:-}"
-    os_like="${ID_LIKE:-}"
-    case " $os_id $os_like " in
-      *" debian "*|*" ubuntu "*) return 0 ;;
-    esac
-  fi
-  echo "OS tidak dikenali sebagai Debian/Ubuntu. Support installer difokuskan ke Debian/Ubuntu saja." >&2
-  exit 1
+  . "$SOURCE_DIR/deploy/lib/installer-common.sh"
+  require_supported_os
 }
 
 node_major() {
@@ -134,7 +116,7 @@ install_terminal_build_runtime() {
 
 ensure_required_commands() {
   local missing=() cmd
-  for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker pgrep snmpwalk snmpget snmpbulkwalk telnet radclient tesseract; do
+  for cmd in curl git rsync tar gzip openssl psql pg_dump node npm docker pgrep ss redis-cli snmpwalk snmpget snmpbulkwalk telnet radclient tesseract; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   if ! command -v freeradius >/dev/null 2>&1 && ! command -v radiusd >/dev/null 2>&1; then
@@ -142,7 +124,7 @@ ensure_required_commands() {
   fi
   if [ "${#missing[@]}" -gt 0 ]; then
     echo "Komponen berikut belum tersedia: ${missing[*]}" >&2
-    echo "Periksa repository OS/EPEL/CRB atau install paket terkait, lalu ulangi install.sh." >&2
+    echo "Periksa repository Ubuntu 24.04/Debian 12, lalu ulangi install.sh." >&2
     exit 1
   fi
 }
@@ -272,177 +254,20 @@ check_node() {
 }
 
 verify_repository_payload() {
-  local missing=() file
-  local required_files=(
-    package.json
-    package-lock.json
-    src/server.js
-    src/subweb-server.js
-    src/radius-connector-service.js
-    src/whatsapp-queue.js
-    src/payment-promise.js
-    src/login-turnstile.js
-    src/network-identity.js
-    src/olt-auto-identity.js
-    src/olt-device-removal.js
-    src/customer-device-removal.js
-    src/network-address.js
-    src/olt-planned-reboot.js
-    src/olt-los-confirmation.js
-    src/olt-vendors.js
-    src/olt-zte-profiles.js
-    src/olt-zte-pnp.js
-    src/olt-zte-bandwidth.js
-    src/olt-zte-registration.js
-    src/olt-zte-catalogue.js
-    src/olt-zte-bridge.js
-    src/olt-zte-tr069.js
-    src/ont-radio-capability.js
-    public/olt-registration.js
-    public/olt-catalogue.js
-    public/olt-bridge.js
-    public/olt-bandwidth.js
-    public/olt-plus.svg
-    src/olt-zte-inventory.js
-    src/olt-terminal.js
-    src/olt-terminal-native.js
-    src/olt-terminal-policy.js
-    src/olt-reboot.js
-    src/olt-pon.js
-    src/olt-cdata-pon.js
-    public/olt-power.svg
-    public/olt-terminal.js
-    public/olt-terminal.html
-    public/olt-terminal.css
-    public/olt-terminal.svg
-    src/olt-hioso.js
-    src/olt-telemetry.js
-    src/olt-vendor-library/NOTICE.md
-    src/olt-vendor-library/adapters/base.adapter.js
-    src/olt-vendor-library/adapters/bdcom.adapter.js
-    src/olt-vendor-library/adapters/btpon.adapter.js
-    src/olt-vendor-library/adapters/cdata.adapter.js
-    src/olt-vendor-library/adapters/fiberhome.adapter.js
-    src/olt-vendor-library/adapters/hioso.adapter.js
-    src/olt-vendor-library/adapters/hsgq.adapter.js
-    src/olt-vendor-library/adapters/huawei.adapter.js
-    src/olt-vendor-library/adapters/index.js
-    src/olt-vendor-library/adapters/tarmoc.adapter.js
-    src/olt-vendor-library/adapters/templates/tarmoc.live-template.js
-    src/olt-vendor-library/adapters/vendor-normalization.js
-    src/olt-vendor-library/adapters/vsol.adapter.js
-    src/olt-vendor-library/adapters/zte.adapter.js
-    src/olt-vendor-library/config.js
-    src/olt-vendor-library/db/index.js
-    src/olt-vendor-library/package.json
-    src/olt-vendor-library/services/context.js
-    src/olt-vendor-library/services/crypto.js
-    src/olt-vendor-library/services/olt-snmp-detail.js
-    src/olt-vendor-library/services/olt-transport.js
-    src/olt-vendor-library/services/snmp.js
-    src/olt-vendor-library/utils/http-error.js
-    src/olt-vendor-library/utils/offline-cause.js
-    src/olt-cli.js
-    src/olt-monitor.js
-    src/olt-ticketing.js
-    src/service-tickets.js
-    src/ticket-incidents.js
-    src/ticket-network.js
-    src/ticket-team.js
-    src/ticket-reference.js
-    src/ticket-recovery.js
-    src/ticket-templates.js
-    src/ticket-customer-notifications.js
-    src/wifiku-modem-status.js
-    public/index.html
-    public/app.js
-    public/login-verification.js
-    public/styles.css
-    public/service-worker.js
-    public/manifest.webmanifest
-    public/olt.js
-    public/olt.css
-    public/ticket-context.js
-    public/ticket-context.css
-    public/tkt.html
-    public/tkt.js
-    public/tkt.css
-    public/olt-ticket.html
-    public/olt-ticket.js
-    public/olt-ticket.css
-    public/olt-trash.svg
-    public/olt-reboot.svg
-    public/olt-refresh.svg
-    public/olt-back.svg
-    public/olt-link.svg
-    public/olt-save.svg
-    public/olt-icons-license.txt
-    public/support-chat.svg
-    deploy/fakenet-billing.env
-    deploy/fakenet-billing-turnstile.env.example
-    deploy/fakenet-billing-isolir-context.env.example
-    deploy/fakenet-billing-waha.env
-    deploy/fakenet-billing-genieacs.env
-    deploy/genieacs/bootstrap.js
-    deploy/genieacs/virtual-parameters/IPTR069.js
-    deploy/genieacs/virtual-parameters/LANActiveClients.js
-    deploy/genieacs/virtual-parameters/LANClients.js
-    deploy/genieacs/virtual-parameters/PonMac.js
-    deploy/genieacs/virtual-parameters/RXPower.js
-    deploy/genieacs/virtual-parameters/WlanPassword.js
-    deploy/genieacs/virtual-parameters/activedevices.js
-    deploy/genieacs/virtual-parameters/getSerialNumber.js
-    deploy/genieacs/virtual-parameters/getdeviceuptime.js
-    deploy/genieacs/virtual-parameters/getponmode.js
-    deploy/genieacs/virtual-parameters/getpppuptime.js
-    deploy/genieacs/virtual-parameters/gettemp.js
-    deploy/genieacs/virtual-parameters/ip.js
-    deploy/genieacs/virtual-parameters/pppoe.js
-    deploy/genieacs/virtual-parameters/pppoeIP.js
-    deploy/genieacs/virtual-parameters/pppoeMac.js
-    deploy/genieacs/virtual-parameters/pppoePassword.js
-    deploy/genieacs/virtual-parameters/pppoeUsername.js
-    deploy/genieacs/virtual-parameters/pppoeUsername2.js
-    deploy/genieacs/virtual-parameters/superAdmin.js
-    deploy/genieacs/virtual-parameters/superPassword.js
-    deploy/genieacs/virtual-parameters/userAdmin.js
-    deploy/genieacs/virtual-parameters/userPassword.js
-    deploy/genieacs/virtual-parameters/wanVlan.js
-    deploy/genieacs/virtual-parameters/wifiSsid24.js
-    deploy/genieacs/virtual-parameters/wifiSsid5.js
-    deploy/sql/freeradius-postgresql.sql
-    deploy/bin/fakenet-billing-stack
-    deploy/bin/fakenet-billing-update
-    deploy/systemd/fakenet-billing.service
-    deploy/systemd/fakenet-billing-isolir.service
-    deploy/systemd/fakenet-billing-voucher.service
-    deploy/systemd/fakenet-billing-wifiku.service
-    deploy/systemd/fakenet-billing-radius-connector.service
-    deploy/systemd/fakenet-billing-waha.service
-    deploy/systemd/fakenet-billing-stack.target
-    deploy/systemd/fakenet-billing-genieacs-mongodb.service
-    deploy/systemd/fakenet-billing-genieacs-cwmp.service
-    deploy/systemd/fakenet-billing-genieacs-nbi.service
-    deploy/systemd/fakenet-billing-genieacs-fs.service
-    deploy/systemd/fakenet-billing-genieacs-ui.service
-  )
-  for file in "${required_files[@]}"; do
-    [ -f "$SOURCE_DIR/$file" ] || missing+=("$file")
-  done
-  if [ "${#missing[@]}" -gt 0 ]; then
-    echo "Repository tidak lengkap. File berikut tidak ditemukan: ${missing[*]}" >&2
-    echo "Unduh/clone ulang repository lengkap, lalu jalankan install.sh kembali." >&2
-    exit 1
-  fi
+  [ -f "$SOURCE_DIR/deploy/lib/installer-common.sh" ] || { echo "ERROR: helper installer tidak lengkap. Clone ulang repository." >&2; return 1; }
+  . "$SOURCE_DIR/deploy/lib/installer-common.sh"
+  verify_release_payload "$SOURCE_DIR"
 }
 
 copy_source() {
   mkdir -p "$APP_DIR"
-  rsync -a --delete \
+  if [ "$(readlink -f "$SOURCE_DIR")" != "$(readlink -f "$APP_DIR")" ]; then
+    rsync -a --delete \
     --exclude node_modules \
     --exclude data \
     --exclude .env \
-    "$SOURCE_DIR/" "$APP_DIR/"
+      "$SOURCE_DIR/" "$APP_DIR/"
+  fi
   mkdir -p "$APP_DIR/data"
   touch "$APP_DIR/data/.gitkeep"
 }
@@ -545,28 +370,15 @@ ensure_genieacs_mongodb_image() {
 }
 
 verify_billing_health() {
-  local attempt payload
-  for attempt in $(seq 1 30); do
-    payload="$(curl -fsS --max-time 3 http://127.0.0.1:8891/api/health 2>/dev/null || true)"
-    if printf '%s' "$payload" | grep -q '"ok":true'; then
-      if printf '%s' "$payload" | grep -q '"backend":"bullmq"' \
-        && printf '%s' "$payload" | grep -q '"available":true'; then
-        echo "Health check Billing dan BullMQ berhasil."
-      else
-        echo "Health check Billing berhasil."
-      fi
-      return 0
-    fi
-    sleep 1
-  done
-  echo "Health check Billing/BullMQ gagal setelah 30 detik." >&2
-  return 1
+  load_billing_env
+  [ ! -f "$GENIEACS_ENV_FILE" ] || load_genieacs_env
+  verify_runtime_health "$APP_DIR"
 }
 
 replace_or_append_env() {
   local file="$1" key="$2" value="$3"
   local escaped
-  escaped="$(printf '%s' "$value" | sed 's/[\/&]/\\&/g')"
+  escaped="$(printf '%s' "$value" | sed 's/[\/&\\]/\\&/g')"
   if grep -q "^${key}=" "$file"; then
     sed -i "s/^${key}=.*/${key}=${escaped}/" "$file"
   else
@@ -661,16 +473,21 @@ harden_runtime_permissions() {
 }
 
 prepare_genieacs_env_file() {
-  local source_mode="${1:-bundled}" genieacs_jwt_secret
+  local source_mode="${1:-bundled}" genieacs_jwt_secret ui_user ui_password
   if [ ! -f "$GENIEACS_ENV_FILE" ]; then
     cp "$APP_DIR/deploy/fakenet-billing-genieacs.env" "$GENIEACS_ENV_FILE"
+    if [ "$source_mode" = bundled ]; then
+      ui_user="$(read_env_value_raw /etc/fakenet-billing.env APP_ADMIN_USERNAME)"
+      ui_password="$(read_env_value_raw /etc/fakenet-billing.env APP_ADMIN_PASSWORD)"
+      [ -n "$ui_user" ] && [ -n "$ui_password" ] || { echo "ERROR: akun awal Billing belum tersedia untuk bootstrap ACS." >&2; return 1; }
+      replace_or_append_env "$GENIEACS_ENV_FILE" GENIEACS_UI_USERNAME "$(quote_env_value "$ui_user")"
+      replace_or_append_env "$GENIEACS_ENV_FILE" GENIEACS_UI_PASSWORD "$(quote_env_value "$ui_password")"
+    fi
   fi
   genieacs_jwt_secret="$(random_hex 64)"
   if grep -q 'CHANGE_ME_GENIEACS_JWT_SECRET' "$GENIEACS_ENV_FILE"; then
     sed -i "s/CHANGE_ME_GENIEACS_JWT_SECRET/$genieacs_jwt_secret/g" "$GENIEACS_ENV_FILE"
   fi
-  append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_UI_USERNAME billing
-  append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_UI_PASSWORD billing123
   append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_CWMP_AUTH_USERNAME admin
   append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_CWMP_AUTH_PASSWORD 1sampai10
   append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_MONGODB_CONNECTION_URL mongodb://127.0.0.1:27017/genieacs
@@ -682,6 +499,16 @@ prepare_genieacs_env_file() {
     append_env_if_missing "$GENIEACS_ENV_FILE" GENIEACS_MONGODB_IMAGE "$GENIEACS_MONGODB_IMAGE_DEFAULT"
   fi
   chmod 600 "$GENIEACS_ENV_FILE"
+}
+
+quote_env_value() {
+  local value="$1"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || return 1
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//\$/\\\$}"
+  value="${value//\`/\\\`}"
+  printf '"%s"' "$value"
 }
 
 systemd_genieacs_nbi_env_file() {
@@ -704,6 +531,7 @@ systemd_genieacs_nbi_env_file() {
 }
 
 lock_existing_genieacs_nbi_localhost() {
+  [ "${SKIP_GENIEACS_RUNTIME_RESTART:-0}" = 1 ] && return 0
   [ "${FAKENET_LOCK_EXISTING_GENIEACS_NBI:-1}" = "0" ] && return 0
   [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ] || return 0
   command -v systemctl >/dev/null 2>&1 || return 0
@@ -1411,7 +1239,7 @@ repair_install() {
     done
     cleanup_obsolete_worker_runtime
     systemctl daemon-reload >/dev/null 2>&1 || true
-    if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
+    if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ] && [ "${SKIP_GENIEACS_RUNTIME_RESTART:-0}" != 1 ]; then
       local docker_unit
       command -v genieacs-cwmp >/dev/null 2>&1 || INSTALL_GENIEACS=1 install_genieacs_runtime
       prepare_genieacs_runtime
@@ -1583,10 +1411,27 @@ uninstall_total() {
   echo "Uninstall total selesai."
 }
 
+preflight_install() {
+  local bundled=1 port
+  verify_repository_payload
+  if [ "${INSTALL_GENIEACS:-1}" = 0 ] || external_genieacs_detected; then bundled=0; fi
+  installation_preflight "$APP_DIR" install "$bundled"
+  if [ ! -f /etc/fakenet-billing.env ]; then
+    for port in "${PORT:-8891}" "${ISOLIR_PORT:-8892}" "${VOUCHER_PORT:-8893}" "${WIFIKU_PORT:-8894}"; do
+      if port_is_listening "$port"; then echo "ERROR: port $port sudah digunakan aplikasi lain." >&2; return 1; fi
+    done
+  fi
+}
+
 main() {
   need_root
-  require_debian_ubuntu_systemd
+  case "${1:-install}" in uninstall|--uninstall) ;; *) require_debian_ubuntu_systemd ;; esac
   case "${1:-install}" in
+    preflight|--preflight)
+      preflight_install
+      echo "Preflight selesai. Belum ada paket, service, atau konfigurasi yang diubah."
+      return 0
+      ;;
     node-runtime)
       install_node_runtime
       check_node
@@ -1599,6 +1444,8 @@ main() {
       return 0
       ;;
     repair|--repair)
+      verify_repository_payload
+      installation_preflight "$APP_DIR" repair 0
       if [ ! -f "$GENIEACS_ENV_FILE" ]; then
         INSTALL_GENIEACS=0
       fi
@@ -1609,11 +1456,11 @@ main() {
     install|"")
       ;;
     *)
-      echo "Usage: bash install.sh [install|repair|uninstall] [--yes] [--purge-deps]" >&2
+      echo "Usage: bash install.sh [preflight|install|repair|uninstall] [--yes] [--purge-deps]" >&2
       exit 2
       ;;
   esac
-  verify_repository_payload
+  preflight_install
   install_packages
   install_ocr_runtime
   install_node_runtime
@@ -1622,6 +1469,7 @@ main() {
   auto_skip_existing_genieacs
   copy_source
   install_node_deps
+  node "$APP_DIR/deploy/verify-release.js" "$APP_DIR" --runtime
   if [ "${INSTALL_GENIEACS:-1}" != "0" ]; then
     install_genieacs_runtime
   fi
@@ -1640,7 +1488,7 @@ main() {
     echo "GenieACS CWMP: http://SERVER-IP:${GENIEACS_CWMP_PORT:-7547}"
     echo "GenieACS UI: http://SERVER-IP:${GENIEACS_UI_PORT:-7568}"
     echo "GenieACS NBI: 127.0.0.1:${GENIEACS_NBI_PORT:-7557} (localhost only)"
-    echo "Login GenieACS awal: ${GENIEACS_UI_USERNAME:-billing} / ${GENIEACS_UI_PASSWORD:-billing123}"
+    echo "Login GenieACS awal: ${GENIEACS_UI_USERNAME} / ${GENIEACS_UI_PASSWORD}"
     echo "Inform CPE: ${GENIEACS_CWMP_AUTH_USERNAME:-admin} / ${GENIEACS_CWMP_AUTH_PASSWORD:-1sampai10}"
   elif [ "${GENIEACS_EXTERNAL_DETECTED:-0}" = "1" ]; then
     echo "GenieACS existing terdeteksi; GenieACS bawaan billing dilewati."
