@@ -7,6 +7,7 @@ function fixture(options = {}) {
   const original = [
     { _id: 'ui.device.0.type', value: '"tags"' },
     { _id: 'ui.device.99.type', value: '"parameter"' },
+    { _id: 'ui.device.0.element', value: '"div"' },
     { _id: 'cwmp.auth', value: 'AUTH("kept", "kept")' },
     { _id: 'ui.custom.value', value: '"kept"' }
   ];
@@ -21,6 +22,7 @@ function fixture(options = {}) {
     },
     put: async (id, body) => {
       if (++writes === 30 && options.writeFails && !failures++) throw Error('Fixture unavailable');
+      for (const key of config.keys()) assert(!(id.startsWith(key + '.') || key.startsWith(id + '.')), 'Scalar/object prefix conflict: ' + id);
       config.set(id, { _id: id, ...body });
     },
     remove: async id => {

@@ -1,13 +1,14 @@
 {
   "name": "fakenet-billing",
-  "version": "4.6.1",
+  "version": "4.6.2",
   "releaseDate": "2026-11-21",
   "description": "FAKE.NET Billing and Office ISP dan RT/RW Net solution",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "subweb": "node src/subweb-server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:genieacs-install": "node test/integration/genieacs-bootstrap.cjs"
   },
   "keywords": [
     "isp",

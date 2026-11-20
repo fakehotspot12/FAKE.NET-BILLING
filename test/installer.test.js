@@ -114,6 +114,7 @@ test('new bundled ACS receives billing initial credentials, existing ACS is not 
   const env = { ...process.env, SOURCE_DIR: root, APP_DIR: tmp, GENIEACS_ENV_FILE: acs };
   const first = spawnSync('bash', [], { input: script, env, encoding: 'utf8' });
   assert.equal(first.status, 0, first.stderr); assert.equal(first.stdout, 'admin/fixture-initial-secret/1sampai10');
+  assert.equal(fs.statSync(acs).mode & 0o777, 0o600);
   fs.writeFileSync(billing, 'APP_ADMIN_USERNAME=admin\nAPP_ADMIN_PASSWORD=changed-later\n');
   const second = spawnSync('bash', [], { input: script, env, encoding: 'utf8' });
   assert.equal(second.status, 0, second.stderr); assert.equal(second.stdout, first.stdout);
@@ -139,4 +140,35 @@ test('runtime health validates all ACS definitions and rejects public NBI bindin
       fetch: async url => new Response(JSON.stringify(url.endsWith('/virtualParameters') ? scripts : url.endsWith('/api/branding') ? { branding: { appVersion: require('../package.json').version } } : { ok: true })) });
     assert.equal(result.ok, binding === '127.0.0.1');
   }
+});
+test('PostgreSQL setup reads protected SQL through stdin, not a postgres-readable temporary pathname', t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'billing-sql-')); t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const file = path.join(tmp, 'private.sql'); fs.writeFileSync(file, 'SELECT 42;\n', { mode: 0o600 });
+  const source = fs.readFileSync(path.join(root, 'install.sh'), 'utf8').replace(/\nmain "\$@"\s*$/, '');
+  const r = spawnSync('bash', [], { input: source + '\npsql_superuser() { printf "args:%s\\n" "$*"; while IFS= read -r row; do printf "sql:%s\\n" "$row"; done; }; postgres_exec_file "$SQL_FIXTURE" fixture\n',
+    env: { ...process.env, SOURCE_DIR: root, SQL_FIXTURE: file }, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /sql:SELECT 42;/);
+  assert(!r.stdout.includes('-f ') && !r.stdout.includes(file));
+});
+test('generated SQL files are private, unpredictable and removed after failed initialization', t => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'billing-sql-')); t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const record = path.join(tmp, 'paths'), source = fs.readFileSync(path.join(root, 'install.sh'), 'utf8').replace(/\nmain "\$@"\s*$/, '');
+  const input = source + `
+command() { if [ "$1" = -v ] && [ "$2" = psql ]; then return 0; fi; builtin command "$@"; }
+load_billing_env() { APP_DATABASE_PASSWORD=fixture-app; RADIUS_DATABASE_PASSWORD=fixture-radius; }
+postgres_exec_file() { stat -c '%a' "$1"; printf '%s\\n' "$1" >> "$SQL_RECORD"; return 43; }
+init_postgres_databases
+`;
+  const r = spawnSync('bash', [], { input, env: { ...process.env, SOURCE_DIR: root, APP_DIR: tmp, SQL_RECORD: record }, encoding: 'utf8' });
+  assert.equal(r.status, 43, r.stderr); assert.equal(r.stdout.trim(), '600');
+  const files = fs.readFileSync(record, 'utf8').trim().split('\n'); assert.equal(files.length, 1);
+  assert(files.every(file => !fs.existsSync(file)));
+});
+test('installer Radius config validation fails closed and stores failure output root-only', t => {
+  const source = fs.readFileSync(path.join(root, 'install.sh'), 'utf8').replace(/\nmain "\$@"\s*$/, '');
+  const r = spawnSync('bash', [], { input: source + '\nfreeradius() { printf "fixture failed\\n"; return 19; }; validate_freeradius_config\n',
+    env: { ...process.env, SOURCE_DIR: root }, encoding: 'utf8' });
+  assert.equal(r.status, 19);
+  const file = r.stderr.match(/lihat (\/tmp\/fakenet-freeradius-check\.[A-Za-z0-9]+)/)?.[1]; assert(file);
+  t.after(() => fs.rmSync(file, { force: true })); assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });

@@ -9,6 +9,8 @@ const source = fs.readFileSync(path.join(__dirname, '../deploy/genieacs/bootstra
 function fixture(options = {}) {
   const parameters = new Map([['private-parameter', { _id: 'private-parameter', script: 'return {value:["kept","xsd:string"]};' }]]);
   const presets = new Map(), provisions = new Map(), config = new Map(), calls = [], logs = [];
+  let staleLogins = options.staleLogins || 0;
+  let stalePasswordLogins = 0;
   if (options.existing) {
     presets.set('fakenet-virtual-parameters', { _id: 'fakenet-virtual-parameters', precondition: options.precondition || '{}', weight: 12 });
     provisions.set('inform', { _id: 'inform', script: 'const informInterval = 300;' });
@@ -23,7 +25,12 @@ function fixture(options = {}) {
       if (method === 'POST') provisions.set('inform', { _id: 'inform', script: 'const informInterval = 300;' });
       return json({ users: !options.initialized });
     }
-    if (pathname === '/login') return options.loginFails ? new Response('Denied', { status: 401 }) : json('fixture-session');
+    if (pathname === '/login') {
+      if (options.loginFails) return new Response('Denied', { status: options.loginStatus || 401 });
+      if (staleLogins-- > 0 || stalePasswordLogins-- > 0) return new Response('Incorrect username or password', { status: 400 });
+      return json('fixture-session');
+    }
+    if (/^\/api\/users\/[^/]+\/password$/.test(pathname)) stalePasswordLogins = options.stalePasswordLogins || 0;
     if (pathname === '/api/config/cwmp.auth' && options.authFails) return new Response('Unavailable', { status: 500 });
     if (pathname === '/api/config') return json([...config.values()]);
     if (pathname.startsWith('/api/config/')) {
@@ -49,7 +56,7 @@ function fixture(options = {}) {
     : name === 'child_process' ? { spawnSync: options.spawnSync || (() => ({ status: 1 })) }
     : name === './ui-template' ? require('../deploy/genieacs/ui-template') : require(name),
   module: { exports: {} }, __dirname: path.join(__dirname, '../deploy/genieacs'),
-  process: { env: { APP_ADMIN_PASSWORD: 'fixture-admin-password', ...(options.existing ? { GENIEACS_BOOTSTRAP_EXTERNAL: '1' } : {}), ...options.env },
+  process: { env: { APP_ADMIN_PASSWORD: 'fixture-admin-password', GENIEACS_LOGIN_RETRY_DELAY_MS: '1', ...(options.existing ? { GENIEACS_BOOTSTRAP_EXTERNAL: '1' } : {}), ...options.env },
     stdout: { write: value => logs.push(value) }, stderr: { write: value => logs.push(value) } },
   fetch, AbortController, setTimeout, clearTimeout, console };
   vm.createContext(sandbox); vm.runInContext(source, sandbox);
@@ -76,6 +83,25 @@ for (const failure of ['loginFails', 'authFails', 'provisionFails', 'templateFai
 test('already initialized bundled ACS also preserves its custom UI on updates', async () => {
   const f = fixture({ initialized: true }); await f.main();
   assert(!f.calls.some(row => row.pathname === '/api/config' || row.pathname.startsWith('/api/config/ui.')));
+});
+test('fresh bootstrap waits for native cached account and password changes without repeating initialization', async () => {
+  const f = fixture({ staleLogins: 2, stalePasswordLogins: 2 }); await f.main();
+  assert.equal(f.calls.filter(row => row.pathname === '/login').length, 7);
+  assert.equal(f.calls.filter(row => row.pathname === '/init' && row.method === 'POST').length, 1);
+  assert.equal(f.calls.filter(row => row.pathname === '/api/users/admin/password').length, 1);
+  assert(f.config.has('ui.device.0.type'));
+});
+test('fresh bootstrap limits authentication retries and never reports a stale account as installed', async () => {
+  const f = fixture({ loginFails: true, env: { GENIEACS_LOGIN_RETRY_ATTEMPTS: '3' } });
+  await assert.rejects(f.main());
+  assert.equal(f.calls.filter(row => row.pathname === '/login').length, 3);
+  assert(!f.logs.some(line => line.includes('Bootstrap GenieACS selesai')));
+});
+test('wrong existing ACS credentials do not trigger default admin retries or password reset', async () => {
+  const f = fixture({ initialized: true, loginFails: true }); await assert.rejects(f.main());
+  assert.equal(f.calls.filter(row => row.pathname === '/login').length, 1);
+  assert(f.calls.filter(row => row.pathname === '/login').every(row => JSON.parse(row.body).password === 'fixture-admin-password'));
+  assert(!f.calls.some(row => row.pathname.startsWith('/api/users/')));
 });
 for (const precondition of ['{}', '{"_id":"disabled-by-owner"}']) test('existing ACS preserves account and preset policy ' + precondition, async () => {
   const f = fixture({ existing: true, precondition }); await f.main();

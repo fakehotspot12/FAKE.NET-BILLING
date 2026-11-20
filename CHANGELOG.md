@@ -2,6 +2,17 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.6.2] - 2026-11-21
+
+### Fixed
+
+- Memperbaiki bootstrap ACS baru yang dapat gagal login ketika cache akun/password GenieACS belum diperbarui. Retry terbatas hanya dilakukan setelah pembuatan atau perubahan akun; akun existing tidak direset. Template awal diganti dan dipulihkan dengan urutan yang mencegah konflik nilai scalar dan object pada cache konfigurasi UI.
+- File sementara installer memakai nama acak dan izin privat; SQL dibaca melalui stdin agar user PostgreSQL tetap dapat menjalankannya tanpa membuka file password ke user lain. File SQL dan skrip setup dibersihkan ketika proses gagal; kegagalan validasi FreeRADIUS tidak lagi dilaporkan sebagai repair berhasil.
+
+### Added
+
+- Tes integrasi opsional ACS kosong memakai GenieACS resmi dan MongoDB terisolasi untuk memeriksa login, 26 Virtual Parameters serta template. Dependency paket diperiksa pada Ubuntu 24.04 dan Debian 12; panduan clone Git menyertakan CA certificates.
+
 ## [4.6.1] - 2026-11-21
 
 ### Added

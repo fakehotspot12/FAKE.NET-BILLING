@@ -225,13 +225,19 @@ install_node_runtime() {
     return
   fi
 
-  local pm setup
+  local pm setup setup_status
   pm="$(detect_pm)"
-  setup="/tmp/fakenet-node-setup.sh"
   case "$pm" in
     apt)
-      curl -fsSL "https://deb.nodesource.com/setup_${NODE_SETUP_MAJOR}.x" -o "$setup"
-      bash "$setup"
+      setup="$(mktemp /tmp/fakenet-node-setup.XXXXXX)"
+      if ! curl -fsSL "https://deb.nodesource.com/setup_${NODE_SETUP_MAJOR}.x" -o "$setup"; then
+        rm -f "$setup"
+        return 1
+      fi
+      setup_status=0
+      bash "$setup" || setup_status=$?
+      rm -f "$setup"
+      [ "$setup_status" -eq 0 ] || return "$setup_status"
       DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
       ;;
     *)
@@ -475,7 +481,7 @@ harden_runtime_permissions() {
 prepare_genieacs_env_file() {
   local source_mode="${1:-bundled}" genieacs_jwt_secret ui_user ui_password
   if [ ! -f "$GENIEACS_ENV_FILE" ]; then
-    cp "$APP_DIR/deploy/fakenet-billing-genieacs.env" "$GENIEACS_ENV_FILE"
+    install -m 0600 "$APP_DIR/deploy/fakenet-billing-genieacs.env" "$GENIEACS_ENV_FILE"
     if [ "$source_mode" = bundled ]; then
       ui_user="$(read_env_value_raw /etc/fakenet-billing.env APP_ADMIN_USERNAME)"
       ui_password="$(read_env_value_raw /etc/fakenet-billing.env APP_ADMIN_PASSWORD)"
@@ -576,7 +582,7 @@ EOF
 install_env() {
   local app_db_password radius_db_password app_admin_password waha_api_key waha_password waha_webhook_secret
   if [ ! -f /etc/fakenet-billing.env ]; then
-    cp "$APP_DIR/deploy/fakenet-billing.env" /etc/fakenet-billing.env
+    install -m 0600 "$APP_DIR/deploy/fakenet-billing.env" /etc/fakenet-billing.env
   fi
 
   app_db_password="$(random_hex 24)"
@@ -603,7 +609,7 @@ install_env() {
   fi
 
   if [ ! -f /etc/fakenet-billing-waha.env ]; then
-    cp "$APP_DIR/deploy/fakenet-billing-waha.env" /etc/fakenet-billing-waha.env
+    install -m 0600 "$APP_DIR/deploy/fakenet-billing-waha.env" /etc/fakenet-billing-waha.env
   fi
   waha_api_key="$(random_hex 32)"
   waha_password="$(random_hex 24)"
@@ -922,16 +928,20 @@ restart_systemd_unit_group() {
 }
 
 validate_freeradius_config() {
-  local cmd=""
+  local cmd="" log_file status=0
   if command -v freeradius >/dev/null 2>&1; then
     cmd="freeradius"
   elif command -v radiusd >/dev/null 2>&1; then
     cmd="radiusd"
   fi
   [ -n "$cmd" ] || return 0
-  "$cmd" -XC >/tmp/fakenet-billing-freeradius-check.log 2>&1 || {
-    echo "Peringatan: validasi FreeRADIUS gagal, lihat /tmp/fakenet-billing-freeradius-check.log" >&2
-  }
+  log_file="$(mktemp /tmp/fakenet-freeradius-check.XXXXXX)"
+  "$cmd" -XC >"$log_file" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "Peringatan: validasi FreeRADIUS gagal, lihat $log_file (root-only)." >&2
+    return "$status"
+  fi
+  rm -f "$log_file"
 }
 
 init_postgres_cluster() {
@@ -972,7 +982,7 @@ hydrate_radius_database_settings() {
 
 postgres_exec_file() {
   local file="$1" database="${2:-postgres}"
-  psql_superuser -X -q -v ON_ERROR_STOP=1 -d "$database" -f "$file"
+  psql_superuser -X -q -v ON_ERROR_STOP=1 -d "$database" < "$file"
 }
 
 init_postgres_databases() {
@@ -983,7 +993,7 @@ init_postgres_databases() {
 
   load_billing_env
   hydrate_radius_database_settings
-  local app_db app_user app_pass radius_db radius_user radius_pass sql_file
+  local app_db app_user app_pass radius_db radius_user radius_pass sql_file sql_status
   app_db="${APP_DATABASE_NAME:-fakenet_billing}"
   app_user="${APP_DATABASE_USER:-fakenet_billing}"
   app_pass="${APP_DATABASE_PASSWORD:-}"
@@ -996,7 +1006,7 @@ init_postgres_databases() {
     return
   fi
 
-  sql_file="/tmp/fakenet-billing-init-db-$$.sql"
+  sql_file="$(mktemp /tmp/fakenet-billing-init-db.XXXXXX)"
   cat > "$sql_file" <<SQL
 DO \$\$
 BEGIN
@@ -1017,20 +1027,24 @@ SELECT 'CREATE DATABASE $radius_db OWNER $radius_user' WHERE NOT EXISTS (SELECT 
 GRANT ALL PRIVILEGES ON DATABASE $app_db TO $app_user;
 GRANT ALL PRIVILEGES ON DATABASE $radius_db TO $radius_user;
 SQL
-  postgres_exec_file "$sql_file" postgres
+  sql_status=0
+  postgres_exec_file "$sql_file" postgres || sql_status=$?
   rm -f "$sql_file"
+  [ "$sql_status" -eq 0 ] || return "$sql_status"
 
   if [ -f "$APP_DIR/deploy/sql/freeradius-postgresql.sql" ]; then
     postgres_exec_file "$APP_DIR/deploy/sql/freeradius-postgresql.sql" "$radius_db"
-    sql_file="/tmp/fakenet-billing-radius-grant-$$.sql"
+    sql_file="$(mktemp /tmp/fakenet-billing-radius-grant.XXXXXX)"
     cat > "$sql_file" <<SQL
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $radius_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $radius_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO $radius_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO $radius_user;
 SQL
-    postgres_exec_file "$sql_file" "$radius_db"
+    sql_status=0
+    postgres_exec_file "$sql_file" "$radius_db" || sql_status=$?
     rm -f "$sql_file"
+    [ "$sql_status" -eq 0 ] || return "$sql_status"
   fi
 }
 

@@ -166,8 +166,9 @@ async function installFreshTemplate({ initialized, read, put, remove, summonPara
   const previous = before.filter(row => isTemplateKey(row._id));
   const rows = buildTemplate(summonParameters), expected = new Map(rows.map(row => [row._id, row.value]));
   try {
+    // A scalar element and its new element.tag children cannot coexist in the UI cache.
+    for (const row of previous) await remove(row._id);
     for (const row of rows) await put(row._id, { value: row.value });
-    for (const row of previous) if (!expected.has(row._id)) await remove(row._id);
     const actual = (await read()).filter(row => isTemplateKey(row._id));
     if (actual.length !== rows.length || actual.some(row => expected.get(row._id) !== row.value)) {
       throw Error('Verifikasi template UI GenieACS gagal');
@@ -175,12 +176,11 @@ async function installFreshTemplate({ initialized, read, put, remove, summonPara
     return { installed: true, version: VERSION, entries: rows.length };
   } catch (error) {
     let rollbackFailed = false;
+    for (const row of rows) {
+      try { await remove(row._id); } catch { rollbackFailed = true; }
+    }
     for (const row of previous) {
       try { await put(row._id, { value: row.value }); } catch { rollbackFailed = true; }
-    }
-    const oldKeys = new Set(previous.map(row => row._id));
-    for (const row of rows) if (!oldKeys.has(row._id)) {
-      try { await remove(row._id); } catch { rollbackFailed = true; }
     }
     try {
       const restored = (await read()).filter(row => isTemplateKey(row._id));

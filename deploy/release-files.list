@@ -256,6 +256,7 @@ test/helpers/olt-native-fixture.js
 test/helpers/olt-pon-fixture.js
 test/helpers/olt-registration-fixture.js
 test/installer.test.js
+test/integration/genieacs-bootstrap.cjs
 test/isolir-payment.test.js
 test/ktp-ocr.test.js
 test/license.test.js

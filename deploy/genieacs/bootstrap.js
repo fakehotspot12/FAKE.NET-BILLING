@@ -132,7 +132,11 @@ async function request(url, options = {}) {
     }
   }).finally(() => clearTimeout(timer));
   const text = await response.text();
-  if (!response.ok) throw new Error(`${options.method || 'GET'} ${url} HTTP ${response.status}: ${text.slice(0, 180)}`);
+  if (!response.ok) {
+    const error = new Error(`${options.method || 'GET'} ${url} HTTP ${response.status}: ${text.slice(0, 180)}`);
+    error.status = response.status;
+    throw error;
+  }
   if (!text) return null;
   try {
     return JSON.parse(text);
@@ -179,6 +183,18 @@ async function login(username, password) {
   return String(token || '').replace(/^"|"$/g, '');
 }
 
+async function loginAfterAccountChange(username, password) {
+  const attempts = Math.max(1, Math.min(30, Number(process.env.GENIEACS_LOGIN_RETRY_ATTEMPTS || 12) || 12));
+  const delay = Math.max(1, Math.min(5000, Number(process.env.GENIEACS_LOGIN_RETRY_DELAY_MS || 1000) || 1000));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try { return await login(username, password); }
+    catch (error) {
+      if (![400, 401, 429, 503].includes(error.status) || attempt === attempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 async function uiPut(token, resource, body) {
   return request(`${uiBase}/api/${resource}`, {
     method: 'PUT',
@@ -202,10 +218,10 @@ async function bootstrapUser() {
       method: 'POST',
       body: JSON.stringify({ users: true, presets: true, filters: true, device: true, index: true, overview: true })
     });
-    token = await login('admin', 'admin');
+    token = await loginAfterAccountChange('admin', 'admin');
     await uiPut(token, `users/${encodeURIComponent(uiUsername)}`, { roles: 'admin' });
     await uiPut(token, `users/${encodeURIComponent(uiUsername)}/password`, { newPassword: uiPassword });
-    token = await login(uiUsername, uiPassword);
+    token = await loginAfterAccountChange(uiUsername, uiPassword);
     if (uiUsername !== 'admin') await uiDelete(token, 'users/admin');
     return { token, initialized: true };
   }

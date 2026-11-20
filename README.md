@@ -12,7 +12,7 @@ Gunakan VM/VPS baru **Ubuntu 24.04 LTS atau Debian 12**, berbasis systemd. Hanya
 
 ```bash
 apt update
-apt install -y git curl
+apt install -y ca-certificates git curl
 cd /root
 git clone https://github.com/fakehotspot12/FAKE.NET-BILLING.git
 cd FAKE.NET-BILLING
@@ -1445,6 +1445,26 @@ Installer dan updater menggunakan satu manifest `deploy/release-files.list`.
 Tes rilis menolak berkas Git yang tertinggal, sedangkan validasi runtime memeriksa
 versi/lockfile/changelog, dependency dan modul/aset yang diperlukan. Data, `.env`,
 session WA dan konfigurasi privat bukan bagian payload rilis.
+
+Bootstrap ACS baru menunggu pembaruan cache akun GenieACS sebelum melanjutkan
+login dan pemasangan parameter. Penantian dibatasi; akun ACS existing tidak
+direset atau dicoba menggunakan password bawaan. Saat template generik pertama
+kali dipasang, konfigurasi tampilan awal dicadangkan lalu diganti dalam urutan
+yang tidak mencampur struktur lama dan baru. Jika gagal, tampilan awal dipulihkan.
+
+Untuk pengembang, tersedia pengujian integrasi ACS kosong:
+
+```bash
+npm run test:genieacs-install
+```
+
+Pengujian ini memerlukan Node.js/npm, Docker aktif, internet dan sekitar 1 GB RAM
+kosong. GenieACS dipasang di direktori sementara, MongoDB dijalankan dalam
+container uji dengan port localhost acak dan memori dibatasi. Tes memverifikasi
+login, 26 Virtual Parameters, template awal dan pengulangan bootstrap tanpa
+mengubah tampilan existing. Container/direktori uji dibersihkan setelah selesai.
+Helper Mongo/UI host sengaja tidak dijalankan; tidak mengakses modem atau data
+ACS existing. Tes ini bukan pengganti uji penuh systemd pada VM baru.
 
 Update menyiapkan source serta dependency di staging, membuat backup, menunggu
 pesan WA aktif selesai, lalu menghentikan hanya service billing terkait untuk
