@@ -2,6 +2,8 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),Module=require('node:module');
 const models=require('../src/onu-model'),store=require('../src/store'),monitor=require('../src/olt-monitor');
 process.env.MIGRATION_MODE='0';process.env.REDIS_CACHE='0';
+// Await the cold ESM import before checking background work backed by in-memory mocks.
+test.before(async()=>require('../src/olt-vendors').loadLibrary());
 function fixture(vendor='hsgq') {
  const data=store.createDefaultStore(),device=monitor.validateDevice(data,{name:'Unit',vendor,host:'192.0.2.56',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit'}),serialNumber='ZTEGAABBCCDD';
  const row={id:vendor==='hsgq'?'0/3:0:'+serialNumber:'1/1/13:1',pon:vendor==='hsgq'?3:13,onuId:vendor==='hsgq'?0:1,serialNumber,status:'online',model:'ZTE-2G',modelSource:'zte-configured-type'};
