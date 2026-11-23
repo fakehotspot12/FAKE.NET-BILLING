@@ -82,10 +82,12 @@ test('ONU lists open the first physical PON and stay bounded to eight for every 
   assert.doesNotMatch(source, /onuSlots|focusedOnu|data-onu-focus|olt-onu-grid|olt-onu-slot/);
   assert.match(source, /device\?\.ponOverview/);
   assert.match(source, /view\.pon=ports\[0\]\?\.ponKey\|\|''/);
-  assert.match(source, /if\(!view\.pon\)\{latestDetails=null;[\s\S]*?return;\}/);
-  assert.doesNotMatch(source, /id="oltLimit"|>Semua PON</);
+  assert.match(source, /if\(!ports\.length\|\|!allPons&&!view\.pon\)\{latestDetails=null;[\s\S]*?return;\}/);
+  assert.match(source, /const allPons=view\.allPons&&faultStates\.has\(view\.status\)/);
+  assert.doesNotMatch(source, /id="oltLimit"/);
+  assert.match(source, /faultStates\.has\(view\.status\)\?`<button[^`]+>Semua PON</);
   assert.match(source, /view\.deviceId=event\.target\.value;view\.pon='';view\.page=1;view\.limit=8/);
-  assert.match(source, /view\.pon=button\.dataset\.pon;view\.page=1;view\.limit=8/);
+  assert.match(source, /view\.pon=button\.dataset\.pon;view\.allPons=!view\.pon&&faultStates\.has\(view\.status\);view\.page=1;view\.limit=8/);
   assert.doesNotMatch(style, /olt-onu-grid|olt-onu-slot|olt-onu-selected/);
   assert.match(source, /Registrasi ONU/);
   assert.doesNotMatch(source, />Tambah Modem</);

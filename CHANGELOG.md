@@ -2,6 +2,22 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.6.3] - 2026-11-23
+
+### Added
+
+- Registrasi ONU ZTE dalam satu popup: daftar modem baru dengan delapan baris per halaman, otorisasi manual berdasarkan SN, serta pengaturan otomatis per PON. Pilihan layanan satu ONU tidak mengubah preset bersama; PON otomatis dilindungi dari otorisasi manual bersamaan.
+- Pengelolaan HSGQ GPON pada model dan firmware terverifikasi: inventory per PON termasuk ONU ID 0, ganti nama, reboot ONU, hapus ONU offline, dan Save Config. CPU/RAM dibaca melalui CLI dengan cache lima menit di Ringkasan; firmware lain tetap mengikuti kemampuan yang sudah terverifikasi.
+- Model ONU terintegrasi pada semua vendor OLT mengutamakan ModelName/ProductClass ACS melalui pemetaan SN atau MAC antarmuka ONT yang sudah terverifikasi. Menggunakan indeks integrasi existing tanpa request ACS per baris atau summon massal; pengaturan integrasi, cakupan NAS, serta pengaman modem pindah dan identitas ganda tetap berlaku.
+
+### Fixed
+
+- Model ZTE/HSGQ menampilkan seri modem sebenarnya, bukan nama profil konfigurasi OLT. Equipment-ID dan jarak dapat dilengkapi dari detail native dengan pemeriksaan identitas sebelum/sesudah pembacaan. Model dicache sampai 24 jam, jarak 30 menit, serta pekerjaan latar dibatasi pada ONU yang sedang ditampilkan; data tidak tersedia tidak ditebak menjadi nol.
+- Memperbaiki decoding port SNMP HSGQ, respons posisi ONU yang sudah kosong, serta respons JSON firmware tanpa penanda akhir koneksi. Pembacaan redaman dibatasi dan berjalan di background; antrean CLI tetap berbatas dan hasil aksi yang belum pasti tidak dikirim ulang otomatis.
+- Filter LOS, Dying Gasp, Other, dan redaman tinggi dapat mencakup seluruh PON pada satu OLT terpilih tanpa menampilkan seluruh inventory sekaligus; daftar tetap delapan ONU per halaman dan memakai snapshot existing.
+- Community SNMP tersimpan dapat dilihat pada form pengaturan OLT oleh pemegang izin pengelolaan. Nilainya tidak ditambahkan ke daftar monitoring; penyimpanan form tanpa perubahan mempertahankan credential terenkripsi.
+- Memperbarui cache aset popup dan manifest installer/updater untuk seluruh modul serta pengujian baru. Update tidak mengganti konfigurasi OLT, parameter/preset/tampilan ACS existing, data pelanggan, invoice, transaksi, atau jadwal pengiriman WhatsApp.
+
 ## [4.6.2] - 2026-11-21
 
 ### Fixed

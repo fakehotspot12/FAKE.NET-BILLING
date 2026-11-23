@@ -13,13 +13,14 @@ export async function withContext(data,device,operation,options={}){
   context.bandwidthActionAllowed=options.bandwidthActionAllowed===true;context.explicitDevBandwidthAction=options.explicitDevBandwidthAction===true;context.bandwidthGrant=null;
   context.registrationActionAllowed=options.registrationActionAllowed===true;context.explicitDevRegistrationAction=options.explicitDevRegistrationAction===true;context.registrationGrant=null;
   context.bridgeActionAllowed=options.bridgeActionAllowed===true;context.explicitDevBridgeAction=options.explicitDevBridgeAction===true;context.bridgeGrant=null;
-  context.cliQueue=options.cliQueue===true&&device.vendor==='zte';
+  context.hsgqActionAllowed=options.hsgqActionAllowed===true;context.hsgqGrant=null;
+  context.cliQueue=device.vendor==='hsgq'||options.cliQueue===true&&device.vendor==='zte';
   const timer=setTimeout(()=>context.controller.abort(),context.deadline-Date.now());
   try{return await contexts.run(context,operation);}finally{clearTimeout(timer);context.controller.abort();}
 }
 export function authorizeOltReboot(commands){
   const context=current(),prefix=commands?.slice(0,-1),command=commands?.at(-1);
-  if(!context.oltRebootAllowed||process.env.MIGRATION_MODE==='1'||context.oltRebootGrant||!Array.isArray(commands)||!['reboot','reload','system reboot'].includes(command)||!['["enable"]','["enable","config"]','["enable","configure terminal"]','["enable","system-view"]'].includes(JSON.stringify(prefix)))throw new Error('OLT reboot authorization rejected');
+  if(!context.oltRebootAllowed||process.env.MIGRATION_MODE==='1'||context.oltRebootGrant||!Array.isArray(commands)||!['reboot','reload','system reboot'].includes(command)||!['["enable"]','["enable","config"]','["enable","configure terminal"]','["enable","system-view"]',...(context.device.vendor==='hsgq'?['["enable","configure"]']:[])].includes(JSON.stringify(prefix)))throw new Error('OLT reboot authorization rejected');
   context.oltRebootGrant={commands:[...commands],used:false,submitted:false,acknowledged:false};
 }
 export function authorizePonOperation({ponKey,enabled,proof}){
@@ -46,6 +47,9 @@ export function authorizeBridgeOperation(state,value){
   const context=current();
   if(context.device.vendor!=='zte'||!context.bridgeActionAllowed||context.bridgeGrant||process.env.MIGRATION_MODE==='1'&&!context.explicitDevBridgeAction)throw new Error('ONU bridge authorization rejected');
   context.bridgeGrant=require('../../olt-zte-bridge').authorize(state,value);
+}
+export function authorizeHsgqOperation(spec){
+ const context=current();if(context.device.vendor!=='hsgq'||!context.hsgqActionAllowed||context.hsgqGrant||process.env.MIGRATION_MODE==='1')throw Error('HSGQ action authorization rejected');context.hsgqGrant=require('../../olt-hsgq').authorize(spec);
 }
 export function authorizeHiosoOperation({address,operation,name=''}){
   const context=current();
@@ -78,11 +82,18 @@ export async function readOnlyFetch(value,options={}){
   if(!login&&!hiosoWrite&&!hiosoDeleteView&&!hiosoSaveView&&(method!=='GET'||/(?:delete|reboot|reset|restart|restore|cfgload|setonu|save|update|remove|\/goform\/)/i.test(url.pathname)))throw new Error('Vendor web write actions are locked');
   if(!login&&[...url.searchParams].some(([key,value])=>/^(?:action|operation|op|cmd|command|method)$/i.test(key)&&!/^(?:get|read|list|show|status|detail)$/i.test(value)))throw new Error('Vendor web query action rejected');
   if(hiosoWrite)context.hiosoGrant.used=true;
-  const response=await(context.transports.fetch||fetch)(url,{...options,method,redirect:'manual',signal:context.controller.signal});
+  const requestController=context.device.vendor==='hsgq'?new AbortController():null;
+  const signal=requestController?AbortSignal.any([context.controller.signal,requestController.signal,...(options.signal?[options.signal]:[])]):context.controller.signal;
+  const headers=context.device.vendor==='hsgq'?new Headers(options.headers):options.headers;if(context.device.vendor==='hsgq'&&method==='GET'&&options.body===undefined)headers.delete('content-type');
+  const response=await(context.transports.fetch||fetch)(url,{...options,headers,method,redirect:'manual',signal});
   if(Number(response.headers.get('content-length')||0)>524288)throw new Error('Vendor response too large');
   if(!response.body)return response;
   const reader=response.body.getReader(),parts=[];let bytes=0;
-  try{while(true){remaining();const{done,value:chunk}=await reader.read();if(done)break;bytes+=chunk.length;if(bytes>524288)throw new Error('Vendor response too large');parts.push(chunk);}}catch(error){await reader.cancel().catch(()=>{});throw error;}
+  const hsgqJson=context.device.vendor==='hsgq'&&!response.headers.has('content-length')&&!response.headers.has('transfer-encoding')&&['/userlogin','/gponmgmt','/gponont_mgmt','/ontinfo_table','/onumgmt'].includes(url.pathname);
+  try{while(true){remaining();const{done,value:chunk}=await reader.read();if(done)break;bytes+=chunk.length;if(bytes>524288)throw new Error('Vendor response too large');parts.push(chunk);
+    // Some HSGQ firmware leaves unframed JSON responses open on keep-alive.
+    if(hsgqJson&&/[}\]]\s*$/.test(Buffer.from(chunk).toString('utf8'))){let complete=false;try{const body=JSON.parse(Buffer.concat(parts).toString('utf8'));complete=body!==null&&typeof body==='object'&&!Array.isArray(body)&&Object.hasOwn(body,'code');}catch{}if(complete){void reader.cancel().catch(()=>{});requestController.abort();break;}}
+  }}catch(error){await reader.cancel().catch(()=>{});throw error;}
   const body=Buffer.concat(parts);
   if(hiosoWrite&&/<title>\s*(?:error|denied)\b|>[^<>]{0,120}\b(?:operation failed|invalid operation|access denied)\b/i.test(body.toString('utf8')))throw new Error('HIOSO rejected operation');
   return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});

@@ -390,6 +390,7 @@ function clearDeviceListCache() {
   deviceListInflight.clear();
   bestDeviceCache.clear();
   radioCapabilityLookups.clear();
+  onuModelLookups.clear();
 }
 
 function deviceCacheScope(cfg = {}) {
@@ -400,6 +401,32 @@ function deviceListCacheKey(cfg = {}, query = {}, projection = '', requestQuery 
 }
 
 const radioCapabilityLookups = new Map();
+const onuModelLookups = new Map();
+function cachedOnuModels(settings = {}, serials = []) {
+  const cfg = normalizeSettings(settings), wanted = new Set(serials.filter(value => typeof value === 'string').slice(0, 128));
+  const prefix = deviceCacheScope(cfg), key = prefix + [...wanted].sort().join(','), now = Date.now(), old = onuModelLookups.get(key);
+  if (!configured(cfg) || !wanted.size) return new Map();
+  if (old?.expiresAt > now) return structuredClone(old.rows);
+  const rows = new Map(), identities = new Map(), ambiguous = new Set(); let budget = 30000;
+  for (const [scope, entry] of deviceListCache) {
+    if (!scope.startsWith(prefix) || entry.staleUntil <= now) continue;
+    for (const raw of entry.rows || []) {
+      if (--budget < 0) return new Map();
+      const sn = normalizeSerialNumber(cleanText(raw._deviceId?._SerialNumber) || getPathValue(raw, 'InternetGatewayDevice.DeviceInfo.SerialNumber') || getPathValue(raw, 'Device.DeviceInfo.SerialNumber'));
+      if (!wanted.has(sn) || !raw._id) continue;
+      if (identities.has(sn) && identities.get(sn) !== raw._id) ambiguous.add(sn);
+      identities.set(sn, raw._id);
+      const normal = require('./onu-model').normalize, model = normal(getPathValue(raw, 'InternetGatewayDevice.DeviceInfo.ModelName')) || normal(getPathValue(raw, 'Device.DeviceInfo.ModelName')) || normal(cleanText(raw._deviceId?._ProductClass));
+      if (!model) continue;
+      if (rows.has(sn) && rows.get(sn).model !== model) ambiguous.add(sn);
+      rows.set(sn, { model, source: 'acs-device-info', checkedAt: raw._lastInform || '' });
+    }
+  }
+  for (const sn of ambiguous) rows.delete(sn);
+  onuModelLookups.set(key, { rows, expiresAt: now + 5000 });
+  while (onuModelLookups.size > 16) onuModelLookups.delete(onuModelLookups.keys().next().value);
+  return structuredClone(rows);
+}
 function cachedRadioCapabilities(settings = {}, serials = []) {
   const cfg = normalizeSettings(settings), wanted = new Set(serials.filter(value => typeof value === 'string').slice(0, 128));
   const prefix = deviceCacheScope(cfg), lookupKey = prefix + [...wanted].sort().join(','), previous = radioCapabilityLookups.get(lookupKey);
@@ -1087,12 +1114,12 @@ async function identityDevices(settings = {}, options = {}) {
   const interfaceMacPaths=['InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress','Device.Ethernet.Interface.1.MACAddress'];
   const opticalPaths=options.optical===true?cfg.rxPowerParameters.filter(path=>!/Password|Passphrase|PreSharedKey|Secret|Token|WLAN|WiFi|Hosts/i.test(path)).slice(0,32):[];
   const projection=['_id','_deviceId','_lastInform','_registered','_tags',
-    'InternetGatewayDevice.DeviceInfo.SerialNumber','InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber','Device.DeviceInfo.SerialNumber',...interfaceMacPaths,...cfg.usernameParameters,...opticalPaths].join(',');
+    'InternetGatewayDevice.DeviceInfo.SerialNumber','InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber','Device.DeviceInfo.SerialNumber','InternetGatewayDevice.DeviceInfo.ModelName','Device.DeviceInfo.ModelName',...interfaceMacPaths,...cfg.usernameParameters,...opticalPaths].join(',');
   // Background-only read: no CWMP refresh, WiFi/host scan or credentials projection.
   const raw=await requestJson(cfg,'/devices/',{timeoutMs:4000,maxResponseBytes:8*1024*1024,query:{query:JSON.stringify(usernameSuffixExclusionQuery(cfg)),projection,limit:'10001'}});
   if(!Array.isArray(raw)||raw.length>10000)throw new Error('Daftar identitas ACS melebihi batas aman');
   return raw.map(device=>{const optical=opticalPaths.length?firstValidRxPowerParameter(device,opticalPaths,(value,path)=>rxPowerNumber(value,path)<0&&Boolean(rxPowerTimestamp(device,path))):null;return({id:cleanText(device._id),serialNumber:normalizeSerialNumber(cleanText(device._deviceId?._SerialNumber)||getPathValue(device,'InternetGatewayDevice.DeviceInfo.SerialNumber')||getPathValue(device,'Device.DeviceInfo.SerialNumber')||getPathValue(device,'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber')),
-    username:resolveUsernameParameter(device,cfg.usernameParameters).value,interfaceMacs:[...new Set(interfaceMacPaths.map(path=>cleanText(getPathValue(device,path)).toUpperCase().replace(/[:-]/g,'')).filter(mac=>/^[0-9A-F]{12}$/.test(mac)&&!/^0{12}$|^F{12}$/.test(mac)&&(parseInt(mac.slice(0,2),16)&1)===0))],productClass:cleanText(device._deviceId?._ProductClass),lastInform:cleanText(device._lastInform),registered:cleanText(device._registered),tags:safeTags(device._tags),...(opticalPaths.length?{rxPowerValue:optical?.path?rxPowerNumber(optical.value,optical.path):null,rxPowerAt:optical?.path?rxPowerTimestamp(device,optical.path):''}:{})});})
+    username:resolveUsernameParameter(device,cfg.usernameParameters).value,interfaceMacs:[...new Set(interfaceMacPaths.map(path=>cleanText(getPathValue(device,path)).toUpperCase().replace(/[:-]/g,'')).filter(mac=>/^[0-9A-F]{12}$/.test(mac)&&!/^0{12}$|^F{12}$/.test(mac)&&(parseInt(mac.slice(0,2),16)&1)===0))],modelName:cleanText(getPathValue(device,'InternetGatewayDevice.DeviceInfo.ModelName')||getPathValue(device,'Device.DeviceInfo.ModelName')).slice(0,80),productClass:cleanText(device._deviceId?._ProductClass),lastInform:cleanText(device._lastInform),registered:cleanText(device._registered),tags:safeTags(device._tags),...(opticalPaths.length?{rxPowerValue:optical?.path?rxPowerNumber(optical.value,optical.path):null,rxPowerAt:optical?.path?rxPowerTimestamp(device,optical.path):''}:{})});})
     .filter(row=>row.id&&row.serialNumber&&row.username&&!rowExcludedByUsernameSuffix(row,cfg.excludeUsernameSuffixes));
 }
 
@@ -3483,6 +3510,7 @@ module.exports = {
   DEFAULT_WIFI_SSID_PARAMETERS,
   configured,
   cachedRadioCapabilities,
+  cachedOnuModels,
   configureWan,
   addWifiSsid,
   deleteDevice,

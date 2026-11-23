@@ -32,3 +32,8 @@ test('manual ZTE telemetry in isolated Dev requires the existing explicit grant 
  const denied=await telemetry.read(data,device,{}, {...options,allowZteDevRead:false});assert.equal(calls,0);assert.equal(denied.cpuPercent,undefined);const first=await telemetry.read(data,device,{},options);assert.equal(first.cpuPercent,9);assert.equal(first.nextReadAt,now+telemetry.INTERVAL_MS);assert.equal((await telemetry.read(data,device,first,{...options,now:now+1000})),first);assert.equal(calls,1);
  }finally{process.env.MIGRATION_MODE='0';}
 });
+test('HSGQ reads CPU and used RAM from native CLI with five-minute cache and no web requests',async()=>{
+ const{data,device}=fixture('hsgq'),now=Date.now();let calls=0;const outputs=[{command:'show cpu-usage',stdout:'Get the CPU usage is 10.389610%\r\n'},{command:'show memory statistics',stdout:'Storage Type Storage Size Storage Used Storage Rate\r\nMemory 515780 kB 258512 kB 50.120592%\r\n'}],options={now,transports:{commands:async({commands})=>{calls++;assert.deepEqual(commands,['enable','configure','show cpu-usage','show memory statistics']);return{success:true,outputs};},fetch:async()=>{throw Error('Must use CLI');}}};
+ const first=await telemetry.read(data,device,{},options);assert.equal(first.cpuPercent,10.38961);assert.equal(first.ramPercent,50.120592);assert.equal(first.source,'cli-hsgq');assert.equal(first.nextReadAt,now+telemetry.INTERVAL_MS);assert.equal(await telemetry.read(data,device,first,{...options,now:now+1000}),first);assert.equal(calls,1);
+ for(const memory of ['Memory 0 kB 0 kB 0%','Memory 100 kB 150 kB 50%','Memory 100 kB 50 kB 10%'])assert.throws(()=>telemetry.parseHsgq([outputs[0],{...outputs[1],stdout:memory}]));
+});

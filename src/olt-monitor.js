@@ -92,7 +92,8 @@ function position(index) {
   const slot = (offset >>> 16) + (modern ? 1 : 0), pon = ((offset >>> 12) & 15) + 1, onuId = offset & 4095;
   return onuId >= 1 && onuId <= 1024 ? { slot, pon, onuId, ponKey: `0/${slot}/${pon}` } : null;
 }
-function actionPosition(device,index){return vendors.normalize(device.vendor)==='hioso'?hioso.position(index):vendors.normalize(device.vendor)==='zte'?require('./olt-zte-inventory').position(index):position(index);}
+function actionPosition(device,index){return vendors.normalize(device.vendor)==='hioso'?hioso.position(index):vendors.normalize(device.vendor)==='hsgq'?require('./olt-hsgq').position(index):vendors.normalize(device.vendor)==='zte'?require('./olt-zte-inventory').position(index):position(index);}
+const managedDriver=device=>device.vendor==='hioso'?hioso:device.vendor==='hsgq'?require('./olt-hsgq'):null;
 function optical(row) {
   const value = number(row);
   if (value === null || [-1, -65535, 65535, 2147483647].includes(value)) return null;
@@ -254,7 +255,7 @@ function publicDevice(device, snapshot = null, options = {}) {
     ponOverview: require('./olt-pon').decorate(null,device,snapshot?.ports||[]).filter(row => row.kind === 'pon').slice(0,64),
     summary: snapshot?.summary || null, warnings: snapshot?.warnings || [] };
 }
-function fingerprint(device) { const fields=[device.host,device.port,device.communityEnc,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.cliPort];if(vendors.normalize(device.vendor)!=='cdata')fields.push(device.vendor,device.cliProtocol,device.webPort,'hioso-actions-v1');if(vendors.normalize(device.vendor)==='zte')fields.push('zte-inventory-v1');return crypto.createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0,24); }
+function fingerprint(device) { const fields=[device.host,device.port,device.communityEnc,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.cliPort];if(vendors.normalize(device.vendor)!=='cdata')fields.push(device.vendor,device.cliProtocol,device.webPort,'hioso-actions-v1');if(device.vendor==='hsgq')fields.push('hsgq-gpon-actions-v1');if(vendors.normalize(device.vendor)==='zte')fields.push('zte-inventory-v1');return crypto.createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0,24); }
 function cacheKey(device) { return `fakenet-billing:olt:v2:${device.id}:${fingerprint(device)}`; }
 async function snapshotFor(device) {
   if(process.env.MIGRATION_MODE==='1'&&/^demo-olt-\d{1,2}$/.test(device.id)&&device.demoSnapshot?.simulated===true&&Array.isArray(device.demoSnapshot.onus)&&device.demoSnapshot.onus.length<=128)return device.demoSnapshot;
@@ -292,14 +293,14 @@ async function collect(data, device, transport = executeTable, causeTransport = 
     for(const name of tableNames){try{tables[name]=await transport(target,name,OIDS[name]);}catch{if(name==='system')throw new Error('SNMP OLT belum merespons');warnings.push(`Data ${name} belum tersedia`);}}
     const system=column(tables.system||[],OIDS.system);if(!system.has('2.0'))throw new Error('Identitas SNMP OLT belum terverifikasi');
     if(isZte&&!/^\.?1\.3\.6\.1\.4\.1\.3902(?:\.|$)/.test(string(system.get('2.0'))))throw new Error('Identitas SNMP bukan OLT ZTE');
-    let inventory;try{inventory=await vendors.readInventory(data,device,{normalizeSerial,classifyCause},{allowZteDevRead:options.allowZteDevRead===true,includeTelemetry:isZte,previousSnapshot:options.previousSnapshot});}catch{inventory={available:false,rows:[],warning:isZte?'Inventory ZTE belum terbaca lengkap. Data terakhir dipertahankan; coba baca ulang setelah sesi OLT selesai.':'Pembacaan inventory vendor belum berhasil. Aksi tulis tetap terkunci.'};}
+    let inventory;try{inventory=await vendors.readInventory(data,device,{normalizeSerial,classifyCause,...(device.vendor==='hsgq'&&tables.interfaces?.length?{physicalInterfaces:tables.interfaces.map(row=>({value:string(row)}))}:{})},{allowZteDevRead:options.allowZteDevRead===true,includeTelemetry:isZte,previousSnapshot:options.previousSnapshot});}catch{inventory={available:false,rows:[],warning:isZte?'Inventory ZTE belum terbaca lengkap. Data terakhir dipertahankan; coba baca ulang setelah sesi OLT selesai.':'Pembacaan inventory vendor belum berhasil. Aksi tulis tetap terkunci.'};}
     if(isZte){const model=string(system.get('1.0')).match(/\bC(?:300|320|350|600|620|650)\b/i)?.[0];if(model)inventory.modelLabel='ZTE '+model.toUpperCase();}
-    if(inventory.warning)warnings.push(inventory.warning);if(device.vendor!=='hioso'||!Object.values(inventory.hiosoActions||{}).some(Boolean))warnings.push('Aksi tulis vendor yang belum terverifikasi tetap terkunci. Pemeriksaan reboot berlaku pada inventory ONU valid; tiket otomatis hanya untuk LOS dengan penyebab terverifikasi.');
+    if(inventory.warning)warnings.push(inventory.warning);if(!Object.values(inventory.hiosoActions||inventory.hsgqActions||{}).some(Boolean))warnings.push('Aksi tulis vendor yang belum terverifikasi tetap terkunci. Pemeriksaan reboot berlaku pada inventory ONU valid; tiket otomatis hanya untuk LOS dengan penyebab terverifikasi.');
     const states=column(tables.interfaceStatus||[],OIDS.interfaceStatus),onus=inventory.rows||[];
     const interfaces=[...column(tables.interfaces||[],OIDS.interfaces)].map(([id,row])=>{const value=number(states.get(id));return{id,name:string(row),status:value===1?'online':value===2?'offline':'unknown'};});
     const {ports,modelLabel,warning}=vendors.monitoringPorts(device,interfaces,inventory);if(warning)warnings.push(warning);
     for(const port of ports)if(port.kind==='pon'&&inventory.available)Object.assign(port,summarizeOnus(onus.filter(row=>row.ponKey===port.ponKey)));
-    return{checkedAt:new Date().toISOString(),status:'online',inventoryAvailable:inventory.available,systemName:string(system.get('5.0')),description:string(system.get('1.0')),uptimeTicks:number(system.get('3.0')),onus,ports,modelLabel,hiosoActions:inventory.hiosoActions||{},summary:inventory.available?summarizeOnus(onus):null,causeSchema:2,warnings};
+    return{checkedAt:new Date().toISOString(),status:'online',inventoryAvailable:inventory.available,systemName:string(system.get('5.0')),description:string(system.get('1.0')),uptimeTicks:number(system.get('3.0')),onus,ports,modelLabel:inventory.modelLabel||modelLabel,hiosoActions:inventory.hiosoActions||{},hsgqActions:inventory.hsgqActions||{},summary:inventory.available?summarizeOnus(onus):null,causeSchema:2,warnings};
   }
   // Walk columns, never the whole enterprise MIB or individual ONU credentials.
   for (const name of ['system','interfaces','interfaceStatus','serial','status','name','model','distance','rx']) {
@@ -358,8 +359,14 @@ async function onuPage(data, devices, options = {}, management = false) {
   const filtered=search?linkedOnus(data,device,raw,snapshot).filter(row=>[row.name,row.serialNumber,row.model,row.customerName,row.customerUsername,row.fiberPointName,device.name,row.downCause].some(value=>String(value||'').toLowerCase().includes(search))):raw;
   const pages = Math.max(1,Math.ceil(filtered.length/limit));
   const page = Math.max(1,Math.min(pages,parseInt(options.page,10)||1));
-  const selected=filtered.slice((page-1)*limit,page*limit),rows=search?selected:linkedOnus(data,device,selected,snapshot);
-  return { device:publicRow,devices:[publicRow],ports:require('./olt-pon').decorate(data,device,snapshot?.ports||[]).map(row=>({...row,oltId:device.id,oltName:device.name})),summary:publicRow.inventoryAvailable!==false?publicRow.summary:null,onus:require('./olt-zte-catalogue').identifyOnus(data,device,rows).map(row=>({...row,oltId:device.id,oltName:device.name})),total:filtered.length,page,pages,limit,selectionRequired:false,...(statusRead?{statusRead}:{}) };
+  const selected=filtered.slice((page-1)*limit,page*limit);let rows=search?selected:linkedOnus(data,device,selected,snapshot);
+  if(device.vendor==='hsgq'&&vendors.capabilities(device,snapshot).rename){
+    rows=await require('./olt-hsgq').enrichPage(data,device,rows,{background:true});
+    const latest=await snapshotFor(device),readings=new Map(rows.filter(row=>row.rxPowerAt).map(row=>[row.id,row])),next=snapshot&&!latest?.pendingRefresh&&latest?.checkedAt===snapshot.checkedAt&&{...snapshot,onus:(snapshot.onus||[]).map(row=>{const reading=readings.get(row.id);return reading?.serialNumber===row.serialNumber?{...row,rxPower:reading.rxPower,txPower:reading.txPower,rxPowerAt:reading.rxPowerAt,opticalSource:reading.opticalSource}:row;})};
+    if(next&&readings.size){next.summary=summarizeOnus(next.onus);snapshot=next;remember(cache,cacheKey(device),next);if(redis.enabled())try{await redis.set(cacheKey(device),JSON.stringify(next),86400);}catch{}publicRow.summary=next.summary;}
+  }
+  rows=require('./onu-model').enrichPage(data,device,require('./olt-zte-catalogue').identifyOnus(data,device,rows));
+  return { device:publicRow,devices:[publicRow],ports:require('./olt-pon').decorate(data,device,snapshot?.ports||[]).map(row=>({...row,oltId:device.id,oltName:device.name})),summary:publicRow.inventoryAvailable!==false?publicRow.summary:null,onus:rows.map(row=>({...row,oltId:device.id,oltName:device.name})),total:filtered.length,page,pages,limit,selectionRequired:false,...(statusRead?{statusRead}:{}) };
 }
 async function liveSerial(data,device,onu) {
   const address=net.isIP(device.host)===6?`udp6:[${device.host}]:${device.port}`:`${device.host}:${device.port}`;
@@ -376,7 +383,7 @@ function selectedOnu(snapshot,serial,selector={},allowMissing=false,device={vend
   return onu;
 }
 async function readRemovalState(data,device,serial,selector={},transport={}){
-  if(device.vendor==='hioso'){const sn=normalizeSerial(serial),snapshot=await snapshotFor(device);if(!sn)throw new Error('MAC ONU tidak valid');const target=selectedOnu(snapshot,sn,selector,true,device),result=await hioso.run(data,device,target,'inspect');return{target,state:result.state};}
+  if(managedDriver(device)){const sn=normalizeSerial(serial),snapshot=await snapshotFor(device);if(!sn)throw new Error('Identitas ONU tidak valid');if(device.vendor==='hsgq'&&!vendors.capabilities(device,snapshot).delete)throw Error('Aksi HSGQ masih terkunci sampai firmware terverifikasi');const target=selectedOnu(snapshot,sn,selector,true,device),result=await managedDriver(device).run(data,device,target,'inspect');return{target,state:result.state};}
   if(!vendors.canWrite(device))throw new Error('Penghapusan vendor ini masih terkunci sampai model dan aksi terverifikasi');
   const sn=normalizeSerial(serial);if(!sn)throw new Error('Serial ONU tidak valid');
   const snapshot=await snapshotFor(device),target=selectedOnu(snapshot,sn,selector,true);
@@ -386,12 +393,12 @@ async function readRemovalState(data,device,serial,selector={},transport={}){
   return {target,state:result.absent?'missing':cli.readRunState(result.outputs?.at(-1)?.stdout)};
 }
 async function removeOnu(data,device,serial,payload,transport={serial:liveSerial,delete:cli.deleteOnu,inspect:cli.inspectOnu}) {
-  if(device.vendor==='hioso'){
+  if(managedDriver(device)){
     const sn=normalizeSerial(serial);if(!sn||normalizeSerial(payload.serialNumber)!==sn||payload.confirmDelete!==true)throw new Error('Konfirmasi MAC dan persetujuan hapus ONU wajib sesuai');
-    const snapshot=await snapshotFor(device),onu=selectedOnu(snapshot,sn,payload,true,device),result=await hioso.run(data,device,onu,'delete'),next={...snapshot,pendingRefresh:true};
+    const snapshot=await snapshotFor(device);if(device.vendor==='hsgq'&&!vendors.capabilities(device,snapshot).delete)throw Error('Aksi HSGQ masih terkunci sampai firmware terverifikasi');const onu=selectedOnu(snapshot,sn,payload,true,device),result=await managedDriver(device).run(data,device,onu,'delete'),next={...snapshot,pendingRefresh:true};
     if(result.deleteConfirmed){next.onus=(snapshot?.onus||[]).filter(row=>row.id!==onu.id);next.summary=summarizeOnus(next.onus);for(const port of next.ports||[])if(port.kind==='pon')Object.assign(port,summarizeOnus(next.onus.filter(row=>row.ponKey===port.ponKey)));}
     const key=cacheKey(device);remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}lastAttempt.delete(key);
-    return{serialNumber:sn,onuIndex:onu.id,ponKey:onu.ponKey,onuId:onu.onuId,oltId:device.id,confirmed:result.deleteConfirmed,alreadyAbsent:result.alreadyAbsent===true,message:result.deleteConfirmed?'ONU HIOSO terverifikasi sudah dihapus. Data billing tetap tersimpan.':'Hapus ONU belum terverifikasi. Periksa ulang tanpa mengirim perintah berulang.'};
+    return{serialNumber:sn,onuIndex:onu.id,ponKey:onu.ponKey,onuId:onu.onuId,oltId:device.id,confirmed:result.deleteConfirmed,alreadyAbsent:result.alreadyAbsent===true,message:result.deleteConfirmed?'ONU terverifikasi sudah dihapus. Data billing tetap tersimpan.':'Hapus ONU belum terverifikasi. Periksa ulang tanpa mengirim perintah berulang.'};
   }
   if(!vendors.canWrite(device))throw new Error('Penghapusan vendor ini masih terkunci sampai aksi terverifikasi');
   transport={serial:liveSerial,delete:cli.deleteOnu,inspect:cli.inspectOnu,...transport};
@@ -411,10 +418,10 @@ async function removeOnu(data,device,serial,payload,transport={serial:liveSerial
   return {serialNumber:sn,onuIndex:String(onu.id),ponKey:onu.ponKey,onuId:onu.onuId,oltId:device.id,confirmed:Boolean(result.deleteConfirmed),alreadyAbsent:result.alreadyAbsent===true,message:result.alreadyAbsent?'ONU sudah tidak terdaftar di posisi ini. Daftar billing telah diperbarui.':result.deleteConfirmed?'ONU telah dihapus dari OLT. Data billing tetap tersimpan.':'Perintah hapus terkirim. Menunggu pembacaan ulang OLT; jangan mengulang sebelum status diperiksa.'};
 }
 async function rebootOnu(data,device,serial,payload,transport={serial:liveSerial,reboot:cli.rebootOnu}) {
-  if(device.vendor==='hioso'){
+  if(managedDriver(device)){
     const sn=normalizeSerial(serial);if(!sn||normalizeSerial(payload.serialNumber)!==sn||payload.confirmReboot!==true)throw new Error('Konfirmasi MAC dan persetujuan reboot ONU wajib sesuai');
-    const snapshot=await snapshotFor(device),onu=selectedOnu(snapshot,sn,payload,false,device);await hioso.run(data,device,onu,'reboot');const key=cacheKey(device),next={...snapshot,pendingRefresh:true};remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}lastAttempt.delete(key);
-    return{serialNumber:sn,oltId:device.id,submitted:true,confirmed:false,message:'Perintah reboot dikirim melalui web HIOSO. Tunggu perangkat pulih sebelum mengulang.'};
+    const snapshot=await snapshotFor(device);if(device.vendor==='hsgq'&&!vendors.capabilities(device,snapshot).reboot)throw Error('Aksi HSGQ masih terkunci sampai firmware terverifikasi');const onu=selectedOnu(snapshot,sn,payload,false,device);await managedDriver(device).run(data,device,onu,'reboot');const key=cacheKey(device),next={...snapshot,pendingRefresh:true};remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}lastAttempt.delete(key);
+    return{serialNumber:sn,oltId:device.id,submitted:true,confirmed:false,message:'Perintah reboot dikirim. Tunggu perangkat pulih sebelum mengulang.'};
   }
   if(!vendors.canWrite(device))throw new Error('Reboot vendor ini masih terkunci sampai aksi terverifikasi');
   const sn=normalizeSerial(serial);
@@ -429,7 +436,7 @@ async function rebootOnu(data,device,serial,payload,transport={serial:liveSerial
   return {serialNumber:sn,oltId:device.id,message:'Perintah reboot ONU berhasil dikirim. Sambungan perangkat akan terputus sementara.'};
 }
 async function readOnuDescription(data,device,serial,selector={},transport={inspect:cli.inspectOnu}) {
-  if(device.vendor==='hioso'){const sn=normalizeSerial(serial);if(!sn)throw new Error('MAC ONU tidak valid');const onu=selectedOnu(await snapshotFor(device),sn,selector,false,device),result=await hioso.run(data,device,onu,'inspect');if(result.state==='missing')throw new Error('ONU tidak lagi terdaftar');return{serialNumber:sn,onuIndex:onu.id,description:result.description,maxLength:30};}
+  if(managedDriver(device)){const sn=normalizeSerial(serial);if(!sn)throw new Error('Identitas ONU tidak valid');const snapshot=await snapshotFor(device);if(device.vendor==='hsgq'&&!vendors.capabilities(device,snapshot).rename)throw Error('Aksi HSGQ masih terkunci sampai firmware terverifikasi');const onu=selectedOnu(snapshot,sn,selector,false,device),result=await managedDriver(device).run(data,device,onu,'inspect');if(result.state==='missing')throw new Error('ONU tidak lagi terdaftar');return{serialNumber:sn,onuIndex:onu.id,description:result.description,maxLength:30};}
   if(!vendors.canWrite(device))throw new Error('Edit description vendor ini masih terkunci sampai aksi terverifikasi');
   const sn=normalizeSerial(serial);if(!sn)throw new Error('Serial ONU tidak valid');
   const snapshot=await snapshotFor(device),onu=selectedOnu(snapshot,sn,selector);
@@ -443,9 +450,9 @@ async function readOnuDescription(data,device,serial,selector={},transport={insp
   return {serialNumber:sn,onuIndex:String(onu.id),description};
 }
 async function renameOnu(data,device,serial,payload,transport={serial:liveSerial,rename:cli.renameOnu}) {
-  if(device.vendor==='hioso'){
-    const sn=normalizeSerial(serial);if(!sn||normalizeSerial(payload.serialNumber)!==sn)throw new Error('Konfirmasi MAC ONU wajib sesuai');const snapshot=await snapshotFor(device),onu=selectedOnu(snapshot,sn,payload,false,device),result=await hioso.run(data,device,onu,'rename',payload),next={...snapshot,onus:snapshot.onus.map(row=>row.id===onu.id?{...row,name:result.description}:row)},key=cacheKey(device);
-    remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}return{serialNumber:sn,description:result.description,confirmed:true,message:'Nama ONU HIOSO diperbarui dan hasilnya terverifikasi.'};
+  if(managedDriver(device)){
+    const sn=normalizeSerial(serial);if(!sn||normalizeSerial(payload.serialNumber)!==sn)throw new Error('Konfirmasi identitas ONU wajib sesuai');const snapshot=await snapshotFor(device);if(device.vendor==='hsgq'&&!vendors.capabilities(device,snapshot).rename)throw Error('Aksi HSGQ masih terkunci sampai firmware terverifikasi');const onu=selectedOnu(snapshot,sn,payload,false,device),result=await managedDriver(device).run(data,device,onu,'rename',payload),next={...snapshot,onus:snapshot.onus.map(row=>row.id===onu.id?{...row,name:result.description}:row)},key=cacheKey(device);
+    remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}return{serialNumber:sn,description:result.description,confirmed:true,message:'Nama ONU diperbarui dan hasilnya terverifikasi.'};
   }
   if(!vendors.canWrite(device))throw new Error('Edit description vendor ini masih terkunci sampai aksi terverifikasi');
   const sn=normalizeSerial(serial),description=cli.description(payload.description);
@@ -518,13 +525,13 @@ async function testConnection(data,device,kind,transport={}) {
   finally{diagnosticPending.delete(key);}
 }
 async function saveConfig(data,device,payload,transport) {
-  if(!vendors.canWrite(device)&&device.vendor!=='hioso')throw new Error('Save Config vendor ini masih terkunci sampai model dan aksi terverifikasi');
+  if(!vendors.canWrite(device)&&device.vendor!=='hioso'&&(device.vendor!=='hsgq'||!vendors.capabilities(device,await snapshotFor(device)).saveConfig))throw new Error('Save Config vendor ini masih terkunci sampai model dan aksi terverifikasi');
   if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: Save Config OLT asli dinonaktifkan');
   if(payload.confirmSave!==true||payload.confirmId!==device.id||String(payload.confirmName||'').trim()!==device.name)throw new Error('Konfirmasi nama OLT dan persetujuan Save Config wajib sesuai');
   if(!payload.revision||payload.revision!==device.updatedAt){const error=new Error('Pengaturan OLT berubah. Buka ulang sebelum menyimpan konfigurasi.');error.status=409;throw error;}
   if(!device.enabled||!device.cliEnabled||!device.cliUsername||!device.cliPasswordEnc)throw new Error('Aktifkan monitoring dan akses CLI OLT terlebih dahulu');
   const key=[device.id,device.host,device.cliPort].join(':'),now=Date.now();if(now-(saveTimes.get(key)||0)<60000){const error=new Error('Save Config baru diproses. Tunggu setidaknya satu menit dan periksa hasil sebelumnya.');error.status=429;throw error;}remember(saveTimes,key,now);
-  try{const result=await (transport||(device.vendor==='hioso'?hioso.saveConfig:cli.saveConfig))(data,device);return{confirmed:result.saveConfirmed===true,message:result.saveConfirmed?'Konfigurasi OLT berhasil disimpan ke penyimpanan permanen.':'Perintah Save Config sudah diproses, tetapi keberhasilannya belum terkonfirmasi. Periksa di OLT sebelum mengulang.'};}
+  try{const result=await (transport||managedDriver(device)?.saveConfig||cli.saveConfig)(data,device);return{confirmed:result.saveConfirmed===true,message:result.saveConfirmed?'Konfigurasi OLT berhasil disimpan ke penyimpanan permanen.':'Perintah Save Config sudah diproses, tetapi keberhasilannya belum terkonfirmasi. Periksa di OLT sebelum mengulang.'};}
   catch{return{confirmed:false,message:'Hasil Save Config belum dapat dipastikan. Periksa status di OLT sebelum mencoba lagi.'};}
 }
 function visibleDevices(data, user = {}) {
@@ -564,7 +571,7 @@ function linkedOnus(data, device, rows, snapshot=null) {
     if(customer&&!identities.compatible(user||customer,{nasId:device.nasId}))customer=null;
     const point = points.get(link.fiberPointId||customer?.fiberPointId||customer?.odpId||customer?.distributionPointId||customer?.distribution_point_id||customer?.odp);
     const reboot=maintenance.size?plannedReboot.forOnu(data,device,onu,{index:maintenance}):null;
-    return { ...onu, ...(reboot?{plannedRebootUntil:reboot.until}:{}), name:cli.onuDescription(onu.name,onu), lastOnlineAt:lastOnlineAt(snapshot,onu), customerId: customer?.id || '', customerName: customer?.name || '', customerUsername: customer?(user?.username||customer.username||''):'',address:customer?.address||require('./network-address').addressFromTags(data,modem),
+    return { ...onu, ...require('./onu-model').fromModem(modem, onu), ...(reboot?{plannedRebootUntil:reboot.until}:{}), name:cli.onuDescription(onu.name,onu), lastOnlineAt:lastOnlineAt(snapshot,onu), customerId: customer?.id || '', customerName: customer?.name || '', customerUsername: customer?(user?.username||customer.username||''):'',address:customer?.address||require('./network-address').addressFromTags(data,modem),
       fiberPointId: point?.id || '', fiberPointName: point ? [point.code, point.name].filter(Boolean).join(' - ') : '' };
   });
 }

@@ -1375,6 +1375,7 @@ function searchApiCacheTtlMs(path = '', fetchOptions = {}) {
   if (!url || truthyParam(url.searchParams.get('refresh'))) return 0;
   if (!String(url.searchParams.get('search') || '').trim()) return 0;
   const endpoint = url.pathname;
+  if (/\/api\/monitoring\/olt\/[^/]+\/registration\/discovery$/.test(endpoint)) return 0;
   const tab = String(url.searchParams.get('tab') || '').trim().toLowerCase();
   if (endpoint.includes('/api/radius/')) return tab === 'sessions' ? 10000 : 60000;
   if (endpoint.includes('/api/monitoring/billing-unpaid')) return 120000;
@@ -26825,7 +26826,7 @@ async function renderMonitoringOlt(mode = 'olt') {
   const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
   if (!window.FakenetOltUI || !window.FakenetTicketContext || !window.FakenetOltRegistration || !window.FakenetOltCatalogue || !window.FakenetOltBridge || !window.FakenetOltBandwidth) {
     if (!oltUiLoadPromise) oltUiLoadPromise = (async () => {
-      const version = 'olt-ticket-audit-20261120-r13';
+      const version = 'olt-registration-center-20261123-r3';
       for (const path of ['/olt.css', '/ticket-context.css']) {
         const href = path + '?ui=' + version;
         if (document.querySelector(`link[href="${href}"]`)) continue;

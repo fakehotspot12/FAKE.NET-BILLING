@@ -119,3 +119,31 @@ test('repeated list reads reuse bounded identity proofs and a new source observa
  for(let i=0;i<100;i++)assert(auto.customerFor(f.data,f.data.oltDevices[0],f.onu,f.now));assert.equal(checks,2);
  await warm(f);assert(auto.customerFor(f.data,f.data.oltDevices[0],f.onu,f.now));assert.equal(checks,4);
 });
+test('integrated ACS ModelName takes priority over OLT templates for every vendor without another source query or data writes',async()=>{
+ for(const vendor of ['cdata','hsgq','zte','hioso','tarmoc','btpon','huawei','vsol','bdcom','fiberhome']){
+  auto.invalidate();const f=fixture(),device=f.data.oltDevices[0];device.vendor=vendor;f.onu.model='ZTE-2G';f.onu.physicalModel='F609';f.row.modelName='ZXHN F670L';f.row.productClass='F609';const before=structuredClone(f.data);let reads=0;
+  await warm(f,[f.row],{fetch:async()=>{reads++;return[f.row];}});
+  for(let i=0;i<20;i++){const projected=olt.linkedOnus(f.data,device,[f.onu])[0];assert.equal(projected.physicalModel,'F670L',vendor);assert.equal(projected.physicalModelSource,'acs-device-info');assert.equal(projected.model,'ZTE-2G');}
+  assert.equal(reads,1);assert.deepEqual(f.data,before);
+ }
+});
+test('EPON models use the verified interface MAC mapping and ProductClass fallback, never the MAC as an assumed serial',async()=>{
+ const f=fixture(),device=f.data.oltDevices[0],mac='AABBCCDDEEFF';device.vendor='hioso';Object.assign(f.onu,{id:'1/1:1:'+mac,serialNumber:mac,identifierKind:'mac'});Object.assign(f.row,{serialNumber:'RTETQB8H0128704',interfaceMacs:[mac],productClass:'HG8145V5'});await warm(f);
+ assert.equal(olt.linkedOnus(f.data,device,[f.onu])[0].physicalModel,'HG8145V5');
+ auto.invalidate();delete f.row.interfaceMacs;await warm(f);assert.equal(olt.linkedOnus(f.data,device,[f.onu])[0].physicalModel,undefined);
+});
+test('disabled integration, foreign NAS, ambiguous identities and replacement hardware cannot inherit an ACS model',async()=>{
+ for(const scenario of ['disabled','foreign','duplicate-acs','duplicate-position','replacement']){
+  auto.invalidate();const f=fixture(),device=f.data.oltDevices[0];f.row.modelName='F670L';let rows=[f.row];
+  if(scenario==='disabled')f.data.settings.networkIntegrationEnabled=false;
+  if(scenario==='foreign')f.row.tags=['n2'];
+  if(scenario==='duplicate-acs')rows.push({...f.row,id:'duplicate',modelName:'F609'});
+  if(scenario==='duplicate-position')f.observations[0].snapshot.onus.push({...f.onu,id:'4718594',ponKey:'0/0/2'});
+  if(scenario==='replacement')f.row.serialNumber='HWTC11223344';
+  await warm(f,rows);assert.equal(olt.linkedOnus(f.data,device,[f.onu])[0].physicalModel,undefined,scenario);
+ }
+});
+test('ACS identity background read carries only two additional model leaves in the existing request',async t=>{
+ const f=fixture();let calls=0;t.mock.method(global,'fetch',async(url,options)=>{calls++;assert.equal(options.method,'GET');const projection=new URL(url).searchParams.get('projection');assert(projection.includes('InternetGatewayDevice.DeviceInfo.ModelName'));assert(projection.includes('Device.DeviceInfo.ModelName'));assert(!/Password|WLANConfiguration|\.Hosts/i.test(projection));return Response.json([{_id:'unit',_deviceId:{_SerialNumber:sn,_ProductClass:'F609'},VirtualParameters:{pppoeUsername:{_value:'alpha@isp'}},Device:{DeviceInfo:{ModelName:{_value:'ZXHN F670L'}}}}]);});
+ const rows=await acs.identityDevices(f.data.settings);assert.equal(rows[0].modelName,'ZXHN F670L');assert.equal(rows[0].productClass,'F609');assert.equal(calls,1);
+});

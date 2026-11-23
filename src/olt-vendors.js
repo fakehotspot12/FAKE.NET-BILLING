@@ -17,7 +17,7 @@ function normalize(value='cdata'){const key=String(value||'cdata').trim().toLowe
 function profile(value){return PROFILES.find(row=>row.value===normalize(value));}
 function canWrite(device){return profile(device.vendor)?.writes===true&&(device.cliProtocol||'telnet')==='telnet';}
 function capabilities(device,snapshot){
-  const configured=Boolean(device.enabled&&device.cliEnabled&&device.cliPasswordEnc),native=canWrite(device),hioso=normalize(device.vendor)==='hioso'?snapshot?.hiosoActions||{}:{};
+  const configured=Boolean(device.enabled&&device.cliEnabled&&device.cliPasswordEnc),native=canWrite(device),hioso=normalize(device.vendor)==='hioso'?snapshot?.hiosoActions||{}:normalize(device.vendor)==='hsgq'?snapshot?.hsgqActions||{}:{};
   return{rename:configured&&(native||hioso.rename===true),reboot:configured&&(native||hioso.reboot===true),delete:configured&&(native||hioso.delete===true),saveConfig:configured&&(native||hioso.saveConfig===true),ponControl:configured&&Boolean(device.cliUsername)&&require('./olt-pon').supports(device)};
 }
 function options(){return PROFILES.map(row=>({...row,mode:row.writes?'verified':'read-only',note:row.writes?'Jalur CDATA terverifikasi':row.inventory==='basic'?'Monitoring SNMP dasar; inventory dan aksi ONU belum terverifikasi':'Monitoring ONU baca-saja; aksi tulis belum terverifikasi'}));}
@@ -31,7 +31,7 @@ function normalizeOnus(rows,helpers={}){
     if(!row||/^unregistered|autofind|discovered$/i.test(String(row.status||'')))continue;
     const raw=String(row.sn||row.serialNumber||row.mac||'').trim().toUpperCase(),isMac=/^(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}$/.test(raw)||/^[0-9A-F]{12}$/.test(raw),sn=isMac?raw.replace(/[:-]/g,''):helpers.normalizeSerial?.(raw)||raw;
     if(!/^[A-Z0-9]{12}$/.test(sn))continue;
-    const slot=Number(row.slot),pon=Number(row.pon),onuId=Number(row.onu_id),address=[slot,pon,onuId].every(Number.isSafeInteger)&&slot>=0&&slot<=31&&pon>=1&&pon<=16&&onuId>=1&&onuId<=1024;
+    const slot=Number(row.slot),pon=Number(row.pon),onuId=Number(row.onu_id),address=[slot,pon,onuId].every(Number.isSafeInteger)&&pon>=1&&pon<=16&&(helpers.minimumOnuId===0?slot===0&&onuId>=0&&onuId<=127:slot>=0&&slot<=31&&onuId>=1&&onuId<=1024);
     if(!address)continue;
     const state=String(row.status||'').toLowerCase(),status=['online','up','working'].includes(state)?'online':['offline','down'].includes(state)?'offline':'unknown',cause=text(row.down_cause,160),condition=status==='offline'?(helpers.classifyCause?.(cause)||'other'):status;
     output.push({id:`${slot}/${pon}:${onuId}:${sn}`,serialNumber:sn,identifierKind:isMac?'mac':'serial',slot,pon,onuId,ponKey:`0/${slot}/${pon}`,name:text(row.description||row.name),model:text(row.equipment_id||row.model,80),status,condition,downCause:status==='offline'?cause:'',causeKnown:status==='offline'&&Boolean(cause)&&condition!=='other',rxPower:metric(row.rx_power,-60,10),txPower:metric(row.tx_power,-60,20),distance:metric(row.distance,0,100000),source:'vendor-live-read'});
@@ -40,6 +40,7 @@ function normalizeOnus(rows,helpers={}){
 }
 function ponPosition(name, vendor) {
   const value=String(name||'').trim();
+  if(normalize(vendor)==='hsgq'){const match=value.match(/^PON(0?[1-9]|1[0-6])$/i);if(match)return{slot:0,pon:Number(match[1]),ponKey:`0/0/${Number(match[1])}`};}
   if(normalize(vendor)==='zte'){
     const match=value.match(/^(?:gpon-olt_|gpon_olt-)(\d{1,2})\/(\d{1,2})\/(\d{1,2})$/i);
     if(!match)return null;
@@ -95,6 +96,7 @@ async function readInventory(data,device,helpers={},transportOptions={}){
     const adapter=factory.createOltAdapter(legacyDevice(device));
     // Bulk optical enrichers can issue dozens of per-ONU commands; keep them off page/background reads.
     adapter.getBulkOnuDetails=async rows=>rows;
+    if(cfg.value==='hsgq'&&await adapter.detectTechnology()==='gpon')return require('./olt-hsgq').readInventory(adapter,helpers);
     if(cfg.value==='btpon'){
       const snmp=await import('./olt-vendor-library/services/snmp.js');
       adapter.readOnuOperStatusMap=async(items=[])=>{

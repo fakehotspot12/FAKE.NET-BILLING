@@ -164,6 +164,8 @@ src/olt-cdata-pon.js
 src/olt-cli.js
 src/olt-device-removal.js
 src/olt-hioso.js
+src/olt-hsgq.js
+src/onu-model.js
 src/olt-los-confirmation.js
 src/olt-manager.js
 src/olt-monitor.js
@@ -270,7 +272,10 @@ test/olt-cdata-pon.test.js
 test/olt-cli.test.js
 test/olt-connectivity.test.js
 test/olt-device-removal.test.js
+test/olt-fault-scope.test.js
 test/olt-hioso.test.js
+test/olt-hsgq.test.js
+test/onu-model.test.js
 test/olt-los-confirmation.test.js
 test/olt-los-tickets.test.js
 test/olt-monitor-api.test.js
@@ -297,6 +302,7 @@ test/olt-zte-bridge.test.js
 test/olt-zte-catalogue.test.js
 test/olt-zte-inventory.test.js
 test/olt-zte-login.test.js
+test/olt-zte-manual-registration.test.js
 test/olt-zte-pnp.test.js
 test/olt-zte-profiles.test.js
 test/olt-zte-queue.test.js

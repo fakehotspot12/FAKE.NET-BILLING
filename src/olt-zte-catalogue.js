@@ -153,14 +153,15 @@ function updateBandwidth(device, catalogue) {
 }
 
 function identifyOnus(data, device, rows) {
-  if (device.vendor !== 'zte') return rows;
+  if (!['zte', 'hsgq'].includes(device.vendor)) return rows;
   const radios = require('./genieacs').cachedRadioCapabilities(data.settings || {}, rows.map(row => row.serialNumber));
+  const normalizeModel = require('./onu-model').normalize;
   const verified = new Map(), signature = connection(device);
   for (const job of (device.onuRegistrationJobs || []).slice(-128).reverse()) if (job.connection === signature && job.status === 'verified' && !verified.has(job.serialNumber)) verified.set(job.serialNumber, job);
   const models = rawMetadata(device).models;
   return rows.map(row => {
     if (row.identityAmbiguous) return row;
-    const job = verified.get(row.serialNumber), physicalModel = job?.address === row.id ? job.model : row.modelSource !== 'zte-configured-type' ? row.model : '';
+    const job = verified.get(row.serialNumber), physicalModel = normalizeModel(row.physicalModel) || normalizeModel(job?.address === row.id ? job.model : row.modelSource !== 'zte-configured-type' ? row.model : '');
     const matches = models.filter(item => item.enabled !== false && item.aliases.some(value => normalizedModel(value) === normalizedModel(physicalModel)));
     const model = matches.length === 1 ? matches[0] : null, radio = radios.get(row.serialNumber);
     let wifiCapability = null;

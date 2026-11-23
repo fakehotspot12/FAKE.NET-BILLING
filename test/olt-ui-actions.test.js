@@ -21,12 +21,12 @@ test('refresh errors from a departed page do not overwrite the new page',async()
  let reject;const f=fixture(()=>new Promise((resolve,fail)=>{reject=fail;}));const pending=f.ui.onClick(f.event);f.ui.switchContext({...f.context});reject(Error('Old page failed'));await pending;assert.equal(f.notice.textContent,'');assert.equal(f.button.disabled,false);
 });
 test('async WhatsApp preview and linking failures are handled without opening stale modals',async()=>{
- for(const action of ['message-ticket','link']){
-  const f=fixture();f.button.dataset.oltAction=action;f.button.dataset.id='t1';f.button.dataset.olt='o1';await f.ui.onClick(f.event);assert.equal(f.notice.textContent,'Connection unavailable');assert.equal(f.button.disabled,false);
+ for(const action of ['message-ticket','link','edit']){
+  const f=fixture();f.button.dataset.oltAction=action;f.button.dataset.id=action==='edit'?'o1':'t1';f.button.dataset.olt='o1';await f.ui.onClick(f.event);assert.equal(f.notice.textContent,'Connection unavailable');assert.equal(f.button.disabled,false);
  }
 });
 test('slow preview and link reads cannot open a popup after navigating away',async()=>{
- for(const action of ['message-ticket','link']){let resolve,opened=0;const f=fixture(()=>new Promise(done=>{resolve=done;}));f.context.openModal=()=>{opened++;};Object.assign(f.button.dataset,{oltAction:action,id:'t1',olt:'o1'});const pending=f.ui.onClick(f.event);f.ui.switchContext({...f.context});resolve({});await pending;assert.equal(opened,0);assert.equal(f.notice.textContent,'');}
+ for(const action of ['message-ticket','link','edit']){let resolve,opened=0;const f=fixture(()=>new Promise(done=>{resolve=done;}));f.context.openModal=()=>{opened++;};Object.assign(f.button.dataset,{oltAction:action,id:action==='edit'?'o1':'t1',olt:'o1'});const pending=f.ui.onClick(f.event);f.ui.switchContext({...f.context});resolve({});await pending;assert.equal(opened,0);assert.equal(f.notice.textContent,'');}
 });
 test('disabled action tooltip still names its function',()=>{
  const f=fixture(),html=f.ui.button('delete-onu','x','Hapus ONU dari OLT','delete','o1',true);assert.match(html,/title="Hapus ONU dari OLT - Belum tersedia/);assert.match(html,/disabled/);

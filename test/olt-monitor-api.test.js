@@ -35,6 +35,18 @@ test('SN registration API preserves role/NAS/CSRF boundaries and rejects a bad m
  assert.equal((await request('admin','POST',endpoint,{action:'activate'})).status,200);assert.equal(activated,1);assert.equal((await request('admin','POST',endpoint,{action:'register',token:'bad'})).status,409);assert.deepEqual({customers:fixture.customers,payments:fixture.payments,invoices:fixture.invoices},before);
  }finally{Object.assign(registration,original);}
 });
+test('new ONU discovery is cache-only on GET and refresh keeps role, NAS, CSRF and fresh permission checks',async()=>{
+ reset();const reg=require('../src/olt-zte-registration'),pnp=require('../src/olt-zte-pnp'),original=reg.refreshDiscovery,device=require('../src/olt-monitor').validateDevice(fixture,{name:'Discovery Unit',vendor:'zte',host:'192.0.2.48',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let reads=0;
+ reg.refreshDiscovery=async()=>{reads++;};
+ try{const endpoint='/'+device.id+'/registration/discovery',before=structuredClone(fixture);
+  assert.equal((await request('','GET',endpoint)).status,401);for(const role of ['owner','technician','noc','finance','collector','reseller_voucher','viewer'])assert.equal((await request(role,'GET',endpoint)).status,403);
+  const cached=await request('admin','GET',endpoint+'?search=HWTC&page=100&limit=all');assert.equal(cached.status,200);assert.equal(cached.body.limit,8);assert.equal(cached.body.page,1);assert.equal(reads,0);assert.equal(saves,0);assert.deepEqual(fixture,before);
+  assert.equal((await request('admin','POST',endpoint,{action:'refresh'},false)).status,419);assert.equal((await request('admin','POST',endpoint,{action:'delete'})).status,400);assert.equal((await request('admin','POST',endpoint,{action:'refresh',search:'x'.repeat(6000)})).status,400);assert.equal(reads,0);
+  assert.equal((await request('admin','POST',endpoint,{action:'refresh'})).status,200);assert.equal(reads,1);
+  const head=fixture.users.find(row=>row.role==='technician');head.position='Kepala Teknisi';head.lockedNasIds=['nas-b'];assert.equal((await request('technician','GET',endpoint)).status,404);head.lockedNasIds=['nas-a'];assert.equal((await request('technician','GET',endpoint)).status,200);
+  const actor=fixture.users.find(row=>row.role==='admin');reg.refreshDiscovery=async()=>{actor.role='viewer';};assert.equal((await request('admin','POST',endpoint,{action:'refresh'})).status,403);assert.equal(saves,0);assert.deepEqual(pnp.presets(device),{});
+ }finally{reg.refreshDiscovery=original;}
+});
 test('TR069 existing-ONU API preserves role/NAS/CSRF and writes a durable audit before any device operation',async()=>{
  reset();const registration=require('../src/olt-zte-registration'),original=registration.applyExistingTr069,device=require('../src/olt-monitor').validateDevice(fixture,{name:'Management Unit',vendor:'zte',host:'192.0.2.46',community:'unit',cliEnabled:true,cliUsername:'unit',cliPassword:'unit',nasId:'nas-a'});fixture.oltDevices=[device];let calls=0;
  registration.applyExistingTr069=async(data,current,actor,input,options)=>{calls++;const job={id:'tr069-unit',kind:'tr069',actorId:actor.id,ponKey:'1/1/13',serialNumber:'HWTCAABBCCDD',address:'1/1/13:1',status:'configuring',message:'Management preflight'};await options.persist(job);assert(fixture.activity.some(row=>row.meta?.jobId===job.id));return{...job,status:'held',message:'Read-only test'};};
@@ -199,6 +211,25 @@ test('admin manually adds edits and removes integration without touching invoice
 test('device mutations keep CSRF and input checks; technical readers cannot edit credentials',async()=>{
  reset();const data={name:'Unit',host:'192.0.2.1',community:'Unit'};assert.equal((await request('admin','POST','',data,false)).status,419);
  assert.equal((await request('admin','POST','',{...data,host:'127.0.0.1'})).status,400);assert.equal((await request('technician','POST','',data)).status,403);assert.equal((await request('finance','POST','',data)).status,403);assert.equal(saves,0);
+});
+test('saved SNMP community is visible only through the management settings endpoint and never cached or added to monitoring lists',async()=>{
+ reset();const secret='Unit<&"Community',device=require('../src/olt-monitor').validateDevice(fixture,{name:'Visible Community',host:'192.0.2.171',community:secret,nasId:'nas-a'});fixture.oltDevices=[device];
+ const endpoint='/'+device.id+'/settings',before=structuredClone(fixture),saved=saves;
+ assert.equal((await request('','GET',endpoint)).status,401);
+ for(const role of ['finance','technician','collector','reseller_voucher','viewer','partner'])assert.equal((await request(role,'GET',endpoint)).status,403);
+ for(const role of ['admin','owner','noc','secretary']){const result=await request(role,'GET',endpoint);assert.equal(result.status,200);assert.deepEqual(result.body,{id:device.id,community:secret});assert.match(result.headers['Cache-Control'],/private.*no-store/);assert.equal(result.headers.Pragma,'no-cache');}
+ const actor=fixture.users.find(row=>row.role==='admin');actor.role='technician';actor.lockedNasIds=['nas-b'];assert.equal((await request('admin','GET',endpoint)).status,403);actor.role='admin';delete actor.lockedNasIds;
+ assert.equal((await request('admin','GET','/missing/settings')).status,404);
+ for(const url of ['', '/'+device.id, '/onus?oltId='+device.id]){const result=await request('admin','GET',url);assert.equal(result.status,200);assert(!JSON.stringify(result.body).includes(secret));assert(!JSON.stringify(result.body).includes(device.communityEnc));}
+ assert.equal(saves,saved);assert.deepEqual(fixture,before);
+});
+test('a broken encrypted community fails without disclosing its value or modifying security settings',async()=>{
+ reset();const device=require('../src/olt-monitor').validateDevice(fixture,{name:'Invalid Community',host:'192.0.2.172',community:'OriginalSecret'});fixture.oltDevices=[device];device.communityEnc='v1:invalid';
+ const before=structuredClone(fixture),result=await request('admin','GET','/'+device.id+'/settings');assert.equal(result.status,500);assert.match(result.body.error,/belum dapat dibaca/);assert(!JSON.stringify(result.body).includes('OriginalSecret'));assert(!JSON.stringify(result.body).includes('v1:invalid'));assert.deepEqual(fixture,before);assert.equal(saves,0);
+});
+test('reading community cannot generate or replace a missing encryption key',async()=>{
+ reset();const device=require('../src/olt-monitor').validateDevice(fixture,{name:'Missing Key',host:'192.0.2.173',community:'OriginalSecret'});fixture.oltDevices=[device];delete fixture.settings.security.secretKey;
+ const before=structuredClone(fixture),result=await request('admin','GET','/'+device.id+'/settings');assert.equal(result.status,500);assert.deepEqual(fixture,before);assert.equal(saves,0);
 });
 test('NAS-scoped technician sees only assigned OLT and cannot read or refresh another OLT',async()=>{
  reset();const a=await request('admin','POST','',{name:'A',host:'192.0.2.1',community:'Unit',nasId:'nas-a'}),b=await request('admin','POST','',{name:'B',host:'192.0.2.2',community:'Unit',nasId:'nas-b'});

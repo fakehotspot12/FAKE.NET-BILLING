@@ -30,7 +30,7 @@ async function verifyRelease(root, options = {}) {
     const { Terminal } = require(require.resolve('@xterm/headless', { paths: [root] }));
     const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
     terminal.dispose();
-    for (const module of ['olt-monitor', 'olt-pon', 'olt-cdata-pon', 'olt-terminal-native', 'olt-zte-pnp', 'olt-zte-bandwidth',
+    for (const module of ['olt-monitor', 'olt-hsgq', 'onu-model', 'olt-pon', 'olt-cdata-pon', 'olt-terminal-native', 'olt-zte-pnp', 'olt-zte-bandwidth',
       'olt-zte-registration', 'olt-zte-tr069', 'olt-zte-catalogue', 'olt-zte-bridge', 'ont-radio-capability', 'whatsapp-queue',
       'payment-promise', 'login-turnstile', 'olt-auto-identity', 'olt-device-removal', 'customer-device-removal', 'network-address',
       'olt-planned-reboot', 'olt-ticketing', 'service-tickets', 'ticket-incidents', 'ticket-network', 'ticket-team', 'ticket-reference',

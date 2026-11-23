@@ -795,9 +795,31 @@ tidak dapat diganti agar format indeks dan identitas ONU lama tidak tercampur.
 | Vendor | Monitoring Pada Rilis Ini | Aksi Perangkat |
 | --- | --- | --- |
 | CDATA GPON | Jalur SNMP/CLI yang telah terverifikasi | Hapus, reboot, description dan Save Config dengan pengamanan |
-| Tarmoc, HSGQ GPON/EPON, BTPON | Adapter inventory live baca-saja; kompatibilitas tetap bergantung model/firmware | Terkunci sampai aksi model terverifikasi |
+| Tarmoc, BTPON | Adapter inventory live baca-saja; kompatibilitas tetap bergantung model/firmware | Terkunci sampai aksi model terverifikasi |
+| HSGQ GPON/EPON | GPON membaca PON fisik dan inventory terverifikasi per PON, termasuk ONU ID 0; EPON mempertahankan adapter baca-saja | HSGQ-G008ID dengan firmware terverifikasi: ganti nama, reboot, hapus offline, dan Save Config; model/firmware lain tetap terkunci |
 | HIOSO EPON | Inventory web/CLI dan deteksi 2/4 PON | Ganti nama, reboot, dan hapus ONU melalui form web yang cocok; MAC/PON diperiksa ulang dan hapus wajib offline |
 | ZTE, Huawei, VSOL, BDCOM/Baudcom, FiberHome | SNMP dasar: identitas sistem dan antarmuka; inventory ONU belum dinyatakan terverifikasi | Terkunci sampai aksi model terverifikasi |
+
+HSGQ GPON memprioritaskan SNMP untuk port fisik dan CLI untuk status serta aksi.
+Redaman ONU dilengkapi melalui endpoint baca bawaan perangkat, paling banyak
+delapan ONU pada halaman aktif, dengan pemeriksaan SN/PON dan cache terbatas.
+Pembacaan ini berjalan di background; query optical massal tidak dipakai.
+Data yang tidak tersedia tetap kosong, bukan diisi dengan angka perkiraan.
+CPU dan RAM HSGQ dibaca melalui CLI dan dicache lima menit di Ringkasan OLT.
+Untuk semua vendor OLT yang ONUnya sudah terintegrasi, model mengutamakan
+ModelName atau ProductClass dari indeks ACS yang terverifikasi. Pemetaan GPON
+memeriksa SN, sedangkan EPON memerlukan MAC antarmuka ONT yang cocok; nama
+pelanggan atau description tidak digunakan untuk menebak model. Tidak ada
+request ACS tambahan per baris atau summon massal. Pengaturan integrasi tetap
+dihormati dan data ambigu tidak digunakan.
+Jika identitas ACS tidak tersedia, data model dari OLT tetap digunakan.
+ZTE/HSGQ dapat melengkapi Equipment-ID OMCI dan jarak melalui pembacaan detail
+di background, maksimal dua ONU per giliran pada halaman aktif. Model native
+dicache sampai 24 jam; jarak 30 menit. Cache terikat koneksi, posisi, dan SN
+sehingga data tidak diwariskan ke modem pengganti. Jarak selalu pengukuran OLT,
+bukan perkiraan dari koordinat pelanggan. Status dan sumber redaman tidak diubah.
+Hapus wajib offline terverifikasi dan tetap mengikuti pratinjau integrasi
+OLT/ACS; reboot menggunakan penanda pemeliharaan untuk mencegah tiket palsu.
 
 Semua library vendor disertakan, tetapi keberadaan nama vendor bukan jaminan
 setiap fitur firmware telah diuji. Inventory yang belum tersedia diberi status
@@ -863,8 +885,16 @@ Perubahan katalog/preset ditahan selama registrasi atau penyiapan profil aktif.
 Konfirmasi perangkat, revisi metadata, CSRF dan pemeriksaan izin server tetap
 berlaku. Installer/updater memverifikasi modul dan aset tanpa dependency baru.
 
-Pengaturan **Registrasi ONU** pada OLT ZTE menyediakan **Registrasi Otomatis ONU**
-per PON. Fitur default nonaktif dan tidak mengubah OLT saat halaman dibuka.
+Tombol **Registrasi ONU** pada OLT ZTE membuka satu popup. Tab **Modem Baru**
+menampilkan SN terdeteksi, model dan PON, dengan pencarian serta delapan ONU
+per halaman. **Otorisasi** membuka pengaturan ONU di popup yang sama. VLAN,
+bandwidth dan TR069 dapat memakai preset PON atau disesuaikan untuk ONU itu
+saja, tanpa menimpa preset bersama. PON yang sudah otomatis tidak menerima
+otorisasi manual bersamaan. Nomor ONU tetap dialokasikan server berdasarkan
+posisi kosong dan identitas fisik yang dibaca ulang.
+
+Tab **Pengaturan PON** menyediakan **Registrasi Otomatis** per PON.
+Fitur default nonaktif dan tidak mengubah OLT saat halaman dibuka.
 Pilih PON, bandwidth dan 1-16 VLAN existing, lalu **Simpan**. Untuk
 mengaktifkannya, centang registrasi otomatis, simpan, **Periksa Pengaturan**,
 dan konfirmasi **Terapkan** satu kali untuk PON tersebut. Pilihan tersimpan
