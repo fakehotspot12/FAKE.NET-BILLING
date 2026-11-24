@@ -4,7 +4,7 @@
   const view = { tab: 'devices', deviceId: 'all', nasId: '', search: '', status: '', pon: '', allPons: false, limit: 8, page: 1 };
   const ticketView = { oltId:'', nasId:'', scope:'', pon:'', search:'', bucket:'open', status:'', kind:'', limit:25, page:1 };
   const ticketStates = [['open','Aktif'],['resolved','Selesai']];
-  let context, payload = {}, generation = 0, detailGeneration = 0, latestDetails = null, refreshTimer, statusTimer, requestedOnuView;
+  let context, payload = {}, generation = 0, detailGeneration = 0, latestDetails = null, refreshTimer, statusTimer, resourceTimer, requestedOnuView;
   let terminalWindow, terminalListener, ponCancelController;
   const $ = id => document.getElementById(id);
   const esc = value => context.escapeHtml(value ?? '');
@@ -23,7 +23,7 @@
   const badge = value => `<span class="olt-badge ${esc(value)}">${esc(labels[value] || value)}</span>`;
   const time = (value,seconds=false) => value ? new Intl.DateTimeFormat('id-ID',{timeZone:context.timeZone||'Asia/Makassar',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',...(seconds?{second:'2-digit'}:{})}).format(new Date(value)) : '-';
   const count = value => value === null || value === undefined ? '-' : new Intl.NumberFormat('id-ID').format(value);
-  const resourceSummary=row=>`<div class="olt-resources" title="${esc(row.resources?.checkedAt?`${row.resources.stale?'Data terakhir':'Dibaca'} ${time(row.resources.checkedAt)}`:'Data perangkat belum tersedia')}">${[['CPU','cpuPercent'],['RAM','ramPercent']].map(([label,key])=>{const value=row.resources?.[key],known=typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=100;return`<div class="olt-resource ${key==='cpuPercent'?'cpu':'ram'} ${row.resources?.stale?'stale':''}"><span>${label}<strong>${known?new Intl.NumberFormat('id-ID',{maximumFractionDigits:1}).format(value)+'%':'-'}</strong></span><div class="olt-resource-track" role="progressbar" aria-label="${label}${known?'':' belum terbaca'}" ${known?`aria-valuenow="${value}" aria-valuemin="0" aria-valuemax="100"`:''}><i style="width:${known?value:0}%"></i></div></div>`;}).join('')}</div>`;
+  const resourceSummary=row=>`<div class="olt-resources" data-olt-resources="${esc(row.id)}" title="${esc(row.resources?.checkedAt?`${row.resources.stale?'Data terakhir':'Dibaca'} ${time(row.resources.checkedAt,true)}`:'Data perangkat belum tersedia')}">${[['CPU','cpuPercent'],['RAM','ramPercent']].map(([label,key])=>{const value=row.resources?.[key],known=typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=100;return`<div class="olt-resource ${key==='cpuPercent'?'cpu':'ram'} ${row.resources?.stale?'stale':''}"><span>${label}<strong>${known?new Intl.NumberFormat('id-ID',{maximumFractionDigits:1}).format(value)+'%':'-'}</strong></span><div class="olt-resource-track" role="progressbar" aria-label="${label}${known?'':' belum terbaca'}" ${known?`aria-valuenow="${value}" aria-valuemin="0" aria-valuemax="100"`:''}><i style="width:${known?value:0}%"></i></div></div>`;}).join('')}</div>`;
   const lastActive = row => `<small class="olt-last-active" title="Waktu terakhir ONU terpantau online oleh billing">Terakhir aktif<span>${esc(time(row.lastOnlineAt))}</span></small>`;
   const icons={conversation:'/support-chat.svg',delete:'/olt-trash.svg',reboot:'/olt-reboot.svg',save:'/olt-save.svg',refresh:'/olt-refresh.svg',back:'/olt-back.svg',link:'/olt-link.svg',terminal:'/olt-terminal.svg',power:'/olt-power.svg',plus:'/olt-plus.svg'};
   const glyph = name => `<span class="olt-glyph" style="--olt-icon:${icons[name]?`url('${icons[name]}')`:`var(--icon-${name==='site'?'radius':name})`}" aria-hidden="true"></span>`;
@@ -64,6 +64,7 @@
   }
   async function render(ctx) {
     clearTimeout(statusTimer);
+    clearTimeout(resourceTimer);
     if(ctx){if(ctx.mode!=='tickets'&&requestedOnuView){Object.assign(view,requestedOnuView);requestedOnuView=null;}else view.tab='devices';latestDetails=null;clearTimeout(refreshTimer);}else ctx=context;
     context=ctx; const token=++generation;
     if(context.mode==='tickets')return renderTicketCenter(token);
@@ -84,7 +85,20 @@
     $('oltAdd')?.addEventListener('click',()=>deviceForm());
     $('oltNasFilter').addEventListener('change',event=>{view.nasId=event.target.value;view.deviceId='all';view.pon='';view.page=1;render();});
     $('oltRoot').addEventListener('click',onClick);
-    if(view.tab==='devices')deviceList();else await onuView();
+    if(view.tab==='devices'){deviceList();followResources();}else await onuView();
+  }
+  function followResources(){
+    clearTimeout(resourceTimer);if(!active()||context.mode==='tickets'||view.tab!=='devices')return;
+    const owner=context,token=generation;
+    resourceTimer=setTimeout(async()=>{
+      if(!active()||context!==owner||generation!==token||view.tab!=='devices')return;
+      let denied=false;
+      try{if(!document.hidden&&!document.querySelector('dialog[open]')){
+        const result=await owner.api('/api/monitoring/olt/resources');if(!active()||context!==owner||generation!==token||view.tab!=='devices')return;
+        const values=new Map((result.devices||[]).map(row=>[row.id,row.resources]));
+        $('oltContent').querySelectorAll('[data-olt-resources]').forEach(node=>{const row=payload.devices.find(row=>row.id===node.dataset.oltResources);if(row&&values.has(row.id)){row.resources=values.get(row.id);node.outerHTML=resourceSummary(row);}});
+      }}catch(error){denied=error.status===401||error.status===403;}finally{if(!denied&&active()&&context===owner&&generation===token&&view.tab==='devices')followResources();}
+    },10000);
   }
   const ticketQuery = () => new URLSearchParams(ticketView).toString();
   async function renderTicketCenter(token) {

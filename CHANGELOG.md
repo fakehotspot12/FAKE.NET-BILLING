@@ -2,6 +2,18 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.7.1] - 2026-11-24
+
+### Improved
+
+- Bar CPU/RAM Ringkasan OLT diperbarui dari cache setiap 10 detik tanpa memuat ulang halaman. Pembacaan CLI background terpisah dari inventory ONU, dengan interval adaptif 15/30/60 detik berdasarkan respons perangkat dan maksimal dua pembacaan bersamaan.
+- Mempertahankan sampel nyata terakhir saat koneksi gagal, dengan backoff 30 detik hingga lima menit. Cache memori terbatas dan Redis dapat digunakan kembali setelah restart; pergantian host/kredensial tidak memakai sampel koneksi lama.
+- Pembacaan resource mengalah pada sesi console, operasi CLI, dan refresh inventory. Polling tampilan dijeda saat halaman tersembunyi/dialog terbuka dan berhenti ketika meninggalkan menu atau akses dicabut.
+
+### Security
+
+- Endpoint resource hanya mengembalikan persentase dan waktu sampel sesuai izin OLT serta cakupan NAS, tanpa kredensial, query perangkat langsung, atau perubahan data billing. Installer/updater memverifikasi modul telemetri sebagai bagian rilis lengkap; konfigurasi dan virtual parameter ACS existing tidak diubah.
+
 ## [4.7.0] - 2026-11-24
 
 ### Added

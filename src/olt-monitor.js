@@ -237,6 +237,7 @@ function validateDevice(data, payload = {}, previous = {}) {
 }
 function publicDevice(device, snapshot = null, options = {}) {
   const actions=vendors.capabilities(device,snapshot);
+  const resource=telemetry.cached(device,snapshot?.telemetry);
   const simulated=process.env.MIGRATION_MODE==='1'&&/^demo-olt-\d{1,2}$/.test(device.id)&&snapshot?.simulated===true;
   const warnings=[],notices=[];
   for(const message of snapshot?.warnings||[]){
@@ -255,9 +256,9 @@ function publicDevice(device, snapshot = null, options = {}) {
     latitude: device.latitude, longitude: device.longitude,
     status: !device.enabled ? 'disabled' : snapshot?.status || 'checking', checkedAt: snapshot?.checkedAt || '',
     lastSuccessAt: snapshot?.lastSuccessAt || (snapshot?.status === 'online' ? snapshot.checkedAt : ''), stale: !simulated&&Boolean(snapshot?.stale || (snapshot?.checkedAt && Date.now() - Date.parse(snapshot.checkedAt) > CACHE_MS * 2)),
-    error: snapshot?.error || '', systemName: snapshot?.systemName || '', description: snapshot?.description || '', uptimeTicks: snapshot?.uptimeTicks ?? null, modelLabel:snapshot?.modelLabel||'',systemLabel:telemetry.label(device,snapshot?.telemetry,snapshot?.modelLabel),
-    modelSource:snapshot?.telemetry?.modelSource||(snapshot?.telemetry?.family?'web-firmware-family':''),
-    resources:{cpuPercent:snapshot?.telemetry?.cpuPercent??null,ramPercent:snapshot?.telemetry?.ramPercent??null,checkedAt:snapshot?.telemetry?.checkedAt||'',stale:Boolean(snapshot?.stale||snapshot?.status&&snapshot.status!=='online'||snapshot?.telemetry?.stale||snapshot?.telemetry?.checkedAt&&Date.now()-Date.parse(snapshot.telemetry.checkedAt)>telemetry.INTERVAL_MS*2)},
+    error: snapshot?.error || '', systemName: snapshot?.systemName || '', description: snapshot?.description || '', uptimeTicks: snapshot?.uptimeTicks ?? null, modelLabel:snapshot?.modelLabel||'',systemLabel:telemetry.label(device,resource,snapshot?.modelLabel),
+    modelSource:resource?.modelSource||(resource?.family?'web-firmware-family':''),
+    resources:telemetry.resources(device,snapshot?.telemetry),
     ponPorts: snapshot ? (snapshot.ports || []).filter(port => port.kind === 'pon').length : null,
     ponOverview: require('./olt-pon').decorate(null,device,snapshot?.ports||[]).filter(row => row.kind === 'pon').slice(0,64),
     summary: snapshot?.summary || null, warnings, notices };
@@ -479,7 +480,7 @@ async function renameOnu(data,device,serial,payload,transport={serial:liveSerial
   return {serialNumber:sn,description,confirmed:true,message:'Description ONU diperbarui dan terverifikasi di OLT.'};
 }
 async function poll(data, device, transport, options = {}) {
-  if(require('./olt-terminal').isOpen(device.id))return snapshotFor(device);
+  if(require('./olt-terminal').isOpen(device.id)||telemetry.isBusy(device))return snapshotFor(device);
   const key = cacheKey(device);
   if (pending.has(key)) return pending.get(key);
   if (pending.size >= 2) return snapshotFor(device);
@@ -487,7 +488,7 @@ async function poll(data, device, transport, options = {}) {
   const promise = (async () => {
     remember(lastAttempt, key, Date.now());
     const previous = await snapshotFor(device); let value;
-    try { value = preserveLastOnline(await collect(data, device, transport, undefined, {...options,previousSnapshot:previous}),previous);if(value.inventoryAvailable===false&&previous?.onus?.length)value={...value,onus:previous.onus,summary:previous.summary,ports:previous.ports,stale:true,lastSuccessAt:previous.lastSuccessAt||(previous.inventoryAvailable!==false?previous.checkedAt:'')};if(!transport&&(process.env.MIGRATION_MODE!=='1'||device.vendor==='zte'&&options.allowZteDevRead===true))value.telemetry=await telemetry.read(data,device,previous?.telemetry,options); }
+    try { value = preserveLastOnline(await collect(data, device, transport, undefined, {...options,previousSnapshot:previous}),previous);if(value.inventoryAvailable===false&&previous?.onus?.length)value={...value,onus:previous.onus,summary:previous.summary,ports:previous.ports,stale:true,lastSuccessAt:previous.lastSuccessAt||(previous.inventoryAvailable!==false?previous.checkedAt:'')};if(!transport)value.telemetry=process.env.MIGRATION_MODE==='1'&&device.vendor==='zte'&&options.allowZteDevRead===true?await telemetry.read(data,device,previous?.telemetry,options):await telemetry.restore(device,previous?.telemetry); }
     catch { value = { ...(previous || {}), pendingRefresh:false, status: 'unreachable', stale: Boolean(previous?.onus), checkedAt: new Date().toISOString(),
       lastSuccessAt: previous?.lastSuccessAt || (previous?.status === 'online' ? previous.checkedAt : ''), error: 'SNMP tidak merespons lengkap. Periksa daya, jaringan, dan community.' }; }
     remember(cache, key, value);
@@ -498,9 +499,10 @@ async function poll(data, device, transport, options = {}) {
 }
 async function pollNext(data) {
   if (pending.size) return { skipped: true };
-  for(const [id,request] of refreshQueue){const device=deviceRows(data).find(row=>row.id===id);refreshQueue.delete(id);if(!device?.enabled||cacheKey(device)!==request.key)continue;await poll(data,device);return{id:device.id,manual:true};}
+  for(const [id,request] of refreshQueue){const device=deviceRows(data).find(row=>row.id===id);if(device&&telemetry.isBusy(device))continue;refreshQueue.delete(id);if(!device?.enabled||cacheKey(device)!==request.key)continue;await poll(data,device);return{id:device.id,manual:true};}
   const candidates = [];
   for (const device of deviceRows(data).filter(row => row.enabled)) {
+    if(telemetry.isBusy(device))continue;
     const key = cacheKey(device), snapshot = await snapshotFor(device), tried = lastAttempt.get(key) || Date.parse(snapshot?.checkedAt || '') || 0;
     if (snapshot?.pendingRefresh || Date.now() - tried >= CACHE_MS) candidates.push({ device, tried:snapshot?.pendingRefresh?0:tried });
   }
@@ -508,11 +510,17 @@ async function pollNext(data) {
   if (!candidates.length) return { skipped: true };
   await poll(data, candidates[0].device); return { id: candidates[0].device.id };
 }
+async function pollResources(data){
+ const devices=deviceRows(data),snapshots=new Map(await Promise.all(devices.map(async device=>[device.id,await snapshotFor(device)]))),now=Date.now();
+ const ready=devices.filter(device=>{const key=cacheKey(device),snapshot=snapshots.get(device.id),attempt=lastAttempt.get(key)||Date.parse(snapshot?.checkedAt||'')||0;return device.enabled&&!pending.has(key)&&!refreshQueue.has(device.id)&&attempt&&now-attempt<CACHE_MS;});
+ return telemetry.pollDevices(data,ready,{getPrevious:async device=>snapshots.get(device.id)?.telemetry});
+}
+async function resourcePage(devices){return{devices:await Promise.all(devices.map(async device=>{const previous=(await snapshotFor(device))?.telemetry;await telemetry.restore(device,previous);return{id:device.id,resources:telemetry.resources(device,previous)};})),refreshAfterMs:10000};}
 function requestRefresh(data, device, options = {}) {
   if(process.env.MIGRATION_MODE==='1'&&!(vendors.normalize(device.vendor)==='zte'&&options.allowZteDevRead===true))throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
   const key = cacheKey(device), now = Date.now();
   if (!device.enabled || require('./olt-terminal').isOpen(device.id) || pending.has(key) || pending.size >= 2 || now - (refreshTimes.get(key) || 0) < 30000) return false;
-  remember(refreshTimes, key, now);refreshQueue.delete(device.id); poll(data, device, undefined, options).catch(() => {}); return true;
+  remember(refreshTimes, key, now);if(telemetry.isBusy(device)){refreshQueue.set(device.id,{key});return true;}refreshQueue.delete(device.id); poll(data, device, undefined, options).catch(() => {}); return true;
 }
 function requestRefreshAll(data,devices) {
   if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
@@ -831,5 +839,5 @@ function pruneTickets(rows) {
 
 module.exports = { OIDS, CACHE_MS, MAX_DEVICES, parseRows, normalizeSerial, normalizeSnapshot, position, optical, validateDevice, readSystemIdentity,
   classifyCause, summarizeOnus, applyCauses, matchesState, lastOnlineAt, lastOptical, preserveLastOnline, parseCauseRows, onuPage, removeOnu, rebootOnu, renameOnu, readOnuDescription, readRemovalState,
-  deviceRows, publicDevice, snapshotFor, collect, poll, pollNext, requestRefresh, requestRefreshAll, testConnection, saveConfig, visibleDevices, mappingNodes, linkCustomer, linkedOnus,actionPosition,
+  deviceRows, publicDevice, snapshotFor, collect, poll, pollNext,pollResources,resourcePage, requestRefresh, requestRefreshAll, testConnection, saveConfig, visibleDevices, mappingNodes, linkCustomer, linkedOnus,actionPosition,
   saveTicket, pruneTickets, ticketMessage, TICKET_STATUSES, losTicketPlan, applyLosTicketPlan, TICKET_SCOPE_LABELS, claimTicket, progressTicket, requireTicketEditor, ticketTemplates, validateTicketTemplates, renderTicketTemplate };

@@ -698,3 +698,11 @@ test('OLT and ticket writes recheck current role and NAS after reading the reque
   assert.equal(response.status,403);assert.equal(saves,before);assert.equal(fixture.oltTickets.length,0);
  }
 });
+
+test('resource updates are authenticated, NAS scoped, cache-only and never expose OLT credentials',async()=>{
+ reset();const monitor=require('../src/olt-monitor'),telemetry=require('../src/olt-telemetry'),original=telemetry.pollDevices;let polls=0;telemetry.pollDevices=async()=>{polls++;throw Error('GET must not poll');};
+ try{fixture.oltDevices=['a','b'].map((name,i)=>monitor.validateDevice(fixture,{name:'Unit '+name,host:'192.0.2.'+(180+i),nasId:'nas-'+name,community:'PRIVATE_COMMUNITY'}));fixture.users.find(row=>row.id==='technician').lockedNasIds=['nas-a'];
+  const path='/api/monitoring/olt/resources';assert.equal((await request('','GET',path)).status,401);for(const role of['finance','reseller_voucher','partner'])assert.equal((await request(role,'GET',path)).status,403);
+  const scoped=await request('technician','GET',path);assert.equal(scoped.status,200);assert.deepEqual(scoped.body.devices.map(x=>x.id),[fixture.oltDevices[0].id]);assert.equal((await request('admin','GET',path)).body.devices.length,2);assert.equal(scoped.body.refreshAfterMs,10000);assert(!JSON.stringify(scoped.body).includes('PRIVATE_COMMUNITY'));assert(!JSON.stringify(scoped.body).includes('192.0.2.'));assert.equal(polls,0);assert.equal(saves,0);
+ }finally{telemetry.pollDevices=original;}
+});

@@ -26826,7 +26826,7 @@ async function renderMonitoringOlt(mode = 'olt') {
   const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
   if (!window.FakenetOltUI || !window.FakenetTicketContext || !window.FakenetOltRegistration || !window.FakenetOltCatalogue || !window.FakenetOltBridge || !window.FakenetOltBandwidth) {
     if (!oltUiLoadPromise) oltUiLoadPromise = (async () => {
-      const version = 'olt-ticket-security-20261124-r1';
+      const version = 'olt-resources-20261124-r1';
       for (const path of ['/olt.css', '/ticket-context.css']) {
         const href = path + '?ui=' + version;
         if (document.querySelector(`link[href="${href}"]`)) continue;

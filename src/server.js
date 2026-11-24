@@ -20033,6 +20033,7 @@ async function warmRouterDashboardCache(reason = 'interval') {
 }
 
 let oltBackgroundTimer = null;
+let oltResourceTimer = null;
 let oltRegistrationTimer = null, oltRegistrationRunning = false;
 async function persistOltRegistration(device,job){
   await mutate(store=>{const registration=require('./olt-zte-registration'),current=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===job.actorId),pnp=require('./olt-zte-pnp');
@@ -20102,6 +20103,8 @@ async function syncOltLosTickets() {
 }
 function startOltMonitoring() {
   if (MIGRATION_MODE) return;
+  const resources=async()=>{const data=peekStore()||await loadStore();await oltMonitor.pollResources(data);};
+  oltResourceTimer=setInterval(()=>void resources().catch(error=>console.error('Telemetri OLT: '+error.message)),5000);oltResourceTimer.unref?.();
   let running=false;
   const run=async()=>{if(running)return;running=true;try{const data=await loadStore();await oltMonitor.pollNext(data);if(oltAutoIdentity.available(data)){const observations=await Promise.all(oltMonitor.deviceRows(data).filter(device=>device.enabled).map(async device=>({device,snapshot:await oltMonitor.snapshotFor(device)})));await oltAutoIdentity.refresh(data,observations);}await syncOltLosTickets();}finally{running=false;}};
   const report=error=>console.error(`Monitoring OLT gagal: ${error.message||error}`);
@@ -24009,6 +24012,10 @@ async function handleApi(req, res, url) {
       notificationEnabled:ticketSettings.whatsappEnabled,ticketAutomation:{enabled:ticketSettings.enabled,cause:'los',whatsappEnabled:ticketSettings.whatsappEnabled},ticketTemplates:oltMonitor.ticketTemplates(context.data),
       ...(manage?{ticketSettings:{...ticketSettings,gatewayEnabled:context.data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(context.data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.eligibleUsers(context.data).map(user=>({id:user.id,name:user.name||user.username,role:user.role,phone:oltTicketing.phoneFor(user)}))}:{}) });
     return;
+  }
+  if(pathname==='/api/monitoring/olt/resources'&&method==='GET'){
+    const context=await requirePermission(req,res,'olt:read');if(!context)return;
+    sendJson(res,200,await oltMonitor.resourcePage(oltMonitor.visibleDevices(context.data,context.user)));return;
   }
   if(pathname==='/api/monitoring/olt/refresh'&&method==='POST'){
     const context=await requirePermission(req,res,'olt:read');if(!context)return;
@@ -28259,6 +28266,7 @@ if (require.main === module) {
     if (paymentGatewayHistorySyncTimer) clearInterval(paymentGatewayHistorySyncTimer);
     if (routerDashboardBackgroundTimer) clearInterval(routerDashboardBackgroundTimer);
     if (oltBackgroundTimer) clearInterval(oltBackgroundTimer);
+    if (oltResourceTimer) clearInterval(oltResourceTimer);
     if (oltRegistrationTimer) clearInterval(oltRegistrationTimer);
     if (customerSummaryBackgroundTimer) clearInterval(customerSummaryBackgroundTimer);
     if (genieAcsStaleReplacedCleanupTimer) clearInterval(genieAcsStaleReplacedCleanupTimer);

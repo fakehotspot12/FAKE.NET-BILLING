@@ -408,7 +408,7 @@ anggaran waktu optik. Cache tidak menempel ke serial/posisi ONU yang berubah.
 ONU yang kembali online diprioritaskan pada putaran pembacaan berikutnya, tanpa
 menambah scheduler atau melebihi batas empat PON. Nilai native `N/A` tetap kosong.
 CPU/RAM C320 memakai kartu pengendali aktif yang terverifikasi, bukan kartu PON,
-dan dibaca maksimal sekali per lima menit. Model ONU dari type konfigurasi OLT
+dan mengikuti interval resource adaptif 15-60 detik. Model ONU dari type konfigurasi OLT
 ditandai sumbernya; kolom pelanggan/ODP yang belum dipetakan tetap tidak ditebak.
 
 Pada OLT ZTE yang sudah ditambahkan, ikon **Profil Layanan ZTE** membuka mode
@@ -816,7 +816,7 @@ Redaman ONU dilengkapi melalui endpoint baca bawaan perangkat, paling banyak
 delapan ONU pada halaman aktif, dengan pemeriksaan SN/PON dan cache terbatas.
 Pembacaan ini berjalan di background; query optical massal tidak dipakai.
 Data yang tidak tersedia tetap kosong, bukan diisi dengan angka perkiraan.
-CPU dan RAM HSGQ dibaca melalui CLI dan dicache lima menit di Ringkasan OLT.
+CPU dan RAM HSGQ dibaca melalui CLI dengan cache resource adaptif di Ringkasan OLT.
 Untuk semua vendor OLT yang ONUnya sudah terintegrasi, model mengutamakan
 ModelName atau ProductClass dari indeks ACS yang terverifikasi. Pemetaan GPON
 memeriksa SN, sedangkan EPON memerlukan MAC antarmuka ONT yang cocok; nama
@@ -1095,12 +1095,23 @@ Hasil dibaca ulang; pengiriman yang belum pasti tidak dicoba ulang otomatis.
 Dukungan model/firmware harus diuji sebelum dipakai pada jaringan aktif;
 provisioning manual existing tetap dipertahankan.
 
-Model dan bar CPU/RAM ada pada **Ringkasan**. Pembacaan berjalan di background
-dan disimpan pada snapshot/cache: resource paling cepat setiap lima menit,
-model setiap 24 jam, serta jeda ulang 15 menit saat gagal. Membuka daftar PON/ONU
-tidak memicu pembacaan sistem baru. Hanya HIOSO memakai web untuk informasi ini;
-vendor lain memakai SNMP/CLI yang didukung. Data tidak tersedia tetap `-`, data
-lama diberi penanda, dan seri fisik tidak ditebak dari nama atau jumlah port.
+Model dan bar CPU/RAM ada pada **Ringkasan**. Pembacaan resource terpisah dari
+inventory ONU: default 30 detik, menjadi 15 detik setelah tiga respons cepat,
+atau 60 detik pada respons lambat. Penyesuaian mengikuti durasi respons, bukan
+menebak LAN/VPN dari alamat privat. Kegagalan diberi jeda bertahap 30 detik
+hingga lima menit tanpa mengganti nilai terakhir menjadi nol. Maksimal dua OLT
+dibaca bersamaan; sesi console, operasi CLI dan pembacaan inventory diprioritaskan.
+
+Ringkasan memperbarui bar dari cache bersama setiap 10 detik saat halaman aktif,
+tanpa merender ulang halaman atau menambah pembacaan perangkat per pengguna.
+Polling browser dijeda saat halaman tersembunyi atau dialog terbuka dan dihentikan
+ketika meninggalkan menu/logout. Sampel terakhir disimpan pada memori terbatas
+dan Redis bila aktif; tidak menambah tabel/history database. Model dicache 24 jam.
+Membuka daftar PON/ONU tidak memicu pembacaan sistem baru. CPU/RAM CDATA, ZTE dan
+HSGQ memakai perintah CLI terverifikasi; HIOSO mempertahankan pembacaan web yang
+didukung. Model vendor lain dapat dilengkapi melalui SNMP tanpa mengarang CPU/RAM.
+Data tidak tersedia tetap `-`, data lama diberi penanda, dan seri fisik tidak
+ditebak dari nama atau jumlah port.
 Keluarga firmware yang tersedia tanpa seri fisik dibedakan melalui tooltip.
 
 SNMP/Telnet diprioritaskan untuk data dan perintah yang terverifikasi didukung
