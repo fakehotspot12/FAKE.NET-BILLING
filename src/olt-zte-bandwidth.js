@@ -5,10 +5,17 @@ const plans=new Map(),pending=new Set(),attempts=new Map(),PLAN_MS=120000;
 const CATALOGUE=['show version-running','show gpon profile tcont','show gpon profile traffic','show gpon onu profile vlan','show vlan summary'];
 const fail=(message,status=409)=>{throw Object.assign(Error(message),{status});};
 const hash=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function nativeProfileStatus(row,direction){
+ const upload=direction==='upload',rate=row&&(upload?profiles.upstream(row):row.pir),limit=upload?1244160:2488320;
+ const valid=row&&(upload?[row.fixed,row.assured,row.maximum].every(value=>Number.isSafeInteger(value)&&value>=0)&&[1,2,3,4,5].includes(row.type)&&!(row.type===4&&(row.fixed||row.assured))&&(![3,5].includes(row.type)||row.maximum>=row.fixed+row.assured):Number.isSafeInteger(row.sir)&&row.sir>=0&&row.sir<=row.pir);
+ const selectable=Boolean(valid&&Number.isSafeInteger(rate)&&rate>=64&&rate<=limit),reserved=Boolean(row&&(upload?row.fixed||row.assured:row.sir));
+ return{selectable,reserved,...(!selectable?{reason:!valid?'Definisi profil perlu diperiksa.':'Batas profil di luar rentang penerapan GPON yang didukung.'}:{})};
+}
 function nativePolicy(catalogue,input){
  const up=catalogue.tcont.find(row=>row.name===input.tcontProfile),down=catalogue.traffic.find(row=>row.name===input.trafficProfile);
- if(!up||!down||up.type!==4||up.fixed!==0||up.assured!==0||down.sir!==0||up.maximum<64||up.maximum>1000000||down.pir<64||down.pir>1000000)fail('Pilih profil best-effort tanpa reservasi bandwidth yang tersedia di OLT.',400);
- return{kbps:up.maximum,...(down.pir!==up.maximum?{downloadKbps:down.pir}:{}),maxOnus:128,fixedKbps:0,assuredKbps:0,profiles:[{kind:'tcont',...up,action:'reuse'},{kind:'traffic',...down,action:'reuse'}]};
+ if(!nativeProfileStatus(up,'upload').selectable||!nativeProfileStatus(down,'download').selectable)fail('Pilih profil existing dengan definisi dan batas GPON yang didukung.',400);
+ const kbps=profiles.upstream(up);
+ return{kbps,...(down.pir!==kbps?{downloadKbps:down.pir}:{}),fixedKbps:up.fixed,assuredKbps:up.assured,requiresReservationConfirmation:Boolean(up.fixed||up.assured||down.sir),profiles:[{kind:'tcont',...up,action:'reuse'},{kind:'traffic',...down,action:'reuse'}]};
 }
 function profileSelection(device,input){
  if(input.kind!=='onu'||input.profileMode!=='catalogue')return input;
@@ -119,6 +126,7 @@ async function execute(data,device,actor,input,options={}){
  pnp.check(data,device,actor);const plan=plans.get(input.token);
  if(!plan||plan.expires<=Date.now()||plan.actorId!==actor.id||plan.deviceId!==device.id||plan.signature!==pnp.signature(device)||input.revision!==(device.updatedAt||'')||input.confirmId!==device.id||input.confirmTarget!==(plan.value.target?.serialNumber||(plan.value.kind==='custom'?plan.value.policies[0].kbps+'/'+(plan.value.policies[0].downloadKbps??plan.value.policies[0].kbps):'60/120'))||input.confirmImpact!==true)fail('Konfirmasi profil bandwidth tidak sesuai');
  assertProfile(device,plan.value);if(plan.value.allocation?.sharedUpload&&input.confirmSharedUpload!==true)fail('Konfirmasi dampak upload bersama pada VLAN lain di ONU ini.',400);
+ if(plan.value.policies.some(policy=>policy.requiresReservationConfirmation)&&input.confirmReservedBandwidth!==true)fail('Konfirmasi penggunaan profil existing dengan reservasi bandwidth pada PON ini.',400);
  if(plan.result)return structuredClone(plan.result);if(plan.used)fail('Perintah sudah diproses; baca hasil sebelum mengulang');
  if(typeof options.beforeSend!=='function'||typeof options.afterSend!=='function')fail('Pencatatan audit perubahan bandwidth wajib tersedia');
  if(process.env.MIGRATION_MODE==='1'&&options.explicitDevAccess!==true)fail('Perubahan bandwidth pada Dev memerlukan izin eksplisit');
@@ -132,4 +140,4 @@ async function execute(data,device,actor,input,options={}){
   try{await options.afterSend(plan.result,plan.value);}catch{plan.result.persistenceWarning=true;plan.result.message+=' Pencatatan hasil belum berhasil.';}return structuredClone(plan.result);
  }finally{pending.delete(device.id);}
 }
-module.exports={policy,customPolicy,nativePolicy,assertProfile,inspect,build,readCommands,writeCommands,verifyStep,verifyResult,authorize,prepare,execute,isBusy:id=>pending.has(id),PLAN_MS};
+module.exports={policy,customPolicy,nativePolicy,nativeProfileStatus,assertProfile,inspect,build,readCommands,writeCommands,verifyStep,verifyResult,authorize,prepare,execute,isBusy:id=>pending.has(id),PLAN_MS};

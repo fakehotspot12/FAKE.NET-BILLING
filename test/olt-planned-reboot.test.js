@@ -4,7 +4,7 @@ const planned=require('../src/olt-planned-reboot'),olt=require('../src/olt-monit
 const rawPlan=olt.losTicketPlan,priorLosReads=require('./helpers/confirmed-los');
 function confirmedPlan(data,observations,options){priorLosReads(data,observations);return rawPlan(data,observations,options);}
 const NOW=Date.parse('2026-11-14T12:00:00Z'),SN='HWTCAABB0001',INDEX='4718593';
-function fixture(){const data=createDefaultStore();data.oltDevices=[{id:'olt-a',name:'Unit',enabled:true,nasId:'nas-a',updatedAt:'rev',links:{}}];data.monitoringTargets=[{id:'nas-a',name:'NAS A'},{id:'nas-b',name:'NAS B'}];return data;}
+function fixture(){const data=createDefaultStore();data.settings.oltTicketing={enabled:true,automaticTicketsEnabled:true,whatsappEnabled:true};data.oltDevices=[{id:'olt-a',name:'Unit',enabled:true,nasId:'nas-a',updatedAt:'rev',links:{}}];data.monitoringTargets=[{id:'nas-a',name:'NAS A'},{id:'nas-b',name:'NAS B'}];return data;}
 const row=(sn=SN,patch={})=>({id:INDEX,serialNumber:sn,ponKey:'0/0/1',onuId:1,status:'offline',condition:'los',causeKnown:true,downCause:'LOS',rxPower:null,...patch});
 function observation(data,onus,at){return{deviceId:'olt-a',deviceUpdatedAt:'rev',snapshot:{status:'online',checkedAt:new Date(at).toISOString(),onus,ports:[]}};}
 function mark(data,target={},actor={}){return planned.begin(data,{source:'olt',serialNumber:SN,oltId:'olt-a',onuIndex:INDEX,pon:'0/0/1',...target},actor,NOW);}
@@ -35,4 +35,14 @@ test('manual tickets and faults predating reboot retain notification eligibility
  const data=fixture();mark(data);const ticket={source:'olt-los',createdAt:new Date(NOW+1000).toISOString(),oltId:'olt-a',pon:'0/0/1',serialNumber:SN};assert(planned.suppressNotification(data,ticket,NOW+2000));assert(!planned.suppressNotification(data,{...ticket,source:'manual'},NOW+2000));assert(!planned.suppressNotification(data,{...ticket,createdAt:new Date(NOW-1000).toISOString()},NOW+2000));assert(!planned.suppressNotification(data,{...ticket,serialNumber:'HWTC11223344'},NOW+2000));
 });
 test('unknown/non-GPON device identities do not create broad reboot markers',()=>{const data=fixture();assert.equal(planned.begin(data,{deviceId:'unknown'},{}),null);assert.equal(planned.index(data,NOW).size,0);});
+test('ZTE reboot markers accept native ONU addresses and suppress only the exact SN and PON',()=>{
+ const data=fixture();data.oltDevices[0].vendor='zte';const target={onuIndex:'1/1/13:6',pon:'1/1/13'},marker=mark(data,target);
+ assert.equal(marker.onuIndex,target.onuIndex);assert(planned.forOnu(data,data.oltDevices[0],row(SN,{id:target.onuIndex,ponKey:target.pon}),{now:NOW+1}));
+ for(const patch of[{id:'1/1/13:7'},{ponKey:'1/1/12'},{serialNumber:'HWTC11223344'}])assert.equal(planned.forOnu(data,data.oltDevices[0],row(SN,{id:target.onuIndex,ponKey:target.pon,...patch}),{now:NOW+1}),null);
+});
+test('ZTE reboot markers reject mismatched PON, invalid IDs and injected commands before storing markers',()=>{
+ for(const target of[{onuIndex:'1/1/13:6',pon:'1/1/12'},{onuIndex:'1/1/13:129',pon:'1/1/13'},{onuIndex:INDEX,pon:'1/1/13'},{onuIndex:'1/1/13:6;reboot',pon:'1/1/13'},{onuIndex:'01/1/13:6',pon:'1/1/13'}]){
+  const data=fixture();data.oltDevices[0].vendor='zte';assert.throws(()=>mark(data,target),/Posisi ONU/);assert.equal(planned.index(data,NOW).size,0);
+ }
+});
 test('reboot serials and actor IDs remain private rather than entering public branding/settings',()=>{const data=fixture();mark(data,{}, {id:'private-actor'});const output=publicSettings(data.settings);assert(!Object.hasOwn(output,'plannedOnuReboots'));assert(!JSON.stringify(output).includes('private-actor'));assert(!JSON.stringify(output).includes(SN));});

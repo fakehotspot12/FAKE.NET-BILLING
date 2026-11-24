@@ -10,32 +10,34 @@
       <div class="full olt-form" id="oltOnuNativeProfiles" hidden><label>Profil Upload<select name="tcontProfile"></select></label><label>Profil Download<select name="trafficProfile"></select></label></div>
       <div class="full olt-bandwidth-current" id="oltOnuCurrentProfile"></div>
       <div class="full zte-profile-preview" id="oltOnuBandwidthPreview" role="status"></div>
-      <div class="full olt-pnp-confirm" id="oltOnuBandwidthConfirmation" hidden><label>Ketik SN ONU<input name="confirmTarget" maxlength="12" autocomplete="off"></label><label class="olt-check"><input name="confirmImpact" type="checkbox">Saya menyetujui perubahan profil layanan ini.</label><label class="olt-check" id="oltOnuSharedConfirmation" hidden><input name="confirmSharedUpload" type="checkbox">Saya menyetujui perubahan batas upload bersama pada VLAN yang ditampilkan.</label></div>
+      <div class="full olt-pnp-confirm" id="oltOnuBandwidthConfirmation" hidden><label>Ketik SN ONU<input name="confirmTarget" maxlength="12" autocomplete="off"></label><label class="olt-check"><input name="confirmImpact" type="checkbox">Saya menyetujui perubahan profil layanan ini.</label><label class="olt-check" id="oltOnuSharedConfirmation" hidden><input name="confirmSharedUpload" type="checkbox">Saya menyetujui perubahan batas upload bersama pada VLAN yang ditampilkan.</label><label class="olt-check" id="oltOnuReservedConfirmation" hidden><input name="confirmReservedBandwidth" type="checkbox">Saya menyetujui penggunaan profil dengan reservasi bandwidth dan telah memeriksa kapasitas PON.</label></div>
       <p class="full" id="oltOnuBandwidthStatus" role="status" aria-live="polite"></p><p class="full olt-modal-error" id="oltModalError" role="alert"></p>
       <div class="full modal-actions olt-bridge-actions"><button type="button" class="ghost-button" data-close-modal>Tutup</button><button type="button" class="ghost-button" id="oltOnuBandwidthRead" title="Baca ulang layanan dan profil" aria-label="Baca ulang layanan dan profil">${glyph('refresh')}</button><button type="button" class="button" id="oltOnuBandwidthPrepare" disabled>Periksa</button><button type="button" class="button" id="oltOnuBandwidthApply" hidden>Terapkan</button></div>`, async () => false);
     const status = document.getElementById('oltOnuBandwidthStatus'), form = status.closest('form'), dialog = form.closest('dialog');
     const $ = id => form.querySelector('#' + id), read = $('oltOnuBandwidthRead'), prepare = $('oltOnuBandwidthPrepare'), apply = $('oltOnuBandwidthApply'), error = $('oltModalError');
     const present = () => form.isConnected && dialog.open && active();
     const rate = value => new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 }).format(value / 1000) + ' Mbps';
-    const opts = (rows, value = '') => '<option value="">Pilih profil</option>' + rows.map(item => `<option value="${esc(item.id)}" ${item.id === value ? 'selected' : ''}>${esc(item.label)}</option>`).join('');
+    const opts = (rows, value = '') => '<option value="">Pilih profil</option>' + rows.map(item => `<option value="${esc(item.id)}" ${item.id === value ? 'selected' : ''} ${item.disabled?'disabled':''} ${item.reason?`title="${esc(item.reason)}"`:''}>${esc(item.label)}</option>`).join('');
     const sync = () => {
       for (const control of form.querySelectorAll('input,select')) control.disabled = busy || finished || !unit;
       read.disabled = busy; prepare.disabled = busy || finished || !unit || !form.elements.profileChoice.value;
       apply.hidden = !plan || finished; apply.disabled = busy || finished;
       $('oltOnuBandwidthConfirmation').hidden = !plan || finished;
       $('oltOnuSharedConfirmation').hidden = !plan?.value.allocation?.sharedUpload;
+      $('oltOnuReservedConfirmation').hidden = !plan?.value.policies.some(policy=>policy.requiresReservationConfirmation);
       $('oltOnuNativeProfiles').hidden = form.elements.profileChoice.value !== 'native';
       for (const close of dialog.querySelectorAll('[data-close-modal],.modal-close')) close.disabled = busy;
     };
     const invalidate = () => {
       plan = null; $('oltOnuBandwidthPreview').replaceChildren();
-      form.elements.confirmTarget.value = ''; form.elements.confirmImpact.checked = false; form.elements.confirmSharedUpload.checked = false;
+      form.elements.confirmTarget.value = ''; form.elements.confirmImpact.checked = false; form.elements.confirmSharedUpload.checked = false; form.elements.confirmReservedBandwidth.checked=false;
       sync();
     };
     const showCurrent = () => {
       const service = unit?.services.find(item => String(item.id) === form.elements.servicePortId.value);
       const gem = unit?.gems.find(item => item.id === service?.gem), tc = unit?.tcont.find(item => item.id === gem?.tcont);
       $('oltOnuCurrentProfile').innerHTML = service ? `<span>Profil saat ini</span><strong>Upload: ${esc(tc?.profile || '-')}</strong><strong>Download: ${esc(gem?.downstream || '-')}</strong>` : '';
+      if(form.elements.profileChoice.value==='native'){for(const[name,value]of[['tcontProfile',tc?.profile],['trafficProfile',gem?.downstream]])form.elements[name].value=value||'';}
     };
     const load = async (force = false) => {
       if (busy || !present()) return;
@@ -49,9 +51,9 @@
         unit = details.onu; catalogue = list;
         form.elements.servicePortId.innerHTML = unit.services.map(item => `<option value="${item.id}">VLAN ${item.userVlan}${item.vlan !== item.userVlan ? ' \u2192 ' + item.vlan : ''} \u00b7 Layanan ${item.id}</option>`).join('') || '<option value="">Belum ada layanan</option>';
         const choices = (catalogue.profiles || []).filter(item => item.enabled !== false).map(item => ({ id: 'catalogue:' + item.id, label: item.label + ' \u00b7 ' + rate(item.uploadKbps) + ' / ' + rate(item.downloadKbps) }));
-        form.elements.profileChoice.innerHTML = opts([...choices, { id: 'standard:60000', label: 'Standar 60 Mbps' }, { id: 'standard:120000', label: 'Standar 120 Mbps' }, { id: 'native', label: 'Pilih profil di OLT' }]);
-        form.elements.tcontProfile.innerHTML = opts((catalogue.nativeProfiles?.upload || []).filter(item => item.type === 4 && item.fixed === 0 && item.assured === 0 && item.maximum >= 64 && item.maximum <= 1000000).map(item => ({ id: item.name, label: item.name + ' \u00b7 ' + rate(item.maximum) })));
-        form.elements.trafficProfile.innerHTML = opts((catalogue.nativeProfiles?.download || []).filter(item => item.sir === 0 && item.pir >= 64 && item.pir <= 1000000).map(item => ({ id: item.name, label: item.name + ' \u00b7 ' + rate(item.pir) })));
+        form.elements.profileChoice.innerHTML = opts([...choices, { id: 'native', label: 'Profil existing di OLT' }, { id: 'standard:60000', label: 'Standar 60 Mbps' }, { id: 'standard:120000', label: 'Standar 120 Mbps' }],choices.length?'':'native');
+        form.elements.tcontProfile.innerHTML = opts((catalogue.nativeProfiles?.upload || []).map(item => ({ id:item.name,label:item.name+' \u00b7 '+rate(item.type===1?item.fixed:item.type===2?item.assured:item.maximum)+' \u00b7 Type '+item.type+(item.selectable===false?' (hanya lihat)':item.reserved?' (reservasi)':''),disabled:item.selectable===false,reason:item.reason })));
+        form.elements.trafficProfile.innerHTML = opts((catalogue.nativeProfiles?.download || []).map(item => ({ id:item.name,label:item.name+' \u00b7 '+rate(item.pir)+(item.selectable===false?' (hanya lihat)':item.reserved?' (reservasi)':''),disabled:item.selectable===false,reason:item.reason })));
         showCurrent(); status.textContent = 'Pilih layanan dan profil bandwidth.';
       } catch (problem) { if (present()) { unit = null; error.textContent = problem.message; status.textContent = 'Tidak ada konfigurasi yang diubah.'; } }
       finally { busy = false; if (present()) sync(); }
@@ -68,14 +70,15 @@
         if (!present()) return;
         const value = plan.value, allocation = value.allocation, policy = value.policies[0];
         $('oltOnuBandwidthPreview').innerHTML = `<div class="zte-profile-result"><div><span>Upload</span><strong>${esc(rate(policy.kbps))}</strong><small>${esc(value.profiles[0].name)}</small></div><div><span>Download layanan terpilih</span><strong>${esc(rate(policy.downloadKbps ?? policy.kbps))}</strong><small>${esc(value.profiles[1].name)}</small></div></div>${allocation.sharedUpload ? `<p class="olt-bandwidth-shared">Upload dibagi oleh VLAN ${esc(allocation.sharedServices.map(item => item.userVlan).join(', '))} pada ONU ini. Profil download VLAN lain tidak berubah.</p>` : ''}`;
+        if(policy.requiresReservationConfirmation)$('oltOnuBandwidthPreview').insertAdjacentHTML('beforeend',`<p class="olt-bandwidth-shared">Reservasi profil: fixed ${esc(rate(policy.fixedKbps))}, assured ${esc(rate(policy.assuredKbps))}, SIR download ${esc(rate(value.profiles[1].sir))}. Definisi profil existing tidak diubah.</p>`);
         form.elements.confirmTarget.placeholder = unit.serialNumber; status.textContent = 'VLAN, ID layanan, T-CONT, GEM, dan preset PON tetap.';
       } catch (problem) { if (present()) { plan = null; error.textContent = problem.message; status.textContent = 'Tidak ada konfigurasi yang diubah.'; } }
       finally { busy = false; if (present()) sync(); }
     });
     apply.addEventListener('click', async () => {
       if (busy || !plan || !present()) return;
-      if (form.elements.confirmTarget.value !== plan.value.target.serialNumber || !form.elements.confirmImpact.checked || plan.value.allocation.sharedUpload && !form.elements.confirmSharedUpload.checked) { error.textContent = 'Isi SN yang sesuai dan centang persetujuan perubahan serta dampak upload bersama jika ada.'; return; }
-      const input = { action: 'apply', token: plan.token, revision: plan.revision, confirmId: row.id, confirmTarget: form.elements.confirmTarget.value, confirmImpact: true, confirmSharedUpload: form.elements.confirmSharedUpload.checked };
+      if (form.elements.confirmTarget.value !== plan.value.target.serialNumber || !form.elements.confirmImpact.checked || plan.value.allocation.sharedUpload && !form.elements.confirmSharedUpload.checked || plan.value.policies.some(policy=>policy.requiresReservationConfirmation)&&!form.elements.confirmReservedBandwidth.checked) { error.textContent = 'Isi SN yang sesuai dan centang persetujuan perubahan, upload bersama, serta reservasi bandwidth jika ada.'; return; }
+      const input = { action: 'apply', token: plan.token, revision: plan.revision, confirmId: row.id, confirmTarget: form.elements.confirmTarget.value, confirmImpact: true, confirmSharedUpload: form.elements.confirmSharedUpload.checked,confirmReservedBandwidth:form.elements.confirmReservedBandwidth.checked };
       busy = true; sync(); error.textContent = ''; status.textContent = 'Menerapkan profil dan membaca ulang hasil...';
       try { const result = await owner.api(base + '/bandwidth', { method: 'POST', timeoutMs: 22000, body: JSON.stringify(input) }); if (present()) { status.textContent = result.message; status.className = result.verified ? 'full olt-test-ok' : 'full olt-test-failed'; } }
       catch (problem) { if (present()) { error.textContent = problem.message; status.textContent = 'Baca ulang layanan sebelum mencoba kembali.'; } }
@@ -84,7 +87,7 @@
     const controls = new AbortController();
     dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); }, { signal: controls.signal });
     dialog.addEventListener('close', () => controls.abort(), { once: true, signal: controls.signal });
-    form.addEventListener('change', event => { if (['servicePortId', 'profileChoice', 'tcontProfile', 'trafficProfile'].includes(event.target.name)) { invalidate(); error.textContent = ''; if (event.target.name === 'servicePortId') showCurrent(); } }, { signal: controls.signal });
+    form.addEventListener('change', event => { if (['servicePortId', 'profileChoice', 'tcontProfile', 'trafficProfile'].includes(event.target.name)) { invalidate(); error.textContent = ''; if (['servicePortId','profileChoice'].includes(event.target.name)) showCurrent(); } }, { signal: controls.signal });
     sync(); void load();
   }
   window.FakenetOltBandwidth = { open };

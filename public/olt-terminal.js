@@ -9,7 +9,7 @@
   const queue = [], controls = new Map([['tab','\t'],['escape','\x1b'],['interrupt','\x03'],['suspend','\x1a'],['up','\x1b[A'],['down','\x1b[B'],['left','\x1b[D'],['right','\x1b[C'],['more',' '],['enter','\r']]);
   let term, fit, observer, session = '', csrf = '', offset = 0, revision = 0, sequence = 0, generation = 0;
   let ready = false, pending = false, password = false, confirmation = false, pager = false, closed = false, connecting = false, sending = false, handoff = false, ctrlArmed = false;
-  let readTimer, inputTimer, resizeTimer, handoffTimer, reader, requestedSize, sentSize;
+  let readTimer, inputTimer, resizeTimer, handoffTimer, reader, connector, requestedSize, sentSize;
   const say = (text, error = false) => { status.textContent = text; status.dataset.error = String(error); };
   const hideExtra = () => { extra.hidden = true; more.setAttribute('aria-expanded','false'); };
   const setKeys = () => { for (const button of document.querySelectorAll('.terminal-keys button')) button.disabled = !ready || closed; if (!ready || closed) hideExtra(); };
@@ -20,12 +20,12 @@
   async function api(path, options = {}) {
     const response = await fetch(path, { ...options, credentials: 'same-origin', cache: 'no-store', signal: options.signal || AbortSignal.timeout(12000), headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, ...options.headers } });
     const value = await response.json().catch(() => ({}));
-    if (!response.ok) throw Object.assign(Error(value.error || 'Koneksi terminal belum tersedia'), { status: response.status, sequence: value.sequence });
+    if (!response.ok) throw Object.assign(Error(value.error || 'Koneksi terminal belum tersedia'), { status: response.status, sequence: value.sequence,consoleReported:value.consoleReported===true });
     return value;
   }
   function clearQueue() { queue.length = 0; clearTimeout(inputTimer); }
   async function disconnect(strict = false) {
-    generation++; ready = false; clearTimeout(readTimer); reader?.abort(); clearQueue(); setKeys();
+    generation++; ready = false; clearTimeout(readTimer); reader?.abort(); connector?.abort(); clearQueue(); setKeys();
     const id = session;
     if (id) try { await api(endpoint + '/' + id, { method: 'DELETE', body: '{}', signal: AbortSignal.timeout(5000) }); }
     catch { if (strict) { reconnect.hidden = false; throw Error('Sesi belum berhasil ditutup. Hubungkan ulang sebelum menghapus ONU.'); } }
@@ -33,7 +33,7 @@
   }
   function close() {
     if (closed) return;
-    closed = true; ready = false; clearTimeout(readTimer); clearTimeout(handoffTimer); clearTimeout(resizeTimer); reader?.abort(); clearQueue(); observer?.disconnect();
+    closed = true; ready = false; clearTimeout(readTimer); clearTimeout(handoffTimer); clearTimeout(resizeTimer); reader?.abort(); connector?.abort(); clearQueue(); observer?.disconnect();
     window.visualViewport?.removeEventListener('resize', viewport); window.visualViewport?.removeEventListener('scroll', viewport); window.removeEventListener('resize', viewport);
     if (session) fetch(endpoint + '/' + session, { method: 'DELETE', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: '{}' }).catch(() => {});
     session = ''; term?.dispose();
@@ -49,7 +49,7 @@
       if (value.output) await new Promise(resolve => term.write(value.output, resolve));
       offset = value.offset; revision = value.revision || 0; ready = value.state === 'ready';
       pending = Boolean(value.commandPending); password = Boolean(value.passwordInput); confirmation = Boolean(value.confirmationInput); pager = Boolean(value.pagerInput);
-      if (value.state === 'closed') { session = ''; clearQueue(); reconnect.hidden = false; say('Sesi ditutup'); }
+      if (value.state === 'closed') { session = ''; clearQueue(); reconnect.hidden = false; say(value.message || 'Sesi ditutup',true); }
       else if (status.dataset.error !== 'true') say(ready ? 'Terhubung' : 'Menghubungkan...');
       setKeys(); void drain();
     } catch (error) {
@@ -103,6 +103,7 @@
       if (Number.isSafeInteger(error.sequence)) sequence = error.sequence;
       else if (session && token === generation) await disconnect();
       if (error.status === 401 || error.status === 403 && !Number.isSafeInteger(error.sequence)) term.reset();
+      else if(!error.consoleReported&&Number.isSafeInteger(error.sequence))term.write('\r\n% Billing: '+String(error.message).replace(/[\x00-\x1f\x7f-\x9f]/g,' ').slice(0,500)+'\r\n');
       say(error.message,true);
     } finally {
       sending = false;
@@ -123,15 +124,18 @@
       const me = await api('/api/auth/me'); csrf = me.csrfToken || '';
       if (!me.user?.permissions?.some(value => ['olt:manage','olt:onu:delete'].includes(value))) throw Error('Tidak memiliki izin terminal OLT.');
       const list = await api('/api/monitoring/olt'), device = list.devices.find(row => row.id === oltId);
+      if(closed)return;
       if (!device || device.terminalAvailable !== true || device.simulated) throw Error('Akses CLI OLT ini belum tersedia.');
       document.getElementById('oltTerminalName').textContent = device.name; document.title = device.name + ' | Terminal OLT';
-      const token = ++generation, dimensions = size(), value = await api(endpoint, { method: 'POST', body: JSON.stringify({ confirm: true, revision: device.revision || '', mode: 'native', ...dimensions }) });
+      say('Menunggu akses CLI...');
+      connector=new AbortController();
+      const token = ++generation, dimensions = size(), value = await api(endpoint, { method: 'POST', signal: AbortSignal.any([connector.signal,AbortSignal.timeout(25000)]), body: JSON.stringify({ confirm: true, revision: device.revision || '', mode: 'native', ...dimensions }) });
       if (closed || token !== generation) { await api(endpoint + '/' + value.id,{method:'DELETE',body:'{}'}).catch(()=>{});return; }
       if(value.mode!=='native'){await api(endpoint+'/'+value.id,{method:'DELETE',body:'{}'});throw Error('Runtime terminal belum diperbarui. Muat ulang aplikasi setelah update.');}
       session = value.id; offset = 0; revision = 0; sequence = 0; pending = false; sentSize = dimensions; requestedSize = null; clearQueue(); term.reset();
       void read(); term.focus();
-    } catch (error) { say(error.status === 401 ? 'Silakan login kembali pada aplikasi billing.' : error.message,true);reconnect.hidden=false; }
-    finally { connecting=false;setKeys(); }
+    } catch (error) { if(!closed){say(error.status === 401 ? 'Silakan login kembali pada aplikasi billing.' : error.message,true);reconnect.hidden=false;} }
+    finally { connector=null;connecting=false;setKeys(); }
   }
   if (!oltId || oltId.length > 100 || !/^[a-zA-Z0-9-]+$/.test(oltId) || !window.Terminal || !window.FitAddon) { say('Terminal tidak dapat dimuat.',true);return; }
   viewport();window.visualViewport?.addEventListener('resize',viewport);window.visualViewport?.addEventListener('scroll',viewport);window.addEventListener('resize',viewport);

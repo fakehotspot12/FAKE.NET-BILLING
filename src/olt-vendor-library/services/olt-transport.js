@@ -9,20 +9,21 @@ export function releaseOlt(id){
   while(queue?.length){const next=queue.shift();if(!queue.length)waiting.delete(id);if(next.signal.aborted){next.cancel();continue;}next.grant();return;}
   busy.delete(id);
 }
-function acquireQueuedOlt(id){
-  const context=current();remaining();
+export function waitForOlt(id,{signal,timeoutMs=8000,priority=false}={}){
+  if(signal?.aborted)return Promise.reject(Object.assign(Error('Permintaan terminal dibatalkan'),{status:409}));
   if(claimOlt(id))return Promise.resolve();
   const queue=waiting.get(id)||[];
   if(queue.length>=4||[...waiting.values()].reduce((n,rows)=>n+rows.length,0)>=32)return Promise.reject(Object.assign(Error('Antrean konfigurasi OLT penuh. Coba kembali setelah proses selesai.'),{status:429}));
   return new Promise((resolve,reject)=>{
-    const signal=context.controller.signal;let timer,settled=false;
-    const clean=()=>{clearTimeout(timer);signal.removeEventListener('abort',cancel);const at=queue.indexOf(entry);if(at>=0)queue.splice(at,1);if(!queue.length)waiting.delete(id);};
+    let timer,settled=false;
+    const clean=()=>{clearTimeout(timer);signal?.removeEventListener('abort',cancel);const at=queue.indexOf(entry);if(at>=0)queue.splice(at,1);if(!queue.length)waiting.delete(id);};
     const cancel=()=>{if(settled)return;settled=true;clean();reject(Object.assign(Error('Batas waktu antrean OLT tercapai. Tutup terminal manual jika masih terbuka, lalu periksa kembali.'),{status:429}));};
-    const entry={signal,cancel,grant:()=>{if(settled)return;settled=true;clean();resolve();}};
-    queue.push(entry);waiting.set(id,queue);signal.addEventListener('abort',cancel,{once:true});
-    timer=setTimeout(cancel,Math.max(1,Math.min(8000,remaining())));
+    const entry={signal:signal||{aborted:false},cancel,grant:()=>{if(settled)return;settled=true;clean();resolve();}};
+    if(priority)queue.unshift(entry);else queue.push(entry);waiting.set(id,queue);signal?.addEventListener('abort',cancel,{once:true});
+    timer=setTimeout(cancel,Math.max(1,Math.min(priority?20000:8000,timeoutMs)));
   });
 }
+function acquireQueuedOlt(id){const context=current();return waitForOlt(id,{signal:context.controller.signal,timeoutMs:remaining(),priority:context.cliPriority===true});}
 export function isRebootProbe(commands,vendor){return Array.isArray(commands)&&['?','reboot ?','reload ?','system reboot ?'].includes(commands.at(-1))&&['["enable"]','["enable","config"]','["enable","configure terminal"]','["enable","system-view"]',...(vendor==='hsgq'?['["enable","configure"]']:[])].includes(JSON.stringify(commands.slice(0,-1)));}
 export function loginDenied(output=''){
   // Login-history counters are not denials; wait for a complete line so a split
@@ -47,11 +48,11 @@ export function assertReadCommands(commands=[]){
 export function shellSession({olt,password,commands,timeoutMs,loginTimeoutMs},open){
   const context=current(),saving=olt.vendor==='hioso'&&context.hiosoActionAllowed&&context.hiosoGrant?.operation==='saveConfigCli'&&context.hiosoGrant.used&&commands.length===2&&commands[0]==='enable'&&commands[1]==='write',onuGrant=olt.vendor==='hioso'&&context.hiosoActionAllowed&&context.hiosoGrant?.operation==='onuCli'&&context.hiosoGrant.used?context.hiosoGrant:null;return new Promise(resolve=>{
     let channel,close=()=>{},timer,loginTimer,helpTimer,settled=false,stage='login',buffer='',output='',bytes=0,index=-1,passwordCount=0,confirmation=false;const outputs=[];
-    const finish=error=>{if(settled)return;settled=true;clearTimeout(timer);clearTimeout(loginTimer);clearTimeout(helpTimer);context.controller.signal.removeEventListener('abort',abort);close();const action=context.ponGrant||context.pnpGrant||context.bandwidthGrant||context.registrationGrant||context.bridgeGrant||context.hsgqGrant;resolve({success:!error,live_mode:true,transport:olt.protocol,outputs,error:error||null,...(context.oltRebootGrant?{submitted:context.oltRebootGrant.submitted,acknowledged:context.oltRebootGrant.acknowledged}:{}),...(action?{submitted:action.submitted,verified:action.verified,completedCommands:outputs.length,failedCommandIndex:error?index:null,cliStage:stage,receivedBytes:bytes}:{})});};
+    const finish=error=>{if(settled)return;settled=true;clearTimeout(timer);clearTimeout(loginTimer);clearTimeout(helpTimer);context.controller.signal.removeEventListener('abort',abort);close();const action=context.ponGrant||context.pnpGrant||context.bandwidthGrant||context.registrationGrant||context.bridgeGrant||context.hsgqGrant||context.zteOnuGrant;resolve({success:!error,live_mode:true,transport:olt.protocol,outputs,error:error||null,...(context.oltRebootGrant?{submitted:context.oltRebootGrant.submitted,acknowledged:context.oltRebootGrant.acknowledged}:{}),...(action?{submitted:action.submitted,verified:action.verified,completedCommands:outputs.length,failedCommandIndex:error?index:null,cliStage:stage,receivedBytes:bytes}:{})});};
     const abort=()=>finish('Batas waktu pembacaan vendor terlampaui');
     const write=value=>{try{channel.write(value);return true;}catch{finish('Sesi CLI vendor terputus saat mengirim perintah');return false;}};
     const send=value=>{if((olt.vendor==='hioso'||olt.vendor==='hsgq'&&require('../../olt-hsgq').isProbeCommands(commands)||context.rebootProbe)&&stage==='command'&&index===commands.length-1&&value.endsWith('?')){if(write(value))helpTimer=setTimeout(()=>{outputs.push({command:value,stdout:output,stderr:''});finish();},800);return;}if(context.oltRebootGrant&&stage==='command'&&index===commands.length-1&&value===commands.at(-1))context.oltRebootGrant.submitted=true;if(context.ponGrant&&stage==='command'&&index===(context.ponGrant.vendor==='cdata'?7:10))context.ponGrant.submitted=true;write(value+(olt.vendor==='hioso'?'\r':olt.vendor==='hsgq'?'\r\n':'\n'));};
-    const next=()=>{if(index===-1)clearTimeout(loginTimer);index++;buffer='';output='';passwordCount=0;if(index>=commands.length)return finish();stage='command';if(context.hsgqGrant&&index===context.hsgqGrant.mutationIndex)context.hsgqGrant.submitted=true;if(context.pnpGrant&&index>=context.pnpGrant.mutationStart&&index<context.pnpGrant.commands.length-3)context.pnpGrant.submitted=true;if(context.bandwidthGrant&&index>=context.bandwidthGrant.mutationStart&&index<context.bandwidthGrant.mutationEnd)context.bandwidthGrant.submitted=true;if(context.registrationGrant&&index>=context.registrationGrant.mutationStart&&index<context.registrationGrant.mutationEnd)context.registrationGrant.submitted=true;if(context.bridgeGrant&&index>=context.bridgeGrant.mutationStart&&index<context.bridgeGrant.mutationEnd)context.bridgeGrant.submitted=true;send(commands[index]);};
+    const next=()=>{if(index===-1)clearTimeout(loginTimer);index++;buffer='';output='';passwordCount=0;if(index>=commands.length)return finish();stage='command';if(context.zteOnuGrant&&index===context.zteOnuGrant.mutationIndex)context.zteOnuGrant.submitted=true;if(context.hsgqGrant&&index===context.hsgqGrant.mutationIndex)context.hsgqGrant.submitted=true;if(context.pnpGrant&&index>=context.pnpGrant.mutationStart&&index<context.pnpGrant.commands.length-3)context.pnpGrant.submitted=true;if(context.bandwidthGrant&&index>=context.bandwidthGrant.mutationStart&&index<context.bandwidthGrant.mutationEnd)context.bandwidthGrant.submitted=true;if(context.registrationGrant&&index>=context.registrationGrant.mutationStart&&index<context.registrationGrant.mutationEnd)context.registrationGrant.submitted=true;if(context.bridgeGrant&&index>=context.bridgeGrant.mutationStart&&index<context.bridgeGrant.mutationEnd)context.bridgeGrant.submitted=true;send(commands[index]);};
     const receive=chunk=>{
       if(settled)return;bytes+=Buffer.byteLength(chunk);if(bytes>524288)return finish('Respons vendor melebihi batas aman');
       const text=String(chunk).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g,'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g,'');buffer+=text;if(stage==='command')output+=text;
@@ -65,7 +66,7 @@ export function shellSession({olt,password,commands,timeoutMs,loginTimeoutMs},op
       if(context.oltRebootGrant&&stage==='command'&&index===commands.length-1&&/(?:reboot|reload|restart)/i.test(buffer)&&!/(?:save|factory|default|erase)/i.test(buffer.trim().split('\n').at(-1))&&/(?:confirm|sure|continue).*(?:\[y\/n\]|\(y\/n\)|\[yes\/no\]|yes\/no|\[y\/n\]\[n\]|\(yes\/no\))\s*(?:\[n\])?\s*[:?]?\s*$/i.test(buffer)){
         if(confirmation)return finish('Konfirmasi reboot berulang ditahan');confirmation=true;context.oltRebootGrant.acknowledged=true;send(/yes\/no/i.test(buffer)?'yes':'y');buffer='';return;
       }
-      if(/(?:are you sure|confirm|continue).*?(?:\[y\/n\]|\(y\/n\)|yes\/no)\s*:?\s*$/i.test(buffer)){if((saving&&index===1||onuGrant&&index===6||context.hsgqGrant&&index===context.hsgqGrant.mutationIndex&&!/factory|erase|default|restore/i.test(buffer))&&stage==='command'&&!confirmation){confirmation=true;send('y');buffer='';return;}return finish('Konfirmasi tulis vendor ditolak');}
+      if(/(?:are you sure|confirm|continue).*?(?:\[y\/n\]|\(y\/n\)|\[yes\/no\]|\(yes\/no\)|yes\/no)\s*[:?]?\s*$/i.test(buffer)){if((saving&&index===1||onuGrant&&index===6||context.hsgqGrant&&index===context.hsgqGrant.mutationIndex&&!/factory|erase|default|restore/i.test(buffer)||context.zteOnuGrant&&index===context.zteOnuGrant.mutationIndex&&!/factory|erase|default|restore/i.test(buffer))&&stage==='command'&&!confirmation){confirmation=true;send(context.zteOnuGrant&&/yes\/no/i.test(buffer)?'yes':'y');buffer='';return;}return finish('Konfirmasi tulis vendor ditolak');}
       if(!/(?:^|\n)(?:[^\r\n<>]{1,100}[>#]|<[A-Za-z0-9_.:/()@ -]{1,100}>|\[[^\r\n]{1,100}\])\s*$/.test(buffer))return;
       if(stage==='command'){const errorOutput=olt.vendor==='hsgq'&&require('../../olt-hsgq').missingDetailResponse(commands[index],output)?output.replace(/^\s*Error, GET ont-auth table fail, reason: ONU is not exist\.\s*$/m,''):output;if(/(?:^|\n)\s*(?:%\s*)?(?:\[[^\]\r\n]*\]\s*)?(?:error|failure|failed|unknown command|unrecognized command|no command matched|command incomplete|incomplete command|invalid command)\b/i.test(errorOutput)||olt.vendor==='hsgq'&&/(?:^|\n)\s*vty%[^\r\n]*(?:command incomplete|unknown command|invalid command|no matched command|\berror\b)/i.test(errorOutput))return finish('Perintah vendor belum didukung firmware');if(onuGrant&&index===5)try{assertHiosoCliTarget(output,onuGrant);}catch(error){return finish(error.message);}outputs.push({command:commands[index],stdout:output,stderr:''});}
       if(context.ponGrant&&stage==='command'){
@@ -86,11 +87,12 @@ export function shellSession({olt,password,commands,timeoutMs,loginTimeoutMs},op
         try{require('../../olt-zte-bridge').verifyStep(outputs,context.bridgeGrant,index,buffer);}catch(error){return finish(error.message||'Binding LAN belum terverifikasi');}
       }
       if(context.hsgqGrant&&stage==='command')try{require('../../olt-hsgq').verifyStep(outputs,context.hsgqGrant,index,buffer);}catch(error){return finish(error.message||'Target HSGQ belum terverifikasi');}
+      if(context.zteOnuGrant&&stage==='command')try{require('../../olt-zte-onu').verifyStep(outputs,context.zteOnuGrant,index,buffer);}catch(error){return finish(error.message||'Target ONU ZTE belum terverifikasi');}
       next();
     };
     context.controller.signal.addEventListener('abort',abort,{once:true});
     timer=setTimeout(abort,Math.max(1,Math.min(timeoutMs||12000,remaining())));
-    if(context.ponGrant||context.pnpGrant||context.bandwidthGrant||context.registrationGrant||context.bridgeGrant)loginTimer=setTimeout(()=>finish('Batas waktu login CLI vendor terlampaui'),Math.max(10,Math.min(loginTimeoutMs||6000,6000,remaining())));
+    if(context.ponGrant||context.pnpGrant||context.bandwidthGrant||context.registrationGrant||context.bridgeGrant||context.zteOnuGrant||context.hsgqGrant)loginTimer=setTimeout(()=>finish('Batas waktu login CLI vendor terlampaui'),Math.max(10,Math.min(loginTimeoutMs||6000,6000,remaining())));
     try{open({receive,finish,dispose(callback){close=callback;if(settled)close();},ready(stream,dispose,authenticated=false){if(settled){dispose();return;}channel=stream;close=dispose;if(authenticated)stage='prompt';stream.on('data',receive);stream.on('error',()=>finish('Sesi CLI vendor terputus'));stream.on('close',()=>{if(!settled)finish('Sesi CLI vendor berakhir sebelum selesai');});}});}catch{finish('Transport vendor belum tersedia');}
   });
 }
@@ -107,8 +109,10 @@ export async function executeOltCommands({olt,password,commands,timeoutMs}){
   const context=request(),hioso=context.device.vendor==='hioso',help=hioso&&Array.isArray(commands)&&(commands.length===2&&commands[0]==='enable'&&commands[1]==='?'||commands.length===5&&commands[0]==='enable'&&commands[1]==='configure terminal'&&commands[2]==='epon'&&/^interface epon 0\/(?:[1-9]|1[0-6])$/.test(commands[3])&&/^(?:onu (?:[1-9]\d?|1[01]\d|12[0-8]) \?|delete onu \?)$/.test(commands[4])),saving=hioso&&context.hiosoActionAllowed&&context.hiosoGrant?.operation==='saveConfigCli'&&!context.hiosoGrant.used&&Array.isArray(commands)&&commands.length===2&&commands[0]==='enable'&&commands[1]==='write',grant=context.hiosoGrant,expected=grant?.operation==='onuCli'?['enable','terminal length 0','configure terminal','epon',`interface epon 0/${grant.pon}`,'show onu info all',grant.action==='delete'?`delete onu ${grant.onuId}`:`onu ${grant.onuId} reboot`,...(grant.action==='delete'?['show onu info all']:[])]:null,onuWrite=hioso&&context.hiosoActionAllowed&&grant?.operation==='onuCli'&&!grant.used&&JSON.stringify(commands)===JSON.stringify(expected);
   const hsgqRead=context.device.vendor==='hsgq'&&(require('../../olt-hsgq').isReadCommands(commands)||require('../../olt-hsgq').isProbeCommands(commands));
   const hsgqWrite=context.device.vendor==='hsgq'&&context.hsgqActionAllowed&&context.hsgqGrant&&!context.hsgqGrant.used&&JSON.stringify(commands)===JSON.stringify(context.hsgqGrant.commands);
+  const zteOnuWrite=context.device.vendor==='zte'&&context.zteOnuActionAllowed&&context.zteOnuGrant&&!context.zteOnuGrant.used&&JSON.stringify(commands)===JSON.stringify(context.zteOnuGrant.commands);
+  if(zteOnuWrite)context.zteOnuGrant.used=true;
   if(hsgqWrite)context.hsgqGrant.used=true;
-  if(!help&&!saving&&!onuWrite&&!probe&&!reboot&&!ponWrite&&!ponRead&&!pnpWrite&&!bandwidthWrite&&!registrationWrite&&!bridgeWrite&&!hsgqRead&&!hsgqWrite)assertReadCommands(commands);
+  if(!help&&!saving&&!onuWrite&&!probe&&!reboot&&!ponWrite&&!ponRead&&!pnpWrite&&!bandwidthWrite&&!registrationWrite&&!bridgeWrite&&!hsgqRead&&!hsgqWrite&&!zteOnuWrite)assertReadCommands(commands);
   if(olt.id!==context.device.id||olt.host!==context.device.host||olt.protocol!==(context.device.cliProtocol||'telnet')||Number(olt.port)!==Number(context.device.cliPort||23)||!['ssh','telnet'].includes(olt.protocol)||!Number.isInteger(Number(olt.port))||Number(olt.port)<1||Number(olt.port)>65535)throw new Error('Vendor CLI target rejected');
   if(context.cliQueue){
     try{await acquireQueuedOlt(olt.id);}catch(error){if(ponWrite||pnpWrite||bandwidthWrite||registrationWrite||bridgeWrite)return{success:false,submitted:false,verified:false,error:error.message,outputs:[],completedCommands:0,failedCommandIndex:-1,cliStage:'queue'};throw error;}

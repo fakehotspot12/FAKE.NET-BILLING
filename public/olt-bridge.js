@@ -17,10 +17,11 @@
     const error = form.querySelector('#oltModalError'), preview = form.querySelector('#oltBridgePreview'), read = form.querySelector('#oltBridgeRead'), prepare = form.querySelector('#oltBridgePrepare'), apply = form.querySelector('#oltBridgeApply');
     const present = () => form.isConnected && dialog?.open && active();
     const sync = () => {
-      const ready = state?.ports.some(port => port.editable !== false),port=state?.ports.find(item=>item.name===form.elements.port.value);
+      const port=state?.ports.find(item=>item.name===form.elements.port.value), ready=port?.editable===true;
       for (const input of form.querySelectorAll('input,select')) input.disabled = busy || finished || !ready;
+      form.elements.port.disabled = busy || finished || !state?.ports.length;
       for (const input of form.querySelectorAll('[name="kind"]')) input.disabled = busy;
-      for (const button of form.querySelectorAll('[data-bridge-port]')) button.disabled = busy || finished || !state || state.ports.find(port => port.name === button.dataset.bridgePort)?.editable === false;
+      for (const button of form.querySelectorAll('[data-bridge-port]')) button.disabled = busy || finished || !state;
       form.elements.mode.querySelector('[value="trunk"]').disabled = form.elements.kind.value === 'wlan';
       read.disabled = busy; prepare.disabled = busy || finished || !ready || !port || port.editable===false || !form.elements.mode.value || !selectedVlans().length;
       apply.hidden = !plan || finished; apply.disabled = busy || finished;
@@ -33,15 +34,16 @@
     const renderBindings = () => {
       form.querySelector('#oltBridgePorts').innerHTML = (state?.ports || []).map(port => {
         const vlans = port.filters?.length ? [...new Set(port.filters.map(row => row.vlan))] : port.vlan ? [port.vlan] : [];
-        return `<div class="olt-bridge-binding" ${form.elements.port.value === port.name ? 'data-selected' : ''}><div><strong>${esc(portLabel(port))}</strong><small>${port.mode === 'trunk' ? 'Trunk' : port.mode === 'tag' ? 'Access' : 'Belum ada binding eksplisit'}${vlans.length ? ' / VLAN ' + esc(vlans.join(', ')) : ''}${port.editable===false?' / Dilindungi atau belum terverifikasi':''}</small></div><button type="button" class="olt-icon" data-bridge-port="${esc(port.name)}" title="Edit binding ${esc(portLabel(port))}" aria-label="Edit binding ${esc(portLabel(port))}" ${port.editable === false || busy ? 'disabled' : ''}>${glyph('edit')}</button></div>`;
+        const command = port.editable === false ? 'Lihat' : 'Edit';
+        return `<div class="olt-bridge-binding" ${form.elements.port.value === port.name ? 'data-selected' : ''}><div><strong>${esc(portLabel(port))}</strong><small>${port.mode === 'trunk' ? 'Trunk' : port.mode === 'tag' ? 'Access' : 'Belum ada binding eksplisit'}${vlans.length ? ' / VLAN ' + esc(vlans.join(', ')) : ''}${port.protectionReason?' / '+esc(port.protectionReason):''}</small></div><button type="button" class="olt-icon" data-bridge-port="${esc(port.name)}" title="${command} binding ${esc(portLabel(port))}" aria-label="${command} binding ${esc(portLabel(port))}" ${busy ? 'disabled' : ''}>${glyph(port.editable === false ? 'eye' : 'edit')}</button></div>`;
       }).join('') || '<p class="olt-bridge-empty">Antarmuka belum dilaporkan.</p>';
     };
     const updateState = result => {
       state = result;
       form.querySelector('#oltBridgeModel').textContent = result.model;
       const previous = form.elements.port.value;
-      form.elements.port.innerHTML = '<option value="">Pilih ' + (form.elements.kind.value === 'wlan' ? 'SSID WiFi' : 'port LAN') + '</option>' + result.ports.map(port => `<option value="${esc(port.name)}" ${port.editable === false ? 'disabled' : ''}>${esc(portLabel(port))}${port.editable === false ? ' - Belum terverifikasi / dilindungi' : ''}</option>`).join('');
-      if (result.ports.some(port => port.name === previous && port.editable !== false)) form.elements.port.value = previous;
+      form.elements.port.innerHTML = '<option value="">Pilih ' + (form.elements.kind.value === 'wlan' ? 'SSID WiFi' : 'port LAN') + '</option>' + result.ports.map(port => `<option value="${esc(port.name)}">${esc(portLabel(port))}${port.editable === false ? ' - Lihat saja' : ''}</option>`).join('');
+      if (result.ports.some(port => port.name === previous)) form.elements.port.value = previous;
       form.querySelector('#oltBridgeVlans').innerHTML = result.vlans.map(id => {const service=result.services?.find(row=>row.userVlan===id);return `<label><input type="checkbox" name="vlans" value="${id}"><span>${id}${service&&service.vlan!==id?' → '+service.vlan:''}</span></label>`;}).join('') || '<span>Belum ada VLAN layanan yang dapat dipilih.</span>';
       renderBindings();
     };
@@ -49,13 +51,15 @@
       const port = state?.ports.find(item => item.name === form.elements.port.value);
       form.elements.mode.value = form.elements.kind.value === 'wlan' ? 'access' : port?.mode === 'trunk' ? 'trunk' : port?.mode === 'tag' ? 'access' : '';
       for (const input of form.querySelectorAll('[name="vlans"]')) input.checked = Boolean(port?.filters.some(row => row.vlan === Number(input.value)) || port?.vlan === Number(input.value));
-      status.textContent = port ? `${portLabel(port)} / ${port.mode === 'trunk' ? 'Trunk' : port.mode === 'tag' ? 'Bridge Access' : 'Belum ada binding OMCI'}` : '';
+      status.textContent = port ? `${portLabel(port)} / ${port.mode === 'trunk' ? 'Trunk' : port.mode === 'tag' ? 'Bridge Access' : 'Belum ada binding OMCI'}${port.protectionReason ? ' / ' + port.protectionReason : ''}` : '';
       renderBindings();
     };
     const load = async (force = false) => {
       if (busy || !present()) return;
       const kind = form.elements.kind.value;
-      busy = true; finished = false; state = null; invalidate(); sync(); error.textContent = ''; status.textContent = 'Membaca antarmuka dan layanan ONU...';
+      busy = true; finished = false; state = null; invalidate(); sync(); error.textContent = ''; status.className = 'full'; status.textContent = 'Membaca antarmuka dan layanan ONU...';
+      form.querySelector('#oltBridgePorts').replaceChildren(); form.querySelector('#oltBridgeVlans').replaceChildren();
+      form.elements.port.innerHTML = '<option value="">Membaca antarmuka...</option>';
       form.querySelector('#oltBridgePortLabel').textContent = kind === 'wlan' ? 'SSID WiFi' : 'Port LAN';
       form.elements.mode.value = kind === 'wlan' ? 'access' : '';
       form.elements.mode.querySelector('[value="trunk"]').hidden = kind === 'wlan';
@@ -73,7 +77,7 @@
       if (busy || !state || !present()) return;
       const vlans = selectedVlans();
       if (!form.elements.port.value || !form.elements.mode.value || !vlans.length || form.elements.mode.value === 'access' && vlans.length !== 1) { error.textContent = 'Pilih port, mode, dan VLAN. Bridge Access memakai satu VLAN.'; return; }
-      busy = true; invalidate(); sync(); error.textContent = ''; status.textContent = 'Memeriksa identitas ONU dan perubahan port...';
+      busy = true; invalidate(); sync(); error.textContent = ''; status.className = 'full'; status.textContent = 'Memeriksa identitas ONU dan perubahan port...';
       try {
         const result = await owner.api(endpoint, { method: 'POST', timeoutMs: 22000, body: JSON.stringify({ action: 'prepare', ...state.target, kind: form.elements.kind.value, port: form.elements.port.value, mode: form.elements.mode.value, vlans }) });
         if (!present()) return; plan = result;
@@ -117,7 +121,7 @@
       const button = event.target.closest('[data-bridge-port]');
       if (!button || button.disabled || busy || !state) return;
       form.elements.port.value = button.dataset.bridgePort; invalidate(); error.textContent = ''; renderPort(); sync();
-      form.elements.mode.focus();
+      (form.elements.mode.disabled ? form.elements.port : form.elements.mode).focus();
     }, { signal: controls.signal });
     sync(); void load();
   }

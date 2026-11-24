@@ -18531,6 +18531,13 @@ async function requireAnyPermission(req, res, permissions = []) {
   return { data, user };
 }
 
+function currentOperationalUser(req,data,permissions){
+  const user=auth.requestUser(req,data);
+  if(!user)throw Object.assign(Error('Sesi login berakhir'),{status:401});
+  if(!permissions.some(permission=>auth.hasPermission(user,permission)))throw Object.assign(Error('Izin operasional telah berubah'),{status:403});
+  return user;
+}
+
 async function requestStore(req) {
   if (req.appStore) return req.appStore;
   req.appStore = await loadStore();
@@ -23990,6 +23997,7 @@ async function handleApi(req, res, url) {
     const context = await requirePermission(req, res, 'olt:read'); if (!context) return;
     const devices = oltMonitor.visibleDevices(context.data, context.user);
     const manage = auth.hasPermission(context.user, 'olt:manage');
+    const ticketSettings=oltTicketing.settingsFor(context.data);
     const nasRows=radiusNasRowsLocal(context.data),nasNames=new Map(nasRows.map(nas=>[nas.id,nas.name])),openTickets=new Map();
     for(const ticket of context.data.oltTickets||[])if(ticket.status!=='resolved')openTickets.set(ticket.oltId,(openTickets.get(ticket.oltId)||0)+1);
     const rows = await Promise.all(devices.map(async device => ({ ...oltMonitor.publicDevice(device, await oltMonitor.snapshotFor(device), { management: manage, terminal:auth.hasPermission(context.user,'olt:onu:delete') }),
@@ -23998,8 +24006,8 @@ async function handleApi(req, res, url) {
       nasOptions: manage ? nasRows.map(nas => ({ id: nas.id, name: nas.name })) : [],
       technicians: (context.data.users || []).filter(user => user.active !== false && ['admin','owner','noc','technician','secretary'].includes(user.role)).map(user => ({ id: user.id, name: user.name || user.username })),
       integrationEnabled: context.data.settings?.networkIntegrationEnabled === true,
-      notificationEnabled: oltTicketing.settingsFor(context.data).whatsappEnabled, ticketAutomation: {enabled:true,cause:'los',whatsappEnabled:oltTicketing.settingsFor(context.data).whatsappEnabled}, ticketTemplates:oltMonitor.ticketTemplates(context.data),
-      ...(manage?{ticketSettings:{...oltTicketing.settingsFor(context.data),gatewayEnabled:context.data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(context.data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.eligibleUsers(context.data).map(user=>({id:user.id,name:user.name||user.username,role:user.role,phone:oltTicketing.phoneFor(user)}))}:{}) });
+      notificationEnabled:ticketSettings.whatsappEnabled,ticketAutomation:{enabled:ticketSettings.enabled,cause:'los',whatsappEnabled:ticketSettings.whatsappEnabled},ticketTemplates:oltMonitor.ticketTemplates(context.data),
+      ...(manage?{ticketSettings:{...ticketSettings,gatewayEnabled:context.data.settings?.waGateway?.enabled===true,publicUrlReady:Boolean(oltTicketing.ticketLink(paymentGatewayOrigin(context.data.settings),{id:'example'}))},ticketRecipientOptions:oltTicketing.eligibleUsers(context.data).map(user=>({id:user.id,name:user.name||user.username,role:user.role,phone:oltTicketing.phoneFor(user)}))}:{}) });
     return;
   }
   if(pathname==='/api/monitoring/olt/refresh'&&method==='POST'){
@@ -24044,7 +24052,13 @@ async function handleApi(req, res, url) {
     const device=oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===oltTerminal[1]);if(!device){terminal.closeOwner(owner);notFound(res);return;}
     try{
       const id=oltTerminal[2]||'';
-      if(!id&&method==='POST'){const input=await readBody(req,4096),result=await terminal.start(context.data,device,owner,input,{explicitDevAccess:MIGRATION_MODE});try{await mutate(store=>addActivity(store,'monitoring',`Akses Terminal CLI OLT ${device.name} dimulai oleh ${context.user.name||context.user.username}`,{action:'olt-terminal-open',oltId:device.id,userId:context.user.id}),{collections:['activity'],includeCore:false});}catch{terminal.stop(owner,device,result.id);throw Error('Audit akses terminal belum dapat disimpan');}sendJson(res,201,result);return;}
+      if(!id&&method==='POST'){
+        const input=await readBody(req,4096),controller=new AbortController(),cancel=()=>controller.abort();res.once('close',cancel);let result;
+        try{result=await terminal.start(context.data,device,owner,input,{signal:controller.signal,explicitDevAccess:MIGRATION_MODE,validateBeforeConnect:async()=>{const fresh=await loadStore(),user=auth.requestUser(req,fresh),current=user&&oltMonitor.visibleDevices(fresh,user).find(row=>row.id===device.id);if(!user||!['olt:manage','olt:onu:delete'].some(value=>auth.hasPermission(user,value))||!current||terminal.connectionSignature(current)!==terminal.connectionSignature(device))throw Object.assign(Error('Izin atau koneksi OLT berubah. Hubungkan ulang terminal.'),{status:403});}});}finally{res.removeListener('close',cancel);}
+        if(res.destroyed){terminal.stop(owner,device,result.id);return;}
+        try{await mutate(store=>addActivity(store,'monitoring',`Akses Terminal CLI OLT ${device.name} dimulai oleh ${context.user.name||context.user.username}`,{action:'olt-terminal-open',oltId:device.id,userId:context.user.id}),{collections:['activity'],includeCore:false});}catch{terminal.stop(owner,device,result.id);throw Error('Audit akses terminal belum dapat disimpan');}
+        if(res.destroyed){terminal.stop(owner,device,result.id);return;}sendJson(res,201,result);return;
+      }
       if(!id){notFound(res);return;}
       if(method==='GET'){
         const since=Number(url.searchParams.get('since')||0);
@@ -24067,7 +24081,7 @@ async function handleApi(req, res, url) {
         sendJson(res,200,{ok:true,action:result.action,onu:await terminal.deletionTarget(context.data,device,result.target)});return;
       }
       sendJson(res,200,result);
-    }catch(error){sendJson(res,error.status||400,{error:error.message||'Terminal OLT tidak tersedia',...(Number.isSafeInteger(error.sequence)?{sequence:error.sequence}:{})});}return;
+    }catch(error){sendJson(res,error.status||400,{error:error.message||'Terminal OLT tidak tersedia',...(Number.isSafeInteger(error.sequence)?{sequence:error.sequence,consoleReported:error.consoleReported===true}:{})});}return;
   }
   const oltZteCatalogue=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/catalogue$/);
   if(oltZteCatalogue&&['GET','POST'].includes(method)){
@@ -24248,7 +24262,7 @@ async function handleApi(req, res, url) {
   if(pathname==='/api/monitoring/olt/ticket-templates'&&method==='PUT') {
     const context=await requireAnyPermission(req,res,['wa-gateway:manage','olt:manage']);if(!context)return;let payload=await readBody(req,131072);
     if(payload.resetDefaults===true)payload=oltMonitor.ticketTemplates({settings:{}});
-    try{const templates=oltMonitor.validateTicketTemplates(payload);await mutate(store=>{store.settings.oltTicketing={...(store.settings.oltTicketing||{}),templates:{...oltMonitor.ticketTemplates(store),...templates}};addActivity(store,'monitoring',`Template tiket layanan diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-template'});},{collections:['activity'],includeCore:true});sendJson(res,200,{ok:true,whatsappEnabled:false});}catch(error){badRequest(res,error.message);}return;
+    try{const templates=oltMonitor.validateTicketTemplates(payload);await mutate(store=>{context.user=currentOperationalUser(req,store,['wa-gateway:manage','olt:manage']);store.settings.oltTicketing={...(store.settings.oltTicketing||{}),templates:{...oltMonitor.ticketTemplates(store),...templates}};addActivity(store,'monitoring',`Template tiket layanan diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-template'});},{collections:['activity'],includeCore:true});sendJson(res,200,{ok:true,whatsappEnabled:false});}catch(error){sendJson(res,error.status||400,{error:error.message});}return;
   }
   if(pathname==='/api/monitoring/olt/tickets'&&method==='GET') {
     const context=await requirePermission(req,res,'olt:tickets:read');if(!context)return;
@@ -24274,13 +24288,14 @@ async function handleApi(req, res, url) {
   if(pathname==='/api/monitoring/olt/ticket-settings'&&method==='PUT') {
     const context=await requirePermission(req,res,'olt:manage');if(!context)return;const payload=await readBody(req,131072);
     try{await mutate(store=>{
+      context.user=currentOperationalUser(req,store,['olt:manage']);
       const settings=oltTicketing.validateSettings(store,payload),templates=oltMonitor.validateTicketTemplates(payload.templates||{});
       if(settings.customerOutageEnabled&&store.settings?.oltTicketing?.customerOutageEnabled!==true)settings.customerOutageEnabledAt=new Date().toISOString();
       if(settings.whatsappEnabled&&!oltTicketing.ticketLink(paymentGatewayOrigin(store.settings),{id:'example'}))throw new Error('Atur URL publik billing di Payment Gateway terlebih dahulu');
       store.settings.oltTicketing={...(store.settings.oltTicketing||{}),...settings,templates:{...oltMonitor.ticketTemplates(store),...templates}};
       const cancelled=oltTicketing.cancelQueued(store);
-      addActivity(store,'monitoring',`Pengaturan tiket layanan diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-settings',whatsappEnabled:settings.whatsappEnabled,cancelled});
-    },{collections:['activity','waMessages'],includeCore:true});sendJson(res,200,{ok:true});}catch(error){badRequest(res,error.message);}return;
+      addActivity(store,'monitoring',`Pengaturan tiket layanan diperbarui oleh ${context.user.name||context.user.username}`,{action:'olt-ticket-settings',automaticTicketsEnabled:settings.automaticTicketsEnabled,whatsappEnabled:settings.whatsappEnabled,cancelled});
+    },{collections:['activity','waMessages'],includeCore:true});sendJson(res,200,{ok:true});}catch(error){sendJson(res,error.status||400,{error:error.message});}return;
   }
   const oltTicketNetwork=pathname.match(/^\/api\/monitoring\/olt\/tickets\/([^/]+)\/network$/);
   if(oltTicketNetwork&&method==='GET'){
@@ -24310,6 +24325,7 @@ async function handleApi(req, res, url) {
         sendJson(res,200,{team:ticketTeam.publicTeam(context.data,ticket),options:ticketTeam.candidates(context.data,ticket,serviceTickets.visible),revision:ticket.updatedAt});return;
       }
       const payload=await readBody(req,8192),{result}=await mutate(store=>{
+        context.user=currentOperationalUser(req,store,['olt:tickets:write']);
         const index=(store.oltTickets||[]).findIndex(row=>row.id===id);if(index<0)throw serviceTickets.error('Tiket tidak ditemukan',404);
         const current=store.oltTickets[index],next=ticketTeam.update(store,current,payload,context.user,serviceTickets.visible);
         if(next===current)return{ticket:current,changed:false};store.oltTickets[index]=next;oltTicketing.cancelQueued(store);
@@ -24325,6 +24341,7 @@ async function handleApi(req, res, url) {
     try{
       if(action==='photos'){if(!photoId||!(ticket.messages||[]).some(message=>(message.photos||[]).some(photo=>photo.id===photoId))){notFound(res);return;}const body=await fs.readFile(path.join(serviceTickets.PHOTO_ROOT,photoId+'.webp'));res.writeHead(200,{'Content-Type':'image/webp','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});res.end(body);return;}
       const payload=await readBody(req);const {result}=await mutate(async store=>{
+        context.user=currentOperationalUser(req,store,['olt:tickets:write']);
         const current=(store.oltTickets||[]).find(row=>row.id===id&&serviceTickets.isServiceTicket(row));if(!current||!serviceTickets.visible(store,context.user,current))throw serviceTickets.error('Tiket tidak ditemukan',404);
         oltMonitor.requireTicketEditor(current,{},context.user);if(!current.assignedTo)throw serviceTickets.error('Ambil tiket sebelum membalas',409);
         const result=await serviceTickets.appendMessage(store,current,payload,context.user);if(result.changed)addActivity(store,'monitoring',`Balasan tiket ${current.number} oleh ${context.user.name||context.user.username}`,{action:'service-ticket-reply',ticketId:id,userId:context.user.id});return result;
@@ -24340,6 +24357,7 @@ async function handleApi(req, res, url) {
       if(method==='GET'){const kind=url.searchParams.get('kind')||'detected',origin=paymentGatewayOrigin(context.data.settings);sendJson(res,200,{message:oltTicketing.ticketLink(origin,ticket)?oltTicketing.messageText(context.data,ticket,kind,origin):oltMonitor.renderTicketTemplate(context.data,ticket,kind),whatsappEnabled:oltTicketing.settingsFor(context.data).whatsappEnabled});return;}
       const payload=await readBody(req,8192),action=oltTicketAction[2];
       const {result}=await mutate(async store=>{
+        context.user=currentOperationalUser(req,store,[action==='notify'?'olt:manage':'olt:tickets:write']);
         const index=(store.oltTickets||[]).findIndex(row=>row.id===ticket.id);if(index<0)throw new Error('Tiket tidak ditemukan');const current=store.oltTickets[index];
         if(!serviceTickets.visible(store,context.user,current))throw new Error('Tiket di luar kewenangan');
         if(action==='notify'){
@@ -24370,6 +24388,8 @@ async function handleApi(req, res, url) {
     let queuedNotifications=0;
     try {
       const { result } = await mutate(async store => {
+        context.user=currentOperationalUser(req,store,!ticketId?['olt:tickets:write','olt:tickets:create']:['olt:tickets:write']);
+        if(!auth.hasPermission(context.user,'olt:tickets:write')&&!payload.category)throw Object.assign(Error('Kategori permintaan wajib dipilih'),{status:403});
         const previous = ticketId ? (store.oltTickets || []).find(row => row.id === ticketId) : {};
         if (!previous) throw new Error('Tiket tidak ditemukan');
         if(!ticketId&&payload.category){
@@ -24414,19 +24434,16 @@ async function handleApi(req, res, url) {
         points: (context.data.fiberPoints || []).slice(0,500).map(point => ({ id: point.id, name: [point.code,point.name].filter(Boolean).join(' - ') })) }); return;
     }
     if (method === 'GET' && device && !action) {
-      const snapshot = await oltMonitor.snapshotFor(device);
-      const rows = oltMonitor.linkedOnus(context.data, device, snapshot?.onus || [],snapshot);
-      const search = String(url.searchParams.get('search') || '').slice(0,100).toLowerCase(), status = url.searchParams.get('status') || '', pon = url.searchParams.get('pon') || '';
-      const filtered = rows.filter(row => oltMonitor.matchesState(row,status) && (!pon || row.ponKey === pon) && [row.name,row.serialNumber,row.model,row.customerName,row.customerUsername,row.fiberPointName,row.downCause].some(value => String(value || '').toLowerCase().includes(search)));
       const limit = [10,25,50,100].includes(Number(url.searchParams.get('limit'))) ? Number(url.searchParams.get('limit')) : 25;
-      const page = Math.max(1,Math.min(Math.max(1,Math.ceil(filtered.length/limit)),Number.parseInt(url.searchParams.get('page'),10)||1));
-      sendJson(res, 200, { device: oltMonitor.publicDevice(device, snapshot, { management: auth.hasPermission(context.user,'olt:manage') }),
-        ports: require('./olt-pon').decorate(context.data,device,snapshot?.ports||[]), onus: filtered.slice((page-1)*limit,page*limit), page, limit, total: filtered.length, pages: Math.max(1,Math.ceil(filtered.length/limit)) }); return;
+      const result=await oltMonitor.onuPage(context.data,[device],{...Object.fromEntries(['search','status','pon','page'].map(key=>[key,url.searchParams.get(key)||''])),oltId:id,limit},auth.hasPermission(context.user,'olt:manage'));
+      sendJson(res,200,{device:result.device,ports:result.ports,onus:result.onus,page:result.page,limit,total:result.total,pages:result.pages});return;
     }
     if ((method === 'POST' && !id) || (method === 'PUT' && id && !action) || (method === 'DELETE' && id && !action) || (method === 'PUT' && action === 'links')) {
       const payload = await readBody(req);
       try {
         const { result } = await mutate(store => {
+          context.user=currentOperationalUser(req,store,[permission]);
+          if(id&&!oltMonitor.visibleDevices(store,context.user).some(row=>row.id===id))throw Object.assign(Error('OLT di luar kewenangan'),{status:404});
           store.oltDevices = Array.isArray(store.oltDevices) ? store.oltDevices : [];
           const index = store.oltDevices.findIndex(row => row.id === id);
           if (id && index < 0) throw new Error('OLT tidak ditemukan');
@@ -24447,7 +24464,7 @@ async function handleApi(req, res, url) {
           return { ...oltMonitor.publicDevice(row,null,{ management: auth.hasPermission(context.user,'olt:manage') }), ...(action === 'links' ? { linked: true } : {}) };
         });
         sendJson(res, method === 'POST' ? 201 : 200, { ok: true, device: result });
-      } catch(error) { badRequest(res,error.message); }
+      } catch(error) { sendJson(res,error.status||400,{error:error.message}); }
       return;
     }
     notFound(res); return;

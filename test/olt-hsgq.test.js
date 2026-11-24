@@ -24,16 +24,42 @@ test('verified model enables only scoped capabilities; unknown firmware stays re
  assert.equal(vendors.capabilities(f.device).delete,false);assert.equal(vendors.capabilities(f.device,{hsgqActions:{delete:true}}).delete,true);
  const spec={operation:'delete',address:ID,serialNumber:SN,version:VERSION,before:detail()};for(const patch of [{address:'0/2:0:'+SN},{serialNumber:'HWTC11223344'},{before:detail('Online')},{version:VERSION.replace('V1.1.10C','V9')},{operation:'delete all'}])assert.throws(()=>driver.authorize({...spec,...patch}));
 });
-async function wire(operation,{badSn=false,badMode=false,rejected=false}={}){
- const f=fixture(),[,context,transport]=await vendors.loadLibrary(),before=detail(operation==='reboot'?'Online':'Offline'),spec={operation,address:ID,serialNumber:SN,version:VERSION,before,...(operation==='rename'?{description:'Client Two',previousDescription:'Client'}:{})},commands=driver.actionCommands(spec),written=[];let name='Client',present=true;
+test('unused HSGQ Other registration requires exact inactive/initial native proof before removal',()=>{
+ const initial=detail('Initial')+'State : Inactive\nConfig State : initial\nMatch State : Initial\n',target=driver.position(ID);
+ assert.equal(driver.detail(initial,target).state,'offline');
+ const spec={operation:'delete',address:ID,serialNumber:SN,version:VERSION,before:initial};assert(driver.authorize(spec));
+ for(const changed of [initial.replace('State : Inactive','State : Active'),initial.replace('Config State : initial','Config State : normal'),initial.replace('Match State : Initial','Match State : mismatch'),initial.replace('Run State : Initial','Run State : Working')])assert.throws(()=>driver.authorize({...spec,before:changed}));
+ for(const changed of [initial.replace('State : Inactive\n',''),initial+'State : Inactive\n',initial.replace(SN,'HWTC11223344')])assert.throws(()=>driver.detail(changed,target));
+ assert.equal(driver.detail(detail('Online'),target).state,'online');
+});
+async function wire(operation,{badSn=false,badMode=false,rejected=false,inactiveInitial=false,inventoryProof=false}={}){
+ let name='Client',present=true;
+ const nativeDetail=(name='Client',sn=SN)=>detail(inactiveInitial?'Initial':operation==='reboot'?'Online':'Offline',name,sn)+(inactiveInitial?'State : Inactive\nConfig State : initial\nMatch State : Initial\n':'');
+ const nativeTable=(sn=SN)=>'PON/ONU Serial State Run Config Match Last Link ONT\n'+(present?`1/0 ${sn} Inactive Initial initial Initial Client\n`:'')+`Total: ${present?1:0} Online:0 Offline:${present?1:0}\n`;
+ const f=fixture(),[,context,transport]=await vendors.loadLibrary(),before=inventoryProof?nativeTable():nativeDetail(),spec={operation,address:ID,serialNumber:SN,version:VERSION,before,...(inventoryProof?{inventoryProof:true}:{}),...(operation==='rename'?{description:'Client Two',previousDescription:'Client'}:{})},commands=driver.actionCommands(spec),written=[];
  const result=await context.withContext(f.data,f.device,()=>{context.authorizeHsgqOperation(spec);context.current().hsgqGrant.used=true;return transport.shellSession({olt:vendors.legacyDevice(f.device),password:'unit',commands,timeoutMs:1000},({ready})=>{const stream=new EventEmitter();stream.write=value=>{written.push(value.trim());const command=value.trim();let body='',prompt='OLT(config)# ';
-   if(command==='enable')prompt='OLT# ';if(command==='show version')body=VERSION;if(command.startsWith('show ont-info '))body=present?detail(operation==='reboot'?'Online':'Offline',name,badSn?'HWTC11223344':SN):'Error, GET ont-auth table fail, reason: ONU is not exist.\n';
+   if(command==='enable')prompt='OLT# ';if(command==='show version')body=VERSION;if(command.startsWith('show ont-info '))body=command.endsWith(' all')?nativeTable(badSn?'HWTC11223344':SN):present?nativeDetail(name,badSn?'HWTC11223344':SN):'Error, GET ont-auth table fail, reason: ONU is not exist.\n';
    if(command==='interface gpon 1')prompt=badMode?'OLT(config)# ':'OLT(config-gpon-1)# ';
    if(command.startsWith('ont setting ')){if(rejected)body='vty% Command incomplete.\n';else name='Client Two';}if(command==='ont delete 0')present=false;if(command==='save')body='Configuration saved successfully.\n';
    queueMicrotask(()=>stream.emit('data',body+'\n'+prompt));return true;};ready(stream,()=>{},true);queueMicrotask(()=>stream.emit('data','OLT# '));});},{hsgqActionAllowed:true});return{result,written};
 }
 for(const operation of ['rename','delete','reboot','save'])test('native HSGQ '+operation+' checks firmware, mode and exact SN before a single mutation',async()=>{
  const {result,written}=await wire(operation);assert.equal(result.success,true,result.error);assert.equal(result.submitted,true);if(operation!=='reboot')assert.equal(result.verified,true);assert.equal(written.filter(command=>/^(?:ont setting|ont delete|ont reboot|save$)/.test(command)).length,1);
+});
+test('inactive Initial removal uses the same single-write and absent-readback verification',async()=>{
+ const {result,written}=await wire('delete',{inactiveInitial:true});assert(result.success,result.error);assert(result.verified);assert.equal(written.filter(command=>command==='ont delete 0').length,1);
+ const changed=await wire('delete',{inactiveInitial:true,badSn:true});assert(!changed.result.success);assert(!changed.written.includes('ont delete 0'));
+});
+test('HSGQ deletion uses a complete native PON table when unused per-ONU detail cannot respond',async()=>{
+ const{result,written}=await wire('delete',{inventoryProof:true});assert(result.success,result.error);assert(result.verified);assert.equal(written.filter(x=>x==='ont delete 0').length,1);assert(written.includes('show ont-info 1 all'));assert(!written.includes('show ont-info 1 0'));
+ const changed=await wire('delete',{inventoryProof:true,badSn:true});assert(!changed.result.success);assert(!changed.written.includes('ont delete 0'));
+});
+test('HSGQ PON deletion proof rejects truncated counts, unknown state, changed identity and duplicate entries',()=>{
+ const text='PON/ONU Serial State Run Config Match Last Link ONT\n'+`1/0 ${SN} Inactive Initial initial Initial Client\nTotal: 1 Online:0 Offline:1\n`,target=driver.position(ID);
+ assert.equal(driver.removalTable(text,target).state,'offline');
+ for(const value of[text.replace('Total: 1','Total: 2'),text.replace(SN,'HWTC11223344'),text.replace('1/0','2/0'),text.replace('Total: 1',`1/0 ${SN} Inactive Initial initial Initial Client\nTotal: 2`)])assert.throws(()=>driver.removalTable(value,target));
+ assert.equal(driver.removalTable(text.replace('Inactive Initial initial Initial','Active Initial initial Initial'),target).state,'unknown');
+ const moved=text.replace('1/0','1/1');assert.throws(()=>driver.removalTable(moved,target),/berpindah/);
 });
 test('same-session target or interface change blocks native mutation before sending',async()=>{
  for(const change of [{badSn:true},{badMode:true}]){const{result,written}=await wire('delete',change);assert.equal(result.success,false);assert.equal(result.submitted,false);assert(!written.includes('ont delete 0'));}
@@ -87,4 +113,12 @@ test('user inspection waits for in-flight optical reads and blocks replacement b
  await driver.enrichPage(f.data,f.device,[target],{background:true,transports:{commands:async()=>{reads++;await gate;return{success:false,outputs:[]};}}});
  const task=driver.run(f.data,f.device,target,'inspect',{}, {transports:{commands:async({commands})=>{inspections++;return{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:command==='show ont-info 1 0'?detail('Online'):'OLT(config)#'}))};}}});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(inspections,0);assert(driver.isBusy(f.device.id));await driver.enrichPage(f.data,f.device,[target],{background:true});assert.equal(reads,1);release();const result=await task;assert.equal(result.state,'online');assert.equal(inspections,1);assert(!driver.isBusy(f.device.id));
+});
+test('removal preview retries one timed-out PON read without sending a mutation or treating timeout as absence',async()=>{
+ for(const recover of[true,false]){const f=fixture(),target={id:ID,serialNumber:SN};let reads=0;const options={transports:{commands:async({commands})=>{reads++;assert(commands.every(command=>command==='enable'||command==='configure'||command.startsWith('show ')));if(reads===1||!recover)return{success:false,error:'Batas waktu pembacaan vendor terlampaui',outputs:[]};return{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:command==='show ont-info 1 all'?table():'OLT(config)#'}))};}}};
+  const task=driver.run(f.data,f.device,target,'inspect',{purpose:'delete'},options);if(recover)assert.equal((await task).state,'offline');else await assert.rejects(task,/belum dapat/);assert.equal(reads,2);
+ }
+});
+test('removal preview never retries changed identity or unsupported CLI errors',async()=>{
+ for(const type of['identity','command']){const f=fixture();let reads=0;const options={transports:{commands:async({commands})=>{reads++;return type==='command'?{success:false,error:'Perintah vendor belum didukung firmware',outputs:[]}:{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:command==='show ont-info 1 all'?table().replaceAll(SN,'HWTC11223344'):'OLT(config)#'}))};}}};await assert.rejects(driver.run(f.data,f.device,{id:ID,serialNumber:SN},'inspect',{purpose:'delete'},options));assert.equal(reads,1);}
 });

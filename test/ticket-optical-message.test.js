@@ -19,7 +19,7 @@ test('valid last OLT reading takes priority over ACS even while the ONU is LOS',
  const value=network.optical(f.data,f.ticket,{now:f.now});assert.equal(value.source,'OLT');assert.equal(value.rxPower,-22.5);assert.match(olt.renderTicketTemplate(f.data,f.ticket),/-22,5 dBm \(OLT;/);
 });
 test('ACS snapshot is captured when the automatic ticket is created and survives restart without a query',async()=>{
- const f=fixture();await warm(f);const at=f.now;require('./helpers/confirmed-los')(f.data,[{deviceId:'olt',snapshot:{checkedAt:new Date(at).toISOString(),onus:[f.onu]}}]);
+ const f=fixture();f.data.settings.oltTicketing={enabled:true,automaticTicketsEnabled:true,whatsappEnabled:true};await warm(f);const at=f.now;require('./helpers/confirmed-los')(f.data,[{deviceId:'olt',snapshot:{checkedAt:new Date(at).toISOString(),onus:[f.onu]}}]);
  const observation={deviceId:'olt',deviceUpdatedAt:'rev',snapshot:{status:'online',checkedAt:new Date(at).toISOString(),onus:[f.onu],ports:[]}},plan=olt.losTicketPlan(f.data,[observation],{now:at}),result=olt.applyLosTicketPlan(f.data,plan,at);
  assert.equal(result.created.length,1);assert.equal(result.created[0].acsOptical.rxPower,-24.75);auto.invalidate();const saved=JSON.parse(JSON.stringify(result.created[0]));assert.match(olt.renderTicketTemplate(f.data,saved),/-24,75 dBm \(ACS;/);assert.equal(saved.acsOptical.at,f.modem.rxPowerAt);
 });

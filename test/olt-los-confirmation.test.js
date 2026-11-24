@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const olt=require('../src/olt-monitor'),guard=require('../src/olt-los-confirmation'),planned=require('../src/olt-planned-reboot');
 const {createDefaultStore,ensureShape,publicSettings}=require('../src/store');
 const NOW=Date.now(),STEP=guard.INTERVAL_MS,SN='HWTCAABB0001';
-function fixture(){const data=createDefaultStore();data.oltDevices=[{id:'olt',enabled:true,updatedAt:'rev',links:{}}];return data;}
+function fixture(){const data=createDefaultStore();data.settings.oltTicketing={enabled:true,automaticTicketsEnabled:true,whatsappEnabled:true};data.oltDevices=[{id:'olt',enabled:true,updatedAt:'rev',links:{}}];return data;}
 function row(patch={}){return{id:'1',serialNumber:SN,ponKey:'0/0/1',status:'offline',condition:'los',causeKnown:true,downCause:'LOS',...patch};}
 function obs(at=0,onus=[row()],patch={}){return{deviceId:'olt',deviceUpdatedAt:'rev',snapshot:{status:'online',checkedAt:new Date(NOW+at).toISOString(),onus,ports:[],...patch}};}
 function poll(data,at=0,onus=[row()],patch={},now=at){const observation=obs(at,onus,patch),before=JSON.stringify(data),plan=olt.losTicketPlan(data,[observation],{now:NOW+now});assert.equal(JSON.stringify(data),before,'planning must not mutate shared state');return{plan,result:olt.applyLosTicketPlan(data,plan,NOW+now)};}

@@ -6,6 +6,10 @@ const olt = require('../src/olt-monitor');
 const auth = require('../src/auth');
 const secrets = require('../src/secure-secrets');
 const {createDefaultStore,ensureShape} = require('../src/store');
+test('OLT capability notes and rotating RX coverage are neutral while real collection warnings stay visible',()=>{
+ const data=createDefaultStore(),device=olt.validateDevice(data,{name:'Unit',vendor:'zte',host:'192.0.2.1',community:'Unit'}),snapshot={warnings:['RX ONU dibaca bergiliran per PON; 7 / 8 nilai tersedia. Nilai tidak tersedia tidak dihitung sebagai 0 dBm.','Aksi tulis vendor yang belum terverifikasi tetap terkunci. Pemeriksaan reboot berlaku pada inventory ONU valid; tiket otomatis hanya untuk LOS dengan penyebab terverifikasi.','Data name belum tersedia'],error:'SNMP belum merespons'};
+ const value=olt.publicDevice(device,snapshot);assert.deepEqual(value.notices,['RX tersedia: 7 / 8 ONU.']);assert.deepEqual(value.warnings,['Data name belum tersedia']);assert.equal(value.error,snapshot.error);assert.equal(snapshot.warnings.length,3);assert(!value.onuDeleteAvailable);
+});
 
 function tables() {
   const row=(oid,value,type='INTEGER')=>({oid,value:String(value),type});
@@ -174,11 +178,14 @@ test('fault filters span cached PONs on the selected OLT with eight rows per pag
  await olt.poll(data,device,async(_,name)=>{reads++;return tables()[name]||[];});const snapshot=await olt.snapshotFor(device),sample=snapshot.onus[0];
  snapshot.onus=[1,2,3].flatMap(pon=>['los','dying-gasp','other','high-rx'].flatMap((condition,kind)=>Array.from({length:4},(_,index)=>({...sample,id:String(pon*100+kind*4+index),ponKey:'0/0/'+pon,serialNumber:'HWTC'+String(pon*100+kind*4+index).padStart(8,'0'),status:condition==='high-rx'?'online':'offline',condition:condition==='high-rx'?'online':condition,rxPower:condition==='high-rx'?-28:null}))));snapshot.summary=olt.summarizeOnus(snapshot.onus);
  const baseline=reads,before=JSON.stringify(data),foreign={id:'unselected',get vendor(){throw Error('Other OLT accessed');}};
- for(const status of ['los','dying-gasp','other','high-rx']){
+ snapshot.ports=[1,2,3].map(pon=>({kind:'pon',ponKey:'0/0/'+pon,name:'PON '+pon}));
+ for(const status of ['online','los','dying-gasp','other','high-rx']){
   const first=await olt.onuPage(data,[device,foreign],{oltId:device.id,status,limit:8}),second=await olt.onuPage(data,[device,foreign],{oltId:device.id,status,limit:8,page:2});
   assert.equal(first.total,12);assert.equal(first.onus.length,8);assert.equal(second.onus.length,4);assert.equal(first.summary.total,48);assert.equal(new Set([...first.onus,...second.onus].map(row=>row.ponKey)).size,3);assert.equal(new Set([...first.onus,...second.onus].map(row=>row.id)).size,12);
   const selected=await olt.onuPage(data,[device,foreign],{oltId:device.id,status,pon:'0/0/3',limit:8});assert.equal(selected.total,4);assert(selected.onus.every(row=>row.ponKey==='0/0/3'));
+  assert.equal(first.filteredTotal,12);assert.deepEqual(first.ports.filter(row=>row.kind==='pon').map(row=>row.filteredTotal),[4,4,4]);assert.equal(selected.filteredTotal,12);
  }
+ snapshot.onus[0].name='Unique match';const searched=await olt.onuPage(data,[device],{oltId:device.id,status:'los',search:'unique match',pon:'0/0/3'});assert.equal(searched.total,0);assert.equal(searched.filteredTotal,1);assert.deepEqual(searched.ports.map(row=>row.filteredTotal),[1,0,0]);
  assert.equal(reads,baseline);assert.equal(JSON.stringify(data),before);
 });
 test('unselected OLT never reads cache or projects customer details, and pagination enriches only shown rows',async()=>{

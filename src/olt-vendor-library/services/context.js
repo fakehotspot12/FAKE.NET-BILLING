@@ -8,12 +8,14 @@ export function request(){const context=current();remaining();if(++context.reque
 export function decryptSecret(value){return value?secrets.decryptSecret(current().data,value):'';}
 export async function withContext(data,device,operation,options={}){
   if(process.env.MIGRATION_MODE==='1'&&!(device.vendor==='zte'&&options.allowZteDevRead===true)&&!(options.rebootProbe===true&&options.allowDevRebootProbe===true))throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
-  const context={data,device,controller:new AbortController(),deadline:Date.now()+Math.min(options.timeoutMs||16000,18000),requests:0,transports:options.transports||{},hiosoActionAllowed:options.hiosoActionAllowed===true,hiosoGrant:null,rebootProbe:options.rebootProbe===true,oltRebootAllowed:options.oltRebootAllowed===true,oltRebootGrant:null,ponActionAllowed:options.ponActionAllowed===true,explicitDevPonAction:options.explicitDevPonAction===true,ponGrant:null};
+  const interactive=options.cliInteractive===true&&['zte','hsgq'].includes(device.vendor);
+  const context={data,device,controller:new AbortController(),deadline:Date.now()+Math.min(options.timeoutMs||16000,interactive?35000:18000),requests:0,transports:options.transports||{},hiosoActionAllowed:options.hiosoActionAllowed===true,hiosoGrant:null,rebootProbe:options.rebootProbe===true,oltRebootAllowed:options.oltRebootAllowed===true,oltRebootGrant:null,ponActionAllowed:options.ponActionAllowed===true,explicitDevPonAction:options.explicitDevPonAction===true,ponGrant:null};
   context.pnpActionAllowed=options.pnpActionAllowed===true;context.explicitDevPnpAction=options.explicitDevPnpAction===true;context.pnpGrant=null;
   context.bandwidthActionAllowed=options.bandwidthActionAllowed===true;context.explicitDevBandwidthAction=options.explicitDevBandwidthAction===true;context.bandwidthGrant=null;
   context.registrationActionAllowed=options.registrationActionAllowed===true;context.explicitDevRegistrationAction=options.explicitDevRegistrationAction===true;context.registrationGrant=null;
   context.bridgeActionAllowed=options.bridgeActionAllowed===true;context.explicitDevBridgeAction=options.explicitDevBridgeAction===true;context.bridgeGrant=null;
   context.hsgqActionAllowed=options.hsgqActionAllowed===true;context.hsgqGrant=null;
+  context.zteOnuActionAllowed=options.zteOnuActionAllowed===true;context.zteOnuGrant=null;context.cliPriority=interactive;
   context.cliQueue=device.vendor==='hsgq'||options.cliQueue===true&&device.vendor==='zte';
   const timer=setTimeout(()=>context.controller.abort(),context.deadline-Date.now());
   try{return await contexts.run(context,operation);}finally{clearTimeout(timer);context.controller.abort();}
@@ -50,6 +52,9 @@ export function authorizeBridgeOperation(state,value){
 }
 export function authorizeHsgqOperation(spec){
  const context=current();if(context.device.vendor!=='hsgq'||!context.hsgqActionAllowed||context.hsgqGrant||process.env.MIGRATION_MODE==='1')throw Error('HSGQ action authorization rejected');context.hsgqGrant=require('../../olt-hsgq').authorize(spec);
+}
+export function authorizeZteOnuOperation(spec){
+ const context=current();if(context.device.vendor!=='zte'||!context.zteOnuActionAllowed||context.zteOnuGrant||process.env.MIGRATION_MODE==='1')throw Error('ZTE ONU action authorization rejected');context.zteOnuGrant=require('../../olt-zte-onu').authorize(spec);
 }
 export function authorizeHiosoOperation({address,operation,name=''}){
   const context=current();

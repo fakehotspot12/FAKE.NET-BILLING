@@ -6,9 +6,19 @@ const NOW=Date.now();
 function onu(serialNumber='HWTCAABB0001',condition='los') {
  return {id:'4718593',serialNumber,name:'Pelanggan Unit',ponKey:'0/0/1',status:condition==='online'?'online':'offline',condition,causeKnown:condition==='los'||condition==='dying-gasp',downCause:condition==='los'?'LOS':condition==='dying-gasp'?'dying-gasp':'',rxPower:null};
 }
-function fixture(){const data=createDefaultStore();data.oltDevices=[{id:'olt-a',name:'OLT A',enabled:true,updatedAt:'revision-a',links:{HWTCAABB0001:{customerId:'member-a',fiberPointId:'odp-a'}}}];data.customers=[{id:'member-a',name:'Member Unit'}];data.fiberPoints=[{id:'odp-a'}];return data;}
+function fixture(){const data=createDefaultStore();data.settings.oltTicketing={enabled:true,automaticTicketsEnabled:true,whatsappEnabled:true};data.oltDevices=[{id:'olt-a',name:'OLT A',enabled:true,updatedAt:'revision-a',links:{HWTCAABB0001:{customerId:'member-a',fiberPointId:'odp-a'}}}];data.customers=[{id:'member-a',name:'Member Unit'}];data.fiberPoints=[{id:'odp-a'}];return data;}
 function observation(data,onus=[onu()],offset=0,extra={}){const device=data.oltDevices[0];return{deviceId:device.id,deviceUpdatedAt:device.updatedAt,snapshot:{status:'online',checkedAt:new Date(NOW+offset).toISOString(),onus,ports:[],...extra}};}
 function apply(data,obs,offset=0,options={}){const observations=Array.isArray(obs)?obs:[obs];priorLosReads(data,observations);const plan=olt.losTicketPlan(data,observations,{now:NOW+offset,...options});return{plan,result:olt.applyLosTicketPlan(data,plan,NOW+offset)};}
+test('automatic ticket creation defaults off for every OLT and accepts only explicit true',()=>{
+ for(const value of[undefined,false,'true',1]){const data=fixture();data.settings.oltTicketing={automaticTicketsEnabled:value};data.oltDevices.push({...data.oltDevices[0],id:'olt-b',links:{}});const a=observation(data),b={...a,deviceId:'olt-b'},before=structuredClone({customers:data.customers,invoices:data.invoices,wa:data.waMessages});const result=apply(data,[a,b]);assert.equal(result.result.created.length,0);assert.equal(result.plan.deferred,0);assert.deepEqual({customers:data.customers,invoices:data.invoices,wa:data.waMessages},before);}
+});
+test('the global switch gates stale creation plans but preserves existing tickets and recovery',()=>{
+ const data=fixture(),obs=observation(data);priorLosReads(data,[obs]);const planned=olt.losTicketPlan(data,[obs],{now:NOW});assert.equal(planned.creates,1);
+ data.settings.oltTicketing.automaticTicketsEnabled=false;assert.equal(olt.applyLosTicketPlan(data,planned,NOW).created.length,0);
+ data.settings.oltTicketing.automaticTicketsEnabled=true;apply(data,observation(data,[onu()],1000),1000);assert.equal(data.oltTickets.length,1);
+ data.settings.oltTicketing.automaticTicketsEnabled=false;const recovered=apply(data,observation(data,[onu('HWTCAABB0001','online')],2000),2000);assert.equal(recovered.result.resolved.length,1);assert.equal(data.oltTickets.length,1);
+ const manual=olt.saveTicket(data,{oltId:'olt-a',serialNumber:'HWTCAABB0002',title:'Manual fault'},{id:'technician'});assert(manual.id);assert.equal(manual.source,undefined);
+});
 test('only explicit current LOS creates automatic unassigned tickets, leaving business and WA data untouched',()=>{
  const data=fixture(),before=JSON.stringify({...data,oltTickets:undefined,oltLosObservations:undefined});
  const obs=observation(data,[onu(),onu('HWTCAABB0002','dying-gasp'),onu('HWTCAABB0003','other'),onu('HWTCAABB0004','online')]);

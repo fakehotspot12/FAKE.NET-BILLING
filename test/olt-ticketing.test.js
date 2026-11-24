@@ -1,7 +1,15 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const ticketing=require('../src/olt-ticketing'),auth=require('../src/auth'),{createDefaultStore}=require('../src/store');
-function fixture(){const data=createDefaultStore();data.users=['admin','technician','secretary','finance'].map((role,index)=>({id:role,username:role,name:'Unit '+role,role,active:true,phone:'08120000000'+index}));data.oltDevices=[{id:'olt-a',name:'OLT A',enabled:true,nasId:'nas-a'}];data.settings.waGateway.enabled=true;data.settings.oltTicketing={whatsappEnabled:true,recipientIds:['technician','secretary']};data.oltTickets=[{id:'t1',number:'OLT-UNIT',oltId:'olt-a',scope:'onu',serialNumber:'HWTCAABB0001',status:'new',assignedTo:'',createdAt:'2026-11-13T01:00:00Z',updatedAt:'2026-11-13T01:00:00Z'}];return data;}
+function fixture(){const data=createDefaultStore();data.users=['admin','technician','secretary','finance'].map((role,index)=>({id:role,username:role,name:'Unit '+role,role,active:true,phone:'08120000000'+index}));data.oltDevices=[{id:'olt-a',name:'OLT A',enabled:true,nasId:'nas-a'}];data.settings.waGateway.enabled=true;data.settings.oltTicketing={enabled:true,whatsappEnabled:true,recipientIds:['technician','secretary']};data.oltTickets=[{id:'t1',number:'OLT-UNIT',oltId:'olt-a',scope:'onu',serialNumber:'HWTCAABB0001',status:'new',assignedTo:'',createdAt:'2026-11-13T01:00:00Z',updatedAt:'2026-11-13T01:00:00Z'}];return data;}
+test('one opt-in switch controls automatic tickets and staff WA without enabling legacy WA-only installations',()=>{
+ const data=fixture(),payload={enabled:false,recipientIds:[]};assert.equal(ticketing.settingsFor(createDefaultStore()).enabled,false);
+ for(const value of['true',1,null])assert.throws(()=>ticketing.validateSettings(data,{...payload,automaticTicketsEnabled:value}),/tiket otomatis/);
+ const next=ticketing.validateSettings(data,payload);assert.equal(next.enabled,false);assert.equal(next.automaticTicketsEnabled,false);assert.equal(next.whatsappEnabled,false);
+ for(const enabled of[false,true]){const result=ticketing.validateSettings(data,{enabled,recipientIds:['technician']});assert.equal(result.enabled,enabled);assert.equal(result.automaticTicketsEnabled,enabled);assert.equal(result.whatsappEnabled,enabled);}
+ assert.throws(()=>ticketing.validateSettings(data,{enabled:true,whatsappEnabled:false,recipientIds:['technician']}),/satu status/);
+ for(const settings of[{whatsappEnabled:true},{automaticTicketsEnabled:true},{automaticTicketsEnabled:true,whatsappEnabled:false},{enabled:false,automaticTicketsEnabled:true,whatsappEnabled:true}]){data.settings.oltTicketing=settings;assert.equal(ticketing.settingsFor(data).enabled,false);assert.equal(ticketing.settingsFor(data).whatsappEnabled,false);}
+});
 const enqueue=(data,payload)=>{const message={...payload,id:'wa-'+data.waMessages.length,status:'queued',queueRevision:0};data.waMessages.push(message);return message;};
 test('planned reboot blocks a new automatic fault before queue and again at delivery, without blocking invoices or manual tickets',()=>{
  const planned=require('../src/olt-planned-reboot'),now=Date.now(),data=fixture(),ticket=data.oltTickets[0];Object.assign(ticket,{source:'olt-los',pon:'0/0/1',createdAt:new Date(now+1).toISOString()});planned.begin(data,{source:'olt',serialNumber:ticket.serialNumber,oltId:'olt-a',onuIndex:'4718593',pon:ticket.pon},{id:'admin'},now);
@@ -20,7 +28,7 @@ test('ticket notification defaults to disabled and validates explicit authorized
  const empty=createDefaultStore();assert.equal(ticketing.settingsFor(empty).whatsappEnabled,false);const data=fixture();assert.deepEqual(ticketing.eligibleUsers(data).map(row=>row.role),['admin','technician','secretary']);
  for(const recipientIds of [[],['unknown']])assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds}));
  assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds:['finance']}).billingRecipientIds,['finance']);
- assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:'yes',recipientIds:['technician']}));assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:false,recipientIds:[]}),{whatsappEnabled:false,recipientIds:[],billingRecipientIds:[],customerOutageEnabled:false});
+ assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:'yes',recipientIds:['technician']}));assert.deepEqual(ticketing.validateSettings(data,{whatsappEnabled:false,recipientIds:[]}),{enabled:false,automaticTicketsEnabled:false,whatsappEnabled:false,recipientIds:[],billingRecipientIds:[],customerOutageEnabled:false});
  data.users[1].phone='';assert.throws(()=>ticketing.validateSettings(data,{whatsappEnabled:true,recipientIds:['technician']}));
 });
 test('ticket URLs are fixed internal paths with no password or login bypass',()=>{

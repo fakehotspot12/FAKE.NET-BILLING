@@ -93,7 +93,7 @@ function position(index) {
   return onuId >= 1 && onuId <= 1024 ? { slot, pon, onuId, ponKey: `0/${slot}/${pon}` } : null;
 }
 function actionPosition(device,index){return vendors.normalize(device.vendor)==='hioso'?hioso.position(index):vendors.normalize(device.vendor)==='hsgq'?require('./olt-hsgq').position(index):vendors.normalize(device.vendor)==='zte'?require('./olt-zte-inventory').position(index):position(index);}
-const managedDriver=device=>device.vendor==='hioso'?hioso:device.vendor==='hsgq'?require('./olt-hsgq'):null;
+const managedDriver=device=>device.vendor==='hioso'?hioso:device.vendor==='hsgq'?require('./olt-hsgq'):device.vendor==='zte'?require('./olt-zte-onu'):null;
 function optical(row) {
   const value = number(row);
   if (value === null || [-1, -65535, 65535, 2147483647].includes(value)) return null;
@@ -238,6 +238,13 @@ function validateDevice(data, payload = {}, previous = {}) {
 function publicDevice(device, snapshot = null, options = {}) {
   const actions=vendors.capabilities(device,snapshot);
   const simulated=process.env.MIGRATION_MODE==='1'&&/^demo-olt-\d{1,2}$/.test(device.id)&&snapshot?.simulated===true;
+  const warnings=[],notices=[];
+  for(const message of snapshot?.warnings||[]){
+    const optical=String(message).match(/^RX ONU dibaca bergiliran per PON; (\d+) \/ (\d+) nilai tersedia\./);
+    if(optical)notices.push(`RX tersedia: ${optical[1]} / ${optical[2]} ONU.`);
+    else if(String(message).startsWith('Aksi tulis vendor yang belum terverifikasi tetap terkunci.')){if(device.vendor!=='zte')notices.push('Aksi konfigurasi yang belum didukung firmware tetap terkunci.');}
+    else warnings.push(message);
+  }
   return { id: device.id, name: device.name, vendor: device.vendor, nasId: device.nasId, enabled: device.enabled,
     simulated,pnpAvailable:Boolean(device.vendor==='zte'&&device.enabled&&device.cliEnabled&&device.cliUsername&&device.cliPasswordEnc&&!simulated),
     ...(options.management || options.terminal ? { revision:device.updatedAt||'', terminalAvailable:Boolean(device.enabled&&device.cliEnabled&&device.cliUsername&&device.cliPasswordEnc), cliProtocol:device.cliProtocol||'telnet', cliPort:device.cliPort||23 } : {}),
@@ -253,7 +260,7 @@ function publicDevice(device, snapshot = null, options = {}) {
     resources:{cpuPercent:snapshot?.telemetry?.cpuPercent??null,ramPercent:snapshot?.telemetry?.ramPercent??null,checkedAt:snapshot?.telemetry?.checkedAt||'',stale:Boolean(snapshot?.stale||snapshot?.status&&snapshot.status!=='online'||snapshot?.telemetry?.stale||snapshot?.telemetry?.checkedAt&&Date.now()-Date.parse(snapshot.telemetry.checkedAt)>telemetry.INTERVAL_MS*2)},
     ponPorts: snapshot ? (snapshot.ports || []).filter(port => port.kind === 'pon').length : null,
     ponOverview: require('./olt-pon').decorate(null,device,snapshot?.ports||[]).filter(row => row.kind === 'pon').slice(0,64),
-    summary: snapshot?.summary || null, warnings: snapshot?.warnings || [] };
+    summary: snapshot?.summary || null, warnings, notices };
 }
 function fingerprint(device) { const fields=[device.host,device.port,device.communityEnc,device.cliEnabled,device.cliUsername,device.cliPasswordEnc,device.cliPort];if(vendors.normalize(device.vendor)!=='cdata')fields.push(device.vendor,device.cliProtocol,device.webPort,'hioso-actions-v1');if(device.vendor==='hsgq')fields.push('hsgq-gpon-actions-v1');if(vendors.normalize(device.vendor)==='zte')fields.push('zte-inventory-v1');return crypto.createHash('sha256').update(JSON.stringify(fields)).digest('hex').slice(0,24); }
 function cacheKey(device) { return `fakenet-billing:olt:v2:${device.id}:${fingerprint(device)}`; }
@@ -354,9 +361,11 @@ async function onuPage(data, devices, options = {}, management = false) {
   }
   const publicRow=publicDevice(device,snapshot,{management});
   const search = String(options.search || '').slice(0,100).toLowerCase();
-  const raw=(snapshot?.onus||[]).filter(row=>matchesState(row,options.status)&&(!options.pon||row.ponKey===options.pon));
-  // Cached state/PON filters precede enrichment; a normal page projects at most 100 ONUs.
-  const filtered=search?linkedOnus(data,device,raw,snapshot).filter(row=>[row.name,row.serialNumber,row.model,row.customerName,row.customerUsername,row.fiberPointName,device.name,row.downCause].some(value=>String(value||'').toLowerCase().includes(search))):raw;
+  const raw=(snapshot?.onus||[]).filter(row=>matchesState(row,options.status));
+  // Count the same cached status/search matches before selecting a PON or page.
+  const matches=search?linkedOnus(data,device,raw,snapshot).filter(row=>[row.name,row.serialNumber,row.model,row.customerName,row.customerUsername,row.fiberPointName,device.name,row.downCause].some(value=>String(value||'').toLowerCase().includes(search))):raw;
+  const ponCounts=new Map();for(const row of matches)ponCounts.set(row.ponKey,(ponCounts.get(row.ponKey)||0)+1);
+  const filtered=options.pon?matches.filter(row=>row.ponKey===options.pon):matches;
   const pages = Math.max(1,Math.ceil(filtered.length/limit));
   const page = Math.max(1,Math.min(pages,parseInt(options.page,10)||1));
   const selected=filtered.slice((page-1)*limit,page*limit);let rows=search?selected:linkedOnus(data,device,selected,snapshot);
@@ -366,7 +375,7 @@ async function onuPage(data, devices, options = {}, management = false) {
     if(next&&readings.size){next.summary=summarizeOnus(next.onus);snapshot=next;remember(cache,cacheKey(device),next);if(redis.enabled())try{await redis.set(cacheKey(device),JSON.stringify(next),86400);}catch{}publicRow.summary=next.summary;}
   }
   rows=require('./onu-model').enrichPage(data,device,require('./olt-zte-catalogue').identifyOnus(data,device,rows));
-  return { device:publicRow,devices:[publicRow],ports:require('./olt-pon').decorate(data,device,snapshot?.ports||[]).map(row=>({...row,oltId:device.id,oltName:device.name})),summary:publicRow.inventoryAvailable!==false?publicRow.summary:null,onus:rows.map(row=>({...row,oltId:device.id,oltName:device.name})),total:filtered.length,page,pages,limit,selectionRequired:false,...(statusRead?{statusRead}:{}) };
+  return { device:publicRow,devices:[publicRow],ports:require('./olt-pon').decorate(data,device,snapshot?.ports||[]).map(row=>({...row,filteredTotal:ponCounts.get(row.ponKey)||0,oltId:device.id,oltName:device.name})),summary:publicRow.inventoryAvailable!==false?publicRow.summary:null,onus:rows.map(row=>({...row,oltId:device.id,oltName:device.name})),filteredTotal:matches.length,total:filtered.length,page,pages,limit,selectionRequired:false,...(statusRead?{statusRead}:{}) };
 }
 async function liveSerial(data,device,onu) {
   const address=net.isIP(device.host)===6?`udp6:[${device.host}]:${device.port}`:`${device.host}:${device.port}`;
@@ -383,7 +392,7 @@ function selectedOnu(snapshot,serial,selector={},allowMissing=false,device={vend
   return onu;
 }
 async function readRemovalState(data,device,serial,selector={},transport={}){
-  if(managedDriver(device)){const sn=normalizeSerial(serial),snapshot=await snapshotFor(device);if(!sn)throw new Error('Identitas ONU tidak valid');if(device.vendor==='hsgq'&&!vendors.capabilities(device,snapshot).delete)throw Error('Aksi HSGQ masih terkunci sampai firmware terverifikasi');const target=selectedOnu(snapshot,sn,selector,true,device),result=await managedDriver(device).run(data,device,target,'inspect');return{target,state:result.state};}
+  if(managedDriver(device)){const sn=normalizeSerial(serial),snapshot=await snapshotFor(device);if(!sn)throw new Error('Identitas ONU tidak valid');if(['hsgq','zte'].includes(device.vendor)&&!vendors.capabilities(device,snapshot).delete)throw Error('Aksi ONU masih terkunci sampai model/firmware terverifikasi');const target=selectedOnu(snapshot,sn,selector,true,device),result=await managedDriver(device).run(data,device,target,'inspect',device.vendor==='hsgq'?{purpose:'delete'}:{});return{target,state:result.state};}
   if(!vendors.canWrite(device))throw new Error('Penghapusan vendor ini masih terkunci sampai model dan aksi terverifikasi');
   const sn=normalizeSerial(serial);if(!sn)throw new Error('Serial ONU tidak valid');
   const snapshot=await snapshotFor(device),target=selectedOnu(snapshot,sn,selector,true);
@@ -394,8 +403,8 @@ async function readRemovalState(data,device,serial,selector={},transport={}){
 }
 async function removeOnu(data,device,serial,payload,transport={serial:liveSerial,delete:cli.deleteOnu,inspect:cli.inspectOnu}) {
   if(managedDriver(device)){
-    const sn=normalizeSerial(serial);if(!sn||normalizeSerial(payload.serialNumber)!==sn||payload.confirmDelete!==true)throw new Error('Konfirmasi MAC dan persetujuan hapus ONU wajib sesuai');
-    const snapshot=await snapshotFor(device);if(device.vendor==='hsgq'&&!vendors.capabilities(device,snapshot).delete)throw Error('Aksi HSGQ masih terkunci sampai firmware terverifikasi');const onu=selectedOnu(snapshot,sn,payload,true,device),result=await managedDriver(device).run(data,device,onu,'delete'),next={...snapshot,pendingRefresh:true};
+    const sn=normalizeSerial(serial);if(!sn||normalizeSerial(payload.serialNumber)!==sn||payload.confirmDelete!==true)throw new Error('Identitas ONU (SN/MAC) dan persetujuan hapus wajib sesuai');
+    const snapshot=await snapshotFor(device);if(['hsgq','zte'].includes(device.vendor)&&!vendors.capabilities(device,snapshot).delete)throw Error('Aksi ONU masih terkunci sampai model/firmware terverifikasi');const onu=selectedOnu(snapshot,sn,payload,true,device),result=await managedDriver(device).run(data,device,onu,'delete'),next={...snapshot,pendingRefresh:true};
     if(result.deleteConfirmed){next.onus=(snapshot?.onus||[]).filter(row=>row.id!==onu.id);next.summary=summarizeOnus(next.onus);for(const port of next.ports||[])if(port.kind==='pon')Object.assign(port,summarizeOnus(next.onus.filter(row=>row.ponKey===port.ponKey)));}
     const key=cacheKey(device);remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}lastAttempt.delete(key);
     return{serialNumber:sn,onuIndex:onu.id,ponKey:onu.ponKey,onuId:onu.onuId,oltId:device.id,confirmed:result.deleteConfirmed,alreadyAbsent:result.alreadyAbsent===true,message:result.deleteConfirmed?'ONU terverifikasi sudah dihapus. Data billing tetap tersimpan.':'Hapus ONU belum terverifikasi. Periksa ulang tanpa mengirim perintah berulang.'};
@@ -419,8 +428,8 @@ async function removeOnu(data,device,serial,payload,transport={serial:liveSerial
 }
 async function rebootOnu(data,device,serial,payload,transport={serial:liveSerial,reboot:cli.rebootOnu}) {
   if(managedDriver(device)){
-    const sn=normalizeSerial(serial);if(!sn||normalizeSerial(payload.serialNumber)!==sn||payload.confirmReboot!==true)throw new Error('Konfirmasi MAC dan persetujuan reboot ONU wajib sesuai');
-    const snapshot=await snapshotFor(device);if(device.vendor==='hsgq'&&!vendors.capabilities(device,snapshot).reboot)throw Error('Aksi HSGQ masih terkunci sampai firmware terverifikasi');const onu=selectedOnu(snapshot,sn,payload,false,device);await managedDriver(device).run(data,device,onu,'reboot');const key=cacheKey(device),next={...snapshot,pendingRefresh:true};remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}lastAttempt.delete(key);
+    const sn=normalizeSerial(serial);if(!sn||normalizeSerial(payload.serialNumber)!==sn||payload.confirmReboot!==true)throw new Error('Identitas ONU (SN/MAC) dan persetujuan reboot wajib sesuai');
+    const snapshot=await snapshotFor(device);if(['hsgq','zte'].includes(device.vendor)&&!vendors.capabilities(device,snapshot).reboot)throw Error('Aksi ONU masih terkunci sampai model/firmware terverifikasi');const onu=selectedOnu(snapshot,sn,payload,false,device);await managedDriver(device).run(data,device,onu,'reboot');const key=cacheKey(device),next={...snapshot,pendingRefresh:true};remember(cache,key,next);if(redis.enabled())try{await redis.set(key,JSON.stringify(next),86400);}catch{}lastAttempt.delete(key);
     return{serialNumber:sn,oltId:device.id,submitted:true,confirmed:false,message:'Perintah reboot dikirim. Tunggu perangkat pulih sebelum mengulang.'};
   }
   if(!vendors.canWrite(device))throw new Error('Reboot vendor ini masih terkunci sampai aksi terverifikasi');
@@ -655,6 +664,7 @@ function losTicketPlan(data, observations, options = {}) {
       }
       const active=activeByOnu.get(key),nextDetection={state:'los',firstDetectedAt:active?.losDetection?.firstDetectedAt||snapshot.checkedAt,lastLosAt:snapshot.checkedAt,observedAt:snapshot.checkedAt,recoveredAt:'',occurrences:(active?.losDetection?.occurrences||0)+1};
       if(active){changes.push({kind:'observe',id:active.id,patch:active.source==='olt-los'?{affectedCount:subject.affectedCount,affectedSerialNumbers:subject.affectedSerialNumbers,...(subject.recovery?{recovery:subject.recovery}:{})}:{},losDetection:nextDetection});continue;}
+      if(!require('./olt-ticket-control').enabled(data))continue;
       const currentLos=subject.affectedSerialNumbers.map(serial=>seen.get(serial)).filter(row=>row&&isConfirmedLos(row));
       if(!currentLos.length||!currentLos.every(onu=>confirmation.confirmed(device,onu,snapshot.checkedAt)))continue;
       if(!available)continue;
@@ -691,6 +701,7 @@ function applyLosTicketPlan(data, plan, now = Date.now()) {
         resolved.push(rows[index]);
       }
     } else {
+      if(!require('./olt-ticket-control').enabled(data))continue;
       const ticket={...saveTicket({...data,oltTickets:rows},change.payload,{id:'system-olt'}),source:'olt-los',scope:change.scope,onuIndex:change.onuIndex||'',...(change.optical?.at?{oltOptical:{...change.optical,oltId:change.payload.oltId,serialNumber:change.payload.serialNumber,onuIndex:change.onuIndex}}:{}),affectedCount:change.affectedCount,affectedSerialNumbers:change.affectedSerialNumbers,losDetection:change.losDetection,onuName:change.onuName,customerId:change.customerId,customerName:change.customerName,fiberPointId:change.fiberPointId,fiberPointName:change.fiberPointName,...(change.simulated?{simulated:true}:{})};
       if(change.recovery){ticket.recovery=change.recovery;ticket.recoveryTargets=change.recoveryTargets;}
       Object.assign(ticket,require('./ticket-network').captureOptical(data,ticket,change.opticalCandidates,now));

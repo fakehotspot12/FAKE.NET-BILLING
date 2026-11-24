@@ -12,9 +12,19 @@ function dimensions(cols, rows) {
 }
 const plain = value => String(value).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/[\r\x00-\x08\x0b-\x1f\x7f]/g,'');
 const promptFrom = value => /^(?:[^<>#\r\n]{1,100}[>#]|<[A-Za-z0-9_.:/()@ -]{1,100}>|\[[^\]\r\n]{1,100}\])$/.test(value) ? value : '';
+function createOutputFilter(){
+  let mode='',escaped=false;
+  return value=>{let output='';for(const char of String(value)){
+    if(mode==='escape'){if(']P_^X'.includes(char)){mode=char===']'?'osc':'string';escaped=false;}else{output+='\x1b'+char;mode='';}continue;}
+    if(mode){if(char==='\x9c'||mode==='osc'&&char==='\x07'||escaped&&char==='\\'){mode='';escaped=false;}else escaped=char==='\x1b';continue;}
+    if(char==='\x1b')mode='escape';else if(char==='\x9d')mode='osc';else if(['\x90','\x98','\x9e','\x9f'].includes(char))mode='string';else output+=char;
+  }return output;};
+}
 
 function create({ device, prompt, cols = 100, rows = 30, write, append, terminate, resize, changed = () => {}, settleMs = 100, eol = '\r' }) {
   const size = dimensions(cols, rows), screen = new Terminal({ ...size, scrollback: 64, allowProposedApi: true });
+  // Keep native cursor/colors, but do not forward clipboard/title/control strings from an OLT.
+  const filterOutput=createOutputFilter();
   let parsed = Promise.resolve(), closed = false, lastOutput = 0, lastWrite = 0, outputSequence = 0;
   let currentPrompt = prompt, draft = '', caret = 0, location = null, pending = null;
   let secretExpected = false, secretSent = false, secret = '', confirmation = false, pager = false;
@@ -52,6 +62,7 @@ function create({ device, prompt, cols = 100, rows = 30, write, append, terminat
   }
   function feed(raw) {
     if (closed) return parsed;
+    raw=filterOutput(raw);if(!raw)return parsed;
     lastOutput = Date.now(); outputSequence++;
     parsed = parsed.then(() => new Promise(resolve => {
       if (closed) return resolve();
@@ -132,7 +143,7 @@ function create({ device, prompt, cols = 100, rows = 30, write, append, terminat
     if (value === '\r' || value === '\n') {
       await settle(0, () => Boolean(visibleDraft()));
       const command = policy.classify(device, location, draft);
-      if(command.permission&&!permissions.includes(command.permission))fail('Tidak memiliki izin mengatur PON. Hanya Admin, Sekretaris dan Kepala Teknisi.',403);
+      policy.checkAccess(command,permissions);
       if (command.kind === 'delete-onu') return { ok: true, action: 'preview-delete-onu', target: command.target };
       const typed = draft, visible = visibleDraft();
       const nativeEnter = visible && visible.value.trimEnd() === typed.trimEnd();
@@ -169,7 +180,12 @@ function create({ device, prompt, cols = 100, rows = 30, write, append, terminat
     return { ok: true };
   }
   function setSize(cols, rows) { const next = dimensions(cols, rows); screen.resize(next.cols, next.rows); resize?.(next.cols, next.rows); changed(); return { ok: true }; }
+  function reportError(error){
+    if(closed)return;
+    const message=String(error.message||'Perintah ditolak').replace(/[\x00-\x1f\x7f-\x9f]/g,' ').slice(0,500),visible=visibleDraft(),line=visible?.value??draft,position=visible?.caret??caret;
+    append('\r\n\x1b[31m% Billing: '+message+'\x1b[0m\r\n'+currentPrompt+line+(position<line.length?'\x1b['+(line.length-position)+'D':''));changed();
+  }
   function dispose() { if (closed) return; closed = true; secret = ''; draft = ''; pending = null; resync?.(); resync = null; screen.dispose(); }
-  return { feed, input, status, resize: setSize, dispose };
+  return { feed, input, status, resize: setSize, dispose,reportError };
 }
-module.exports = { create, dimensions };
+module.exports = { create, dimensions,createOutputFilter };

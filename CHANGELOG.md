@@ -2,6 +2,31 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.7.0] - 2026-11-24
+
+### Added
+
+- Satu kontrol global **Tiket Otomatis & WA Petugas**, default nonaktif, dengan penerima dan pesan gangguan massal pelanggan tetap terkelola. Tiket manual dan riwayat yang sudah ada tetap dipertahankan; setelan lama tidak diaktifkan diam-diam.
+- Driver aksi ONU ZTE pada model/firmware terverifikasi, dengan pemeriksaan identitas dan posisi sebelum reboot/hapus serta verifikasi hasil. Penghapusan yang sudah selesai tidak mengirim perintah hapus perangkat berulang.
+
+### Security
+
+- Pembatasan perintah console mengikuti izin operasional: staf tetap dapat memantau, mengelola ONU sesuai izin dan memakai alur hapus terverifikasi, tetapi tidak mengubah konfigurasi global, PON, atau provisioning tanpa kewenangan.
+- Menutup celah perubahan izin/cakupan saat permintaan pengelolaan OLT, tiket dan penghapusan sedang diproses. Payload izin dari browser tidak menjadi sumber kewenangan.
+- Menyaring kontrol clipboard/judul terminal tanpa menghilangkan warna, kursor, bantuan Tab, atau pesan error native. Penolakan aplikasi tampil langsung di console dan tidak mengeksekusi perintah yang dibatasi.
+
+### Fixed
+
+- Kotak Online dan filter gangguan dapat melihat seluruh PON pada OLT terpilih, tetap delapan ONU per halaman. Kotak Hasil Filter dan jumlah masing-masing PON mengikuti status serta pencarian, bukan total tanpa filter.
+- Pembacaan tipe ONU terpotong dan pilihan profil bandwidth existing; profil lama dipertahankan, reservasi bandwidth memerlukan persetujuan, dan kapasitas yang belum terverifikasi tidak ditebak.
+- Registrasi HSGQ yang belum pernah aktif dapat diperiksa melalui tabel PON lengkap. Retry terbatas hanya pada pembacaan yang timeout, tidak pada aksi tulis, identitas berubah, atau firmware yang tidak didukung.
+- Antrean akses console dan pembacaan LAN/WiFi OMCI dibatasi agar tidak saling menimpa. Binding management/backhaul tetap dilindungi; pemetaan SSID yang tidak dilaporkan tidak dianggap dapat dikonfigurasi.
+
+### Improved
+
+- Endpoint daftar ONU menggunakan pemfilteran dan pagination sebelum proyeksi detail yang tidak diperlukan. Ringkasan tiket menghindari pemrosesan pengaturan berulang tanpa menambah polling perangkat.
+- Bahasa status membedakan pratinjau, tersimpan, perintah terkirim, hasil terverifikasi dan hasil belum pasti. Manifest, pemeriksaan runtime installer/updater dan cache aset mencakup seluruh modul baru tanpa mengganti data billing atau virtual parameter ACS existing.
+
 ## [4.6.3] - 2026-11-23
 
 ### Added

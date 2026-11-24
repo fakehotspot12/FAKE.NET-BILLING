@@ -9,9 +9,9 @@ serverModule.require=name=>name==='./store'?{...storeModule,loadStore:async()=>f
 serverModule._compile(fs.readFileSync(serverPath,'utf8')+'\nmodule.exports.__test.oltApi=handleApi;module.exports.__test.createWifiKuSession=createWifiKuSession;module.exports.__test.syncOltLosTickets=syncOltLosTickets;module.exports.__test.oltQueueJob=processWaGatewayQueueJob;module.exports.__test.stubOltTransport=(deliver,wait=async()=>{})=>{const savedDeliver=deliverWaMessage,savedWait=waitForWaGatewayDeliverySlot;deliverWaMessage=deliver;waitForWaGatewayDeliverySlot=wait;return()=>{deliverWaMessage=savedDeliver;waitForWaGatewayDeliverySlot=savedWait;};};',serverPath);
 const handle=serverModule.exports.__test.oltApi,sessions=new Map();
 function reset(){fixture=storeModule.createDefaultStore();fixture.users=auth.publicRoles().map(({value})=>({id:value,username:value,name:'Unit '+value,role:value,active:true}));fixture.monitoringTargets=[{id:'nas-a',name:'NAS-A',host:'192.0.2.10'},{id:'nas-b',name:'NAS-B',host:'192.0.2.11'}];saves=0;}
-async function request(role,method='GET',suffix='',body={},validCsrf=true,handler=handle){
+async function request(role,method='GET',suffix='',body={},validCsrf=true,handler=handle,beforeBody){
  if(role&&!sessions.has(role))sessions.set(role,auth.createSession(fixture.users.find(row=>row.id===role||row.role===role)));
- const id=sessions.get(role),uri=suffix.startsWith('/api/')?suffix:'/api/monitoring/olt'+suffix,req=Readable.from([Buffer.from(JSON.stringify(body))]);req.method=method;req.url=uri;req.socket={remoteAddress:'127.0.0.1'};
+ const id=sessions.get(role),uri=suffix.startsWith('/api/')?suffix:'/api/monitoring/olt'+suffix,req=Readable.from((async function*(){if(beforeBody)await beforeBody();yield Buffer.from(JSON.stringify(body));})());req.method=method;req.url=uri;req.socket={remoteAddress:'127.0.0.1'};
  req.headers={host:'localhost:8891',origin:'http://localhost:8891','content-type':'application/json',...(id?{cookie:auth.SESSION_COOKIE+'='+id}:{}),'x-csrf-token':validCsrf?auth.csrfTokenForSessionId(id):'bad'};
  const res=apiResponse();await handler(req,res,new URL(uri,'http://localhost:8891'));return res;
 }
@@ -317,13 +317,13 @@ test('ACS single and batch reboots use persistent serial-normalized guards; expl
  }finally{process.env.MIGRATION_MODE='1';}
 });
 test('background LOS reconciliation persists tickets once, audits creation and never enqueues WhatsApp',async()=>{
- reset();const created=await request('admin','POST','',{name:'Unit',host:'192.0.2.90',community:'unit'}),olt=require('../src/olt-monitor'),original=olt.snapshotFor;
+ reset();fixture.settings.oltTicketing={enabled:true,automaticTicketsEnabled:true,whatsappEnabled:true};const created=await request('admin','POST','',{name:'Unit',host:'192.0.2.90',community:'unit'}),olt=require('../src/olt-monitor'),original=olt.snapshotFor;
  const before=structuredClone({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages}),savesBefore=saves,at=Date.now();
  const snapshot={status:'online',checkedAt:new Date(at-359000).toISOString(),onus:[{serialNumber:'HWTCAABBCCDD',ponKey:'0/0/1',name:'Unit Client',status:'offline',condition:'los',causeKnown:true,downCause:'LOS'}],ports:[]};olt.snapshotFor=async()=>snapshot;
  try{for(const offset of[-359000,-179000]){snapshot.checkedAt=new Date(at+offset).toISOString();const waiting=await serverModule.exports.__test.syncOltLosTickets();assert.equal(waiting.created.length,0);assert.equal(fixture.oltTickets.length,0);assert.equal(fixture.waMessages.length,0);}
  snapshot.checkedAt=new Date(at+1000).toISOString();const result=await serverModule.exports.__test.syncOltLosTickets();assert.equal(result.created.length,1);assert.equal(saves,savesBefore+3);assert(fixture.activity.some(row=>row.meta?.action==='olt-los-ticket-auto'));assert.equal(fixture.oltTickets[0].source,'olt-los');assert.equal(fixture.oltTickets[0].assignedTo,'');
  await serverModule.exports.__test.syncOltLosTickets();assert.equal(saves,savesBefore+3);assert.equal(fixture.oltTickets.length,1);
- const listed=await request('secretary');assert.equal(listed.body.ticketAutomation.enabled,true);assert.equal(listed.body.ticketAutomation.whatsappEnabled,false);assert.equal((await request('secretary','GET','/tickets')).body.tickets[0].serialNumber,'HWTCAABBCCDD');
+ const listed=await request('secretary');assert.equal(listed.body.ticketAutomation.enabled,true);assert.equal(listed.body.ticketAutomation.whatsappEnabled,true);assert.equal((await request('secretary','GET','/tickets')).body.tickets[0].serialNumber,'HWTCAABBCCDD');
  const changed=await request('admin','PUT','/tickets/'+fixture.oltTickets[0].id,{serialNumber:'HWTCAABB0001'});assert.equal(changed.status,400);
  assert.deepEqual({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages},before);
  }finally{olt.snapshotFor=original;}
@@ -354,12 +354,24 @@ test('direct ticket links require a permitted session and GET never claims the t
 });
 test('notification switch is opt-in, CSRF-protected and cancels only ticket messages',async()=>{
  reset();fixture.settings.paymentGateway.publicBaseUrl='https://billing.example.test';fixture.users.find(row=>row.role==='technician').phone='081200000001';fixture.users.find(row=>row.role==='secretary').phone='081200000002';
- const body={whatsappEnabled:true,recipientIds:['technician','secretary']};assert.equal((await request('secretary','PUT','/ticket-settings',body,false)).status,419);assert.equal((await request('admin','PUT','/ticket-settings',body,false)).status,419);assert.equal((await request('admin','PUT','/ticket-settings',{...body,recipientIds:['finance']})).status,400);
+ const body={enabled:true,recipientIds:['technician','secretary']};assert.equal((await request('secretary','PUT','/ticket-settings',body,false)).status,419);assert.equal((await request('admin','PUT','/ticket-settings',body,false)).status,419);assert.equal((await request('admin','PUT','/ticket-settings',{...body,recipientIds:['finance']})).status,400);
  assert.equal((await request('admin','PUT','/ticket-settings',body)).status,200);const listed=await request('admin');assert.equal(listed.body.ticketSettings.whatsappEnabled,true);assert.equal(listed.body.notificationEnabled,true);assert.equal((await request('technician')).body.ticketRecipientOptions,undefined);
  fixture.waMessages=[{id:'wa-olt',type:'oltTicket',status:'queued',queueRevision:0},{id:'wa-invoice',type:'paymentPaid',status:'queued'}];assert.equal((await request('admin','PUT','/ticket-settings',{whatsappEnabled:false,recipientIds:['technician']})).status,200);assert.equal(fixture.waMessages[0].status,'cancelled');assert.equal(fixture.waMessages[1].status,'queued');
 });
+test('global ticket/WA switch defaults off, persists together and enforces role/CSRF',async()=>{
+ reset();fixture.settings.paymentGateway.publicBaseUrl='https://billing.example.test';fixture.users.find(row=>row.role==='technician').phone='081200000001';const before=businessState(),body={enabled:true,recipientIds:['technician']};
+ assert.equal((await request('admin')).body.ticketSettings.automaticTicketsEnabled,false);assert.equal((await request('admin')).body.ticketAutomation.enabled,false);
+ for(const role of['technician','finance','collector','reseller_voucher'])assert.equal((await request(role,'PUT','/api/tickets/settings',body)).status,403);
+ assert.equal((await request('secretary','PUT','/api/tickets/settings',body,false)).status,419);
+ assert.equal((await request('admin','PUT','/api/tickets/settings',{...body,enabled:'true'})).status,400);
+ assert.equal((await request('secretary','PUT','/api/tickets/settings',body)).status,200);
+ assert.equal((await request('admin')).body.ticketSettings.automaticTicketsEnabled,true);assert.equal(fixture.settings.oltTicketing.whatsappEnabled,true);
+ assert.equal((await request('admin','PUT','/api/tickets/settings',{whatsappEnabled:false,recipientIds:[]})).status,200);assert.equal(fixture.settings.oltTicketing.automaticTicketsEnabled,false);
+ assert.equal((await request('admin','PUT','/api/tickets/settings',{...body,enabled:false})).status,200);assert.equal((await request('admin')).body.ticketSettings.automaticTicketsEnabled,false);
+ assert(fixture.activity.some(row=>row.meta?.action==='olt-ticket-settings'&&row.meta.automaticTicketsEnabled===false));assert.deepEqual(businessState(),before);assert.equal(fixture.waMessages.length,0);
+});
 test('automatic tickets close only after confirmed recovery and record one audited resolution',async()=>{
- reset();await request('admin','POST','',{name:'Recovery',host:'192.0.2.95',community:'unit'});const olt=require('../src/olt-monitor'),original=olt.snapshotFor,at=Date.now();
+ reset();fixture.settings.oltTicketing={enabled:true,automaticTicketsEnabled:true,whatsappEnabled:true};await request('admin','POST','',{name:'Recovery',host:'192.0.2.95',community:'unit'});const olt=require('../src/olt-monitor'),original=olt.snapshotFor,at=Date.now();
  const snapshot={status:'online',checkedAt:new Date(at).toISOString(),onus:[{serialNumber:'HWTCAABBCCDD',ponKey:'0/0/1',name:'Unit Client',status:'offline',condition:'los',causeKnown:true,downCause:'LOS'}],ports:[]};olt.snapshotFor=async()=>snapshot;
  require('./helpers/confirmed-los')(fixture,[{deviceId:fixture.oltDevices[0].id,snapshot}]);
  try{await serverModule.exports.__test.syncOltLosTickets();assert.equal(fixture.oltTickets.length,1);snapshot.checkedAt=new Date(at+1000).toISOString();snapshot.onus[0]={...snapshot.onus[0],status:'online',condition:'online'};const result=await serverModule.exports.__test.syncOltLosTickets();assert.equal(result.resolved.length,1);assert.equal(fixture.oltTickets[0].status,'resolved');assert.equal(fixture.oltTickets[0].autoResolved,true);assert(fixture.activity.some(row=>row.meta?.action==='olt-los-ticket-recovered'));const before=saves;await serverModule.exports.__test.syncOltLosTickets();assert.equal(saves,before);assert.equal(fixture.waMessages.length,0);}finally{olt.snapshotFor=original;}
@@ -379,7 +391,7 @@ test('ticket center is scoped, paginated, read-only and never polls an OLT',asyn
  }finally{olt.snapshotFor=original;}
 });
 async function ticketOutbox(){
- reset();const created=await request('admin','POST','',{name:'WA Test',host:'192.0.2.98',community:'unit',nasId:'nas-a'});fixture.users.find(user=>user.role==='technician').phone='081200000001';fixture.settings.waGateway.enabled=true;fixture.settings.oltTicketing={whatsappEnabled:true,recipientIds:['technician']};
+ reset();const created=await request('admin','POST','',{name:'WA Test',host:'192.0.2.98',community:'unit',nasId:'nas-a'});fixture.users.find(user=>user.role==='technician').phone='081200000001';fixture.settings.waGateway.enabled=true;fixture.settings.oltTicketing={enabled:true,whatsappEnabled:true,recipientIds:['technician']};
  fixture.oltTickets=[{id:'ticket-unit',number:'TICKET-UNIT',oltId:created.body.device.id,serialNumber:'HWTCAABBCCDD',scope:'onu',status:'new',assignedTo:'',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}];
  const ticketing=require('../src/olt-ticketing');ticketing.enqueueNotifications(fixture,fixture.oltTickets[0],'detected','https://billing.example.test',(data,payload)=>{const message={...payload,id:'wa-unit',status:'queued',queueRevision:0};data.waMessages.push(message);return message;});return fixture.waMessages[0];
 }
@@ -672,4 +684,17 @@ test('secretary has admin user and OLT integration access while metadata changes
  assert.equal((await request('secretary','PUT','/'+created.body.device.id,{name:'Updated OLT'})).status,200);assert.equal((await request('secretary','DELETE','/'+created.body.device.id,{confirmId:created.body.device.id,confirmName:'Updated OLT',confirmDelete:true})).status,200);
  assert(fixture.activity.some(row=>row.meta?.userId==='secretary'||row.message?.includes('Unit secretary')));
  assert.deepEqual({customers:fixture.customers,invoices:fixture.invoices,payments:fixture.payments,waMessages:fixture.waMessages},before);
+});
+
+test('OLT and ticket writes recheck current role and NAS after reading the request body',async()=>{
+ for(const change of ['inactive','role','nas']){
+  reset();sessions.delete('admin');sessions.delete('technician');const created=await request('admin','POST','',{name:'Unit',host:'192.0.2.94',community:'unit',nasId:'nas-a'}),id=created.body.device.id,before=saves,role=change==='nas'?'technician':'admin';
+  const response=await request(role,'PUT','/'+id+(change==='nas'?'/links':''),{name:'Must not save'},true,handle,()=>{const actor=fixture.users.find(row=>row.id===role);if(change==='inactive')actor.active=false;else if(change==='role')actor.role='viewer';else actor.lockedNasIds=['nas-b'];});
+  assert.equal(response.status,change==='nas'?404:change==='inactive'?401:403);assert.equal(saves,before);assert.equal(fixture.oltDevices[0].name,'Unit');
+ }
+ for(const path of ['/api/tickets/settings','/api/tickets/templates','/api/tickets']){
+  reset();sessions.delete('secretary');const before=saves,payload=path.endsWith('/settings')?{enabled:false}:path.endsWith('/templates')?{psbDetected:'Must not save'}:{category:'billing',text:'Should not create'};
+  const response=await request('secretary',path==='/api/tickets'?'POST':'PUT',path,payload,true,handle,()=>{fixture.users.find(row=>row.id==='secretary').role='viewer';});
+  assert.equal(response.status,403);assert.equal(saves,before);assert.equal(fixture.oltTickets.length,0);
+ }
 });

@@ -56,28 +56,33 @@ function notificationUsers(data, scope) {
 
 function settingsFor(data) {
   const value = data.settings?.oltTicketing || {};
+  const enabled=require('./olt-ticket-control').enabled(data);
   const legacyBilling=new Set((data.users||[]).filter(user=>['finance','collector'].includes(user.role)).map(user=>user.id));
   const ids=Array.isArray(value.recipientIds)?[...new Set(value.recipientIds)].slice(0,25):[];
-  return { whatsappEnabled: value.whatsappEnabled === true,
+  return { enabled,automaticTicketsEnabled:enabled,whatsappEnabled:enabled,
     customerOutageEnabled:value.customerOutageEnabled===true,
     recipientIds:ids.filter(id=>!legacyBilling.has(id)),
     billingRecipientIds:Array.isArray(value.billingRecipientIds)?[...new Set(value.billingRecipientIds)].slice(0,25):ids.filter(id=>legacyBilling.has(id)) };
 }
 
 function validateSettings(data, payload) {
+  if(payload.enabled!==undefined&&typeof payload.enabled!=='boolean')throw new Error('Status tiket otomatis dan WA petugas tidak valid');
+  if(payload.automaticTicketsEnabled!==undefined&&typeof payload.automaticTicketsEnabled!=='boolean')throw new Error('Pengaturan tiket otomatis tidak valid');
   if(payload.customerOutageEnabled!==undefined&&typeof payload.customerOutageEnabled!=='boolean')throw new Error('Pengaturan pesan gangguan massal tidak valid');
-  if (typeof payload.whatsappEnabled !== 'boolean' || !Array.isArray(payload.recipientIds)
+  if (payload.whatsappEnabled!==undefined&&typeof payload.whatsappEnabled!=='boolean' || !Array.isArray(payload.recipientIds)
     || payload.recipientIds.length > 25 || payload.recipientIds.some(id => typeof id !== 'string')
     || payload.billingRecipientIds!==undefined&&(!Array.isArray(payload.billingRecipientIds)||payload.billingRecipientIds.length>25||payload.billingRecipientIds.some(id=>typeof id!=='string'))) {
     throw new Error('Pengaturan notifikasi tiket tidak valid');
   }
   const options=new Map(recipientOptions(data).map(row=>[row.id,row])),current=settingsFor(data),legacy=payload.billingRecipientIds===undefined;
+  const enabled=payload.enabled??(payload.automaticTicketsEnabled!==undefined?payload.automaticTicketsEnabled&&(payload.whatsappEnabled??current.whatsappEnabled):payload.whatsappEnabled===false?false:current.enabled);
+  if(payload.enabled!==undefined&&['automaticTicketsEnabled','whatsappEnabled'].some(key=>payload[key]!==undefined&&payload[key]!==enabled))throw new Error('Gunakan satu status yang sama untuk tiket otomatis dan WA petugas');
   const ids=[...new Set(payload.recipientIds)];
   const billingIds=[...new Set(payload.billingRecipientIds??(Array.isArray(data.settings?.oltTicketing?.billingRecipientIds)?current.billingRecipientIds:ids.filter(id=>['finance','collector'].includes(options.get(id)?.role))))];
   const technicalIds=legacy?ids.filter(id=>!['finance','collector'].includes(options.get(id)?.role)):ids;
   for(const [values,scope]of[[technicalIds,'technical'],[billingIds,'billing']])if(values.some(id=>{const user=options.get(id);return !user?.canReceive||!user.phone||!user.scopes.includes(scope);}))throw new Error('Penerima wajib user berwenang dengan nomor WhatsApp valid dan kategori yang sesuai');
-  if(payload.whatsappEnabled&&!technicalIds.length&&!billingIds.length)throw new Error('Pilih minimal satu penerima notifikasi tiket');
-  return { whatsappEnabled: payload.whatsappEnabled, recipientIds:technicalIds,billingRecipientIds:billingIds,customerOutageEnabled:payload.customerOutageEnabled??current.customerOutageEnabled };
+  if(enabled&&!technicalIds.length&&!billingIds.length)throw new Error('Pilih minimal satu penerima WA petugas');
+  return { enabled,automaticTicketsEnabled:enabled,whatsappEnabled:enabled,recipientIds:technicalIds,billingRecipientIds:billingIds,customerOutageEnabled:payload.customerOutageEnabled??current.customerOutageEnabled };
 }
 
 function recipientsFor(data, ticket, kind = 'detected') {

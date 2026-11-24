@@ -78,7 +78,10 @@ test('a modem returning after deletion is preserved without an automatic repeate
  const f=fixture();f.options.removeAcs=async()=>{f.counter.acs++;};const result=await f.remove(await f.preview());assert(result.warning);assert.equal(result.acs.state,'preserved');assert.equal(f.counter.acs,1);
 });
 test('source or permissions revoked after OLT completion prevents ACS deletion',async()=>{
- for(const kind of ['source','permission']){const f=fixture();f.options.getData=async()=>{const next=structuredClone(f.data);if(kind==='source')next.settings.genieAcs.baseUrl='http://192.0.2.99:7557';else next.users[0].role='viewer';return next;};const result=await f.remove(await f.preview());assert(result.partial);assert.equal(f.counter.acs,0);}
+ for(const kind of ['source','permission']){const f=fixture();f.options.getData=async()=>{const next=structuredClone(f.data);if(f.counter.olt){if(kind==='source')next.settings.genieAcs.baseUrl='http://192.0.2.99:7557';else next.users[0].role='viewer';}return next;};const result=await f.remove(await f.preview());assert(result.partial);assert.equal(f.counter.acs,0);}
+});
+test('revoked permission or NAS scope during preview cannot reach a hardware delete',async()=>{
+ for(const kind of['role','inactive','nas','connection']){const f=fixture(),plan=await f.preview();let reads=0;f.options.getData=async()=>{const next=structuredClone(f.data);if(++reads>=2){if(kind==='role')next.users[0].role='viewer';if(kind==='inactive')next.users[0].active=false;if(kind==='nas'){next.users[0].role='technician';next.users[0].lockedNasIds=['nas-b'];}if(kind==='connection')next.oltDevices[0].host='192.0.2.99';}return next;};await assert.rejects(f.remove(plan));assert.equal(f.counter.olt,0);assert.equal(f.counter.acs,0);}
 });
 test('demo mode cannot perform real removal even with a previously valid token',async()=>{
  const f=fixture(),plan=await f.preview();process.env.MIGRATION_MODE='1';await assert.rejects(f.remove(plan),/Mode dev terisolasi/);assert.equal(f.counter.olt,0);

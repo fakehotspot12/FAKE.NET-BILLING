@@ -58,7 +58,22 @@ test('per-ONU native profiles support asymmetric best-effort rates and never alt
  const before=structuredClone(state),value=bandwidth.build(state,{...input(state.onu),profileMode:'native',tcontProfile:'UPLOAD-20',trafficProfile:'DOWNLOAD-50'});
  assert.equal(value.policies[0].kbps,20000);assert.equal(value.policies[0].downloadKbps,50000);assert(value.profiles.every(row=>row.action==='reuse'));assert.deepEqual(state,before);
  const commands=bandwidth.writeCommands(state,value);assert(commands.includes('tcont 1 profile UPLOAD-20'));assert(commands.includes('gemport 1 traffic-limit downstream DOWNLOAD-50'));assert(!commands.some(command=>command.startsWith('profile ')));
- for(const extra of[{tcontProfile:'default'},{tcontProfile:'named-60M'},{trafficProfile:'default'},{tcontProfile:'UPLOAD-20;reboot'}])assert.throws(()=>bandwidth.build(state,{...input(state.onu),profileMode:'native',tcontProfile:'UPLOAD-20',trafficProfile:'DOWNLOAD-50',...extra}));
+ for(const extra of[{tcontProfile:'missing'},{trafficProfile:'default'},{tcontProfile:'UPLOAD-20;reboot'}])assert.throws(()=>bandwidth.build(state,{...input(state.onu),profileMode:'native',tcontProfile:'UPLOAD-20',trafficProfile:'DOWNLOAD-50',...extra}));
+});
+test('existing legacy Type 5 and SIR profiles are reused exactly without editing definitions or the auto-learn preset',()=>{
+ const state=model();state.catalogue.tcont.push({name:'LEGACY-60-UP',type:5,fixed:64,assured:64,maximum:62976});state.catalogue.traffic.push({name:'LEGACY-60-DOWN',sir:62976,pir:62976});
+ const before=structuredClone(state),value=bandwidth.build(state,{...input(state.onu),profileMode:'native',tcontProfile:'LEGACY-60-UP',trafficProfile:'LEGACY-60-DOWN'}),commands=bandwidth.writeCommands(state,value);
+ assert.equal(value.policies[0].kbps,62976);assert(value.policies[0].requiresReservationConfirmation);assert.equal(value.policies[0].fixedKbps,64);assert(value.profiles.every(row=>row.action==='reuse'));assert.deepEqual(state,before);
+ assert(commands.includes('tcont 1 profile LEGACY-60-UP'));assert(!commands.some(command=>/^profile |^no |^onu-pnp$|^bandwidth |^onu-type-default /.test(command)));
+ assert(bandwidth.nativeProfileStatus({type:5,fixed:64,assured:64,maximum:1048064},'upload').selectable);assert(!bandwidth.nativeProfileStatus(state.catalogue.traffic[0],'download').selectable);
+ assert(!bandwidth.nativeProfileStatus({type:4,fixed:64,assured:64,maximum:60000},'upload').selectable);
+});
+test('native reserved bandwidth requires independent consent before any audit or OLT mutation',async()=>{
+ const{data,device,actor}=fixture(),state=model();state.catalogue.tcont.push({name:'LEGACY-60-UP',type:5,fixed:64,assured:64,maximum:62976});state.catalogue.traffic.push({name:'LEGACY-60-DOWN',sir:62976,pir:62976});let writes=0,audits=0;
+ const options={transportOptions:{transports:{commands:async({commands})=>{if(commands.includes('configure terminal')){writes++;return{success:false,submitted:true};}return response(commands,state);}}},beforeSend:async()=>{audits++;},afterSend:async()=>{audits++;}};
+ const plan=await bandwidth.prepare(data,device,actor,{...input(state.onu),profileMode:'native',tcontProfile:'LEGACY-60-UP',trafficProfile:'LEGACY-60-DOWN'},options),confirmation={token:plan.token,revision:device.updatedAt||'',confirmId:device.id,confirmTarget:state.onu.serialNumber,confirmImpact:true};
+ await assert.rejects(bandwidth.execute(data,device,actor,confirmation,options),/reservasi bandwidth/);assert.equal(writes,0);assert.equal(audits,0);
+ const result=await bandwidth.execute(data,device,actor,{...confirmation,confirmReservedBandwidth:true},options);assert(result.uncertain);assert.equal(writes,1);assert.equal(audits,2);
 });
 
 test('per-ONU catalogue selection uses saved rates rather than browser-supplied values and detects changed/deleted profiles',async()=>{

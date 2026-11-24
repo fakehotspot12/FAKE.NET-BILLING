@@ -354,6 +354,7 @@ test('staff update bounds history and preserves service identity without executi
 
 test('OLT recovery never automatically resolves a customer service ticket', async () => {
   const data = fixture(), ticket = await opened(data);
+  data.settings.oltTicketing={enabled:true,automaticTicketsEnabled:true,whatsappEnabled:true};
   data.oltDevices = [{ id: 'olt-a', enabled: true, updatedAt: 'r1', links: { HWTCAABB0001: { customerId: customer.id } } }];
   const before = structuredClone(ticket);
   for (const condition of ['los', 'online']) {

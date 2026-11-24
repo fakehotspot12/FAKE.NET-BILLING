@@ -24,10 +24,16 @@ function parseCatalogue(result){
  return{firmwares,tcont,traffic,vlan,vlans:[...vlans].sort((a,b)=>a-b)};
 }
 function field(text,label){return tidy(text).match(new RegExp('^\\s*'+label+'\\s*:\\s*([^\\n]+)','im'))?.[1]?.trim()||'';}
+function onuIdentity(text,index,expected){
+ const one=label=>{const rows=[...tidy(text).matchAll(new RegExp('^[ \\t]*'+label+'[ \\t]*:[ \\t]*([^\\n]*)','gm'))];if(rows.length!==1)fail('Identitas ONU tidak lengkap atau ganda',409);return rows[0][1].trim();};
+ const type=one('Type'),serialNumber=one('Serial number').toUpperCase();
+ if(one('ONU interface')!=='gpon-onu_'+index||!name(type)||!/^[A-Z0-9]{12}$/.test(serialNumber))fail('Identitas atau posisi ONU berubah; baca ulang',409);
+ verifySerial({serialNumber},expected);return{type,serialNumber};
+}
 function parseOnu(result,requested){
  const index=address(requested);if(!index||!result?.success)fail('Alamat atau respons ONU belum terverifikasi',503);const iface='gpon-onu_'+index;
  const detail=command(result,'show gpon onu detail-info '+iface),config=command(result,'show running-config interface '+iface),capability=command(result,'show gpon remote-onu capability '+iface);
- const serial=field(detail,'Serial number').toUpperCase(),type=field(detail,'Type');
+ const {serialNumber:serial,type}=onuIdentity(detail,index);
  if(field(detail,'ONU interface')!==iface||!new RegExp('^interface '+iface+'\\s*$','m').test(config)||!/^[A-Z0-9]{12}$/.test(serial)||!name(type))fail('Identitas atau posisi ONU berubah; baca ulang',409);
  const typeText=command(result,'show onu-type gpon '+type),typeName=field(typeText,'ONU type name');if(typeName!==type)fail('ONU-type tidak cocok',409);
  const limits={tcont:Math.min(bounded(field(capability,'T-CONT number'),1,255,'T-CONT fisik'),bounded(field(typeText,'Max T-CONT'),1,255,'Batas ONU-type T-CONT')),gem:Math.min(bounded(field(capability,'GEM port number'),1,4096,'GEM fisik'),bounded(field(typeText,'Max GEM port'),1,4096,'Batas ONU-type GEM'))};
@@ -100,13 +106,19 @@ async function readCatalogue(data,device,options={}){
 async function readOnu(data,device,requested,options={}){
  const index=address(requested);if(!index)fail('Isi alamat ONU frame/slot/port:nomor yang valid');
  if(options.type!==undefined&&options.type!==''&&!name(options.type))fail('Tipe ONU dari inventory tidak valid');
- const id=key(device)+':'+index,previous=onuCache.get(id);if(!options.force&&previous&&Date.now()-previous.at<60000)return structuredClone(previous.onu);if(onuPending.has(id))return structuredClone(await onuPending.get(id));if(onuPending.size+pending.size>=2)fail('Pembacaan OLT sedang digunakan. Coba kembali.',429);
+ const id=key(device)+':'+index+':'+(options.serialNumber||''),previous=onuCache.get(id);if(!options.force&&previous&&Date.now()-previous.at<60000)return structuredClone(verifySerial(previous.onu,options.serialNumber));if(onuPending.has(id))return structuredClone(await onuPending.get(id));if(onuPending.size+pending.size>=2)fail('Pembacaan OLT sedang digunakan. Coba kembali.',429);
  if(Date.now()-(attempts.get(id)||0)<10000)fail('ONU baru saja diperiksa. Tunggu beberapa detik.',429);attempts.set(id,Date.now());while(attempts.size>64)attempts.delete(attempts.keys().next().value);
- const task=(async()=>{const iface='gpon-onu_'+index,commands=['show gpon onu detail-info '+iface,'show running-config interface '+iface,'show gpon remote-onu capability '+iface],knownType=inventoryType(device,index,options.serialNumber,options.type),first=await read(data,device,[...commands,...(knownType?['show onu-type gpon '+knownType]:[])],options);if(!first.success)fail('Kemampuan ONU belum dapat dibaca',503);
-  const type=field(command(first,'show gpon onu detail-info '+iface),'Type');if(!name(type))fail('ONU-type belum terverifikasi',409);
-  if(knownType){if(type!==knownType)fail('Tipe ONU berubah dari inventory. Baca ulang inventory sebelum melanjutkan.',409);const onu={...parseOnu(first,index),checkedAt:new Date().toISOString()};onuCache.set(id,{at:Date.now(),onu});while(onuCache.size>128)onuCache.delete(onuCache.keys().next().value);return onu;}
-  const second=await read(data,device,['show onu-type gpon '+type],options);if(!second.success)fail('Batas ONU-type belum dapat dibaca',503);
-  const onu={...parseOnu({success:true,outputs:[...first.outputs,...second.outputs]},index),checkedAt:new Date().toISOString()};onuCache.set(id,{at:Date.now(),onu});while(onuCache.size>128)onuCache.delete(onuCache.keys().next().value);return onu;})();onuPending.set(id,task);
+ const task=(async()=>{const iface='gpon-onu_'+index,commands=['show gpon onu detail-info '+iface,'show running-config interface '+iface,'show gpon remote-onu capability '+iface],knownType=name(previous?.onu.type)||inventoryType(device,index,options.serialNumber,options.type),first=await read(data,device,[...commands,...(knownType?['show onu-type gpon '+knownType]:[])],options);
+  if(!first.success&&!knownType)fail('Kemampuan ONU belum dapat dibaca',503);
+  for(const query of commands)command(first,query);
+  const identity=onuIdentity(command(first,commands[0]),index,options.serialNumber);let raw=first;
+  if(!knownType||knownType!==identity.type){
+   // Base-info labels may be truncated; the full native type is authoritative.
+   const second=await read(data,device,[...(knownType?commands:[]),'show onu-type gpon '+identity.type],options);if(!second.success)fail('Batas ONU-type belum dapat dibaca',503);
+   if(knownType){const fresh=onuIdentity(command(second,commands[0]),index,options.serialNumber);if(fresh.type!==identity.type||fresh.serialNumber!==identity.serialNumber)fail('Identitas ONU berubah saat dibaca. Baca ulang sebelum melanjutkan.',409);raw=second;}
+   else raw={success:true,outputs:[...first.outputs,...second.outputs]};
+  }else if(!first.success)fail('Kemampuan ONU belum dapat dibaca',503);
+  const onu={...verifySerial(parseOnu(raw,index),options.serialNumber),checkedAt:new Date().toISOString()};onuCache.set(id,{at:Date.now(),onu});while(onuCache.size>128)onuCache.delete(onuCache.keys().next().value);return onu;})();onuPending.set(id,task);
  try{return structuredClone(await task);}finally{onuPending.delete(id);}
 }
 function verifySerial(onu,expected){if(expected!==undefined&&expected!==''&&(!/^[A-Z0-9]{12}$/.test(String(expected))||onu?.serialNumber!==expected))fail('SN ONU berbeda dari baris terpilih. Baca ulang inventory sebelum melanjutkan',409);return onu;}

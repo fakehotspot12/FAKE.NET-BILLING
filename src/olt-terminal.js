@@ -16,15 +16,15 @@ async function openTransport(device,handlers){
  const child=spawn('telnet',['-E',device.host,String(device.cliPort||23)],{stdio:'pipe'});handlers.ready(value=>child.stdin.write(value),false);child.stdout.on('data',handlers.data);child.stderr.on('data',()=>{});child.stdin.on('error',()=>handlers.end('Sesi Telnet OLT terputus'));child.on('error',()=>handlers.end('Klien Telnet belum tersedia'));child.on('close',()=>handlers.end());return()=>child.kill();
 }
 function createManager({open=openTransport,now=Date.now}={}){
- const sessions=new Map(),attempts=new Map();let sweeper;
+ const sessions=new Map(),attempts=new Map(),openings=new Map();let sweeper;
  function write(session,value){try{session.write(value);}catch{close(session,'Sesi OLT terputus');fail('Sesi OLT terputus',409);}}
  function wake(session){session.revision=(session.revision||0)+1;if(session.waiter&&!session.wakeTimer){session.wakeTimer=setTimeout(()=>{session.wakeTimer=null;session.waiter?.();},20);session.wakeTimer.unref?.();}}
  function append(session,value){const text=session.nativeMode?String(value):clean(value);session.offset+=text.length;session.buffer=(session.buffer+text).slice(-BUFFER_LIMIT);session.base=session.offset-session.buffer.length;wake(session);}
  function close(session,message='Sesi ditutup'){
-  if(session.state==='closed')return;session.state='closed';session.closedAt=now();clearTimeout(session.loginTimer);clearTimeout(session.completionTimer);clearTimeout(session.resyncTimer);session.engine?.dispose();try{session.dispose?.();}catch{}finally{session.release?.();session.dispose=null;session.release=null;session.write=null;session.authBuffer='';}append(session,'\r\n'+message+'\r\n');session.waiter?.();
+  if(session.state==='closed')return;session.state='closed';session.closedAt=now();session.closeReason=message;clearTimeout(session.loginTimer);clearTimeout(session.completionTimer);clearTimeout(session.resyncTimer);session.engine?.dispose();try{session.dispose?.();}catch{}finally{session.release?.();session.dispose=null;session.release=null;session.write=null;session.authBuffer='';}append(session,'\r\n'+message+'\r\n');session.waiter?.();
  }
  function sweep(){for(const[id,session]of sessions){if(session.state!=='closed'&&(now()-session.lastInput>=IDLE_MS||now()-session.createdAt>=LIFE_MS))close(session,'Sesi berakhir karena batas waktu');if(session.state==='closed'&&(now()-session.closedAt>60000||sessions.size>64))sessions.delete(id);}if(!sessions.size&&sweeper){clearInterval(sweeper);sweeper=null;}}
- function isOpen(id){sweep();return[...sessions.values()].some(session=>session.deviceId===id&&session.state!=='closed');}
+ function isOpen(id){sweep();return[...openings.values()].some(value=>value.deviceId===id)||[...sessions.values()].some(session=>session.deviceId===id&&session.state!=='closed');}
  function find(owner,device,id){sweep();const session=sessions.get(id);if(!session||session.owner!==owner||session.deviceId!==device.id)fail('Sesi terminal tidak ditemukan',404);if(session.signature!==signature(device)){close(session,'Konfigurasi koneksi OLT berubah');fail('Koneksi OLT berubah. Hubungkan ulang terminal.',409);}return session;}
  async function start(data,device,owner,input={},options={}){
   sweep();if(!owner||input.confirm!==true||input.revision!==(device.updatedAt||''))fail('Konfirmasi akses dan revisi OLT wajib sesuai',409);
@@ -32,16 +32,20 @@ function createManager({open=openTransport,now=Date.now}={}){
   const host=net.isIP(device.host)===6?new URL('http://['+device.host+']/').hostname.slice(1,-1):device.host;
   if(!net.isIP(host)||/^(?:0\.|127\.|169\.254\.|22[4-9]\.|23\d\.|255\.|::|ff[0-9a-f]{2}:|fe80:)/i.test(host)||!['telnet','ssh'].includes(device.cliProtocol||'telnet')||!Number.isInteger(Number(device.cliPort))||Number(device.cliPort)<1||Number(device.cliPort)>65535)fail('Target CLI OLT tidak valid');
   if(process.env.MIGRATION_MODE==='1'&&(!options.explicitDevAccess||/^demo-olt-/.test(device.id)))fail('Terminal perangkat simulasi tidak tersedia');
-  if(isOpen(device.id)||require('./olt-cli').isBusy(device.id)||require('./olt-zte-bridge').isBusy(device.id)||[...sessions.values()].some(session=>session.owner===owner&&session.state!=='closed'))fail('Sesi terminal OLT atau akun ini masih terbuka',409);
-  if([...sessions.values()].filter(session=>session.state!=='closed').length>=MAX_SESSIONS)fail('Terminal sedang penuh. Coba kembali.',429);
+  if(isOpen(device.id)||openings.has(owner)||[...sessions.values()].some(session=>session.owner===owner&&session.state!=='closed'))fail('Sesi terminal OLT atau akun ini masih terbuka',409);
+  if([...sessions.values()].filter(session=>session.state!=='closed').length+openings.size>=MAX_SESSIONS)fail('Terminal sedang penuh. Coba kembali.',429);
   const attempt=attempts.get(owner)||{at:now(),count:0};if(now()-attempt.at>=60000){attempt.at=now();attempt.count=0;}if(++attempt.count>5)fail('Terlalu banyak percobaan terminal. Tunggu satu menit.',429);attempts.set(owner,attempt);while(attempts.size>64)attempts.delete(attempts.keys().next().value);
   const nativeMode=input.mode==='native';if(input.mode!==undefined&&!['native','legacy'].includes(input.mode))fail('Mode terminal tidak valid');const size=nativeMode?require('./olt-terminal-native').dimensions(input.cols,input.rows):{cols:100,rows:30};
   const[, ,transport]=await require('./olt-vendors').loadLibrary();
-  if(isOpen(device.id)||require('./olt-cli').isBusy(device.id)||require('./olt-zte-bridge').isBusy(device.id)||[...sessions.values()].some(session=>session.owner===owner&&session.state!=='closed'))fail('Sesi terminal OLT atau akun ini masih terbuka',409);
-  if([...sessions.values()].filter(session=>session.state!=='closed').length>=MAX_SESSIONS)fail('Terminal sedang penuh. Coba kembali.',429);
-  // Acquire before decrypt/connect; automated commands share this device lock.
-  if(!transport.claimOlt(device.id))fail('Akses OLT sedang digunakan. Coba kembali.',409);
-  let session;try{
+  if(isOpen(device.id)||openings.has(owner)||[...sessions.values()].some(session=>session.owner===owner&&session.state!=='closed'))fail('Sesi terminal OLT atau akun ini masih terbuka',409);
+  if([...sessions.values()].filter(session=>session.state!=='closed').length+openings.size>=MAX_SESSIONS)fail('Terminal sedang penuh. Coba kembali.',429);
+  // Reserve this owner/OLT while one bounded wait lets the current CLI operation finish.
+  const opening={deviceId:device.id,controller:new AbortController()};openings.set(owner,opening);
+  const signal=options.signal?AbortSignal.any([opening.controller.signal,options.signal]):opening.controller.signal;
+  let session,acquired=false;try{
+   await transport.waitForOlt(device.id,{signal,timeoutMs:20000,priority:true});acquired=true;
+   if(options.validateBeforeConnect)await options.validateBeforeConnect();
+   if(signal.aborted)fail('Permintaan terminal dibatalkan',409);
    const password=secrets.decryptSecret(data,device.cliPasswordEnc);session={id:crypto.randomUUID(),owner,deviceId:device.id,signature:signature(device),nativeMode,state:'connecting',createdAt:now(),lastInput:now(),lastSend:0,sequence:0,revision:0,buffer:'',offset:0,base:0,bytes:0,authBuffer:'',stage:'login',passwordCount:0,release:()=>transport.releaseOlt(device.id)};sessions.set(session.id,session);
    const wire=value=>{try{session.write(value);}catch{close(session,'Sesi OLT terputus');}};
    const readyPrompt=text=>/(?:^|\n)(?:[^\r\n<>]{1,100}[>#]|<[A-Za-z0-9_.:/()@ -]{1,100}>|\[[^\r\n]{1,100}\])\s*$/.test(text);
@@ -70,11 +74,12 @@ function createManager({open=openTransport,now=Date.now}={}){
    }};
    session.loginTimer=setTimeout(()=>close(session,'Batas waktu login OLT tercapai'),12000);session.loginTimer.unref?.();
    const dispose=await open(device,handlers);session.dispose=dispose;if(session.state==='closed')dispose?.();
+   if(signal.aborted){close(session,'Permintaan terminal dibatalkan');fail('Permintaan terminal dibatalkan',409);}
    if(!sweeper){sweeper=setInterval(sweep,10000);sweeper.unref?.();}
    return{id:session.id,state:session.state,mode:nativeMode?'native':'legacy',idleSeconds:IDLE_MS/1000};
-  }catch(error){if(session)close(session,'Koneksi terminal gagal');else transport.releaseOlt(device.id);throw error;}
+  }catch(error){if(session)close(session,'Koneksi terminal gagal');else if(acquired)transport.releaseOlt(device.id);throw error;}finally{if(openings.get(owner)===opening)openings.delete(owner);}
  }
- function read(owner,device,id,since=0){const session=find(owner,device,id);if(!Number.isSafeInteger(since)||since<0||since>session.offset)fail('Posisi output terminal tidak valid');return{state:session.state,revision:session.revision,sequence:session.sequence,output:session.buffer.slice(Math.max(0,since-session.base)),offset:session.offset,reset:since<session.base,passwordInput:Boolean(session.passwordInput),confirmationInput:Boolean(session.confirmReplyExpected),commandPending:Boolean(session.pendingCommand||session.completionPending||session.resync),...(session.completion?{completion:session.completion}:{}),prompt:session.passwordInput?'Password:':session.confirmReplyExpected?(session.promptTail||'').trimEnd().split('\n').at(-1).slice(-100):session.promptText||'',...(session.nativeMode?session.engine?.status()||{mode:'native'}:{}),idleUntil:session.lastInput+IDLE_MS};}
+ function read(owner,device,id,since=0){const session=find(owner,device,id);if(!Number.isSafeInteger(since)||since<0||since>session.offset)fail('Posisi output terminal tidak valid');return{state:session.state,message:session.closeReason||'',revision:session.revision,sequence:session.sequence,output:session.buffer.slice(Math.max(0,since-session.base)),offset:session.offset,reset:since<session.base,passwordInput:Boolean(session.passwordInput),confirmationInput:Boolean(session.confirmReplyExpected),commandPending:Boolean(session.pendingCommand||session.completionPending||session.resync),...(session.completion?{completion:session.completion}:{}),prompt:session.passwordInput?'Password:':session.confirmReplyExpected?(session.promptTail||'').trimEnd().split('\n').at(-1).slice(-100):session.promptText||'',...(session.nativeMode?session.engine?.status()||{mode:'native'}:{}),idleUntil:session.lastInput+IDLE_MS};}
  async function waitRead(owner,device,id,since,revision,signal){
   const session=find(owner,device,id);read(owner,device,id,since);if(session.state==='closed'||session.offset!==since||session.revision!==revision)return read(owner,device,id,since);if(session.waiter)fail('Pembacaan terminal masih berjalan',409);
   await new Promise(resolve=>{const timer=setTimeout(done,2500);function done(){clearTimeout(timer);clearTimeout(session.wakeTimer);session.wakeTimer=null;session.waiter=null;signal?.removeEventListener('abort',done);resolve();}session.waiter=done;if(signal?.aborted)done();else signal?.addEventListener('abort',done,{once:true});});return read(owner,device,id,since);
@@ -89,7 +94,7 @@ function createManager({open=openTransport,now=Date.now}={}){
   const at=now();if(!session.rate||at-session.rate.at>=1000)session.rate={at,count:0};if(++session.rate.count>60)fail('Tombol terminal terlalu cepat',429);
   session.inputBusy=true;session.lastInput=at;
   try{const result=payload.kind==='resize'?session.engine.resize(payload.cols,payload.rows):await session.engine.input(payload.value,access.permissions||[]);session.lastNativeReply={...result,...session.engine.status(),sequence:payload.sequence};session.lastNativeError=null;return session.lastNativeReply;}
-  catch(error){session.lastNativeError={message:error.message,status:error.status||400,sequence:payload.sequence};throw Object.assign(error,{sequence:payload.sequence});}
+  catch(error){session.engine.reportError(error);session.lastNativeError={message:error.message,status:error.status||400,sequence:payload.sequence,consoleReported:true};throw Object.assign(error,session.lastNativeError);}
   finally{session.sequence=payload.sequence;session.lastNativeHash=hash;session.inputBusy=false;wake(session);}
  }
  function input(owner,device,id,payload={},access={}){
@@ -108,7 +113,7 @@ function createManager({open=openTransport,now=Date.now}={}){
    if(typeof payload.value!=='string'||Buffer.byteLength(payload.value)>1024||/[\x00-\x1f\x7f]/.test(payload.value))fail('Masukkan satu baris perintah, maksimal 1.024 byte');
    if(session.passwordInput&&session.secretReplyExpected)session.secretReplyExpected=false;
    else if(session.confirmReplyExpected&&/^(?:y|yes|n|no)$/i.test(payload.value.trim()))session.confirmReplyExpected=false;
-   else{if(session.pendingCommand)fail('Perintah sebelumnya belum selesai. Gunakan More, Enter atau Ctrl+C pada prompt perangkat.',409);const command=policy.classify(device,session.location,payload.value);if(command.permission&&!access.permissions?.includes(command.permission))fail('Tidak memiliki izin mengatur PON. Hanya Admin, Sekretaris dan Kepala Teknisi.',403);if(command.kind==='delete-onu')return{ok:true,action:'preview-delete-onu',target:command.target};session.pendingCommand=command;}
+   else{if(session.pendingCommand)fail('Perintah sebelumnya belum selesai. Gunakan More, Enter atau Ctrl+C pada prompt perangkat.',409);const command=policy.classify(device,session.location,payload.value);policy.checkAccess(command,access.permissions||[]);if(command.kind==='delete-onu')return{ok:true,action:'preview-delete-onu',target:command.target};session.pendingCommand=command;}
    if(session.remoteDraft){const command=session.pendingCommand;session.pendingCommand=null;session.resync={value:payload.value,command};session.resyncTail='';session.resyncTimer=setTimeout(()=>close(session,'Prompt belum terverifikasi setelah bantuan CLI'),3000);session.resyncTimer.unref?.();session.lastSend=now();session.lastInput=now();write(session,'\x03');return{ok:true};}
    value=payload.value+'\r\n';
   }
@@ -116,8 +121,8 @@ function createManager({open=openTransport,now=Date.now}={}){
   session.lastSend=now();session.lastInput=now();session.promptTail='';if(['interrupt','suspend'].includes(payload.kind)){session.pendingCommand=null;session.location=null;session.passwordInput=false;session.secretReplyExpected=false;session.confirmReplyExpected=false;}if(payload.kind==='escape')session.location=null;try{session.write(value);}catch{close(session,'Sesi OLT terputus');fail('Sesi OLT terputus',409);}return{ok:true};
  }
  function stop(owner,device,id){close(find(owner,device,id));return{ok:true};}
- function closeOwner(owner){for(const session of sessions.values())if(session.owner===owner)close(session,'Sesi aplikasi ditutup');}
- function shutdown(){for(const session of sessions.values())close(session);sessions.clear();clearInterval(sweeper);sweeper=null;}
+ function closeOwner(owner){openings.get(owner)?.controller.abort();for(const session of sessions.values())if(session.owner===owner)close(session,'Sesi aplikasi ditutup');}
+ function shutdown(){for(const value of openings.values())value.controller.abort();for(const session of sessions.values())close(session);sessions.clear();clearInterval(sweeper);sweeper=null;}
  return{start,read,waitRead,input,stop,isOpen,closeOwner,shutdown};
 }
 async function deletionTarget(data,device,target,options={}){
@@ -127,4 +132,4 @@ async function deletionTarget(data,device,target,options={}){
  if(matches.length!==1||matches[0].identityAmbiguous||!olt.normalizeSerial(matches[0].serialNumber))fail('Target/SN ONU belum pasti. Periksa daftar ONU sebelum menghapus.',409);
  const row=matches[0];return{id:String(row.id),serialNumber:row.serialNumber,ponKey:row.ponKey,onuId:row.onuId,name:row.name||'',oltId:device.id,oltName:device.name};
 }
-module.exports={...createManager(),createManager,deletionTarget,IDLE_MS,LIFE_MS,BUFFER_LIMIT,MAX_SESSIONS};
+module.exports={...createManager(),createManager,deletionTarget,connectionSignature:signature,IDLE_MS,LIFE_MS,BUFFER_LIMIT,MAX_SESSIONS};

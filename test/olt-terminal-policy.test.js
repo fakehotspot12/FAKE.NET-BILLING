@@ -16,10 +16,22 @@ for(const line of['no on 2','n onu 2','ont del 1 2','undo','delete onu all','no 
 });
 test('deletion without a verified interface context is not inferred from the last ONU viewed in the browser',()=>{
  for(const line of['no onu 1','delete onu 1','ont delete 1 1'])assert.throws(()=>policy.classify({vendor:'zte'},null,line),/Posisi ONU belum pasti/);
- assert.deepEqual(policy.nextLocation({vendor:'cdata'},'interface gpon 0/1'),{frame:0,slot:1});assert.equal(policy.nextLocation({vendor:'zte'},'interface gpon-olt_1/1/13').ponKey,'1/1/13');assert.equal(policy.nextLocation({vendor:'hioso'},'interface epon 0/2').ponKey,'0/1/2');assert.equal(policy.nextLocation({vendor:'zte'},'interface gpon-onu_1/1/13:1'),null);
+ assert.deepEqual(policy.nextLocation({vendor:'cdata'},'interface gpon 0/1'),{frame:0,slot:1});assert.equal(policy.nextLocation({vendor:'zte'},'interface gpon-olt_1/1/13').ponKey,'1/1/13');assert.equal(policy.nextLocation({vendor:'hioso'},'interface epon 0/2').ponKey,'0/1/2');assert.equal(policy.nextLocation({vendor:'zte'},'interface gpon-onu_1/1/13:1').onuId,1);
 });
 test('supported full configuration and read commands remain usable while deletion aliases cannot escape the parser',()=>{
  for(const line of['enable','configure terminal','config','system-view','interface gpon-olt_1/1/13','show gpon onu state','display current-configuration','do show version-running','terminal length 0','tcont 1 profile DEMO-UP','gemport 1 tcont 1','service-port 1 vport 1 user-vlan 101 vlan 101','onu 1 type UNIT sn HWTCAABBCCDD','description customer name','write memory'])assert.equal(policy.classify({vendor:'zte'},null,line).kind,'command');
+});
+test('staff keeps reads and guarded ONU deletion but cannot bypass web permissions through CLI configuration',()=>{
+ const device={vendor:'zte'},staff=['olt:read','olt:onu:delete','olt:onu:reboot'],head=[...staff,'olt:pnp:manage','olt:pon:manage'];
+ for(const line of['show version-running','show gpon onu state','show running-config interface gpon-onu_1/1/13:1'])assert.doesNotThrow(()=>policy.checkAccess(policy.classify(device,null,line),staff));
+ for(const line of['show running-config','show run','display current-configuration','hostname OTHER','password changed','write memory','vlan 101','tcont 1 profile UNIT','service-port 1 vport 1 user-vlan 101 vlan 101','onu 1 type UNIT sn HWTCAABBCCDD'])assert.throws(()=>policy.checkAccess(policy.classify(device,null,line),staff),error=>error.status===403,line);
+ for(const line of['tcont 1 profile UNIT','service-port 1 vport 1 user-vlan 101 vlan 101'])assert.doesNotThrow(()=>policy.checkAccess(policy.classify(device,null,line),head));
+ assert.doesNotThrow(()=>policy.checkAccess(policy.classify(device,{ponKey:'1/1/13'},'no onu 1'),staff));
+ assert.throws(()=>policy.checkAccess(policy.classify(device,{ponKey:'1/1/13'},'no onu 1'),['olt:read']),error=>error.status===403);
+});
+test('HSGQ ONU zero deletion stays scoped to a verified PON and goes to the web preview',()=>{
+ const device={vendor:'hsgq'},location=policy.nextLocation(device,'interface gpon 1'),command=policy.classify(device,location,'ont delete 0');assert.equal(command.kind,'delete-onu');assert.equal(command.target.onuId,0);assert.equal(command.target.ponKey,'0/0/1');
+ assert.throws(()=>policy.classify(device,null,'ont delete 0'));assert.throws(()=>policy.classify({vendor:'zte'},location,'ont delete 0'));assert.throws(()=>policy.classify({vendor:'zte'},{ponKey:'1/1/13',onuId:1},'no onu 2'));
 });
 test('exact ZTE no shutdown enables the verified PON context without granting a deletion bypass',()=>{
  const location=policy.nextLocation({vendor:'zte'},'interface gpon-olt_1/1/13');
@@ -34,14 +46,14 @@ test('no shutdown is rejected outside a verified ZTE PON, including after interf
 test('terminal observes successful navigation before intercepting delete and never writes that deletion to the stream',async()=>{
  const data={settings:{}},device={id:'terminal-delete-unit',name:'Unit',vendor:'zte',enabled:true,cliEnabled:true,host:'192.0.2.90',cliPort:23,cliProtocol:'telnet',cliUsername:'unit',updatedAt:'revision'};device.cliPasswordEnc=secrets.encryptSecret(data,'unit-password');let callbacks,clock=100000;const writes=[],manager=terminal.createManager({now:()=>clock,open:async(_,handlers)=>{callbacks=handlers;handlers.ready(value=>writes.push(value),true);return()=>{};}});
  try{const session=await manager.start(data,device,'owner',{confirm:true,revision:device.updatedAt});callbacks.data('OLT#');manager.input('owner',device,session.id,{kind:'line',value:'interface gpon-olt_1/1/13'});assert.throws(()=>manager.input('owner',device,session.id,{kind:'line',value:'no onu 1'}));callbacks.data('interface gpon-olt_1/1/13\nOLT(config-if)#');clock+=200;
- const reply=manager.input('owner',device,session.id,{kind:'line',value:'no onu 1'});assert.equal(reply.action,'preview-delete-onu');assert.equal(reply.target.ponKey,'1/1/13');assert.deepEqual(writes,['interface gpon-olt_1/1/13\r\n']);clock+=200;
+ const reply=manager.input('owner',device,session.id,{kind:'line',value:'no onu 1'},{permissions:['olt:onu:delete']});assert.equal(reply.action,'preview-delete-onu');assert.equal(reply.target.ponKey,'1/1/13');assert.deepEqual(writes,['interface gpon-olt_1/1/13\r\n']);clock+=200;
  manager.input('owner',device,session.id,{kind:'line',value:'exit'});callbacks.data('exit\nOLT(config)#');clock+=200;assert.throws(()=>manager.input('owner',device,session.id,{kind:'line',value:'no onu 1'}),/Posisi ONU belum pasti/);
  manager.input('owner',device,session.id,{kind:'line',value:'interface gpon-olt_1/1/12'});callbacks.data('Error: invalid interface\nOLT(config)#');clock+=200;assert.throws(()=>manager.input('owner',device,session.id,{kind:'line',value:'no onu 1'}));
  }finally{manager.shutdown();}
 });
 test('a fake password label in read output cannot bypass the deletion policy',async()=>{
  const data={settings:{}},device={id:'terminal-delete-password',name:'Unit',vendor:'zte',enabled:true,cliEnabled:true,host:'192.0.2.90',cliPort:23,cliProtocol:'telnet',cliUsername:'unit',updatedAt:'revision'};device.cliPasswordEnc=secrets.encryptSecret(data,'unit-password');let callbacks,clock=100000;const writes=[],manager=terminal.createManager({now:()=>clock,open:async(_,handlers)=>{callbacks=handlers;handlers.ready(value=>writes.push(value),true);return()=>{};}});
- try{const session=await manager.start(data,device,'owner',{confirm:true,revision:device.updatedAt});callbacks.data('OLT#');manager.input('owner',device,session.id,{kind:'line',value:'show running-config'});callbacks.data('Description: Password:');clock+=200;assert.throws(()=>manager.input('owner',device,session.id,{kind:'line',value:'no onu 1'}));assert.deepEqual(writes,['show running-config\r\n']);}finally{manager.shutdown();}
+ try{const session=await manager.start(data,device,'owner',{confirm:true,revision:device.updatedAt});callbacks.data('OLT#');manager.input('owner',device,session.id,{kind:'line',value:'show running-config'},{permissions:['olt:manage']});callbacks.data('Description: Password:');clock+=200;assert.throws(()=>manager.input('owner',device,session.id,{kind:'line',value:'no onu 1'}));assert.deepEqual(writes,['show running-config\r\n']);}finally{manager.shutdown();}
 });
 test('deletion target resolves exact PON/index/SN from a fresh snapshot, never an ONU ID from a different PON',async()=>{
  const data={settings:{}},device={id:'unit',name:'OLT Unit'},target={ponKey:'1/1/13',onuId:1},rows=[{id:'1/1/12:1',ponKey:'1/1/12',onuId:1,serialNumber:'HWTCAABBCC01'},{id:'1/1/13:1',ponKey:'1/1/13',onuId:1,serialNumber:'HWTCAABBCC02'}],snapshot={status:'online',checkedAt:new Date().toISOString(),onus:rows};

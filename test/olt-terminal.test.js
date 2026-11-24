@@ -62,6 +62,22 @@ test('password prompts mask entered data, controls are allowlisted and multiline
 test('terminal holds the vendor transport lock and releases it when the session closes',async()=>{
  const f=fixture(),m=mock(),[,context,transport]=await vendors.loadLibrary();try{const s=await start(f,m);assert.equal(transport.claimOlt(f.device.id),false);await assert.rejects(context.withContext(f.data,f.device,()=>transport.executeOltCommands({olt:vendors.legacyDevice(f.device),commands:['show version-running']})),/digunakan/);m.manager.stop('owner-a',f.device,s.id);assert(transport.claimOlt(f.device.id));transport.releaseOlt(f.device.id);}finally{m.manager.shutdown();}
 });
+test('a terminal waits behind the current background read while reserving its owner and OLT',async()=>{
+ const f=fixture(),m=mock(),[,,transport]=await vendors.loadLibrary();assert(transport.claimOlt(f.device.id));
+ try{const pending=start(f,m);await new Promise(resolve=>setImmediate(resolve));assert(m.manager.isOpen(f.device.id));assert.equal(m.disposed,0);await assert.rejects(start(f,m,'other-owner'),error=>error.status===409);await assert.rejects(start(fixture(),m),error=>error.status===409);transport.releaseOlt(f.device.id);const session=await pending;login(m);assert.equal(m.manager.read('owner-a',f.device,session.id).state,'ready');assert(transport.isBusy(f.device.id));m.manager.stop('owner-a',f.device,session.id);assert(!transport.isBusy(f.device.id));}finally{m.manager.shutdown();transport.releaseOlt(f.device.id);}
+});
+test('logout cancels a queued terminal without connecting or releasing another operation lock',async()=>{
+ const f=fixture(),m=mock(),[,,transport]=await vendors.loadLibrary();assert(transport.claimOlt(f.device.id));
+ try{const pending=start(f,m),rejected=assert.rejects(pending,/antrean|dibatalkan/);await new Promise(resolve=>setImmediate(resolve));m.manager.closeOwner('owner-a');await rejected;assert(!m.manager.isOpen(f.device.id));assert(transport.isBusy(f.device.id));assert.equal(m.h,undefined);assert.equal(m.disposed,0);}finally{m.manager.shutdown();transport.releaseOlt(f.device.id);}
+});
+test('permission or connection revocation is checked after queue acquisition and before decrypt/connect',async()=>{
+ const f=fixture(),m=mock(),[,,transport]=await vendors.loadLibrary();
+ try{let checked=0;await assert.rejects(start(f,m,'owner-a',{validateBeforeConnect:async()=>{checked++;throw Object.assign(Error('Izin berubah'),{status:403});}}),error=>error.status===403);assert.equal(checked,1);assert.equal(m.h,undefined);assert(!m.manager.isOpen(f.device.id));assert(!transport.isBusy(f.device.id));}finally{m.manager.shutdown();}
+});
+test('closing the HTTP request cancels queue acquisition without starting an orphaned terminal',async()=>{
+ const f=fixture(),m=mock(),[,,transport]=await vendors.loadLibrary(),controller=new AbortController();assert(transport.claimOlt(f.device.id));
+ try{const pending=start(f,m,'owner-a',{signal:controller.signal}),rejected=assert.rejects(pending,/antrean|dibatalkan/);await new Promise(resolve=>setImmediate(resolve));controller.abort();await rejected;assert(!m.manager.isOpen(f.device.id));assert(transport.isBusy(f.device.id));assert.equal(m.h,undefined);}finally{m.manager.shutdown();transport.releaseOlt(f.device.id);}
+});
 test('dev access is explicit, simulated OLT targets stay isolated, and connections remain opt-in',async()=>{
  const f=fixture(),m=mock();process.env.MIGRATION_MODE='1';try{await assert.rejects(start(f,m));await assert.rejects(start({...f,device:{...f.device,id:'demo-olt-1'}},m,'owner-a',{explicitDevAccess:true}));const s=await start(f,m,'owner-a',{explicitDevAccess:true});assert(s.id);}finally{process.env.MIGRATION_MODE='0';m.manager.shutdown();}
 });

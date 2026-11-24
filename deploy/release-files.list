@@ -177,6 +177,7 @@ src/olt-terminal-native.js
 src/olt-terminal-policy.js
 src/olt-terminal.js
 src/olt-ticketing.js
+src/olt-ticket-control.js
 src/olt-vendor-library/NOTICE.md
 src/olt-vendor-library/adapters/base.adapter.js
 src/olt-vendor-library/adapters/bdcom.adapter.js
@@ -207,6 +208,7 @@ src/olt-zte-bandwidth.js
 src/olt-zte-bridge.js
 src/olt-zte-catalogue.js
 src/olt-zte-inventory.js
+src/olt-zte-onu.js
 src/olt-zte-pnp.js
 src/olt-zte-profiles.js
 src/olt-zte-registration.js
@@ -301,6 +303,7 @@ test/olt-zte-bridge-wlan.test.js
 test/olt-zte-bridge.test.js
 test/olt-zte-catalogue.test.js
 test/olt-zte-inventory.test.js
+test/olt-zte-onu.test.js
 test/olt-zte-login.test.js
 test/olt-zte-manual-registration.test.js
 test/olt-zte-pnp.test.js

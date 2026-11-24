@@ -66,8 +66,7 @@ test('a known inventory ONU type uses one bounded CLI session and must match the
  const data={settings:{}},device={id:'zte-single-read-unit',vendor:'zte',enabled:true,cliEnabled:true,host:'192.0.2.67',cliPort:23,cliProtocol:'telnet',cliUsername:'unit'};device.cliPasswordEnc=secrets.encryptSecret(data,'unit');let calls=0,raw=onu(),now=Date.now();const realNow=Date.now;Date.now=()=>now;
  const options={type:'UNIT-2G',transports:{commands:async({commands})=>{calls++;assert(commands.includes('show onu-type gpon UNIT-2G'));return structuredClone(raw);}}};
  try{const first=await profiles.readOnu(data,device,'1/1/1:1',options);assert.equal(first.type,'UNIT-2G');assert.equal(calls,1);await profiles.readOnu(data,device,'1/1/1:1',options);assert.equal(calls,1);now+=11000;await profiles.readOnu(data,device,'1/1/1:1',{...options,force:true});assert.equal(calls,2);
-  profiles.invalidate(device);now+=11000;raw.outputs[0].stdout=raw.outputs[0].stdout.replace('Type: UNIT-2G','Type: OTHER');await assert.rejects(profiles.readOnu(data,device,'1/1/1:1',options),/Tipe ONU berubah/);assert.equal(calls,3);
-  await assert.rejects(profiles.readOnu(data,device,'1/1/1:1',{...options,type:'UNIT;reboot'}),/tidak valid/);assert.equal(calls,3);
+  await assert.rejects(profiles.readOnu(data,device,'1/1/1:1',{...options,type:'UNIT;reboot'}),/tidak valid/);assert.equal(calls,2);
  }finally{Date.now=realNow;}
 });
 
@@ -75,5 +74,23 @@ test('verified registration type overrides a truncated inventory label only for 
  const data={settings:{}},device={id:'zte-full-type-unit',vendor:'zte',enabled:true,cliEnabled:true,host:'192.0.2.68',cliPort:23,cliProtocol:'telnet',cliUsername:'unit'};device.cliPasswordEnc=secrets.encryptSecret(data,'unit');const catalogue=require('../src/olt-zte-catalogue');device.onuRegistrationJobs=[{status:'verified',address:'1/1/1:1',serialNumber:'HWTCAABBCCDD',type:'UNIT-2G',connection:catalogue.connection(device)}];let calls=0;
  const options={type:'UNIT',serialNumber:'HWTCAABBCCDD',transports:{commands:async({commands})=>{calls++;assert(commands.includes('show onu-type gpon UNIT-2G'));assert(!commands.includes('show onu-type gpon UNIT'));return onu();}}};
  const unit=await profiles.readOnu(data,device,'1/1/1:1',options);assert.equal(unit.type,'UNIT-2G');assert.equal(calls,1);profiles.invalidate(device);
- const wrong={...options,serialNumber:'HWTC11223344',transports:{commands:async({commands})=>{assert(commands.includes('show onu-type gpon UNIT'));return onu();}}};await assert.rejects(profiles.readOnu(data,{...device,id:'zte-no-alias-unit'},'1/1/1:1',wrong),/Tipe ONU berubah/);
+ const wrong={...options,serialNumber:'HWTC11223344',transports:{commands:async({commands})=>{assert(commands.includes('show onu-type gpon UNIT'));return onu();}}};await assert.rejects(profiles.readOnu(data,{...device,id:'zte-no-alias-unit'},'1/1/1:1',wrong),/SN ONU berbeda/);
+});
+test('truncated or stale inventory types resolve from exact native identity once without changing registration records',async()=>{
+ for(const failedHint of[false,true]){
+  const data={settings:{}},device={id:'zte-native-full-type-'+failedHint,vendor:'zte',enabled:true,cliEnabled:true,host:'192.0.2.70',cliPort:23,cliUsername:'unit',cliProtocol:'telnet'};device.cliPasswordEnc=secrets.encryptSecret(data,'unit');let calls=0;
+  const options={type:'UNIT',serialNumber:'HWTCAABBCCDD',transports:{commands:async({commands})=>{calls++;assert(commands.every(command=>command==='enable'||command.startsWith('show ')));const raw=onu();if(calls===1){assert(commands.includes('show onu-type gpon UNIT'));raw.outputs.pop();raw.success=!failedHint;raw.outputs.push(output('show onu-type gpon UNIT','ONU type name: UNIT-2G\nMax T-CONT: 8\nMax GEM port: 32\n'));}else assert(commands.includes('show onu-type gpon UNIT-2G'));return raw;}}};
+  const before=structuredClone(device),value=await profiles.readOnu(data,device,'1/1/1:1',options);assert.equal(value.type,'UNIT-2G');assert.equal(calls,2);assert.deepEqual(device,before);assert.equal((await profiles.readOnu(data,device,'1/1/1:1',options)).type,'UNIT-2G');assert.equal(calls,2);
+ }
+});
+test('type-resolution retry rejects changed serial, position, repeated type changes and ambiguous native identity',async()=>{
+ for(const scenario of['serial','position','type','duplicate']){
+  const data={settings:{}},device={id:'zte-full-type-race-'+scenario,vendor:'zte',enabled:true,cliEnabled:true,host:'192.0.2.71',cliPort:23,cliUsername:'unit',cliProtocol:'telnet'};device.cliPasswordEnc=secrets.encryptSecret(data,'unit');let calls=0;
+  const options={type:'UNIT',serialNumber:'HWTCAABBCCDD',transports:{commands:async()=>{calls++;const raw=onu();if(calls===1){raw.outputs[3].command='show onu-type gpon UNIT';if(scenario==='duplicate')raw.outputs[0].stdout+='Type: UNIT-2G\n';}else{if(scenario==='serial')raw.outputs[0].stdout=raw.outputs[0].stdout.replace('HWTCAABBCCDD','HWTC11223344');if(scenario==='position')raw.outputs[0].stdout=raw.outputs[0].stdout.replace('gpon-onu_1/1/1:1','gpon-onu_1/1/2:1');if(scenario==='type')raw.outputs[0].stdout=raw.outputs[0].stdout.replace('Type: UNIT-2G','Type: OTHER');}return raw;}}};
+  await assert.rejects(profiles.readOnu(data,device,'1/1/1:1',options));assert.equal(calls,scenario==='duplicate'?1:2);
+ }
+});
+test('native profile inspection preserves every service including several user VLANs translated to one network VLAN',()=>{
+ const raw=onu();raw.outputs[1].stdout=raw.outputs[1].stdout.replace('!\n','gemport 2 tcont 1\nservice-port 2 vport 2 user-vlan 102 vlan 101\ngemport 3 tcont 1\nservice-port 3 vport 3 user-vlan 100 vlan 100\n!\n');
+ const parsed=profiles.parseOnu(raw,'1/1/1:1');assert.deepEqual(parsed.services.map(row=>[row.userVlan,row.vlan]),[[101,101],[102,101],[100,100]]);
 });

@@ -140,7 +140,7 @@ function view(data, device) {
     counts: { vlans: state?.catalogue.vlans.length ?? null, upload: state?.catalogue.tcont.length ?? null, download: state?.catalogue.traffic.length ?? null, models: state?.onuTypes.length ?? null },
     vlans: (state?.catalogue.vlans || []).map(id => ({ id, ...labels.get(id) })),
     profiles: meta.profiles.map(row => { let prepared = false, conflict = ''; try { prepared = !!state && bandwidth.customPolicy(state.catalogue, row.uploadKbps, row.downloadKbps).profiles.every(item => item.action === 'reuse'); } catch { conflict = 'Definisi profil bertabrakan dengan OLT.'; } return { ...row, presetCount: uses.get(row.id) || 0, prepared, conflict }; }),
-    nativeProfiles: state ? { upload: state.catalogue.tcont, download: state.catalogue.traffic } : { upload: [], download: [] },
+    nativeProfiles: state ? { upload: state.catalogue.tcont.map(row=>({...row,...bandwidth.nativeProfileStatus(row,'upload')})), download: state.catalogue.traffic.map(row=>({...row,...bandwidth.nativeProfileStatus(row,'download')})) } : { upload: [], download: [] },
     models: meta.models, templates: state?.onuTypes || [], vendors: VENDORS,
     learned: learned.map(({ serialNumber, ...row }) => ({ ...row, radio: radios.get(serialNumber) || null })), maxProfiles: 128 };
 }

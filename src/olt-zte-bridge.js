@@ -19,11 +19,12 @@ function target(input) {
 function readCommands(unit, kind = 'lan') {
   interfaceKind(kind);
   const iface = 'gpon-onu_' + unit.address;
+  const queries = kind === 'wlan' ? ['vlan wifi', 'vlan-filter-mode wifi', 'vlan-filter wifi', 'ssid info'] : ['vlan eth', 'vlan-filter-mode ethuni', 'vlan-filter ethuni'];
   return ['enable', 'terminal length 0', 'show version-running', 'show gpon onu by sn ' + unit.serialNumber,
     'show gpon onu detail-info ' + iface, 'show gpon remote-onu equip ' + iface,
     'show gpon remote-onu capability ' + iface, 'show running-config interface ' + iface,
     'show onu running config ' + iface,
-    ...['vlan eth', 'vlan-filter-mode ethuni', 'vlan-filter ethuni', 'vlan wifi', 'vlan-filter-mode wifi', 'vlan-filter wifi', 'ssid info'].map(query => 'show gpon remote-onu ' + query + ' ' + iface)];
+    ...queries.map(query => 'show gpon remote-onu ' + query + ' ' + iface)];
 }
 function output(result, command, last = false) {
   const rows = (result.outputs || []).filter(row => row.command === command);
@@ -55,7 +56,7 @@ function ssidMapping(text, max) {
     const band = /^2[.,]4\s*ghz$/.test(frequency) ? '2.4' : /^5\s*ghz$/.test(frequency) ? '5' : '';
     const usable = Boolean(ssid && !/^(?:N\/A|unknown|by ONU default)$/i.test(ssid));
     const reserved = /backhaul|\bmesh\b|^bh[_-]/i.test(ssid) || /backhaul/i.test(field(section, '(?:Service type|Type)'));
-    ports.push({ name, ssid, band, editable: usable && !reserved });
+    ports.push({ name, ssid, band, editable: usable && !reserved, ...(!usable ? { protection: 'ssid-unmapped' } : reserved ? { protection: 'backhaul' } : {}) });
     // Client counters can change during a session; SSID/authentication settings cannot.
     guards.push(section.split('\n').map(line => line.trim()).filter(line => line && !/^Current users\s*:/i.test(line) && !/^[A-Za-z0-9_.()-]+#$/.test(line)));
   }
@@ -93,7 +94,13 @@ function management(lines, definitions, kind) {
   return { ports, other, services, protectedVlans: [...protectedVlans].sort((a, b) => a - b) };
 }
 function inspect(result, selection, last = false, requestedKind = 'lan') {
-  if (!result.success) fail('Bridge ONU belum dapat dibaca. Periksa koneksi CLI.', 503);
+  if (!result.success) {
+    const error = String(result.error || '');
+    if (/antrean|sedang digunakan/i.test(error)) fail('CLI sedang dipakai operasi lain. Tunggu proses selesai lalu baca ulang.', 429);
+    if (/login.*ditolak/i.test(error)) fail('Login CLI OLT ditolak. Periksa akun CLI pada pengaturan OLT.', 502);
+    if (/belum didukung firmware/i.test(error)) fail('Perintah OMCI untuk antarmuka ini belum didukung firmware OLT. Konfigurasi tidak diubah.', 422);
+    fail('Antarmuka ONU belum dapat dibaca. Periksa koneksi dan baca ulang setelah proses OLT selesai.', 503);
+  }
   const kind = interfaceKind(requestedKind), unit = target(selection), get = query => output(result, query, last), iface = 'gpon-onu_' + unit.address;
   for (const command of readCommands(unit, kind)) get(command);
   const version = get('show version-running'), firmwares = [...version.matchAll(/^\d+\/\d+\/\d+\s+\S+\s+MVR\s+(\S+)/gm)].map(row => row[1]);
@@ -111,7 +118,15 @@ function inspect(result, selection, last = false, requestedKind = 'lan') {
   const wifiText = field(capability, 'WIFI UNI number'), wifi = /^\d+$/.test(wifiText) ? Number(wifiText) : 0;
   if (!Number.isSafeInteger(wifi) || wifi < 0 || wifi > 32) fail('Kapasitas WLAN belum terverifikasi.');
   const ssids = kind === 'wlan' ? ssidMapping(get('show gpon remote-onu ssid info ' + iface), wifi) : null;
-  const definitions = ssids ? ssids.ports : Array.from({ length: ethernet }, (_, i) => ({ name: 'eth_0/' + (i + 1) }));
+  const definitions = ssids ? [...ssids.ports] : Array.from({ length: ethernet }, (_, i) => ({ name: 'eth_0/' + (i + 1) }));
+  // Existing native bindings remain inspectable even when the ONU omits SSID names.
+  if (ssids) for (const line of managementLines) {
+    const name = line.match(/^(?:vlan port|vlan-filter(?:-mode)? wifi) (wifi_0\/\d+)\b/)?.[1];
+    if (!name) continue;
+    if (!portName(name, 'wlan')) fail('Identitas port WLAN existing belum valid.');
+    if (!definitions.some(port => port.name === name)) definitions.push({ name, ssid: '', band: '', editable: false, protection: 'ssid-unmapped' });
+  }
+  if (ssids && definitions.length > wifi) fail('Binding WLAN melebihi kemampuan ONU yang dilaporkan.');
   const config = management(managementLines, definitions, kind);
   const services = [];
   for (const line of interfaceLines) {
@@ -131,10 +146,10 @@ function inspect(result, selection, last = false, requestedKind = 'lan') {
 const proof = state => hash(state);
 function publicState(state, at = Date.now()) {
   return { target: state.target, kind: state.kind, model: state.model, vendor: state.vendor, ethernet: state.ethernet, wifi: state.wifi,
-    ports: state.ports.map(port => ({ ...structuredClone(port), editable: editable(state, port) })),
+    ports: state.ports.map(port => ({ ...structuredClone(port), editable: editable(state, port), ...protection(state, port) })),
     vlans: state.vlans.filter(id => !state.protectedVlans.includes(id)), protectedVlans: [...state.protectedVlans],
     services:state.servicePorts.filter(row=>state.vlans.includes(row.userVlan)&&!state.protectedVlans.includes(row.userVlan)).map(row=>({id:row.id,gem:row.gem,userVlan:row.userVlan,vlan:row.vlan})),
-    ...(state.kind === 'wlan' && !state.ports.some(port => editable(state, port)) ? { unavailableReason: 'Pemetaan SSID belum dilaporkan melalui OMCI atau SSID dilindungi. Gunakan konfigurasi WiFi melalui ACS.' } : {}),
+    ...(state.kind === 'wlan' && !state.ports.length ? { unavailableReason: 'Modem belum melaporkan pemetaan SSID melalui OMCI. Konfigurasi WiFi tetap dapat diperiksa melalui ACS.' } : {}),
     checkedAt: new Date(at).toISOString() };
 }
 function advanced(state, port) {
@@ -142,6 +157,14 @@ function advanced(state, port) {
 }
 function editable(state, port) {
   return port.editable !== false && !advanced(state, port) && !port.filters.some(row => state.protectedVlans.includes(row.vlan)) && !(port.vlan && state.protectedVlans.includes(port.vlan));
+}
+function protection(state, port) {
+  let code = '';
+  if (port.filters.some(row => state.protectedVlans.includes(row.vlan)) || port.vlan && state.protectedVlans.includes(port.vlan)) code = 'management';
+  else if (advanced(state, port)) code = 'advanced';
+  else if (port.editable === false) code = port.protection || 'ssid-unmapped';
+  const reasons = { management: 'Terikat VLAN management/TR069; hanya dapat dilihat.', advanced: 'Memiliki binding lanjutan; perubahan melalui editor ini dikunci.', backhaul: 'SSID backhaul/mesh; hanya dapat dilihat.', 'ssid-unmapped': 'Identitas SSID belum dilaporkan melalui OMCI; binding hanya dapat dilihat.' };
+  return code ? { protection: code, protectionReason: reasons[code] } : {};
 }
 function build(state, input) {
   const selected = target(input), port = state.ports.find(row => row.name === input.port);
@@ -247,10 +270,8 @@ function reserve(device, readOnly = false) {
 }
 function release(device) { const count = pending.get(device.id) || 0; if (count > 1) pending.set(device.id, count - 1); else pending.delete(device.id); }
 const cacheKey = (device, unit, kind) => pnp.signature(device) + ':' + unit.address + ':' + unit.serialNumber + ':' + kind;
-function remember(device, unit, result) {
-  for (const kind of ['lan', 'wlan']) {
-    try { cache.set(cacheKey(device, unit, kind), { state: inspect(result, unit, false, kind), at: Date.now() }); } catch { /* An unsupported WLAN view must not replace a valid LAN snapshot. */ }
-  }
+function remember(device, unit, result, kind) {
+  cache.set(cacheKey(device, unit, kind), { state: inspect(result, unit, false, kind), at: Date.now() });
   while (cache.size > 32) cache.delete(cache.keys().next().value);
 }
 async function run(data, device, unit, options, grant = null) {
@@ -265,10 +286,12 @@ async function run(data, device, unit, options, grant = null) {
 async function read(data, device, actor, input, options = {}) {
   check(data, device, actor); const unit = target(input), kind = interfaceKind(input.kind), key = cacheKey(device, unit, kind);
   const old = cache.get(key); if (input.force !== true && old && Date.now() - old.at < CACHE_MS) return publicState(old.state, old.at);
-  return publicState(inspect(await load(data, device, unit, { ...options, kind }), unit, false, kind));
+  await load(data, device, unit, { ...options, kind });
+  const fresh = cache.get(key);
+  return publicState(fresh.state, fresh.at);
 }
 async function load(data, device, unit, options) {
-  const key = cacheKey(device, unit, 'ports');
+  const key = cacheKey(device, unit, options.kind);
   if (loading.has(key)) return loading.get(key);
   if (Date.now() - (attempts.get(key) || 0) < 3000) fail('Tunggu sebentar sebelum membaca ulang antarmuka.', 429);
   attempts.set(key, Date.now()); while (attempts.size > 64) attempts.delete(attempts.keys().next().value);
@@ -276,7 +299,7 @@ async function load(data, device, unit, options) {
   const task = (async () => {
     const result = await run(data, device, unit, options);
     inspect(result, unit, false, options.kind);
-    remember(device, unit, result);
+    remember(device, unit, result, options.kind);
     return result;
   })();
   loading.set(key, task);

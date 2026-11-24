@@ -4,6 +4,13 @@ process.env.MIGRATION_MODE='0';
 test('native PTY keeps immediate echo and ANSI editing, executes only on guarded Enter and never runs a server shell',async()=>{
  const f=await fixture();try{await f.key('show version-runninX');await f.wait(row=>row.output.includes('runninX'));assert.equal(f.executed.length,0);await f.key('\x7f');await f.key('g');await f.key('\r');await f.wait(row=>!row.commandPending&&row.output.includes('Unit Version'));assert.deepEqual(f.executed,['show version-running']);assert(f.read().output.includes('\x1b[2K'));}finally{f.stop();}
 });
+test('blocked commands print one inline console error, retain editable input and never execute',async()=>{
+ const f=await fixture(),access={permissions:['olt:read','olt:onu:delete']};try{await f.key('write memory');const sequence=f.read().sequence+1;await assert.rejects(f.key('\r',sequence,access),error=>error.status===403&&error.consoleReported===true);const first=f.read();assert(first.output.includes('% Billing: Perintah ini memerlukan izin kelola OLT.'));assert(first.output.endsWith('OLT#write memory'));await assert.rejects(f.key('\r',sequence,access));assert.equal(f.read().output,first.output);assert.deepEqual(f.executed,[]);assert.equal(f.read().state,'ready');}finally{f.stop();}
+});
+test('native error output and ANSI cursor/colors are preserved but fragmented OSC/DCS payloads are not forwarded',()=>{
+ const filter=require('../src/olt-terminal-native').createOutputFilter();let output='';for(const part of['\x1b]52;c;','cHJpdmF0ZQ==','\x07','\x1bPcontrol','\x1b','\\','\x1b[31m%Error 20202: Invalid input\x1b[0m\r\nOLT#'])output+=filter(part);assert.equal(output,'\x1b[31m%Error 20202: Invalid input\x1b[0m\r\nOLT#');assert(!output.includes('cHJpdmF0ZQ'));
+ const c1=require('../src/olt-terminal-native').createOutputFilter();assert.equal(c1('\x9d52;c;secret\x9cOLT#'),'OLT#');
+});
 test('question help waits for the restored prompt and preserves trailing space for continued typing',async()=>{
  const f=await fixture({helpDelay:180});try{await f.key('show gpon onu ');await f.key('?');assert(f.read().output.includes('Show ONU state'));await f.key('state');await f.key('\r');await f.wait(row=>!row.commandPending);assert.deepEqual(f.executed,['show gpon onu state']);}finally{f.stop();}
 });

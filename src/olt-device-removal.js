@@ -84,10 +84,12 @@ async function remove(data,device,serial,payload,actor,options={}){
   if(plan.status==='running'||locks.has(lock)||locks.has(acsLock)||locks.size>=8)throw error('Penghapusan sedang diproses. Tunggu hasilnya.',409);
   plan.status='running';locks.add(lock);locks.add(acsLock);
   try{
-    const checked=await inspect(data,device,sn,{onuIndex:plan.target.id},actor,options);
+    const fresh=async()=>{const current=options.getData?await options.getData():data,currentDevice=olt.deviceRows(current).find(row=>row.id===device.id);if(!currentDevice||signature(current,currentDevice)!==plan.signature)throw error('Pengaturan OLT atau integrasi berubah. Periksa ulang.',409);permission(current,currentDevice,actor,plan.cascade);return{data:current,device:currentDevice};};
+    let latest=await fresh();const checked=await inspect(latest.data,latest.device,sn,{onuIndex:plan.target.id},actor,options);
     if(!checked.canSubmit||checked.simulated)throw error(checked.olt.reason||checked.acs.reason||'Status perangkat berubah. Periksa ulang sebelum menghapus.',409);
     if(plan.candidate&&checked.candidate&&(checked.candidate.id!==plan.candidate.id||checked.owner&&plan.owner&&checked.owner!==plan.owner))throw error('Identitas ACS berubah sejak pratinjau. Penghapusan dibatalkan.',409);
-    let removed;try{removed=await(options.removeOlt||olt.removeOnu)(data,device,sn,{serialNumber:sn,onuIndex:plan.target.id,confirmDelete:true},{...(options.oltTransport||{}),allowMissing:true,requireOffline:true});}catch{return plan.result=summary(state('failed','OLT belum berhasil dihapus.'),state('skipped'),plan.cascade);}
+    latest=await fresh();
+    let removed;try{removed=await(options.removeOlt||olt.removeOnu)(latest.data,latest.device,sn,{serialNumber:sn,onuIndex:plan.target.id,confirmDelete:true},{...(options.oltTransport||{}),allowMissing:true,requireOffline:true});}catch{return plan.result=summary(state('failed','OLT belum berhasil dihapus.'),state('skipped'),plan.cascade);}
     if(!removed?.confirmed)return plan.result=summary(state('pending'),state('skipped'),plan.cascade);
     automatic.invalidate();let oltResult=state(removed.alreadyAbsent?'missing':'deleted');
     if(!plan.cascade)return plan.result=summary(oltResult,state('skipped'),false);

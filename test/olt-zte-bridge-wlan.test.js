@@ -32,6 +32,20 @@ test('zero/unsupported WLAN never manufactures SSID slots from WiFi capability c
   assert.equal(view.wifi, 8); assert.deepEqual(view.ports, []); assert.match(view.unavailableReason, /OMCI/);
   assert.throws(() => bridge.build(state, input(model())));
 });
+test('native existing WLAN bindings remain readable without inventing missing SSID identities',()=>{
+ const sample=model();sample.portConfig=['vlan port wifi_0/5 mode tag vlan 101','vlan-filter wifi wifi_0/5 pri 0 vlan 101'];
+ const state=inspected(sample),view=bridge.publicState(state),port=view.ports[0];
+ assert.equal(view.ports.length,1);assert.equal(port.name,'wifi_0/5');assert.equal(port.vlan,101);assert.equal(port.protection,'ssid-unmapped');assert.match(port.protectionReason,/Identitas SSID/);assert.equal(port.editable,false);
+ assert.throws(()=>bridge.build(state,input(sample)),/SSID/);
+ sample.wifiCount=0;assert.throws(()=>inspected(sample),/kemampuan/);
+});
+test('protection reasons distinguish actual management, backhaul, advanced binding and missing identity',()=>{
+ const sample={...model(),wifiCount:8,ssids:[{name:'wifi_0/1',ssid:'Backhaul'},{name:'wifi_0/2',ssid:''},{name:'wifi_0/3',ssid:'Private'},{name:'wifi_0/4',ssid:'Guest'}],portConfig:['vlan port wifi_0/3 mode tag vlan 100'],other:[...model().other,'vlan port wifi_0/4 translate vlan 102']};
+ const state=inspected(sample),view=bridge.publicState(state);
+ assert.deepEqual(view.ports.map(port=>port.protection),['backhaul','ssid-unmapped','management','advanced']);
+ assert(view.ports.every(port=>port.editable===false&&port.protectionReason));assert(!JSON.stringify(view).includes('protected-key'));
+ for(const port of view.ports)assert.throws(()=>bridge.build(state,{...input(sample),port:port.name}));
+});
 test('SSID duplicates, backhaul, cross-kind injection, WLAN trunk and management VLAN are held', () => {
   const state = sample(), baseline = inspected(state);
   for (const extra of [{ kind: 'lan' }, { kind: 'wifi' }, { port: 'eth_0/4' }, { port: 'wifi_0/2' }, { mode: 'trunk' }, { vlans: [100] }, { vlans: [101, 102] }]) assert.throws(() => bridge.build(baseline, { ...input(state), ...extra }));
@@ -73,12 +87,13 @@ test('native WLAN apply preserves names/keys/radio/LAN and checks full SSID iden
     }
   }
 });
-test('LAN and WLAN share one native read but isolate snapshots and avoid duplicate port-switch queries', async () => {
+test('LAN and WLAN isolate native reads, then reuse their own short-lived snapshots', async () => {
   const { data, device, actor } = fixture(), state = sample(); let reads = 0;
   const options = { transportOptions: { transports: { commands: async ({ commands }) => { reads++; return response(commands, state); } } } };
   const lan = await bridge.read(data, device, actor, selection(state), options); assert.equal(lan.ports.length, 4);
-  const wlan = await bridge.read(data, device, actor, { ...selection(state), kind: 'wlan' }, options); assert.equal(wlan.ports.length, 2); assert.equal(reads, 1);
-  await bridge.prepare(data, device, actor, input(state), options); assert.equal(reads, 1);
+  const wlan = await bridge.read(data, device, actor, { ...selection(state), kind: 'wlan' }, options); assert.equal(wlan.ports.length, 2); assert.equal(reads, 2);
+  await bridge.read(data, device, actor, selection(state), options);
+  await bridge.prepare(data, device, actor, input(state), options); assert.equal(reads, 2);
 });
 test('explicit refresh bypasses the short snapshot cache while normal tab changes remain local', async () => {
   const { data, device, actor } = fixture(), state = sample(), realNow = Date.now; let now = realNow(), reads = 0;
@@ -89,17 +104,37 @@ test('explicit refresh bypasses the short snapshot cache while normal tab change
     now += 4000;
     await bridge.read(data, device, actor, { ...selection(state), force: true }, options);
     await bridge.read(data, device, actor, { ...selection(state), kind: 'wlan' }, options);
-    assert.equal(reads, 2);
+    assert.equal(reads, 3);
   } finally { Date.now = realNow; }
 });
-test('a burst of LAN/SSID readers shares one native session without duplicate commands or shared mutable results', async () => {
+test('initial and cached responses share the real snapshot timestamp even if the clock advances during parsing',async()=>{
+ const {data,device,actor}=fixture(),state=sample(),realNow=Date.now;let now=realNow(),reads=0;
+ Date.now=()=>++now;
+ try{
+  const options={transportOptions:{transports:{commands:async({commands})=>{reads++;return response(commands,state);}}}};
+  const first=await bridge.read(data,device,actor,selection(state),options);now+=10;
+  assert.deepEqual(await bridge.read(data,device,actor,selection(state),options),first);assert.equal(reads,1);
+ }finally{Date.now=realNow;}
+});
+test('a burst of LAN/SSID readers shares one read per kind without duplicate commands or shared mutable results', async () => {
   const { data, device, actor } = fixture(), state = sample(); let reads = 0, release;
   const gate = new Promise(resolve => { release = resolve; });
   const options = { transportOptions: { transports: { commands: async ({ commands }) => { reads++; await gate; return response(commands, state); } } } };
   const requests = Array.from({ length: 24 }, (_, index) => bridge.read(data, device, actor, { ...selection(state), kind: index % 2 ? 'wlan' : 'lan' }, options));
-  release(); const results = await Promise.all(requests); assert.equal(reads, 1); assert.equal(results.length, 24);
+  release(); const results = await Promise.all(requests); assert.equal(reads, 2); assert.equal(results.length, 24);
   results[0].ports[0].name = 'changed'; assert.equal(results[2].ports[0].name, 'eth_0/1'); assert.equal(results[1].ports[0].name, 'wifi_0/1');
   assert(!bridge.isBusy(device.id));
+});
+test('unsupported WiFi commands never break LAN reads or poison the cached LAN identity',async()=>{
+ const{data,device,actor}=fixture(),state=sample(),seen=[];
+ const options={transportOptions:{transports:{commands:async({commands})=>{seen.push(commands);return commands.some(command=>/remote-onu (?:vlan(?:-filter(?:-mode)?)? wifi|ssid info)/.test(command))?{success:false,error:'Perintah vendor belum didukung firmware',outputs:[]}:response(commands,state);}}}};
+ const lan=await bridge.read(data,device,actor,selection(state),options);assert.equal(lan.ports.length,4);assert(seen[0].every(command=>!/wifi|ssid info/.test(command)));
+ await assert.rejects(bridge.read(data,device,actor,{...selection(state),kind:'wlan'},options),error=>error.status===422&&/OMCI/.test(error.message));
+ assert.deepEqual(await bridge.read(data,device,actor,selection(state),options),lan);assert.equal(seen.length,2);assert(!bridge.isBusy(device.id));
+ assert(bridge.readCommands(selection(state),'wlan').every(command=>!/vlan eth |ethuni/.test(command)));
+});
+test('busy CLI and rejected login have distinct safe diagnostics, not a fabricated offline ONU',()=>{
+ for(const[error,status,pattern]of[['Akses OLT sedang digunakan',429,/CLI sedang dipakai/],['Login CLI vendor ditolak',502,/Login CLI/],['Batas waktu pembacaan vendor terlampaui',503,/Antarmuka/]])assert.throws(()=>bridge.inspect({success:false,error,outputs:[]},selection(model())),failure=>failure.status===status&&pattern.test(failure.message));
 });
 test('one ONU retains multiple LAN/SSID bindings, shared VLANs and multi-VLAN trunks across separate verified edits', async () => {
   const { data, device, actor } = fixture(), state = sample(), original = structuredClone(state.ssids), realNow = Date.now; let now = realNow();

@@ -38,7 +38,7 @@ test('manual close of automatic grouped faults uses fresh cached data, authoriza
  assert.equal(await recovery.validateResolution(data,{...ticket,scope:'service'},{status:'resolved'},options),null);assert.equal(reads,3);
 });
 test('remaining individual LOS becomes its own ticket after a group meets the recovery target',()=>{
- const list=rows(10),device={id:'olt',enabled:true,updatedAt:'unit',links:Object.fromEntries(list.map(row=>[row.serialNumber,{fiberPointId:'odp'}]))},data={settings:{},users:[],customers:[],radiusUsers:[],fiberPoints:[{id:'odp'}],oltDevices:[device],oltTickets:[]};
+ const list=rows(10),device={id:'olt',enabled:true,updatedAt:'unit',links:Object.fromEntries(list.map(row=>[row.serialNumber,{fiberPointId:'odp'}]))},data={settings:{oltTicketing:{enabled:true,automaticTicketsEnabled:true,whatsappEnabled:true}},users:[],customers:[],radiusUsers:[],fiberPoints:[{id:'odp'}],oltDevices:[device],oltTickets:[]};
  list.forEach(row=>Object.assign(row,{status:'offline',condition:'los',causeKnown:true,downCause:'LOS'}));const observation=offset=>({deviceId:'olt',deviceUpdatedAt:'unit',snapshot:{status:'online',checkedAt:new Date(NOW+offset).toISOString(),onus:structuredClone(list),ports:[]}});
  require('./helpers/confirmed-los')(data,[observation(0)]);
  let result=olt.applyLosTicketPlan(data,olt.losTicketPlan(data,[observation(0)],{now:NOW}),NOW);assert.equal(result.created.length,1);

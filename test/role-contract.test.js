@@ -94,6 +94,11 @@ test('secretary inherits every admin permission while retaining its own role and
   assert.equal(permissions.includes('wa-gateway:manage'), true);
   assert.equal(permissions.includes('xendit:withdraw'), true);
 });
+test('staff technicians cannot manage OLT registrations but retain ONU operations and ticket work',()=>{
+ const permissions=auth.publicUser({id:'staff-unit',role:'technician',position:'Staf Teknisi dan Perlengkapan'}).permissions;
+ for(const key of['olt:manage','olt:reboot','olt:pnp:manage','olt:pon:manage'])assert.equal(permissions.includes(key),false,key);
+ for(const key of['olt:read','olt:onu:delete','olt:onu:reboot','olt:tickets:read','olt:tickets:write'])assert(permissions.includes(key),key);
+});
 test('secretary passes admin-equivalent invoice cancellation and sensitive gateway role gates',()=>{
  const source=serverSource(),cancel=sourceSection(source,'function invoiceCancelAllowedUser(', 'const RADBOOX_STALE_MS');
  const allowed=vm.runInNewContext(cancel+'\ninvoiceCancelAllowedUser');assert(allowed(auth.publicUser({role:'secretary'})));assert(!allowed(auth.publicUser({role:'collector'})));

@@ -449,11 +449,15 @@ polling background atau memakai SNMP SET.
   Cache diperbarui bergilir sekitar tiga menit; halaman tidak memicu walk baru.
   Kegagalan pembacaan ditandai dan data terakhir dipertahankan, bukan dianggap nol.
   Field yang memang tidak tersedia ditampilkan `-`.
-- Admin, sekretaris, owner, dan NOC mengelola koneksi OLT. Teknisi dapat melihat
-  monitoring, menautkan ONU ke pelanggan/ODP, dan menangani tiket gangguan.
+- Admin, sekretaris, owner, dan NOC mengelola koneksi OLT. Staf teknisi tidak
+  menambah, mengubah, atau menghapus integrasi OLT. Teknisi tetap dapat melihat
+  monitoring, menautkan ONU ke pelanggan/ODP, mengelola satu ONU dan menangani tiket.
+  Konfigurasi PON, provisioning, dan reboot seluruh OLT mengikuti izin terpisah;
+  akses terminal tidak dapat dipakai untuk melewati pembatasan tombol web.
   Admin/owner/NOC, teknisi, dan sekretaris dapat reboot atau hapus satu ONU lewat CLI jika
   akun CLI diaktifkan admin. Batas NAS teknisi tetap berlaku. Community/password
-  CLI tersimpan terenkripsi dan tidak dikembalikan melalui API. Menu OLT tersedia
+  CLI tersimpan terenkripsi dan tidak dimuat pada daftar monitoring. Community
+  hanya dapat dibaca melalui pengaturan oleh pemegang izin pengelolaan. Menu OLT tersedia
   untuk semua role selain finance dan reseller (termasuk Mitra/Reseller). Collector
   dan viewer hanya melihat monitoring. Sekretaris memiliki izin setara Admin;
   seluruh aksi perangkat tetap memerlukan konfirmasi dan verifikasi yang sama.
@@ -473,7 +477,14 @@ polling background atau memakai SNMP SET.
   manajemen OLT ke LAN/VPN karena Telnet tidak mengenkripsi jalur koneksi.
 - Koordinat yang diisi muncul pada peta pelanggan dan jaringan fiber. Penautan ONU
   ke pelanggan/ODP dilakukan eksplisit, tidak menebak identitas dari nama ONU.
-- ONU yang dilaporkan LOS otomatis dibuatkan tiket di **Monitoring > Tiket Layanan**,
+- Checkbox **Tiket Otomatis & WA Petugas** di **Pengaturan Tiket** berlaku untuk semua
+  OLT dan default tidak dicentang, termasuk setelah pembaruan jika belum pernah
+  diatur. Saat nonaktif, monitoring dan tiket manual tetap berjalan; tiket yang
+  sudah ada tidak dihapus dan pemulihannya tetap diperiksa. Satu checkbox mengatur
+  pembuatan tiket LOS otomatis dan WhatsApp petugas. Pilih penerima saat mengaktifkan.
+  Konfigurasi lama yang hanya menyalakan WhatsApp tidak otomatis menyalakan tiket
+  saat update. Pesan gangguan massal ke pelanggan tetap memakai pilihan terpisah.
+- Jika tiket otomatis diaktifkan, ONU yang dilaporkan LOS dibuatkan tiket di **Monitoring > Tiket Layanan**,
   terhubung ke OLT/PON/serial dan pelanggan/ODP bila sudah ditautkan. Dying Gasp,
   Other, data lama, dan pembacaan gagal tidak membuat tiket LOS. Satu gangguan
   yang belum pulih tidak membuat tiket berulang, termasuk setelah restart.

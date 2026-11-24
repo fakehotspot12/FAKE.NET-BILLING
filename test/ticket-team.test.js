@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),team=require('../src/ticket-team'),olt=require('../src/olt-monitor'),service=require('../src/service-tickets'),notifications=require('../src/olt-ticketing');
 function fixture(){
  const users=[{id:'lead',name:'Lead',role:'technician',phone:'081200000001'},{id:'a',name:'Assistant A',role:'technician',phone:'081200000002'},{id:'b',name:'Assistant B',role:'technician',phone:'081200000003'},{id:'other',role:'technician'},{id:'admin',role:'admin'},{id:'finance',role:'finance'},{id:'inactive',role:'technician',active:false},{id:'foreign',role:'technician',lockedNasIds:['nas-b']}];
- const data={users,settings:{waGateway:{enabled:true},oltTicketing:{whatsappEnabled:true,recipientIds:['lead']}},customers:[],radiusUsers:[],radiusNas:[],monitoringTargets:[{id:'nas-a'},{id:'nas-b'}],oltDevices:[],waMessages:[]};
+ const data={users,settings:{waGateway:{enabled:true},oltTicketing:{enabled:true,whatsappEnabled:true,recipientIds:['lead']}},customers:[],radiusUsers:[],radiusNas:[],monitoringTargets:[{id:'nas-a'},{id:'nas-b'}],oltDevices:[],waMessages:[]};
  const ticket={id:'ticket',number:'T-001',source:'staff-service',scope:'service',category:'billing',kind:'request',title:'Unit',status:'assigned',assignedTo:'lead',nasId:'nas-a',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),history:[]};data.oltTickets=[ticket];return{data,ticket,users,actor:users[0]};
 }
 test('legacy tickets retain one primary owner and public team never exposes contact credentials',()=>{

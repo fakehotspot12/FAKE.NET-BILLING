@@ -31,9 +31,9 @@ async function verifyRelease(root, options = {}) {
     const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
     terminal.dispose();
     for (const module of ['olt-monitor', 'olt-hsgq', 'onu-model', 'olt-pon', 'olt-cdata-pon', 'olt-terminal-native', 'olt-zte-pnp', 'olt-zte-bandwidth',
-      'olt-zte-registration', 'olt-zte-tr069', 'olt-zte-catalogue', 'olt-zte-bridge', 'ont-radio-capability', 'whatsapp-queue',
+      'olt-zte-registration', 'olt-zte-tr069', 'olt-zte-catalogue', 'olt-zte-bridge', 'olt-zte-onu', 'ont-radio-capability', 'whatsapp-queue',
       'payment-promise', 'login-turnstile', 'olt-auto-identity', 'olt-device-removal', 'customer-device-removal', 'network-address',
-      'olt-planned-reboot', 'olt-ticketing', 'service-tickets', 'ticket-incidents', 'ticket-network', 'ticket-team', 'ticket-reference',
+      'olt-planned-reboot', 'olt-ticketing', 'olt-ticket-control', 'service-tickets', 'ticket-incidents', 'ticket-network', 'ticket-team', 'ticket-reference',
       'ticket-recovery', 'ticket-templates', 'ticket-customer-notifications', 'wifiku-modem-status']) require(path.join(root, 'src', module));
     await require(path.join(root, 'src/olt-vendors')).loadLibrary();
     const xterm = require.resolve('@xterm/xterm', { paths: [root] });

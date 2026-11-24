@@ -44,7 +44,7 @@ async function fixture(options={}){
  const read=(since=0)=>manager.read(owner,device,started.id,since);
  async function wait(check){for(let i=0;i<150;i++){const value=read();if(value.state==='closed')throw Error(value.output);if(check(value))return value;await sleep(10);}throw Error('Fixture wait timeout');}
  await wait(value=>value.state==='ready'&&value.output.includes('OLT#'));
- const key=(value,seq=++sequence,access={permissions:['olt:pon:manage']})=>manager.input(owner,device,started.id,{kind:'keys',value,sequence:seq},access);
+ const key=(value,seq=++sequence,access={permissions:['olt:manage','olt:pon:manage','olt:pnp:manage','olt:onu:delete','olt:onu:reboot']})=>manager.input(owner,device,started.id,{kind:'keys',value,sequence:seq},access);
  return{data,device,manager,owner,id:started.id,writes,executed,sizes,read,wait,key,sleep,stop:()=>manager.shutdown()};
 }
 module.exports={fixture,sleep};
