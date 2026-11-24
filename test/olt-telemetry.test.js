@@ -77,3 +77,7 @@ test('inventory and requested refresh wait for resource reads without marking a 
  const{data,device}=fixture('hsgq');data.oltDevices=[device];let release,started=false,walks=0;const gate=new Promise(resolve=>{release=resolve;}),read=telemetry.read(data,device,{}, {transports:{commands:async()=>{started=true;await gate;return{success:true,outputs:hsgqOutputs};}}});
  try{for(let i=0;i<30&&!started;i++)await new Promise(r=>setTimeout(r,5));assert(started);assert.equal(await monitor.poll(data,device,{walk:async()=>{walks++;}}),null);assert.equal(monitor.requestRefresh(data,device),true);assert.deepEqual(await monitor.pollNext(data),{skipped:true});assert.equal(walks,0);assert.equal(await monitor.snapshotFor(device),null);}finally{release();await read;}
 });
+test('resource and inventory polling yield throughout an active registration rather than taking the next CLI phase slot',async t=>{
+ const{data,device}=fixture('hsgq');data.oltDevices=[device];const registration=require('../src/olt-zte-registration');t.mock.method(registration,'isBusy',id=>id===device.id);let calls=0;
+ await telemetry.pollDevices(data,[device],{transports:{commands:async()=>{calls++;return{success:true,outputs:hsgqOutputs};}}});assert.equal(calls,0);assert.equal(await monitor.poll(data,device,{walk:async()=>{calls++;}}),null);assert.deepEqual(await monitor.pollNext(data),{skipped:true});assert.equal(calls,0);
+});

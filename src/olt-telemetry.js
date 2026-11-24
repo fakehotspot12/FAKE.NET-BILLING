@@ -88,7 +88,7 @@ async function pollDevices(data,devices,options={}){
  try{
   const [, ,transport]=await vendors.loadLibrary(),now=options.now??Date.now(),due=[];
   for(const device of devices.filter(row=>row.enabled).slice(0,32)){
-   if(pending.has(key(device))||transport.isBusy(device.id)||require('./olt-terminal').isOpen(device.id)||require('./olt-cli').isBusy(device.id))continue;
+   if(pending.has(key(device))||transport.isBusy(device.id)||require('./olt-terminal').isOpen(device.id)||require('./olt-cli').isBusy(device.id)||require('./olt-zte-registration').isBusy(device.id))continue;
    const previous=await restore(device,(await options.getPrevious?.(device))||{});if((previous.nextReadAt||0)<=now)due.push({device,previous});
   }
   due.sort((a,b)=>(a.previous.nextReadAt||0)-(b.previous.nextReadAt||0));

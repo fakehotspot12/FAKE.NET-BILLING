@@ -34,6 +34,12 @@ test('native PnP parses actual global/per-PON state, bandwidth and physical mode
  const model=state(),result=pnp.inspect(readReply(pnp.readCommands([key]),model),[key]);assert.equal(result.global.enabled,false);assert.equal(result.ports[0].enabled,false);assert.equal(result.newOnus[0].model,'HG-SAMPLE');assert.equal(result.onuTypes[0].name,'UNIT-2G');assert.equal(result.catalogue.tcont[1].maximum,50000);assert.equal(result.physicalPorts.length,16);assert(!JSON.stringify(result).includes('PW'));
  assert.equal(pnp.readCommands(model.physicalPorts).length,27);assert.throws(()=>pnp.readCommands(Array.from({length:21},(_,i)=>'1/1/'+i)));
 });
+test('native discovery accepts model names with spaces but preserves serial, duplicate and truncation guards',()=>{
+ const header='OltIndex Model SN PW\n',row='gpon-olt_1/1/13 GM220-S XPON ZICG00112233 unit-secret';
+ const parsed=pnp.discovery(header+row+'\nOLT#');assert.equal(parsed.length,1);assert.equal(parsed[0].model,'GM220-S XPON');assert.equal(parsed[0].serialNumber,'ZICG00112233');assert(!JSON.stringify(parsed).includes('unit-secret'));
+ for(const value of[row.replace('ZICG00112233','ZICG0011223'),row.replace(' unit-secret',''),row.replace('GM220-S XPON','Model; reboot'),row.replace('GM220-S XPON','M'.repeat(81))])assert.throws(()=>pnp.discovery(header+value));
+ assert.throws(()=>pnp.discovery(header+row+'\n'+row));const duplicate=pnp.discovery(header+row+'\n'+row.replace('1/1/13','1/1/12'));assert(duplicate.every(x=>x.ambiguous));
+});
 test('malformed, cross-PON, special UNI and ambiguous model/type output fail closed',()=>{
  assert.throws(()=>pnp.globalState('GPON bandwidth profile: default\nGPON: N/A'));
  assert.throws(()=>pnp.portState(reply('show onu-pnp olt config gpon-olt_'+key,state()),'1/1/12'));

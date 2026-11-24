@@ -2,6 +2,16 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.7.2] - 2026-11-24
+
+### Fixed
+
+- Membaca nama model ONU ZTE yang mengandung spasi pada tabel discovery. Satu model pada PON lain tidak lagi menggagalkan daftar modem baru, pemeriksaan registrasi manual, atau aktivasi registrasi otomatis. Pemeriksaan SN lengkap, posisi PON, duplikasi, izin dan konfirmasi tetap berlaku; password autentikasi native tidak ditampilkan.
+- Menampilkan posisi registrasi lama ketika SN yang dipindah masih terdaftar pada PON lain. Riwayat berhasil pada PON lama tidak menghalangi discovery baru setelah pemetaan native diselesaikan. Hanya kegagalan sebelum perintah registrasi karena konflik posisi yang boleh diperiksa ulang otomatis dengan jeda minimal dua menit; pengiriman ambigu/telah terkirim tetap ditahan, dan registrasi lama tidak dihapus otomatis.
+- Memprioritaskan registrasi yang berjalan terhadap polling inventory dan CPU/RAM. Timeout antrean pada pembacaan awal yang belum melakukan perubahan dapat diperiksa ulang otomatis secara terbatas, tanpa mengulang konfigurasi parsial atau perintah yang sudah terkirim.
+- Percobaan manual yang sebelumnya ditolak sebelum registrasi tidak lagi membaca kapabilitas alamat ONU yang belum terbentuk. Kelanjutan konfigurasi parsial tetap memerlukan SN dan posisi native yang sesuai.
+- Mempertahankan pemantauan CPU/RAM adaptif, cache bersama dan seluruh fitur rilis sebelumnya tanpa mengubah preset atau mengaktifkan registrasi otomatis pada PON lain.
+
 ## [4.7.1] - 2026-11-24
 
 ### Improved

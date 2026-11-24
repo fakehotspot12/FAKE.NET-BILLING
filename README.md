@@ -1095,6 +1095,18 @@ Hasil dibaca ulang; pengiriman yang belum pasti tidak dicoba ulang otomatis.
 Dukungan model/firmware harus diuji sebelum dipakai pada jaringan aktif;
 provisioning manual existing tetap dipertahankan.
 
+Discovery registrasi ZTE menerima nama model dengan spasi sesuai tabel native.
+Modem pada PON manual tetap menunggu otorisasi; pada PON otomatis yang sudah
+diterapkan, server mendaftarkan SN dan layanan dari preset tanpa accept per modem.
+Menyimpan centang/preset saja belum mengaktifkan otomatis: gunakan **Periksa**,
+konfirmasi PON lalu **Terapkan**. Label **Otomatis Aktif** menunjukkan status nyata
+controller. SN yang masih terdaftar di posisi lain atau ganda tidak dipindahkan
+atau dihapus diam-diam; periksa dan selesaikan pemetaan lamanya dahulu.
+Konflik posisi yang terverifikasi terjadi sebelum perintah registrasi dapat
+diperiksa ulang otomatis setelah minimal dua menit. Setiap percobaan tetap
+memeriksa discovery, SN dan posisi native sebelum menulis; pengiriman ambigu
+atau konfigurasi parsial tetap memerlukan pemeriksaan manual tanpa replay.
+
 Model dan bar CPU/RAM ada pada **Ringkasan**. Pembacaan resource terpisah dari
 inventory ONU: default 30 detik, menjadi 15 detik setelah tiga respons cepat,
 atau 60 detik pada respons lambat. Penyesuaian mengikuti durasi respons, bukan

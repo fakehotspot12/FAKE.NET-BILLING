@@ -40,7 +40,8 @@ function discovery(text){
   return[];
  }
  if(!/OltIndex\s+Model\s+SN\s+PW/.test(value))fail('Deteksi model ONU belum terverifikasi',503);
- for(const line of value.split('\n')){if(!/^\s*gpon-olt_/.test(line))continue;const match=line.trim().match(/^gpon-olt_(\d+\/\d+\/\d+)\s+(\S+)\s+([A-Za-z0-9]{12})\s+\S+\s*$/);if(!match||seen.has(match[1]+':'+match[3].toUpperCase()))fail('Deteksi ONU baru ambigu atau terpotong',503);pon(match[1]);seen.add(match[1]+':'+match[3].toUpperCase());rows.push({ponKey:match[1],model:['N/A','unknown'].includes(match[2])?'':match[2],serialNumber:match[3].toUpperCase(),modelSource:'olt-discovery'});}
+ // SN and password are the final two columns; native model names may contain spaces.
+ for(const line of value.split('\n')){if(!/^\s*gpon-olt_/.test(line))continue;const match=line.trim().match(/^gpon-olt_(\d+\/\d+\/\d+)\s+(.+?)\s+([A-Za-z0-9]{12})\s+\S+\s*$/);if(!match||! /^[A-Za-z0-9][A-Za-z0-9 ._()+/-]{0,79}$/.test(match[2])||seen.has(match[1]+':'+match[3].toUpperCase()))fail('Deteksi ONU baru ambigu atau terpotong',503);pon(match[1]);seen.add(match[1]+':'+match[3].toUpperCase());rows.push({ponKey:match[1],model:['N/A','unknown'].includes(match[2])?'':match[2],serialNumber:match[3].toUpperCase(),modelSource:'olt-discovery'});}
  if(rows.length>8192)fail('Daftar ONU baru melebihi batas',503);const counts=new Map();for(const row of rows)counts.set(row.serialNumber,(counts.get(row.serialNumber)||0)+1);return rows.map(row=>({...row,ambiguous:counts.get(row.serialNumber)>1}));
 }
 function readCommands(keys){if(!Array.isArray(keys)||!keys.length||keys.length>MAX_PORTS||new Set(keys).size!==keys.length)fail('Daftar PON melebihi batas pemeriksaan aman');return['enable','terminal length 0','show card','show onu-pnp config',...keys.map(portCommand),'show onu-type gpon','show pon onu uncfg','show version-running','show gpon profile tcont','show gpon profile traffic','show gpon onu profile vlan','show vlan summary'];}

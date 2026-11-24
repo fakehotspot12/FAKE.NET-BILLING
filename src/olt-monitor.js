@@ -480,7 +480,7 @@ async function renameOnu(data,device,serial,payload,transport={serial:liveSerial
   return {serialNumber:sn,description,confirmed:true,message:'Description ONU diperbarui dan terverifikasi di OLT.'};
 }
 async function poll(data, device, transport, options = {}) {
-  if(require('./olt-terminal').isOpen(device.id)||telemetry.isBusy(device))return snapshotFor(device);
+  if(require('./olt-terminal').isOpen(device.id)||telemetry.isBusy(device)||require('./olt-zte-registration').isBusy(device.id))return snapshotFor(device);
   const key = cacheKey(device);
   if (pending.has(key)) return pending.get(key);
   if (pending.size >= 2) return snapshotFor(device);
@@ -499,10 +499,10 @@ async function poll(data, device, transport, options = {}) {
 }
 async function pollNext(data) {
   if (pending.size) return { skipped: true };
-  for(const [id,request] of refreshQueue){const device=deviceRows(data).find(row=>row.id===id);if(device&&telemetry.isBusy(device))continue;refreshQueue.delete(id);if(!device?.enabled||cacheKey(device)!==request.key)continue;await poll(data,device);return{id:device.id,manual:true};}
+  for(const [id,request] of refreshQueue){const device=deviceRows(data).find(row=>row.id===id);if(device&&(telemetry.isBusy(device)||require('./olt-zte-registration').isBusy(device.id)))continue;refreshQueue.delete(id);if(!device?.enabled||cacheKey(device)!==request.key)continue;await poll(data,device);return{id:device.id,manual:true};}
   const candidates = [];
   for (const device of deviceRows(data).filter(row => row.enabled)) {
-    if(telemetry.isBusy(device))continue;
+    if(telemetry.isBusy(device)||require('./olt-zte-registration').isBusy(device.id))continue;
     const key = cacheKey(device), snapshot = await snapshotFor(device), tried = lastAttempt.get(key) || Date.parse(snapshot?.checkedAt || '') || 0;
     if (snapshot?.pendingRefresh || Date.now() - tried >= CACHE_MS) candidates.push({ device, tried:snapshot?.pendingRefresh?0:tried });
   }
@@ -520,7 +520,7 @@ function requestRefresh(data, device, options = {}) {
   if(process.env.MIGRATION_MODE==='1'&&!(vendors.normalize(device.vendor)==='zte'&&options.allowZteDevRead===true))throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
   const key = cacheKey(device), now = Date.now();
   if (!device.enabled || require('./olt-terminal').isOpen(device.id) || pending.has(key) || pending.size >= 2 || now - (refreshTimes.get(key) || 0) < 30000) return false;
-  remember(refreshTimes, key, now);if(telemetry.isBusy(device)){refreshQueue.set(device.id,{key});return true;}refreshQueue.delete(device.id); poll(data, device, undefined, options).catch(() => {}); return true;
+  remember(refreshTimes, key, now);if(telemetry.isBusy(device)||require('./olt-zte-registration').isBusy(device.id)){refreshQueue.set(device.id,{key});return true;}refreshQueue.delete(device.id); poll(data, device, undefined, options).catch(() => {}); return true;
 }
 function requestRefreshAll(data,devices) {
   if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
