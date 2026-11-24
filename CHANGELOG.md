@@ -10,6 +10,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 - Menampilkan posisi registrasi lama ketika SN yang dipindah masih terdaftar pada PON lain. Riwayat berhasil pada PON lama tidak menghalangi discovery baru setelah pemetaan native diselesaikan. Hanya kegagalan sebelum perintah registrasi karena konflik posisi yang boleh diperiksa ulang otomatis dengan jeda minimal dua menit; pengiriman ambigu/telah terkirim tetap ditahan, dan registrasi lama tidak dihapus otomatis.
 - Memprioritaskan registrasi yang berjalan terhadap polling inventory dan CPU/RAM. Timeout antrean pada pembacaan awal yang belum melakukan perubahan dapat diperiksa ulang otomatis secara terbatas, tanpa mengulang konfigurasi parsial atau perintah yang sudah terkirim.
 - Percobaan manual yang sebelumnya ditolak sebelum registrasi tidak lagi membaca kapabilitas alamat ONU yang belum terbentuk. Kelanjutan konfigurasi parsial tetap memerlukan SN dan posisi native yang sesuai.
+- Menunggu discovery OMCI ONU baru secara terbatas hingga 35 detik/maksimal delapan pembacaan sebelum menilai T-CONT/GEM tidak tersedia. Setiap pembacaan memeriksa ulang SN; kapasitas tidak ditebak dan perintah registrasi tidak diulang.
 - Mempertahankan pemantauan CPU/RAM adaptif, cache bersama dan seluruh fitur rilis sebelumnya tanpa mengubah preset atau mengaktifkan registrasi otomatis pada PON lain.
 
 ## [4.7.1] - 2026-11-24

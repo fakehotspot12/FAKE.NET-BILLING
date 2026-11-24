@@ -173,9 +173,10 @@ async function phase(data,device,spec,options){
  return verifyResult(result,spec);
 }
 async function waitCapability(data,device,value,options){
- for(let attempt=0;attempt<3;attempt++){
-  const raw=await run(data,device,['enable','terminal length 0','show gpon onu by sn '+value.serialNumber,...unitCommands(value)],options);if(!raw.success)fail('Kemampuan ONU baru belum terbaca');const found=bySerial(output(raw,'show gpon onu by sn '+value.serialNumber),value.serialNumber);if(found.length!==1||found[0]!==value.address)fail('SN berubah sebelum pemeriksaan OMCI');
-  try{return unit(raw,value);}catch(error){if(!/(?:T-CONT fisik|GEM fisik)/.test(error.message)||attempt===2)throw error;await new Promise(resolve=>setTimeout(resolve,1500));}
+ const deadline=performance.now()+35000;
+ for(let attempt=0;attempt<8;attempt++){
+  const raw=await run(data,device,['enable','terminal length 0','show gpon onu by sn '+value.serialNumber,...unitCommands(value)],{...options,commandBudgetMs:Math.max(1,Math.min(18000,deadline-performance.now()))});if(!raw.success)fail('Kemampuan ONU baru belum terbaca');const found=bySerial(output(raw,'show gpon onu by sn '+value.serialNumber),value.serialNumber);if(found.length!==1||found[0]!==value.address)fail('SN berubah sebelum pemeriksaan OMCI');
+  try{return unit(raw,value);}catch(error){const delay=Math.min(2000+attempt*500,5000);if(!/(?:T-CONT fisik|GEM fisik)/.test(error.message)||attempt===7||performance.now()+delay>=deadline)throw error;await new Promise(resolve=>setTimeout(resolve,delay));}
  }
 }
 async function configureTr069(data,device,value,options){
