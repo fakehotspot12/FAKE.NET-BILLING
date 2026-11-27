@@ -130,6 +130,35 @@ test('ACS config backup uses read-only Mongo shell when NBI lacks /config', asyn
   });
   assert(queried); assert.equal(rows[0].value, 'kept');
 });
+test('new ACS UI defaults to 3001 while existing custom ports survive env preparation', t => {
+  const template = fs.readFileSync(path.join(root, 'deploy/fakenet-billing-genieacs.env'), 'utf8');
+  assert.match(template, /^GENIEACS_UI_PORT=3001$/m);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'billing-acs-port-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const file = path.join(tmp, 'acs.env');
+  const source = fs.readFileSync(path.join(root, 'install.sh'), 'utf8').replace(/\nmain "\$@"\s*$/, '');
+  for (const port of [3001, 7568, 3000, 3101]) {
+    fs.writeFileSync(file, template.replace('GENIEACS_UI_PORT=3001', 'GENIEACS_UI_PORT=' + port));
+    const result = spawnSync('bash', [], { input: source + '\nprepare_genieacs_env_file existing\n. "$GENIEACS_ENV_FILE"\nprintf "%s" "$GENIEACS_UI_PORT"\n',
+      env: { ...process.env, SOURCE_DIR: root, APP_DIR: root, GENIEACS_ENV_FILE: file }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, String(port));
+  }
+});
+test('bundled ACS health follows UI port overrides and otherwise uses 3001', async () => {
+  const scripts = fs.readdirSync(path.join(root, 'deploy/genieacs/virtual-parameters')).filter(name => name.endsWith('.js')).map(name => ({ _id: name.slice(0, -3), script: fs.readFileSync(path.join(root, 'deploy/genieacs/virtual-parameters', name), 'utf8') }));
+  class PgClient { async connect() {} async query() { return { rows: [{ name: 'fixture' }] }; } async end() {} }
+  class Redis { on() {} async connect() {} async ping() { return 'PONG'; } disconnect() {} }
+  for (const port of [undefined, '7568', '3101']) {
+    const seen = [];
+    const result = await checkRuntime(root, { env: { DATABASE_URL: 'postgres://fixture', FREERADIUS_DATABASE_URL: 'postgres://fixture', REDIS_URL: 'redis://fixture', GENIEACS_ENABLED: '1', GENIEACS_SOURCE: 'bundled', FAKENET_BUNDLED_GENIEACS: '1', ...(port ? { GENIEACS_UI_PORT: port } : {}) }, PgClient, Redis,
+      exec: async command => ({ stdout: command === 'ss' ? ['127.0.0.1:7557', '0.0.0.0:7547', '0.0.0.0:7567', '127.0.0.1:27017'].map(address => 'LISTEN 0 4096 ' + address + ' 0.0.0.0:*').join('\n') : '' }),
+      fetch: async url => {
+        seen.push(url); if (url.endsWith('/status')) return new Response('OK');
+        return new Response(JSON.stringify(url.endsWith('/virtualParameters') ? scripts : url.endsWith('/api/branding') ? { branding: { appVersion: require('../package.json').version } } : { ok: true }));
+      } });
+    assert(result.ok, JSON.stringify(result.checks)); assert(seen.includes('http://127.0.0.1:' + (port || '3001') + '/status'));
+  }
+});
 test('runtime health validates all ACS definitions and rejects public NBI bindings', async () => {
   const scripts = fs.readdirSync(path.join(root, 'deploy/genieacs/virtual-parameters')).filter(name => name.endsWith('.js')).map(name => ({ _id: name.slice(0, -3), script: fs.readFileSync(path.join(root, 'deploy/genieacs/virtual-parameters', name), 'utf8') }));
   class PgClient { async connect() {} async query() { return { rows: [{ name: 'fixture' }] }; } async end() {} }

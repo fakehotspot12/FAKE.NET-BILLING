@@ -2,6 +2,17 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.7.4] - 2026-11-27
+
+### Improved
+
+- Menyederhanakan daftar modem GenieACS desktop dan mobile dengan menghapus label VLAN Internet. Nilai VLAN dan konfigurasi WAN tetap tersedia pada pengaturan perangkat dan tidak diubah.
+- Menggunakan port UI GenieACS `3001` sebagai default instalasi baru, termasuk bootstrap, pemeriksaan kesehatan dan dokumentasi. Port existing yang dikonfigurasi tetap dipertahankan saat update; port Inform CPE dan NBI tidak berubah.
+
+### Maintenance
+
+- Rilis hanya memuat kode aplikasi dan konfigurasi contoh, tanpa menyalin data pelanggan, kredensial, profil otomasi atau konfigurasi OLT operasional.
+
 ## [4.7.3] - 2026-11-26
 
 ### Added

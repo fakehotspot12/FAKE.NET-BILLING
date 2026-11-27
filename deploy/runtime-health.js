@@ -74,7 +74,7 @@ async function checkRuntime(root, dependencies = {}) {
     });
     if (env.FAKENET_BUNDLED_GENIEACS === '1') {
       await check('GenieACS UI dan MongoDB lokal', async () => {
-        assert.equal(await (await get('http://127.0.0.1:' + (env.GENIEACS_UI_PORT || 7568) + '/status', { signal: AbortSignal.timeout(5000) })).text(), 'OK');
+        assert.equal(await (await get('http://127.0.0.1:' + (env.GENIEACS_UI_PORT || 3001) + '/status', { signal: AbortSignal.timeout(5000) })).text(), 'OK');
         const { stdout } = await command('ss', ['-H', '-lnt'], { timeout: 5000 });
         for (const port of [env.GENIEACS_CWMP_PORT || 7547, env.GENIEACS_FS_PORT || 7567, 27017]) assert(stdout.split('\n').some(line => line.trim().split(/\s+/)[3]?.endsWith(':' + port)));
         const mongo = stdout.split('\n').map(line => line.trim().split(/\s+/)[3]).filter(value => value?.endsWith(':27017'));

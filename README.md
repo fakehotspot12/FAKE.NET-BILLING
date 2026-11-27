@@ -51,7 +51,7 @@ WifiKu        : http://IP-SERVER:8894/wifiku
 WAHA lokal    : 127.0.0.1:8895
 GenieACS CWMP : http://IP-SERVER:7547
 GenieACS NBI  : 127.0.0.1:7557
-GenieACS UI   : http://IP-SERVER:7568
+GenieACS UI   : http://IP-SERVER:3001
 ```
 
 Pada instalasi baru, login web GenieACS memakai akun awal billing yang sama:
@@ -1368,7 +1368,7 @@ Role barang dapat disesuaikan: teknisi dapat mengelola kebutuhan lapangan, admin
 | GenieACS CWMP | 7547 | Inform CPE/ONU, perlu dijangkau perangkat |
 | GenieACS NBI | 7557 | API internal Billing, bind ke 127.0.0.1 |
 | GenieACS FS | 7567 | File server perangkat, buka hanya bila dibutuhkan CPE |
-| GenieACS UI | 7568 | Antarmuka admin ACS; lindungi dengan firewall/VPN/HTTPS |
+| GenieACS UI | 3001 | Antarmuka admin ACS; lindungi dengan firewall/VPN/HTTPS |
 | MongoDB GenieACS | 27017 | Database lokal ACS, bind ke 127.0.0.1 |
 
 Contoh subdomain:
@@ -1519,6 +1519,11 @@ Env utama:
 
 Instalasi baru pada mesin kosong memasang GenieACS lokal secara default. MongoDB dijalankan dalam container dengan data persisten di `/opt/fakenet-billing-genieacs/mongodb`; proses CWMP, NBI, FS, dan UI berjalan sebagai user sistem `genieacs`.
 
+Port UI untuk instalasi baru adalah `3001`. Port existing yang tercatat dalam
+`GENIEACS_UI_PORT` tetap digunakan ketika update atau repair; update tidak
+memindahkan port diam-diam. Port UI berbeda dari Inform CPE (`7547`) dan NBI
+lokal (`7557`). Perubahan port UI tidak memerlukan penggantian URL Inform modem.
+
 Jika installer menemukan GenieACS existing dari service, proses, atau port default `7547/7557/7567/7568`, instalasi GenieACS bawaan billing akan dilewati otomatis supaya tidak konflik dengan ACS yang sudah berjalan. Unit service bawaan billing yang sempat tertinggal akan di-stop, di-disable, dan dibersihkan dari systemd, tanpa menghapus data ACS existing. Aplikasi billing tetap diinstall normal. Jika service `genieacs-nbi` tersedia, installer mencoba mengunci NBI existing ke `127.0.0.1:7557`; billing akan memakai URL tersebut sebagai default. Jika topologi ACS berbeda, isi URL NBI dari menu `GenieACS > Pengaturan`.
 
 Installer menulis marker `GENIEACS_SOURCE` dan `FAKENET_BUNDLED_GENIEACS` di `/etc/fakenet-billing.env`. Helper `fakenet-billing-stack` hanya akan start/restart service GenieACS bawaan jika marker tersebut menunjukkan instalasi `bundled`, sehingga update web tidak memaksa ACS bawaan pada mesin yang sudah punya GenieACS sendiri.
@@ -1530,6 +1535,7 @@ Konfigurasi awal:
 | Login UI | Sama dengan akun awal billing; password acak ditampilkan installer |
 | Inform CPE | `admin` / `1sampai10` |
 | URL Inform | `http://IP-SERVER:7547` |
+| Web UI instalasi baru | `http://IP-SERVER:3001` |
 | NBI untuk Billing | `http://127.0.0.1:7557` |
 
 Virtual Parameters `RXPower`, `gettemp`, `wanVlan`, `wifiSsid24`, dan `wifiSsid5` dipasang bersama provision harian agar aplikasi dapat membaca redaman, suhu, VLAN WAN, dan SSID dari beberapa keluarga ONU termasuk beberapa modem CDATA/CDTC FDxxx. Nilai tetap berasal dari parameter perangkat yang tersedia di GenieACS; perangkat yang tidak mengekspos parameter terkait akan tampil kosong.

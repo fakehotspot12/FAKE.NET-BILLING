@@ -15,6 +15,17 @@ function sourceFile(...segments) {
   return fs.readFileSync(path.join(__dirname, '..', ...segments), 'utf8');
 }
 
+test('GenieACS lists omit VLAN labels without removing WAN and WiFi controls', () => {
+  const app = publicSource('app.js');
+  const begin = app.indexOf('async function renderGenieAcs(');
+  assert(begin > 0);
+  const end = app.indexOf('\nasync function ', begin + 1);
+  const list = app.slice(begin, end > begin ? end : undefined);
+  assert.doesNotMatch(list, /VLAN Internet/);
+  assert.match(list, /data-genie-wan=/); assert.match(list, /data-genie-wifi=/);
+  assert.match(sourceFile('src', 'genieacs-wan.js'), /vlan/i);
+});
+
 test('loads the lightweight bootstrap before the full authenticated application', () => {
   const indexSource = publicSource('index.html');
   const bootstrapSource = publicSource('bootstrap.js');

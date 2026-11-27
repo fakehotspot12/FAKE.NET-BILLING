@@ -6,7 +6,7 @@ const { createHash } = require('crypto');
 const { spawnSync } = require('child_process');
 const { installFreshTemplate } = require('./ui-template');
 
-const uiBase = `http://127.0.0.1:${Number(process.env.GENIEACS_UI_PORT || 7568)}`;
+const uiBase = `http://127.0.0.1:${Number(process.env.GENIEACS_UI_PORT || 3001)}`;
 const nbiBase = `http://127.0.0.1:${Number(process.env.GENIEACS_NBI_PORT || 7557)}`;
 const uiUsername = String(process.env.GENIEACS_UI_USERNAME || process.env.APP_ADMIN_USERNAME || 'admin');
 const uiPassword = String(process.env.GENIEACS_UI_PASSWORD || process.env.APP_ADMIN_PASSWORD || '');

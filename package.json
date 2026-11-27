@@ -1,7 +1,7 @@
 {
   "name": "fakenet-billing",
-  "version": "4.7.3",
-  "releaseDate": "2026-11-26",
+  "version": "4.7.4",
+  "releaseDate": "2026-11-27",
   "description": "FAKE.NET Billing and Office ISP dan RT/RW Net solution",
   "main": "src/server.js",
   "scripts": {

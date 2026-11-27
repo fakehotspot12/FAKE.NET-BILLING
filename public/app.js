@@ -18772,10 +18772,6 @@ async function renderGenieAcs(options = {}) {
                     ${nasActiveBadge(nasName)}
                   </div>
                   <div class="genieacs-card-item">
-                    <span>VLAN Internet</span>
-                    <strong>${escapeHtml(genieVlanText(row.wanVlan))}</strong>
-                  </div>
-                  <div class="genieacs-card-item">
                     <span>Type</span>
                     <strong title="${escapeHtml(row.productClass || '-')}">${escapeHtml(row.productClass || '-')}</strong>
                   </div>
@@ -18860,7 +18856,6 @@ async function renderGenieAcs(options = {}) {
                         </button>
                       ` : ''}
                     </div>
-                    <small class="muted">VLAN Internet: ${escapeHtml(genieVlanText(row.wanVlan))}</small>
                   </td>
                   <td class="genieacs-nowrap" title="${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}">${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}</td>
                   <td class="genieacs-truncate" title="${escapeHtml(row.nasName || row.nasIpAddress || '-')}">${nasActiveBadge(row.nasName || row.nasIpAddress || '-')}</td>

@@ -905,7 +905,7 @@ verify_genieacs_health() {
   [ -f "$GENIEACS_ENV_FILE" ] || return 0
   load_genieacs_env
   local ui_port nbi_port attempt ui_status nbi_status
-  ui_port="${GENIEACS_UI_PORT:-7568}"
+  ui_port="${GENIEACS_UI_PORT:-3001}"
   nbi_port="${GENIEACS_NBI_PORT:-7557}"
   for attempt in $(seq 1 "${GENIEACS_HEALTH_ATTEMPTS:-120}"); do
     ui_status="$(curl -sS --max-time 2 "http://127.0.0.1:${ui_port}/status" 2>/dev/null || true)"
@@ -1501,7 +1501,7 @@ main() {
   if [ "${INSTALL_GENIEACS:-1}" != "0" ] && [ -f "$GENIEACS_ENV_FILE" ]; then
     load_genieacs_env
     echo "GenieACS CWMP: http://SERVER-IP:${GENIEACS_CWMP_PORT:-7547}"
-    echo "GenieACS UI: http://SERVER-IP:${GENIEACS_UI_PORT:-7568}"
+    echo "GenieACS UI: http://SERVER-IP:${GENIEACS_UI_PORT:-3001}"
     echo "GenieACS NBI: 127.0.0.1:${GENIEACS_NBI_PORT:-7557} (localhost only)"
     echo "Login GenieACS awal: ${GENIEACS_UI_USERNAME} / ${GENIEACS_UI_PASSWORD}"
     echo "Inform CPE: ${GENIEACS_CWMP_AUTH_USERNAME:-admin} / ${GENIEACS_CWMP_AUTH_PASSWORD:-1sampai10}"
