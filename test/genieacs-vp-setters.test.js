@@ -132,3 +132,57 @@ test('Bridge stays off for restricted ZTE GPON models but remains available for 
     assert.equal(wan.detectWanVendor(device).bridgeSupported,true,model);
   }
 });
+
+// Match GenieACS's lazy wrappers: attributes not requested in timestamps are
+// absent, and inspecting a wrapper after declare() commits the pending batch.
+function readVirtual(name, leaves, options={}) {
+ let pending=false,commits=0;const reads=[],writes=[];
+ const commit=()=>{commits++;pending=false;if(commits>8)throw Error('Unbounded virtual read commits');};
+ const declare=(pattern,attributes={},write)=>{
+  if(write){writes.push({pattern,write});throw Error('Read-only virtual attempted a native write');}
+  reads.push(pattern);pending=true;const regex=new RegExp('^'+pattern.split('.').map(p=>p==='*'?'[^.]+':p.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('\\.')+'$');
+  const paths=Object.keys(leaves).filter(path=>regex.test(path));
+  const rows={get size(){if(pending)commit();return paths.length;},*[Symbol.iterator](){if(pending)commit();for(const path of paths)yield wrap(path);}};
+  function wrap(path){const row={get path(){if(pending)commit();return path;}};if(attributes.value>=1)Object.defineProperty(row,'value',{get(){if(pending)commit();return[leaves[path].value,leaves[path].type||'xsd:string'];}});if(attributes.writable>=1)Object.defineProperty(row,'writable',{get(){if(pending)commit();return leaves[path].writable;}});return row;}
+  for(const key of ['path','value','writable'])Object.defineProperty(rows,key,{get:()=>paths.length?wrap(paths[0])[key]:undefined});return rows;
+ };
+ const source=fs.readFileSync(path.join(__dirname,'../deploy/genieacs/virtual-parameters',name+'.js'),'utf8');const result=new Function('declare','commit','args',source)(declare,commit,[{},options.desired===undefined?{}:{value:[options.desired]}]);return{result,reads,writes,commits};
+}
+test('active-client virtual reads16SSID and host metadata in bounded batches instead of hundreds of commits',()=>{
+ const leaves={'DeviceID.ProductClass':{value:'F672Y'}};
+ for(let i=1;i<=16;i++){const base='InternetGatewayDevice.LANDevice.1.WLANConfiguration.'+i;leaves[base+'.SSID']={value:'Customer '+i};leaves[base+'.Enable']={value:true};leaves[base+'.TotalAssociations']={value:1};}
+ const output=readVirtual('activedevices',leaves);assert.equal(output.result.value[0],'16');assert(output.commits<=2);assert.deepEqual(output.writes,[]);
+ const restricted=readVirtual('activedevices',{'DeviceID.ProductClass':{value:'FL327D'},[wlan+'.TotalAssociations']:{value:2}});assert(restricted.reads.every(p=>!p.includes('Hosts.Host')));
+});
+test('VLAN virtual reads explicit aliases and tagged WAN names, keeps zero untagged and refuses unrelated templates',()=>{
+ const make=(base,vlan,name,username='member')=>({'VirtualParameters.pppoeUsername':{value:username},[base+'.Username']:{value:username},[base+'.ConnectionStatus']:{value:'Connected'},[base+'.Name']:{value:name},...(vlan===undefined?{}:{[base+'.X_HW_VLAN']:{value:vlan}})});
+ assert.equal(readVirtual('wanVlan',make(ppp+'1',101,'Internet')).result.value[0],'101');
+ assert.equal(readVirtual('wanVlan',make(ppp+'1',undefined,'1_INTERNET_R_VID_131')).result.value[0],'131');
+ assert.equal(readVirtual('wanVlan',make(ppp+'1',0,'Internet')).result.value[0],'0');
+ const missing=make(ppp+'3',undefined,'4_INTERNET_R_VID_');Object.assign(missing,make(ppp+'1',undefined,'2_INTERNET_R_VID_200','old-template'));missing['VirtualParameters.pppoeUsername']={value:'member'};assert.equal(readVirtual('wanVlan',missing).result.value[0],'');
+ const dual={...make(ppp+'1',101,'Internet'),...make(ppp+'2',102,'Internet')};assert.equal(readVirtual('wanVlan',dual).result.value[0],'');
+});
+test('VLAN virtual follows TR181LowerLayers rather than taking a management VLAN from the first index',()=>{
+ const leaves={'VirtualParameters.pppoeUsername':{value:'member'},'Device.PPP.Interface.2.Username':{value:'member'},'Device.PPP.Interface.2.LowerLayers':{value:'Device.Ethernet.Link.4'},'Device.Ethernet.Link.4.LowerLayers':{value:'Device.Ethernet.VLANTermination.3'},'Device.Ethernet.VLANTermination.1.VLANID':{value:100},'Device.Ethernet.VLANTermination.3.VLANID':{value:777}};
+ const output=readVirtual('wanVlan',leaves);assert.equal(output.result.value[0],'777');assert(output.commits<=1);
+});
+test('cached virtual readers request actual values and retain unknown uptime or counters without writes',()=>{
+ const leaves={'InternetGatewayDevice.DeviceInfo.XponInterface.MACAddress':{value:'AA:BB:CC:DD:EE:01'},[ppp+'1.MACAddress']:{value:'AA:BB:CC:DD:EE:02'},'InternetGatewayDevice.DeviceInfo.UpTime':{value:65},[ppp+'1.Uptime']:{value:120},'VirtualParameters.pppoeIP':{value:'192.0.2.8'}};
+ for(const[name,expected]of [['PonMac','AA:BB:CC:DD:EE:01'],['pppoeMac','AA:BB:CC:DD:EE:02'],['getdeviceuptime','0d 00:01:05'],['getpppuptime','0d 00:02:00'],['ip','192.0.2.8']]){const output=readVirtual(name,leaves);assert.equal(output.result.value[0],expected,name);assert(output.commits<=2,name);assert.deepEqual(output.writes,[]);}
+ for(const name of['getdeviceuptime','getpppuptime','LANActiveClients','LANClients','activedevices'])assert.equal(readVirtual(name,{}).result.value[0],'',name);
+});
+test('PPPIP and username virtual reads do not mix a management address or require write eligibility',()=>{
+ const leaves={'VirtualParameters.pppoeUsername':{value:'member'},[ppp+'1.Username']:{value:'member'},[ppp+'1.ExternalIPAddress']:{value:'192.0.2.8'},[ppp+'2.Username']:{value:'acs'},[ppp+'2.ExternalIPAddress']:{value:'192.0.2.100'}};
+ assert.equal(readVirtual('pppoeIP',leaves).result.value[0],'192.0.2.8');
+ const combined={[ppp+'1.Username']:{value:'member',writable:true},[ppp+'1.ConnectionStatus']:{value:'Connected'},[ppp+'1.X_HW_VLAN']:{value:101},[ppp+'1.X_HW_SERVICELIST']:{value:'TR069_INTERNET'}};
+ const output=readVirtual('pppoeUsername',combined);assert.equal(output.result.value[0],'member');assert.equal(output.result.writable,false);assert(output.commits<=2);
+});
+test('PPP password contract never treats a username virtual as a password',()=>{
+ const cfg=genie.normalizeSettings({});assert(cfg.pppPasswordParameters.includes('VirtualParameters.pppoePassword'));assert(!cfg.pppPasswordParameters.some(p=>p.endsWith('pppoeUsername')||p.endsWith('.pppoe')||p.endsWith('pppoeUsername2')));
+});
+test('installer cache backfill executes the same VP readers, preserves custom definitions and refuses native writes',()=>{
+ const{evaluateCachedVirtualParameters}=require('../deploy/genieacs/bootstrap');const sources=['wanVlan','getSerialNumber','getdeviceuptime'].map(name=>({name,script:fs.readFileSync(path.join(__dirname,'../deploy/genieacs/virtual-parameters',name+'.js'),'utf8')}));
+ const doc={_id:'unit',_deviceId:{_SerialNumber:'HWTC11223344'},VirtualParameters:{custom:{_value:'owner-kept'}},InternetGatewayDevice:{DeviceInfo:{UpTime:{_value:65}},WANDevice:{1:{WANConnectionDevice:{1:{WANPPPConnection:{1:{Username:{_value:'member'},ConnectionStatus:{_value:'Connected'},Name:{_value:'1_INTERNET_R_VID_131'}}}}}}}}};
+ const output=evaluateCachedVirtualParameters(doc,sources);assert.deepEqual(output.errors,[]);assert.equal(output.set['VirtualParameters.wanVlan']._value,'131');assert.equal(output.set['VirtualParameters.getSerialNumber']._value,'HWTC11223344');assert.equal(output.set['VirtualParameters.getdeviceuptime']._value,'0d 00:01:05');assert(!Object.hasOwn(output.set,'VirtualParameters.custom'));assert(Object.keys(output.set).every(p=>p.startsWith('VirtualParameters.')));
+ const malicious=evaluateCachedVirtualParameters(doc,[{name:'bad',script:'declare("Device.WAN.1.Enable", null, {value:false});return {writable:false,value:["bad","xsd:string"]};'}]);assert.equal(Object.keys(malicious.set).length,0);assert.equal(malicious.errors.length,1);
+});

@@ -24,6 +24,11 @@ test('TR069 URL/boolean validation rejects CLI injection, credentials, unsafe pr
  assert.equal(tr.setting(undefined),null);assert.deepEqual(tr.setting({enabled:false}),{enabled:false,acsUrl:''});assert.deepEqual(tr.setting({enabled:true,acsUrl:'http://192.0.2.10:7547'}),config);
  for(const bad of[null,true,{enabled:'true'},{enabled:true,acsUrl:'file:///etc/passwd'},{enabled:true,acsUrl:'http://x/;reboot'},{enabled:true,acsUrl:'http://x/\nreboot'},{enabled:true,acsUrl:'http://user:pass@x/'},{enabled:true,acsUrl:'http://127.0.0.1/'},{enabled:true,acsUrl:'http://x/?token=secret'},{...config,hostId:2}])assert.throws(()=>tr.setting(bad));
 });
+test('automatic registration can provision management DHCP without enabling TR069',async()=>{
+ const f=fns.fixture();f.model.trLines=[];const sent=[],options={explicitDevAccess:true,transportOptions:{transports:{commands:async({commands})=>{sent.push(...commands);return response(commands,f.model);}}},persist:async job=>reg.record(f.device,job)};
+ await pnp.read(f.data,f.device,f.actor,fns.key,options);pnp.savePreset(f.data,f.device,f.actor,{ponKey:fns.key,vlanMode:'selected',vlans:[100,101],bandwidthMode:'auto60',onuType:'',requestedEnabled:true,presetRevision:'',tr069:{enabled:false,managementEnabled:true,acsUrl:''}});
+ const job=await reg.processJob(f.data,f.device,f.actor,fns.key,f.model.onu.serialNumber,options);assert.equal(job.status,'verified',job.message);assert(job.tr069Result.configured);assert(sent.some(x=>x.startsWith('ip-host ')));assert(!sent.some(x=>x.startsWith('tr069-mgmt ')));
+});
 test('registration reuses VLAN100/GEM1/service1, configures only management and never claims ACS Inform',async()=>{
  const f=await fixture();assert(f.job.tr069Result.configured);assert.equal(f.job.tr069Result.acsVerified,false);assert.equal(f.job.tr069Result.dhcpAddress,null);assert.equal(f.model.onu.services.length,3);assert.equal(f.model.management.length,3);assert.equal(f.sent.filter(line=>/^service-port 1 /.test(line)).length,1);assert.equal(f.sent.filter(line=>/^service FBV100 /.test(line)).length,1);
  assert.deepEqual(tr.plan(f.state,config).writes,[]);assert(!f.sent.some(line=>/^switchport-bind.*(?:ethuni|wifi|veip)|^no |^vlan 100|^reboot|^shutdown/.test(line)));

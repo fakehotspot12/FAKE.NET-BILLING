@@ -247,11 +247,8 @@ test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () =
   const lanClients = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'genieacs', 'virtual-parameters', 'LANClients.js'), 'utf8');
 
   assert.match(bootstrap, /X_CT-COM_GponInterfaceConfig\.RXPower/);
-  assert.match(bootstrap, /802\\\\\.11/);
-  assert.match(bootstrap, /const text = clean\(value\)/);
-  assert.match(bootstrap, /function pppUsernamePaths\(\)/);
-  assert.match(bootstrap, /WANPPPConnection\." \+ ppp \+ "\.Username/);
-  assert.match(bootstrap, /const pppUserPaths = pppUsernamePaths\(\)/);
+  assert.match(bootstrap, /function evaluateCachedVirtualParameters/);
+  assert.match(bootstrap, /Cache backfill cannot write native parameters/);
   assert.match(bootstrap, /installVirtualParametersViaNbi/);
   assert.match(bootstrap, /GENIEACS_BOOTSTRAP_DRY_RUN/);
   assert.match(bootstrap, /verifyVirtualParameterDefinitions/);
@@ -263,10 +260,10 @@ test('keeps GenieACS bootstrap and LAN virtual parameters safe for FL327D', () =
     bootstrap.indexOf('async function installVirtualParameters(')
   );
   assert.doesNotMatch(backfill, /\$unset|const unset/);
-  assert.match(backfill, /changedVpSet/);
-  assert.match(backfill, /\{ \$set: changedSet \}/);
+  assert.match(backfill, /evaluateCachedVirtualParameters/);
+  assert.match(backfill, /\{\$set: result\.set\}/);
   assert.match(bootstrap, /X_ZTE-COM_WANPONInterfaceConfig\.RXPower/);
-  assert.match(bootstrap, /Device\.Optical\.Interface\.1\.RXPower/);
+  assert.match(bootstrap, /Device\.Optical\.Interface\.\*\.RXPower/);
   assert.doesNotMatch(source, /name: 'refreshObject', objectName: ''/);
   assert.match(source, /WANPPPConnection\.\*\.Username/);
   assert.match(source, /Promise\.all\(projectionChunks\(projection\)/);
@@ -1776,6 +1773,19 @@ test('verifies the complete WAN readback instead of accepting a partial match', 
   assert.equal(stale.checks.bindings, false);
   assert.equal(updated.verified, true);
 });
+test('WAN notices distinguish a real pending task from an empty queue and an unchanged untagged VLAN',()=>{
+ const plan={vlan:101},verification={verified:false,informed:true,checks:{target:true,vlan:false},actualVlan:0},state=genieAcs._internal.wanVerificationState;
+ const complete=state(plan,verification,0);assert.equal(complete.state,'unverified');assert.match(complete.message,/0 \(untagged\).*101/);assert.doesNotMatch(complete.message,/belum mengirim inform|tetap berada/);
+ const pending=state(plan,verification,2);assert.equal(pending.state,'queued');assert.equal(pending.pendingTaskCount,2);assert.match(pending.message,/2 task/);
+ const unknown=state(plan,verification);assert.equal(unknown.state,'unverified');assert.equal(unknown.pendingTaskCount,null);assert.doesNotMatch(unknown.message,/tidak lagi berada|menunggu di/);
+ assert.equal(state(plan,{verified:true},0).state,'verified');
+});
+test('changing an untagged CMCC Internet VLAN preserves its native PPPoE_Routed mode and the separate ACS WAN',()=>{
+ const device=zteCmccWanDevice(),before=structuredClone(device),raw=device.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1].WANPPPConnection[1];raw.X_CMCC_VLANIDMark._value=0;
+ const summary=genieAcsWan.summarizeWanConnections(device,'member-cmcc'),row=summary.rows.find(row=>row.username==='member-cmcc');
+ const plan=genieAcsWan.prepareWanProvision(device,{targetWan:row.id,mode:'pppoe',vlan:101,username:'member-cmcc',bindings:[]}),values=new Map(plan.parameterValues.map(([name,value])=>[name,value]));
+ assert.equal(values.get(row.basePath+'.ConnectionType'),'PPPoE_Routed');assert.equal(values.get(row.basePath+'.X_CMCC_VLANIDMark'),101);assert(!plan.parameterValues.some(([name])=>name.includes('WANIPConnection.1.')));assert.deepEqual(device.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1].WANIPConnection,before.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1].WANIPConnection);
+});
 
 test('requires confirmation and cleans old WAN when moving a binding', () => {
   const device = huaweiMultiWanDevice();
@@ -1796,6 +1806,114 @@ test('requires confirmation and cleans old WAN when moving a binding', () => {
     moveBindings: true
   });
   assert.equal(plan.cleanupValues.some(([name, value]) => name.endsWith('.X_HW_LANBIND.Lan2Enable') && value === 0), true);
+});
+
+test('reported untagged Internet VLAN stays visible without enabling VLAN zero provisioning', () => {
+  const leaf = value => ({ _value: value });
+  const device = { _deviceId: { _Manufacturer: 'ZTE' }, VirtualParameters: { wanVlan: leaf('101') }, InternetGatewayDevice: { WANDevice: { 1: { WANConnectionDevice: { 1: {
+    WANPPPConnection: { 3: { Username: leaf('customer'), Name: leaf('4_INTERNET_R_VID_'), ConnectionType: leaf('PPPoE_Routed'), ConnectionStatus: leaf('Connected'), 'X_CMCC_VLANIDMark': leaf(0), 'X_CMCC_ServiceList': leaf('INTERNET') } },
+    WANIPConnection: { 1: { 'X_CMCC_VLANIDMark': leaf(100), 'X_CMCC_ServiceList': leaf('TR069') } }
+  } } } } } };
+  const summary = genieAcsWan.summarizeWanConnections(device, 'customer');
+  assert.equal(summary.primary.vlan, 0);
+  assert.equal(summary.primary.label, 'PPPoE - VLAN 0 (untagged)');
+  assert.equal(summary.primary.bindingEditable, false);
+  assert.equal(summary.management.protected, true);
+  assert.throws(() => genieAcsWan.prepareWanProvision(device, { targetWan: summary.primary.id, mode: 'pppoe', vlan: 0, username: 'customer' }), /VLAN wajib angka 1 sampai 4094/);
+  delete device.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1].WANPPPConnection[3]['X_CMCC_VLANIDMark'];
+  delete device.VirtualParameters.wanVlan;
+  assert.equal(genieAcsWan.summarizeWanConnections(device, 'customer').primary.vlan, null);
+});
+
+function deletionFixture(id = 'delete-fixture') {
+  const leaf = value => ({ _value: value });
+  const make = (name, vlan, services, username = '') => ({ _object: true, _writable: true, Name: leaf(name), Username: leaf(username), ConnectionType: leaf('PPPoE_Routed'), ConnectionStatus: leaf('Connected'), X_CMCC_VLANIDMark: leaf(vlan), X_CMCC_ServiceList: leaf(services) });
+  return { _id: id, _deviceId: { _Manufacturer: 'ZTE', _ProductClass: 'F663NV3a', _SerialNumber: id }, InternetGatewayDevice: { WANDevice: { 1: { WANConnectionDevice: { 1: {
+    WANPPPConnection: { 1: make('Template', 200, 'INTERNET', 'template'), 3: make('Internet', 0, 'INTERNET', 'member') },
+    WANIPConnection: { 1: make('TR069', 100, 'TR069') }
+  } } } } } };
+}
+const deletionPath = 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.3';
+function deletionPayload(raw) {return {targetWan: deletionPath, expectedRevision: genieAcsWan.summarizeWanConnections(raw).rows.find(row => row.id === deletionPath).deleteRevision, confirm: true};}
+
+test('WAN deletion accepts one writable instance and rejects protected, stale, missing and parent targets', () => {
+  const raw = deletionFixture(), payload = deletionPayload(raw);
+  assert.equal(genieAcsWan.prepareWanDeletion(raw, payload).targetWan, deletionPath);
+  for (const targetWan of [deletionPath.replace(/\.3$/, ''), 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1', 'new', deletionPath + '.Password', deletionPath.replace(/\.3$/, '.9')]) assert.throws(() => genieAcsWan.prepareWanDeletion(raw, {...payload, targetWan}));
+  assert.throws(() => genieAcsWan.prepareWanDeletion(raw, {...payload, confirm: false}), /Konfirmasi/);
+  const target = raw.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1].WANPPPConnection[3];
+  for (const writable of [false, undefined]) {target._writable = writable;assert.throws(() => genieAcsWan.prepareWanDeletion(raw, payload), /izin|Izin/);}
+  target._writable = true;target.Username._value = 'replaced';
+  assert.throws(() => genieAcsWan.prepareWanDeletion(raw, payload), /berubah/);
+  target.Username._value = 'member';target.X_CMCC_ServiceList._value = 'INTERNET_TR069';
+  assert.throws(() => genieAcsWan.prepareWanDeletion(raw, deletionPayload(raw)), /dilindungi/);
+});
+
+function mockWanDelete(t, raw, mode = '') {
+  const calls = [], cancelled = []; let lastTask = '';
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    const target = new URL(url);
+    if (target.pathname === '/devices/') return Response.json([structuredClone(raw)]);
+    if (target.pathname === '/tasks/') return Response.json(mode === 'pending' ? [{_id: 'existing', objectName: deletionPath}] : []);
+    if (target.pathname.startsWith('/tasks/') && options.method === 'DELETE') {cancelled.push(target.pathname);return Response.json({});}
+    if (target.pathname === '/faults/') return Response.json(mode === 'fault' && lastTask === 'deleteObject' ? [{code: 'cwmp.9005', message: 'DeleteObject rejected'}] : []);
+    if (target.pathname.endsWith('/tasks') && options.method === 'POST') {
+      const body = JSON.parse(options.body);calls.push(body);lastTask = body.name;
+      if (body.name === 'getParameterValues' && mode === 'offline') return Response.json({_id:'probe'}, {status:202});
+      if (body.name === 'getParameterValues' && mode === 'changed') raw.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1].WANPPPConnection[3].X_CMCC_ServiceList._value = 'TR069';
+      if (body.name === 'deleteObject' && mode === 'queued') return Response.json({_id:'delete'}, {status:202});
+      if (body.name === 'deleteObject' && !['fault','stale-readback'].includes(mode)) delete raw.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1].WANPPPConnection[3];
+      return Response.json({_id: body.name === 'deleteObject' ? 'delete' : 'probe'});
+    }
+    throw Error('Unexpected request: ' + target.pathname);
+  });return {calls, cancelled};
+}
+test('deletion identity does not change with the account-specific VLAN display fallback', () => {
+  const raw = deletionFixture('delete-display-fallback'), connection = raw.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1];
+  for (const row of Object.values(connection.WANPPPConnection)) {delete row.X_CMCC_VLANIDMark;row.Name._value = 'Internet';}
+  raw.VirtualParameters = {wanVlan: {_value:'101'}};
+  const selected = genieAcsWan.summarizeWanConnections(raw, 'member').rows.find(row => row.id === deletionPath);
+  const unselected = genieAcsWan.summarizeWanConnections(raw, 'template').rows.find(row => row.id === deletionPath);
+  assert.equal(selected.vlan, 101);
+  assert.equal(unselected.vlan, null);
+  assert.equal(selected.deleteRevision, unselected.deleteRevision);
+  assert.equal(genieAcsWan.prepareWanDeletion(raw, {targetWan:deletionPath, expectedRevision:selected.deleteRevision, confirm:true}).targetWan, deletionPath);
+});
+const deletionSettings = {enabled:true, baseUrl:'http://delete-acs.example.test', connectionRequest:false};
+test('delete WAN sends one exact DeleteObject and preserves the shared management WAN and sibling', async t => {
+  const raw = deletionFixture('delete-success'), payload = deletionPayload(raw), parent = raw.InternetGatewayDevice.WANDevice[1].WANConnectionDevice[1];
+  const before = JSON.stringify({management: parent.WANIPConnection, sibling: parent.WANPPPConnection[1]});
+  const mock = mockWanDelete(t, raw), result = await genieAcs.deleteWan(deletionSettings, raw._id, payload);
+  assert.equal(result.verification.verified, true);
+  assert.equal(result.verification.protectedWansPreserved, true);
+  assert.deepEqual(mock.calls.filter(row => row.name === 'deleteObject'), [{name:'deleteObject',objectName:deletionPath,expiry:30}]);
+  assert(mock.calls.filter(row => row.name === 'getParameterValues').flatMap(row => row.parameterNames).every(path => path.startsWith(deletionPath + '.') && !/Password$/.test(path)));
+  assert.equal(JSON.stringify({management: parent.WANIPConnection, sibling: parent.WANPPPConnection[1]}), before);
+  assert(!mock.calls.some(row => ['setParameterValues','reboot','addObject'].includes(row.name)));
+});
+for (const mode of ['offline','changed','pending']) test('delete WAN refuses ' + mode + ' state before sending DeleteObject', async t => {
+  const raw = deletionFixture('delete-' + mode), payload = deletionPayload(raw), mock = mockWanDelete(t, raw, mode);
+  await assert.rejects(genieAcs.deleteWan(deletionSettings, raw._id, payload));
+  assert(!mock.calls.some(row => row.name === 'deleteObject'));
+  if (mode === 'offline') assert.deepEqual(mock.cancelled, ['/tasks/probe']);
+});
+test('queued deletion is cancelled and is never replayed', async t => {
+  const raw = deletionFixture('delete-queued'), mock = mockWanDelete(t, raw, 'queued');
+  await assert.rejects(genieAcs.deleteWan(deletionSettings, raw._id, deletionPayload(raw)), /belum terkonfirmasi/);
+  assert.equal(mock.calls.filter(row => row.name === 'deleteObject').length, 1);
+  assert.deepEqual(mock.cancelled, ['/tasks/delete']);
+});
+test('CPE deletion rejection surfaces the fault and does not retry', async t => {
+  const raw = deletionFixture('delete-fault'), mock = mockWanDelete(t, raw, 'fault');
+  await assert.rejects(genieAcs.deleteWan(deletionSettings, raw._id, deletionPayload(raw)), /9005/);
+  assert.equal(mock.calls.filter(row => row.name === 'deleteObject').length, 1);
+});
+test('successful DeleteObject with stale cache is reported as awaiting readback', async t => {
+  const raw = deletionFixture('delete-readback'), mock = mockWanDelete(t, raw, 'stale-readback');
+  const result = await genieAcs.deleteWan(deletionSettings, raw._id, deletionPayload(raw));
+  assert.equal(result.verification.verified, false);
+  assert.equal(result.verification.removed, false);
+  assert.equal(mock.calls.filter(row => row.name === 'deleteObject').length, 1);
 });
 
 test('rejects protected WAN and never exposes PPPoE password in public plan', () => {

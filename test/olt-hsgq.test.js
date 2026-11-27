@@ -61,6 +61,11 @@ test('HSGQ PON deletion proof rejects truncated counts, unknown state, changed i
  assert.equal(driver.removalTable(text.replace('Inactive Initial initial Initial','Active Initial initial Initial'),target).state,'unknown');
  const moved=text.replace('1/0','1/1');assert.throws(()=>driver.removalTable(moved,target),/berpindah/);
 });
+test('native empty-PON response is absence only for the exact PON, not a truncated or conflicting table',()=>{
+ const target=driver.position(ID),empty='show ont-info 1 all \r\n  In port 1 , the total of ONTs are: 0, online: 0\r\n\r\nOLT(config)# ';
+ assert.deepEqual(driver.removalTable(empty,target),{state:'missing',registry:[]});
+ for(const text of ['',empty.replace('port 1','port 2'),empty.replace('show ont-info 1','show ont-info 2'),empty.replace('are: 0','are: 1'),empty.replace('online: 0','online: 1'),empty+empty,empty+'\n'+row(),empty+'\nTotal: 0 Online:0 Offline:0',empty+'\nError, access denied',empty+'\nPON/ONU Serial',empty+'\nUnexpected partial output'])assert.throws(()=>driver.removalTable(text,target));
+});
 test('same-session target or interface change blocks native mutation before sending',async()=>{
  for(const change of [{badSn:true},{badMode:true}]){const{result,written}=await wire('delete',change);assert.equal(result.success,false);assert.equal(result.submitted,false);assert(!written.includes('ont delete 0'));}
  const{result}=await wire('rename',{rejected:true});assert.equal(result.success,false);assert.equal(result.submitted,true);
@@ -80,6 +85,14 @@ test('bounded HSGQ inventory retains ONU 0, real causes and exact PON counts; tr
  const f=fixture();let truncated=false;const calls=[];const options={transports:{exec:async(name,args)=>({stdout:args.some(value=>value.endsWith('.1.2'))?'.1.3.6.1.2.1.2.2.1.2.1 = STRING: "PON01"\n':'.1.3.6.1.2.1.1.1.0 = STRING: "HSGQ-G008ID"\n'}),commands:async({commands})=>{calls.push(...commands);return{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:command==='show ont-info 1 all'?table(truncated?'':row()):'OLT(config)#'}))};}}};
  const result=await vendors.readInventory(f.data,f.device,{normalizeSerial:monitor.normalizeSerial,classifyCause:monitor.classifyCause},options);assert.equal(result.rows.length,1);assert.equal(result.rows[0].onuId,0);assert.equal(result.rows[0].condition,'los');assert.equal(result.hsgqActions.delete,true);assert(!calls.includes('show ont-info all'));assert(!calls.includes('show ont-optical all'));
  truncated=true;await assert.rejects(vendors.readInventory(f.data,f.device,{},options),/terpotong/);
+});
+test('an explicitly empty HSGQ PON does not lock the inventory or actions of populated PONs',async()=>{
+ const f=fixture();let empty='show ont-info 8 all\r\n  In port 8 , the total of ONTs are: 0, online: 0\r\n\r\nOLT(config)# ',populated=true;
+ const options={transports:{exec:async()=>({stdout:'.1.3.6.1.2.1.1.1.0 = STRING: "HSGQ-G008ID"\n'}),commands:async({commands})=>({success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:command==='show ont-info 1 all'?(populated?table():empty.replaceAll('8','1')):command==='show ont-info 8 all'?empty:'OLT(config)#'}))})}};
+ const helpers={physicalInterfaces:[{value:'PON01'},{value:'PON08'}],normalizeSerial:monitor.normalizeSerial,classifyCause:monitor.classifyCause};
+ const inventory=await vendors.readInventory(f.data,f.device,helpers,options);assert.equal(inventory.available,true);assert.equal(inventory.rows.length,1);assert.equal(inventory.hsgqActions.delete,true);assert.equal(inventory.hsgqActions.rename,true);assert.equal(inventory.hsgqActions.reboot,true);
+ for(const text of ['OLT(config)#',empty.replace('port 8','port 7'),empty.replace('are: 0','are: 1'),empty+'\nError, incomplete table']){const valid=empty;empty=text;await assert.rejects(vendors.readInventory(f.data,f.device,helpers,options),/terpotong/);empty=valid;}
+ populated=false;assert.equal((await vendors.readInventory(f.data,f.device,helpers,options)).rows.length,0);
 });
 test('HSGQ ONU 0 uses the existing planned reboot ticket suppression without broadening another PON',()=>{
  const f=fixture(),planned=require('../src/olt-planned-reboot'),target={oltId:f.device.id,onuIndex:ID,serialNumber:SN,pon:'0/0/1',source:'olt'},now=Date.now();assert(planned.begin(f.data,target,{role:'admin'},now));const snapshot={id:ID,serialNumber:SN,ponKey:'0/0/1'};assert(planned.forOnu(f.data,f.device,snapshot,{now:now+1000}));assert.equal(planned.forOnu(f.data,f.device,{...snapshot,ponKey:'0/0/2'},{now:now+1000}),null);
@@ -113,6 +126,47 @@ test('user inspection waits for in-flight optical reads and blocks replacement b
  await driver.enrichPage(f.data,f.device,[target],{background:true,transports:{commands:async()=>{reads++;await gate;return{success:false,outputs:[]};}}});
  const task=driver.run(f.data,f.device,target,'inspect',{}, {transports:{commands:async({commands})=>{inspections++;return{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:command==='show ont-info 1 0'?detail('Online'):'OLT(config)#'}))};}}});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(inspections,0);assert(driver.isBusy(f.device.id));await driver.enrichPage(f.data,f.device,[target],{background:true});assert.equal(reads,1);release();const result=await task;assert.equal(result.state,'online');assert.equal(inspections,1);assert(!driver.isBusy(f.device.id));
+});
+test('HSGQ inventory and resource polling yield for the complete user inspection',async()=>{
+ const f=fixture(),target={id:ID,serialNumber:SN};let release,calls=0;const gate=new Promise(resolve=>release=resolve);
+ const inspection=driver.run(f.data,f.device,target,'inspect',{purpose:'delete'},{transports:{commands:async({commands})=>{await gate;return{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:command==='show ont-info 1 all'?table():'OLT(config)#'}))};}}});
+ try{await new Promise(resolve=>setImmediate(resolve));assert(driver.isBusy(f.device.id));await monitor.poll(f.data,f.device,async()=>{calls++;return[];});await require('../src/olt-telemetry').pollDevices(f.data,[f.device],{transports:{commands:async()=>{calls++;return{success:false};}}});assert.equal(calls,0);}finally{release();await inspection;}
+});
+test('multiple HSGQ users queue complete operations in order without interleaving a write and another inspection',async()=>{
+ const f=fixture(),target={id:ID,serialNumber:SN};let release,calls=0;const gate=new Promise(resolve=>release=resolve),events=[];
+ const options={transports:{commands:async({commands})=>{events.push(commands.some(command=>command.startsWith('ont setting '))?'rename':'inspect');if(++calls===1)await gate;return{success:true,verified:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:detail('Online')}))};}}};
+ const first=driver.run(f.data,f.device,target,'rename',{description:'Client Two',previousDescription:'Client'},options);await new Promise(resolve=>setImmediate(resolve));
+ const second=driver.run(f.data,f.device,target,'inspect',{},options);await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);release();assert.equal((await first).descriptionConfirmed,true);assert.equal((await second).state,'online');assert.deepEqual(events,['inspect','rename','inspect']);assert(!driver.isBusy(f.device.id));
+});
+test('HSGQ queued writes recheck cooldown rather than replaying a mutation requested by two users',async()=>{
+ const f=fixture(),target={id:ID,serialNumber:SN};let release,calls=0;const gate=new Promise(resolve=>release=resolve),options={transports:{commands:async({commands})=>{if(++calls===1)await gate;return{success:true,verified:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:detail('Online')}))};}}};
+ const first=driver.run(f.data,f.device,target,'rename',{description:'Client Two',previousDescription:'Client'},options);await new Promise(resolve=>setImmediate(resolve));const second=assert.rejects(driver.run(f.data,f.device,target,'rename',{description:'Client Three',previousDescription:'Client'},options),error=>error.status===429&&/Perintah baru diproses/.test(error.message));release();await first;await second;assert.equal(calls,2);assert(!driver.isBusy(f.device.id));
+});
+test('HSGQ queue is bounded and releases all waiters after a failed read',async()=>{
+ const f=fixture(),target={id:ID,serialNumber:SN};let release,calls=0;const gate=new Promise(resolve=>release=resolve),options={transports:{commands:async({commands})=>{if(++calls===1){await gate;return{success:false,error:'Unsupported command'};}return{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:detail('Online')}))};}}};
+ const first=assert.rejects(driver.run(f.data,f.device,target,'inspect',{},options),/belum dapat/);await new Promise(resolve=>setImmediate(resolve));const queued=Array.from({length:4},()=>driver.run(f.data,f.device,target,'inspect',{},options));await assert.rejects(driver.run(f.data,f.device,target,'inspect',{},options),error=>error.status===429&&/Antrean aksi HSGQ penuh/.test(error.message));assert.equal(calls,1);release();await first;assert((await Promise.all(queued)).every(row=>row.state==='online'));assert.equal(calls,5);assert(!driver.isBusy(f.device.id));
+});
+test('an expired HSGQ queue entry never reads or writes after the active operation completes',async t=>{
+ const f=fixture(),target={id:ID,serialNumber:SN};let release,calls=0;const gate=new Promise(resolve=>release=resolve),options={transports:{commands:async({commands})=>{calls++;await gate;return{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:detail('Online')}))};}}};
+ const first=driver.run(f.data,f.device,target,'inspect',{},options);await new Promise(resolve=>setImmediate(resolve));t.mock.timers.enable({apis:['setTimeout']});
+ const expired=assert.rejects(driver.run(f.data,f.device,target,'inspect',{},options),error=>error.status===429&&/Batas waktu antrean/.test(error.message));t.mock.timers.tick(8001);await expired;t.mock.timers.reset();release();await first;assert.equal(calls,1);assert(!driver.isBusy(f.device.id));
+});
+test('temporary HSGQ inventory failure preserves known firmware capabilities but not a live identity proof',async()=>{
+ const f=fixture(),original=vendors.readInventory,raw=async(target,name,oid)=>name==='system'?[{oid:oid+'.2.0',type:'OID',value:'.1.3.6.1.4.1.50224'}]:name==='interfaces'?[{oid:oid+'.1',type:'STRING',value:'PON01'}]:[{oid:oid+'.1',type:'INTEGER',value:'1'}];let broken=false;
+ vendors.readInventory=async()=>{if(broken)throw Error('Read interrupted');return{available:true,rows:[{id:ID,serialNumber:SN,pon:1,ponKey:'0/0/1',onuId:0,status:'offline',condition:'other'}],hsgqActions:{rename:true,reboot:true,delete:true,saveConfig:true}};};
+ try{const fresh=await monitor.poll(f.data,f.device,raw);assert.equal(vendors.capabilities(f.device,fresh).delete,true);broken=true;const failed=await monitor.poll(f.data,f.device,raw);assert.equal(failed.inventoryAvailable,false);assert.equal(failed.stale,true);assert.deepEqual(failed.hsgqActions,fresh.hsgqActions);assert.equal(vendors.capabilities(f.device,failed).delete,true);assert(!failed.warnings.some(value=>value.includes('Aksi tulis vendor')));const publicRow=monitor.publicDevice(f.device,failed);assert(publicRow.onuRenameAvailable&&publicRow.onuDeleteAvailable&&publicRow.onuRebootAvailable);assert(!publicRow.notices.some(value=>value.includes('terkunci')));assert.throws(()=>driver.authorize({operation:'delete',address:ID,serialNumber:SN,version:VERSION,before:detail('Offline','Client','HWTC11223344')}),/berubah/);}finally{vendors.readInventory=original;}
+});
+test('verified HSGQ capabilities survive read contention on an empty OLT but reset for a changed connection',async t=>{
+ const f=fixture(),actions={rename:true,reboot:true,delete:true,saveConfig:true},raw=async(target,name,oid)=>name==='system'?[{oid:oid+'.2.0',type:'OID',value:'.1.3.6.1.4.1.50224'}]:name==='interfaces'?[{oid:oid+'.1',type:'STRING',value:'PON01'}]:[];let broken=false;
+ t.mock.method(vendors,'readInventory',async()=>{if(broken)throw Error('CLI busy');return{available:true,rows:[],modelLabel:'HSGQ-G008ID',hsgqActions:actions};});
+ const fresh=await monitor.poll(f.data,f.device,raw);assert.equal(fresh.onus.length,0);broken=true;
+ const failed=await monitor.poll(f.data,f.device,raw);assert.equal(failed.inventoryAvailable,false);assert.deepEqual(failed.hsgqActions,actions);assert.equal(failed.modelLabel,'HSGQ-G008ID');assert.equal(monitor.publicDevice(f.device,failed).onuDeleteAvailable,true);assert(!failed.warnings.some(value=>value.includes('Aksi tulis vendor')));
+ const changed=await monitor.poll(f.data,{...f.device,host:'192.0.2.10'},raw);assert.equal(monitor.publicDevice(f.device,changed).onuDeleteAvailable,false);
+});
+test('an explicit HSGQ firmware rejection replaces old capabilities even while retaining stale ONU rows',async t=>{
+ const f=fixture(),raw=async(target,name,oid)=>name==='system'?[{oid:oid+'.2.0',type:'OID',value:'.1.3.6.1.4.1.50224'}]:[];let rejected=false;
+ t.mock.method(vendors,'readInventory',async()=>({available:!rejected,rows:rejected?[]:[{id:ID,serialNumber:SN,pon:1,ponKey:'0/0/1',onuId:0,status:'offline',condition:'other'}],hsgqActions:{rename:!rejected,reboot:!rejected,delete:!rejected,saveConfig:!rejected}}));
+ await monitor.poll(f.data,f.device,raw);rejected=true;const failed=await monitor.poll(f.data,f.device,raw),publicRow=monitor.publicDevice(f.device,failed);assert.equal(failed.onus.length,1);assert.equal(failed.inventoryAvailable,false);assert(!publicRow.onuRenameAvailable&&!publicRow.onuDeleteAvailable&&!publicRow.onuRebootAvailable);
 });
 test('removal preview retries one timed-out PON read without sending a mutation or treating timeout as absence',async()=>{
  for(const recover of[true,false]){const f=fixture(),target={id:ID,serialNumber:SN};let reads=0;const options={transports:{commands:async({commands})=>{reads++;assert(commands.every(command=>command==='enable'||command==='configure'||command.startsWith('show ')));if(reads===1||!recover)return{success:false,error:'Batas waktu pembacaan vendor terlampaui',outputs:[]};return{success:true,outputs:commands.map(command=>({command,stdout:command==='show version'?VERSION:command==='show ont-info 1 all'?table():'OLT(config)#'}))};}}};

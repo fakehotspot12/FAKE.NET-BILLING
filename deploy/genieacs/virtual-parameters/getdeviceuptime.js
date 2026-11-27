@@ -10,24 +10,15 @@ function uptimeText(totalSecs) {
   return `${days}d ${hours}:${minutes}:${secs}`;
 }
 
+const paths = ["InternetGatewayDevice.DeviceInfo.UpTime", "Device.DeviceInfo.UpTime"];
+const declarations = paths.map(path => declare(path, { path: 1, value: 1 }));
+commit();
 let totalSecs = "";
-if (args[1] && args[1].value) {
-  totalSecs = args[1].value[0] || "";
-  declare("InternetGatewayDevice.DeviceInfo.UpTime", null, { value: totalSecs });
-  declare("Device.DeviceInfo.UpTime", null, { value: totalSecs });
-} else {
-  const igd = declare("InternetGatewayDevice.DeviceInfo.UpTime", {});
-  const device = declare("Device.DeviceInfo.UpTime", {});
-  for (const rows of [igd, device]) {
-    for (const row of rows) {
-      const value = row.value && row.value[0];
-      if (value !== undefined && value !== null && value !== "") {
-        totalSecs = value;
-        break;
-      }
-    }
-    if (totalSecs !== "") break;
+for (const rows of declarations) {
+  for (const row of rows) {
+    const value = row.value && row.value[0];
+    if (value !== undefined && value !== null && value !== "" && Number.isFinite(Number(value)) && Number(value) >= 0) { totalSecs = value; break; }
   }
+  if (totalSecs !== "") break;
 }
-
-return { writable: false, value: [uptimeText(totalSecs), "xsd:string"] };
+return { writable: false, value: [totalSecs === "" ? "" : uptimeText(totalSecs), "xsd:string"] };

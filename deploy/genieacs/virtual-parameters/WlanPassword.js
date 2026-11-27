@@ -6,13 +6,8 @@ const paths = [
 
 const discovered = paths.map(path => declare(path, { path: 1 }));
 commit();
-const rows = [];
-const seen = new Set();
-for (const matches of discovered) for (const item of matches) {
-  if (seen.has(item.path)) continue;
-  seen.add(item.path);
-  rows.push(declare(item.path, { value: 1, writable: 1 }));
-}
+const names = [...new Set(discovered.flatMap(matches => Array.from(matches, item => item.path)))];
+const rows = names.map(path => declare(path, { value: 1, writable: 1 }));
 commit();
 
 const target = rows.find(row => row.writable === true && row.value && row.value[0])

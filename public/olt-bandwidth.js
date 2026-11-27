@@ -20,7 +20,7 @@
     const opts = (rows, value = '') => '<option value="">Pilih profil</option>' + rows.map(item => `<option value="${esc(item.id)}" ${item.id === value ? 'selected' : ''} ${item.disabled?'disabled':''} ${item.reason?`title="${esc(item.reason)}"`:''}>${esc(item.label)}</option>`).join('');
     const sync = () => {
       for (const control of form.querySelectorAll('input,select')) control.disabled = busy || finished || !unit;
-      read.disabled = busy; prepare.disabled = busy || finished || !unit || !form.elements.profileChoice.value;
+      read.disabled = busy; prepare.disabled = busy || finished || !unit?.services.length || !form.elements.servicePortId.value || !form.elements.profileChoice.value;
       apply.hidden = !plan || finished; apply.disabled = busy || finished;
       $('oltOnuBandwidthConfirmation').hidden = !plan || finished;
       $('oltOnuSharedConfirmation').hidden = !plan?.value.allocation?.sharedUpload;
@@ -54,7 +54,7 @@
         form.elements.profileChoice.innerHTML = opts([...choices, { id: 'native', label: 'Profil existing di OLT' }, { id: 'standard:60000', label: 'Standar 60 Mbps' }, { id: 'standard:120000', label: 'Standar 120 Mbps' }],choices.length?'':'native');
         form.elements.tcontProfile.innerHTML = opts((catalogue.nativeProfiles?.upload || []).map(item => ({ id:item.name,label:item.name+' \u00b7 '+rate(item.type===1?item.fixed:item.type===2?item.assured:item.maximum)+' \u00b7 Type '+item.type+(item.selectable===false?' (hanya lihat)':item.reserved?' (reservasi)':''),disabled:item.selectable===false,reason:item.reason })));
         form.elements.trafficProfile.innerHTML = opts((catalogue.nativeProfiles?.download || []).map(item => ({ id:item.name,label:item.name+' \u00b7 '+rate(item.pir)+(item.selectable===false?' (hanya lihat)':item.reserved?' (reservasi)':''),disabled:item.selectable===false,reason:item.reason })));
-        showCurrent(); status.textContent = 'Pilih layanan dan profil bandwidth.';
+        showCurrent(); status.textContent = unit.services.length ? 'Pilih layanan dan profil bandwidth.' : 'Layanan VLAN belum terpasang pada ONU. Lanjutkan proses tertahan melalui Registrasi ONU > Proses Terakhir.';
       } catch (problem) { if (present()) { unit = null; error.textContent = problem.message; status.textContent = 'Tidak ada konfigurasi yang diubah.'; } }
       finally { busy = false; if (present()) sync(); }
     };

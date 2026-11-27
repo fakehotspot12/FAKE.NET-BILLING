@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "bindAddress": "127.0.0.1",
+  "port": 1162,
+  "fallbackMs": 20000,
+  "sources": [
+    {
+      "oltId": "olt-id-dari-daftar",
+      "host": "192.0.2.90",
+      "sourceAddress": "192.0.2.90",
+      "community": "GANTI-DENGAN-KUNCI-ACAK-MINIMAL-16-KARAKTER"
+    }
+  ]
+}

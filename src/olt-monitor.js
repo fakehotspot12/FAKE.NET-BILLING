@@ -94,6 +94,7 @@ function position(index) {
 }
 function actionPosition(device,index){return vendors.normalize(device.vendor)==='hioso'?hioso.position(index):vendors.normalize(device.vendor)==='hsgq'?require('./olt-hsgq').position(index):vendors.normalize(device.vendor)==='zte'?require('./olt-zte-inventory').position(index):position(index);}
 const managedDriver=device=>device.vendor==='hioso'?hioso:device.vendor==='hsgq'?require('./olt-hsgq'):device.vendor==='zte'?require('./olt-zte-onu'):null;
+const hsgqOperationBusy=device=>device?.vendor==='hsgq'&&require('./olt-hsgq').isBusy(device.id);
 function optical(row) {
   const value = number(row);
   if (value === null || [-1, -65535, 65535, 2147483647].includes(value)) return null;
@@ -198,6 +199,7 @@ function normalizeSnapshot(tables, now = Date.now()) {
 
 function deviceRows(data) { return Array.isArray(data.oltDevices) ? data.oltDevices : []; }
 function validateDevice(data, payload = {}, previous = {}) {
+  if(payload.settingsRevision!==undefined&&payload.settingsRevision!==previous.updatedAt)throw Object.assign(new Error('Pengaturan OLT berubah. Buka ulang sebelum menyimpan.'),{status:409});
   const host = text(payload.host ?? previous.host ?? '', 64);
   if (!net.isIP(host) || /^(?:0\.|127\.|169\.254\.|22[4-9]\.|23\d\.|255\.)/.test(host) || /^(?:::|::1|ff[0-9a-f]{2}:|fe80:)/i.test(host)) throw new Error('Isi IP manajemen OLT yang valid, bukan loopback/multicast');
   const name = text(payload.name ?? previous.name ?? '', 100);
@@ -231,6 +233,11 @@ function validateDevice(data, payload = {}, previous = {}) {
     webPort:integer(payload.webPort??previous.webPort,1,65535,80),
     latitude: hasLatitude ? latitude : null, longitude: hasLongitude ? longitude : null,
     links: previous.links || {}, createdAt: previous.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+  if(payload.onuAcs!==undefined){
+    if(vendor!=='zte')throw new Error('Pengaturan otomatis VLAN100 ACS tersedia untuk OLT ZTE');
+    if(require('./olt-zte-registration').isBusy(device.id)||require('./olt-zte-bandwidth').isBusy(device.id)||require('./olt-zte-bridge').isBusy(device.id))throw new Error('Tunggu proses ONU selesai sebelum mengubah pengaturan ACS OLT');
+    device.onuAcs=require('./olt-acs-policy').normalize(payload.onuAcs);
+  }
   if (deviceRows(data).some(row => row.id !== device.id && row.host === host && row.port === device.port)) throw new Error('Alamat dan port OLT sudah terdaftar');
   if (!previous.id && deviceRows(data).length >= MAX_DEVICES) throw new Error('Batas awal monitoring 32 OLT');
   return device;
@@ -247,6 +254,7 @@ function publicDevice(device, snapshot = null, options = {}) {
     else warnings.push(message);
   }
   return { id: device.id, name: device.name, vendor: device.vendor, nasId: device.nasId, enabled: device.enabled,
+    ...(device.vendor==='zte'?{onuAcs:require('./olt-acs-policy').settings(device),onuAcsConfigured:device.onuAcs!==undefined}:{}),
     simulated,pnpAvailable:Boolean(device.vendor==='zte'&&device.enabled&&device.cliEnabled&&device.cliUsername&&device.cliPasswordEnc&&!simulated),
     ...(options.management || options.terminal ? { revision:device.updatedAt||'', terminalAvailable:Boolean(device.enabled&&device.cliEnabled&&device.cliUsername&&device.cliPasswordEnc), cliProtocol:device.cliProtocol||'telnet', cliPort:device.cliPort||23 } : {}),
     ...(options.management ? { host: device.host, port: device.port, revision:device.updatedAt||'', communityConfigured: Boolean(device.communityEnc), cliEnabled: Boolean(device.cliEnabled), cliProtocol:device.cliProtocol||'telnet', webPort:device.webPort||80, cliUsername: device.cliUsername || '', cliPort: device.cliPort || 23, cliPasswordConfigured: Boolean(device.cliPasswordEnc) } : {}),
@@ -301,7 +309,7 @@ async function collect(data, device, transport = executeTable, causeTransport = 
     for(const name of tableNames){try{tables[name]=await transport(target,name,OIDS[name]);}catch{if(name==='system')throw new Error('SNMP OLT belum merespons');warnings.push(`Data ${name} belum tersedia`);}}
     const system=column(tables.system||[],OIDS.system);if(!system.has('2.0'))throw new Error('Identitas SNMP OLT belum terverifikasi');
     if(isZte&&!/^\.?1\.3\.6\.1\.4\.1\.3902(?:\.|$)/.test(string(system.get('2.0'))))throw new Error('Identitas SNMP bukan OLT ZTE');
-    let inventory;try{inventory=await vendors.readInventory(data,device,{normalizeSerial,classifyCause,...(device.vendor==='hsgq'&&tables.interfaces?.length?{physicalInterfaces:tables.interfaces.map(row=>({value:string(row)}))}:{})},{allowZteDevRead:options.allowZteDevRead===true,includeTelemetry:isZte,previousSnapshot:options.previousSnapshot});}catch{inventory={available:false,rows:[],warning:isZte?'Inventory ZTE belum terbaca lengkap. Data terakhir dipertahankan; coba baca ulang setelah sesi OLT selesai.':'Pembacaan inventory vendor belum berhasil. Aksi tulis tetap terkunci.'};}
+    let inventory;try{inventory=await vendors.readInventory(data,device,{normalizeSerial,classifyCause,...(device.vendor==='hsgq'&&tables.interfaces?.length?{physicalInterfaces:tables.interfaces.map(row=>({value:string(row)}))}:{})},{allowZteDevRead:options.allowZteDevRead===true,includeTelemetry:isZte,previousSnapshot:options.previousSnapshot});}catch{inventory={available:false,rows:[],...(device.vendor==='hsgq'?{hsgqActions:options.previousSnapshot?.hsgqActions||{},modelLabel:options.previousSnapshot?.modelLabel||''}:{}),warning:isZte?'Inventory ZTE belum terbaca lengkap. Data terakhir dipertahankan; coba baca ulang setelah sesi OLT selesai.':device.vendor==='hsgq'?'Inventory HSGQ belum terbaca lengkap. Data terakhir ditampilkan; identitas ONU diperiksa ulang sebelum perubahan.':'Pembacaan inventory vendor belum berhasil. Aksi tulis tetap terkunci.'};}
     if(isZte){const model=string(system.get('1.0')).match(/\bC(?:300|320|350|600|620|650)\b/i)?.[0];if(model)inventory.modelLabel='ZTE '+model.toUpperCase();}
     if(inventory.warning)warnings.push(inventory.warning);if(!Object.values(inventory.hiosoActions||inventory.hsgqActions||{}).some(Boolean))warnings.push('Aksi tulis vendor yang belum terverifikasi tetap terkunci. Pemeriksaan reboot berlaku pada inventory ONU valid; tiket otomatis hanya untuk LOS dengan penyebab terverifikasi.');
     const states=column(tables.interfaceStatus||[],OIDS.interfaceStatus),onus=inventory.rows||[];
@@ -480,7 +488,7 @@ async function renameOnu(data,device,serial,payload,transport={serial:liveSerial
   return {serialNumber:sn,description,confirmed:true,message:'Description ONU diperbarui dan terverifikasi di OLT.'};
 }
 async function poll(data, device, transport, options = {}) {
-  if(require('./olt-terminal').isOpen(device.id)||telemetry.isBusy(device)||require('./olt-zte-registration').isBusy(device.id))return snapshotFor(device);
+  if(require('./olt-terminal').isOpen(device.id)||telemetry.isBusy(device)||hsgqOperationBusy(device)||require('./olt-zte-registration').isBusy(device.id))return snapshotFor(device);
   const key = cacheKey(device);
   if (pending.has(key)) return pending.get(key);
   if (pending.size >= 2) return snapshotFor(device);
@@ -499,10 +507,10 @@ async function poll(data, device, transport, options = {}) {
 }
 async function pollNext(data) {
   if (pending.size) return { skipped: true };
-  for(const [id,request] of refreshQueue){const device=deviceRows(data).find(row=>row.id===id);if(device&&(telemetry.isBusy(device)||require('./olt-zte-registration').isBusy(device.id)))continue;refreshQueue.delete(id);if(!device?.enabled||cacheKey(device)!==request.key)continue;await poll(data,device);return{id:device.id,manual:true};}
+  for(const [id,request] of refreshQueue){const device=deviceRows(data).find(row=>row.id===id);if(device&&(telemetry.isBusy(device)||hsgqOperationBusy(device)||require('./olt-zte-registration').isBusy(device.id)))continue;refreshQueue.delete(id);if(!device?.enabled||cacheKey(device)!==request.key)continue;await poll(data,device);return{id:device.id,manual:true};}
   const candidates = [];
   for (const device of deviceRows(data).filter(row => row.enabled)) {
-    if(telemetry.isBusy(device)||require('./olt-zte-registration').isBusy(device.id))continue;
+    if(telemetry.isBusy(device)||hsgqOperationBusy(device)||require('./olt-zte-registration').isBusy(device.id))continue;
     const key = cacheKey(device), snapshot = await snapshotFor(device), tried = lastAttempt.get(key) || Date.parse(snapshot?.checkedAt || '') || 0;
     if (snapshot?.pendingRefresh || Date.now() - tried >= CACHE_MS) candidates.push({ device, tried:snapshot?.pendingRefresh?0:tried });
   }
@@ -520,7 +528,7 @@ function requestRefresh(data, device, options = {}) {
   if(process.env.MIGRATION_MODE==='1'&&!(vendors.normalize(device.vendor)==='zte'&&options.allowZteDevRead===true))throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');
   const key = cacheKey(device), now = Date.now();
   if (!device.enabled || require('./olt-terminal').isOpen(device.id) || pending.has(key) || pending.size >= 2 || now - (refreshTimes.get(key) || 0) < 30000) return false;
-  remember(refreshTimes, key, now);if(telemetry.isBusy(device)||require('./olt-zte-registration').isBusy(device.id)){refreshQueue.set(device.id,{key});return true;}refreshQueue.delete(device.id); poll(data, device, undefined, options).catch(() => {}); return true;
+  remember(refreshTimes, key, now);if(telemetry.isBusy(device)||hsgqOperationBusy(device)||require('./olt-zte-registration').isBusy(device.id)){refreshQueue.set(device.id,{key});return true;}refreshQueue.delete(device.id); poll(data, device, undefined, options).catch(() => {}); return true;
 }
 function requestRefreshAll(data,devices) {
   if(process.env.MIGRATION_MODE==='1')throw new Error('Mode dev terisolasi: pembacaan OLT asli dinonaktifkan');

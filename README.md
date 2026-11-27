@@ -817,6 +817,12 @@ delapan ONU pada halaman aktif, dengan pemeriksaan SN/PON dan cache terbatas.
 Pembacaan ini berjalan di background; query optical massal tidak dipakai.
 Data yang tidak tersedia tetap kosong, bukan diisi dengan angka perkiraan.
 CPU dan RAM HSGQ dibaca melalui CLI dengan cache resource adaptif di Ringkasan OLT.
+Aksi HSGQ dari beberapa user diproses bergiliran per OLT, dengan maksimal empat
+permintaan menunggu selama delapan detik. Permintaan yang kedaluwarsa tidak
+dijalankan. Terminal CLI yang terbuka tetap perlu ditutup sebelum aksi ONU.
+Kegagalan baca sementara mempertahankan kemampuan firmware yang sudah
+terverifikasi pada koneksi yang sama; setiap perubahan tetap memeriksa ulang
+firmware, SN, posisi dan status ONU langsung di perangkat.
 Untuk semua vendor OLT yang ONUnya sudah terintegrasi, model mengutamakan
 ModelName atau ProductClass dari indeks ACS yang terverifikasi. Pemetaan GPON
 memeriksa SN, sedangkan EPON memerlukan MAC antarmuka ONT yang cocok; nama
@@ -904,6 +910,14 @@ saja, tanpa menimpa preset bersama. PON yang sudah otomatis tidak menerima
 otorisasi manual bersamaan. Nomor ONU tetap dialokasikan server berdasarkan
 posisi kosong dan identitas fisik yang dibaca ulang.
 
+Jika SN sudah terdaftar tetapi penerapan VLAN tertahan, **Proses Terakhir**
+menyediakan **Lanjutkan Layanan** pada PON otomatis. Alur ini memakai pengaturan
+proses sebelumnya, memeriksa SN, posisi dan batch layanan yang sudah terpasang,
+lalu meminta konfirmasi sebelum meneruskan layanan yang belum selesai.
+Registrasi SN tidak diulang dan otomatis PON tetap aktif. Pilihan **Layanan
+VLAN** pada editor bandwidth maupun bridge berasal dari pemetaan layanan ONU;
+daftarnya baru tersedia setelah layanan terpasang, bukan dari template kosong.
+
 Tab **Pengaturan PON** menyediakan **Registrasi Otomatis** per PON.
 Fitur default nonaktif dan tidak mengubah OLT saat halaman dibuka.
 Pilih PON, bandwidth dan 1-16 VLAN existing, lalu **Simpan**. Untuk
@@ -913,6 +927,24 @@ di server; badge menunjukkan status pengendali registrasi, bukan hanya ceklis.
 Perubahan preset, koneksi OLT atau hak operator memerlukan pemeriksaan ulang.
 
 Opsi **TR069 DHCP - VLAN100** tersedia pada preset PON ZTE, default nonaktif.
+Pada **Pengaturan OLT > VLAN100 dan ACS ONU**, simpan URL ACS sekali dan
+aktifkan **Otomatis VLAN100 + TR069 untuk registrasi ONU baru**. Preset PON
+terpilih kemudian menyertakan VLAN100 dan memakai URL ACS OLT tersebut.
+Menyimpan pengaturan ini tidak mengubah layanan ONU yang sudah terdaftar.
+Untuk ONU existing, pilih tombol **+ VLAN100 / ACS** pada baris ONU, periksa
+rencana, lalu pilih **Enable TR069**. Enable sekaligus menyiapkan VLAN100,
+IP Host DHCP dan URL ACS. **Disable TR069** hanya mengunci status TR069;
+VLAN100, IP Host, PPPoE dan layanan internet dipertahankan. Pengaturan manual
+VLAN, TR069 dan URL ACS di **Registrasi ONU** tetap tersedia.
+ONU tidak harus mempunyai riwayat
+registrasi pada billing. Jalur VLAN100 existing dipakai kembali; jalur baru
+memakai GEM/service-port kosong serta T-CONT dan profil downstream existing.
+T-CONT, profil internet, binding LAN/WiFi dan registrasi SN tidak ditulis ulang.
+Slot penuh, pemetaan lanjutan, IP Host yang dipakai atau URL ACS berbeda menahan
+penerapan. Hasil ambigu wajib dibaca ulang dan tidak diulang otomatis.
+Pada template internet lama yang memakai IP Host1, push dapat memilih IP Host
+lain yang dilaporkan kosong oleh ONU. Binding internet, PPPoE, VEIP dan filter
+VLAN lama dipertahankan; topologi switch selain pola yang dikenali tetap ditahan.
 Isi URL CWMP ACS (bukan port NBI), pilih VLAN100 yang sudah tersedia, lalu simpan.
 Jalur GEM dan service-port VLAN100 dipakai kembali, bukan dibuat ganda; WAN
 Internet, LAN dan WiFi tidak diubah. Setelah pengendali registrasi diaktifkan,
@@ -936,6 +968,18 @@ SN tetap diperlukan; PnP/auto-authorize native tidak dijalankan bersamaan agar
 kedua jalur tidak berebut pendaftaran. Server billing dan koneksi CLI ke OLT
 harus tersedia untuk pendaftaran baru. ONU existing tidak dikonfigurasi ulang.
 
+Pada PON otomatis, ONU pindahan yang SN-nya masih tercatat pada PON lama dapat
+dipindahkan tanpa otorisasi ulang per modem. SN harus terdeteksi tunggal pada
+PON tujuan dan registrasi lama wajib terbukti offline melalui pembacaan ulang
+CLI. Konfigurasi lama dicadangkan terenkripsi sebelum satu penghapusan posisi
+lama; ONU lain, pelanggan dan perangkat ACS tidak dihapus. Setelah posisi lama
+hilang terverifikasi, ONU didaftarkan dengan preset PON tujuan. Posisi lama yang
+online, identitas ganda, perubahan konfigurasi, atau pengiriman yang tidak pasti
+tetap ditahan. Pendaftaran manual tidak menghapus registrasi lama otomatis.
+Cadangan privat disimpan di `data/olt-relocations`, maksimal 128 berkas selama
+30 hari; kegagalan atau batas penyimpanan menahan pemindahan, bukan melewati
+cadangan. Pemindaian normal tidak menambah pembacaan detail tanpa konflik SN.
+
 Model fisik dari discovery tetap dibedakan dari nama template konfigurasi.
 Template GPON OMCI otomatis tidak menebak kemampuan WiFi berdasarkan SN atau
 vendor. Kapasitas T-CONT/GEM fisik diperiksa kembali sebelum layanan diterapkan;
@@ -952,14 +996,40 @@ posisi, preset dan batch layanan yang lengkap wajib cocok sebelum pengiriman.
 Pendaftaran yang sudah berhasil tidak diulang. Konfigurasi asing atau batch
 parsial yang tidak dapat diverifikasi tetap ditahan.
 
-Pemindaian discovery paling cepat setiap 20 detik untuk satu OLT per giliran,
-hanya jika ada PON dengan registrasi otomatis aktif. Saat tidak ada yang aktif,
-tidak ada timer registrasi. Pembacaan detail berjalan ketika ada ONU baru,
-bukan query per pelanggan pada setiap pemindaian. Riwayat proses dibatasi 128
+Pemindaian discovery cadangan berjalan setiap 20 detik untuk satu OLT per
+giliran, hanya jika ada PON dengan registrasi otomatis aktif. Modem yang sudah
+terdeteksi diproses berurutan tanpa menunggu putaran 20 detik berikutnya,
+maksimal delapan proses per rangkaian. Event OLT yang sah dapat membangunkan
+pemeriksaan dengan jeda minimum dua detik; tidak ada otorisasi per SN pada PON
+otomatis. Saat tidak ada yang aktif, tidak ada timer registrasi. Pembacaan
+detail berjalan ketika ada ONU baru, bukan query per pelanggan. Riwayat dibatasi 128
 record per OLT selama 30 hari; popup menampilkan status terbaru delapan SN.
 Implementasi ini dibatasi ke firmware ZTE V2.1.0 yang dikenali. Registrasi dan
 verifikasi layanan bukan pengujian akses internet: WAN/PPPoE dan jalur upstream
 tetap harus benar. Aksi tidak mengatur akun PPPoE atau password WiFi pelanggan.
+
+**Pemicu SNMP OLT (Opsional)**
+
+Penerima event memakai dependency `net-snmp` yang disertakan pada instalasi dan
+update. Instalasi bawaan tidak membuka port event. Contoh konfigurasi tersedia
+di `deploy/fakenet-billing-olt-events.json.example`; administrator dapat
+membuat `/etc/fakenet-billing-olt-events.json` dengan izin `0600`, alamat bind
+LAN/VPN spesifik, port UDP di atas 1023, ID dan host OLT yang sesuai, alamat
+sumber trap, serta kunci trap acak minimal 16 karakter. Jalur file dapat diubah
+melalui `OLT_EVENTS_CONFIG_FILE`. File privat ini tidak ditimpa oleh updater.
+Batasi firewall ke sumber OLT tersebut; jangan membuka port ke internet.
+
+Tujuan trap pada OLT harus menunjuk ke alamat/port penerima dengan SNMPv2c dan
+kunci yang sama, tanpa mengganti tujuan notifikasi lain. Dukungan dan jenis
+event firmware perlu diuji di perangkat. Trap vendor ZTE atau perubahan link
+hanya memicu pembacaan discovery melalui CLI: SN, posisi, preset dan izin tetap
+diperiksa, bukan dipercaya dari isi paket. Sumber/kunci yang salah, paket
+melebihi 8 KiB dan event beruntun dibatasi sebelum menambah pekerjaan. Tidak
+ada penulisan database per paket; statistik berada di memori terbatas. Jika
+event hilang, penerima gagal, atau CLI sibuk, polling cadangan tetap tersedia.
+`fallbackMs` default 20000 dan dapat diatur 5000-60000 untuk instalasi yang
+memerlukan cadangan lebih cepat; sesuaikan dengan kualitas jalur dan beban OLT.
+PON manual, ONU online, akun internet dan pengaman relokasi tidak dilewati.
 
 Daftar ONU membuka PON pertama dengan delapan baris per halaman. Pencarian dan
 pagination tetap memakai snapshot cache PON terpilih tanpa query OLT tambahan.
@@ -1467,6 +1537,9 @@ UI dan autentikasi Inform berhasil disiapkan. Pengamanan Inform dipasang setelah
 inisialisasi, bukan sebelumnya. Pada ACS existing, akun, autentikasi dan kebijakan
 aktif/nonaktif preset yang sudah ada tetap dipertahankan. Jika dibutuhkan,
 `GENIEACS_AUTO_VP_PROVISION=0` menonaktifkan preset harian milik billing.
+Pada pembaruan ACS bawaan yang sudah diinisialisasi, aturan Inform yang ada
+juga dipertahankan, termasuk mode tanpa autentikasi. Akun Inform awal tidak
+dipasang ulang untuk menimpa kebijakan operator.
 Shell MongoDB untuk ACS bawaan dapat memakai `mongosh` dalam container miliknya;
 tidak perlu memasang shell MongoDB terpisah pada host.
 
@@ -1544,6 +1617,19 @@ aktifkan layanan yang diperlukan dan uji satu pelanggan. UI ACS dan port admin
 harus dibatasi melalui firewall/VPN/HTTPS; installer tidak membuka firewall umum.
 
 Bootstrap installer dan updater hanya melakukan upsert Virtual Parameters yang dimiliki billing. Virtual Parameters, preset, provision, dan konfigurasi UI existing yang tidak dimiliki billing tidak dihapus atau ditulis ulang. Sinkronisasi diverifikasi kembali melalui NBI sebelum proses dinyatakan berhasil.
+
+Skrip bawaan versi sebelumnya dikenali melalui hash rilis. Jika nama parameter
+bawaan telah diubah menjadi skrip kustom, updater mempertahankannya dan memberi
+peringatan agar administrator dapat meninjaunya; skrip kustom tersebut juga
+tidak ditimpa oleh backfill cache. Pengaturan tambahan dan kondisi nonaktif pada
+preset existing tetap dipertahankan. Penambahan parameter tidak menghapus WAN,
+WiFi, host LAN, parameter native modem atau bagian UI yang sudah ada.
+
+Nilai VLAN `0 (untagged)` ditampilkan sesuai laporan modem. Perubahan ke VLAN
+tagged bergantung pada dukungan firmware dan jalur VLAN OLT/router; penerimaan
+task oleh ACS bukan bukti perubahan berhasil. Periksa hasil pembacaan balik
+sebelum melakukan migrasi banyak perangkat. Pembaruan aplikasi tidak menjalankan
+migrasi VLAN modem secara otomatis.
 
 Jika ingin memaksa instalasi tanpa membuat ACS lokal, gunakan:
 
@@ -1832,3 +1918,38 @@ password: password acak dari output installer
 ```
 
 Segera ubah password setelah login pertama.
+# Pengaturan OLT dan ONU
+
+Pada monitoring OLT, **Kelola OLT** memisahkan Koneksi OLT, Profil Perangkat,
+Profil Otomasi, dan Otomasi ACS. Registrasi ONU dan ceklis Registrasi Otomatis
+per PON tetap tersedia. Profil otomasi menyimpan paket VLAN, bandwidth, dan
+tipe ONU dari preset PON untuk digunakan kembali. Untuk mengganti profil PON
+yang aktif otomatis, nonaktifkan registrasi PON dahulu, periksa preset baru,
+lalu aktifkan kembali. Konfigurasi pelanggan existing tidak diganti massal.
+
+**Pengaturan ONU** pada ZTE menyatukan Layanan, LAN/WiFi, IP Host, WAN, dan
+ACS/TR069. Layanan memakai satu editor T-CONT → GEM → VLAN dengan pemeriksaan
+dependensi. IP Host menampilkan indeks dan kapasitas native, IP, mask,
+gateway, DNS, dan penanda ACS. Billing mengelola maksimal dua IP Host dengan mode DHCP, Static dan PPPoE. Host
+existing di luar batas tetap dapat dilihat. Password PPPoE tersimpan
+tetap dipertahankan jika kolom password dikosongkan. Editor binding WAN
+route/bridge terpisah belum tersedia.
+IP Host yang masih terkait TR069 dilindungi dari penghapusan umum.
+VLAN100 existing dipakai ulang jika jalurnya sesuai. Otomasi tidak mengambil
+Host3 atau mengubah host PPPoE menjadi DHCP; konflik ditahan untuk diperiksa.
+
+Pengaturan manajemen memisahkan dua pilihan: **VLAN 100 + IP Host DHCP** dan
+**TR-069 / ACS**. Pilihan pertama menyiapkan jalur manajemen tanpa mengaktifkan
+TR-069. Pilihan kedua tanpa jalur VLAN100 hanya memakai layanan TR-069 existing
+yang identitas serta pemetaan native-nya terverifikasi. Layanan gabungan
+INTERNET_TR069_VOIP tidak dipecah, dipindah, atau dibuat ulang otomatis. Jalur
+yang tidak terbaca ditahan untuk pemeriksaan, bukan ditebak dari nama layanan.
+Keduanya dapat diaktifkan bersama untuk ONU baru; pengaturan lama tetap terbaca
+dengan perilaku sebelumnya sampai pilihan disimpan ulang. Pada ONU existing,
+Siapkan VLAN 100 dan Enable/Disable TR069 adalah tindakan terpisah yang memakai
+pratinjau dan konfirmasi. Disable mempertahankan jalur layanan dan IP Host.
+Pengecualian ACS per SN tersimpan terpisah dari
+layanan manual. Semua perubahan native memerlukan pratinjau, konfirmasi,
+pemeriksaan identitas/konfigurasi sebelum kirim dan pembacaan ulang hasil.
+Hasil yang belum pasti tidak dikirim ulang otomatis. Dukungan native dibatasi
+pada firmware dan topologi yang telah diverifikasi oleh driver.

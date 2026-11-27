@@ -11,6 +11,7 @@ deploy/bin/fakenet-billing-stack
 deploy/bin/fakenet-billing-update
 deploy/fakenet-billing-genieacs.env
 deploy/fakenet-billing-isolir-context.env.example
+deploy/fakenet-billing-olt-events.json.example
 deploy/fakenet-billing-turnstile.env.example
 deploy/fakenet-billing-waha.env
 deploy/fakenet-billing.env
@@ -100,6 +101,7 @@ public/login-verification.js
 public/manifest.webmanifest
 public/olt-back.svg
 public/olt-bandwidth.js
+public/olt-acs.js
 public/olt-bridge.js
 public/olt-catalogue.js
 public/olt-icons-license.txt
@@ -169,6 +171,8 @@ src/onu-model.js
 src/olt-los-confirmation.js
 src/olt-manager.js
 src/olt-monitor.js
+src/olt-events.js
+src/olt-registration-scheduler.js
 src/olt-planned-reboot.js
 src/olt-pon.js
 src/olt-reboot.js
@@ -213,6 +217,8 @@ src/olt-zte-pnp.js
 src/olt-zte-profiles.js
 src/olt-zte-registration.js
 src/olt-zte-tr069.js
+src/olt-acs-policy.js
+src/olt-zte-acs.js
 src/ont-radio-capability.js
 src/operations.js
 src/payment-promise.js
@@ -310,6 +316,9 @@ test/olt-zte-pnp.test.js
 test/olt-zte-profiles.test.js
 test/olt-zte-queue.test.js
 test/olt-zte-registration.test.js
+test/olt-zte-relocation.test.js
+test/olt-events.test.js
+test/olt-registration-scheduler.test.js
 test/olt-zte-tr069.test.js
 test/ont-radio-capability.test.js
 test/operations.test.js
@@ -338,3 +347,14 @@ test/whatsapp-session.test.js
 test/whatsapp-unit.test.js
 test/wifiku-modem-status.test.js
 uninstall.sh
+test/olt-zte-acs.test.js
+public/olt-onu-settings.js
+public/olt-settings.js
+src/olt-onu-policy.js
+src/olt-zte-settings.js
+src/olt-automation-profiles.js
+test/olt-zte-settings.test.js
+test/olt-onu-policy.test.js
+test/olt-automation-profiles.test.js
+test/helpers/olt-settings-fixture.js
+src/olt-zte-view.js

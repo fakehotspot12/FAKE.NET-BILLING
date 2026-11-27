@@ -53,7 +53,7 @@ function inspect(result,keys,last=false){
 }
 function proof(value,selection={}){return hash({global:value.global,ports:value.ports,physicalPorts:value.physicalPorts,catalogue:value.catalogue,onuTypes:value.onuTypes,...(selection.autoMatch?{models:[...new Set(value.newOnus.filter(row=>row.ponKey===selection.ponKey).map(row=>JSON.stringify([row.model,row.ambiguous])))].sort()}:{})});}
 function canManage(data,device,actor){const user=(data.users||[]).find(row=>row.id===actor?.id&&row.active!==false);return Boolean(user&&auth.hasPermission(auth.publicUser(user),'olt:pnp:manage')&&require('./olt-reboot').scopedDevices(data,user).some(row=>row.id===device.id));}
-function check(data,device,actor,{readOnly=false}={}){if(!canManage(data,device,actor))fail('Tidak memiliki izin mengatur ONU-PnP ini',403);if(device.vendor!=='zte'||!device.enabled||!device.cliEnabled||!device.cliUsername||!device.cliPasswordEnc||/^demo-olt-/.test(device.id))fail('ONU-PnP belum terverifikasi untuk OLT ini');if(require('./olt-terminal').isOpen(device.id)||require('./olt-cli').isBusy(device.id)||!readOnly&&require('./olt-zte-bridge').isMutating(device.id))fail('Tutup terminal atau tunggu operasi OLT selesai');}
+function check(data,device,actor,{readOnly=false}={}){if(!canManage(data,device,actor))fail('Tidak memiliki izin mengatur ONU-PnP ini',403);if(device.vendor!=='zte'||!device.enabled||!device.cliEnabled||!device.cliUsername||!device.cliPasswordEnc||/^demo-olt-/.test(device.id))fail('ONU-PnP belum terverifikasi untuk OLT ini');if(require('./olt-terminal').isOpen(device.id)||!readOnly&&require('./olt-cli').isBusy(device.id)||!readOnly&&require('./olt-zte-bridge').isMutating(device.id))fail('Tutup terminal atau tunggu operasi OLT selesai');}
 function saved(device){const row=cache.get(signature(device));return row&&Date.now()-Date.parse(row.checkedAt)<CACHE_MS?structuredClone(row):null;}
 function remember(device,value){cache.set(signature(device),value);while(cache.size>32)cache.delete(cache.keys().next().value);}
 function reserve(device){const id=signature(device);if(pending.has(device.id)||pending.size>=2)fail('Pembacaan ONU-PnP sedang berjalan',429);if(Date.now()-(attempts.get(id)||0)<3000)fail('Tunggu sebentar sebelum membaca ulang',429);attempts.set(id,Date.now());while(attempts.size>64)attempts.delete(attempts.keys().next().value);pending.add(device.id);}
@@ -64,8 +64,8 @@ function presets(device){
   try{pon(key);if(!row||row.connection!==connection||row.ponKey!==key||!['selected','transparent'].includes(row.vlanMode)||!Array.isArray(row.vlans)||row.vlans.length>16||!row.vlans.every(id=>Number.isSafeInteger(id)&&id>=2&&id<=4094)||new Set(row.vlans).size!==row.vlans.length||!/^[0-9a-f-]{36}$/.test(row.revision)||!Number.isFinite(Date.parse(row.updatedAt))||!validName(row.bandwidth)||row.onuType&&!validName(row.onuType))continue;
    const tr069=require('./olt-zte-tr069').setting(row.tr069);
    result[key]={ponKey:key,vlanMode:row.vlanMode,vlans:[...row.vlans],bandwidth:row.bandwidth,...(row.bandwidthMode==='auto60'?{bandwidthMode:'auto60'}:row.bandwidthMode==='catalogue'?{bandwidthMode:'catalogue',bandwidthPresetId:row.bandwidthPresetId}:{}),...(typeof row.requestedEnabled==='boolean'?{requestedEnabled:row.requestedEnabled}:{}),...(tr069?{tr069}:{}),onuType:row.onuType||'',revision:row.revision,updatedAt:row.updatedAt};
-  }catch{}
- }return result;
+ }catch{}
+ }return Object.fromEntries(Object.entries(result).map(([key,row])=>[key,require('./olt-acs-policy').preset(device,row)]));
 }
 function savePreset(data,device,actor,input){
  if(!canManage(data,device,actor))fail('Tidak memiliki izin mengatur preset PON ini',403);if(device.vendor!=='zte')fail('Preset ini khusus OLT ZTE');
@@ -80,11 +80,11 @@ function savePreset(data,device,actor,input){
  if(!validName(bandwidth)||bandwidth.length>32||!automatic&&!managed&&!state.catalogue.tcont.some(row=>row.name===bandwidth)||typeof input.onuType!=='string'||input.onuType&&(!validName(input.onuType)||!state.onuTypes.some(row=>row.name===input.onuType)))fail('Profil preset tidak tersedia di OLT',400);
  const requestedEnabled=input.requestedEnabled??previous?.requestedEnabled;
  const tr069=require('./olt-zte-tr069').setting(input.tr069===undefined?previous?.tr069:input.tr069);
- if(tr069?.enabled&&(input.vlanMode!=='selected'||!input.vlans.includes(100)))fail('TR069 DHCP memerlukan VLAN100 existing pada preset PON',400);
+ if(require('./olt-zte-tr069').managementEnabled(tr069)&&(input.vlanMode!=='selected'||!input.vlans.includes(100)))fail('IP Host DHCP memerlukan VLAN100 existing pada preset PON',400);
  const value={ponKey:key,vlanMode:input.vlanMode,vlans:[...input.vlans].sort((a,b)=>a-b),bandwidth,...(automatic?{bandwidthMode:'auto60'}:managed?{bandwidthMode:'catalogue',bandwidthPresetId:input.bandwidthPresetId}:{}),...(typeof requestedEnabled==='boolean'?{requestedEnabled}:{}),...(tr069?{tr069}:{}),onuType:input.onuType,revision:crypto.randomUUID(),updatedAt:new Date().toISOString()};
  if(previous&&hash({...previous,revision:undefined,updatedAt:undefined})===hash({...value,revision:undefined,updatedAt:undefined}))return structuredClone(previous);
  const entries={...presets(device),[key]:value};if(Object.keys(entries).length>128)fail('Batas preset PON tercapai');
- device.onuPnpPresets=Object.fromEntries(Object.entries(entries).map(([key,row])=>[key,{...row,connection:presetConnection(device)}]));return structuredClone(value);
+ device.onuPnpPresets=Object.fromEntries(Object.entries(entries).map(([key,row])=>[key,{...row,connection:presetConnection(device)}]));if(device.onuAutomationAssignments)delete device.onuAutomationAssignments[key];return structuredClone(value);
 }
 function selectedPreset(device,input){
  if(input.presetRevision===undefined)return input;const row=presets(device)[pon(input.ponKey)];

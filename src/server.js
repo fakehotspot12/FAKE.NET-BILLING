@@ -20034,7 +20034,7 @@ async function warmRouterDashboardCache(reason = 'interval') {
 
 let oltBackgroundTimer = null;
 let oltResourceTimer = null;
-let oltRegistrationTimer = null, oltRegistrationRunning = false;
+let oltRegistrationController = null, oltRegistrationEvents = null;
 async function persistOltRegistration(device,job){
   await mutate(store=>{const registration=require('./olt-zte-registration'),current=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===job.actorId),pnp=require('./olt-zte-pnp');
     if(!current||pnp.signature(current)!==pnp.signature(device)||!pnp.canManage(store,current,actor)||job.presetRevision&&pnp.presets(current)[job.ponKey]?.revision!==job.presetRevision||job.catalogueRevision&&require('./olt-zte-catalogue').selectionRevision(current)!==job.catalogueRevision)throw Error('Izin, preset atau katalog OLT berubah; registrasi ditahan');
@@ -20045,11 +20045,11 @@ async function persistOltRegistration(device,job){
   if(job.status==='verified'&&server.listening){const data=await loadStore(),latest=oltMonitor.deviceRows(data).find(row=>row.id===device.id);if(latest)try{oltMonitor.requestRefresh(data,latest,{allowZteDevRead:MIGRATION_MODE});}catch{}}
 }
 function startOltRegistration(){
-  if(oltRegistrationTimer)return;
   const enabled=data=>(data.oltDevices||[]).some(device=>Object.values(require('./olt-zte-registration').settings(device)).some(row=>row.enabled&&(!MIGRATION_MODE||row.devAllowed)));
   if(!enabled(peekStore()||{}))return;
-  const run=async()=>{if(oltRegistrationRunning)return;oltRegistrationRunning=true;try{const data=await loadStore();if(!enabled(data)){clearInterval(oltRegistrationTimer);oltRegistrationTimer=null;return;}await require('./olt-zte-registration').tick(data,{persist:persistOltRegistration});}catch(error){console.error('Registrasi ONU ditahan: '+error.message);}finally{oltRegistrationRunning=false;}};
-  oltRegistrationTimer=setInterval(()=>void run(),20000);oltRegistrationTimer.unref?.();void run();
+  if(!oltRegistrationController)oltRegistrationController=require('./olt-registration-scheduler').create({load:loadStore,enabled:data=>{const active=enabled(data);if(!active){oltRegistrationEvents?.stop();oltRegistrationEvents=null;}return active;},tick:(data,options)=>require('./olt-zte-registration').tick(data,{...options,persist:persistOltRegistration}),onError:error=>console.error('Registrasi ONU ditahan: '+error.message)});
+  oltRegistrationController.start();
+  if(!oltRegistrationEvents){oltRegistrationEvents=require('./olt-events').create({load:loadStore,wake:id=>{startOltRegistration();return oltRegistrationController?.wake(id)||false;},onError:error=>console.error(error.message)});void oltRegistrationEvents.start();}
 }
 async function runPlannedModemReboot(target,actor,operation){
   if(MIGRATION_MODE)throw new Error('Mode dev terisolasi: reboot perangkat asli dinonaktifkan');
@@ -23273,6 +23273,27 @@ async function handleApi(req, res, url) {
   }
 
   const genieAcsWanConfigureMatch = pathname.match(/^\/api\/genieacs\/devices\/([^/]+)\/wan$/);
+  if (method === 'DELETE' && genieAcsWanConfigureMatch) {
+    const authContext = await requirePermission(req, res, 'genieacs:write');
+    if (!authContext) return;
+    const deviceId = decodeURIComponent(genieAcsWanConfigureMatch[1]);
+    const payload = await readBody(req);
+    try {
+      const result = await genieAcs.deleteWan(authContext.data.settings || {}, deviceId, payload);
+      await mutate(store => addActivity(store, 'monitoring', `WAN GenieACS dihapus oleh ${authContext.user.name || authContext.user.username}`, {
+        action: 'genieacs-wan-delete', deviceId, targetWan: result.targetWan, vlan: result.vlan,
+        status: result.verification?.verified ? 'verified' : 'pending', taskIds: result.taskIds, verification: result.verification
+      }));
+      sendJson(res, 200, result);
+    } catch (error) {
+      await mutate(store => addActivity(store, 'monitoring', `Penghapusan WAN GenieACS gagal oleh ${authContext.user.name || authContext.user.username}`, {
+        action: 'genieacs-wan-delete', status: 'failed', deviceId, targetWan: String(payload.targetWan || ''),
+        taskIds: error.taskIds || [], fault: error.fault || null, error: String(error.message || '').slice(0, 500)
+      })).catch(() => {});
+      sendJson(res, 400, { ok: false, error: error.message || 'WAN gagal dihapus; periksa ulang kondisinya' });
+    }
+    return;
+  }
   if (method === 'POST' && genieAcsWanConfigureMatch) {
     const authContext = await requirePermission(req, res, 'genieacs:write');
     if (!authContext) return;
@@ -23283,7 +23304,7 @@ async function handleApi(req, res, url) {
       await mutate((store) => {
         addActivity(store, 'monitoring', `Konfigurasi WAN GenieACS dikirim oleh ${authContext.user.name || authContext.user.username}`, {
           action: 'genieacs-wan-configure',
-          status: result.verification?.verified === true ? 'verified' : 'pending',
+          status: result.verification?.verified === true ? 'verified' : result.verification?.state === 'unverified' ? 'unverified' : 'pending',
           deviceId,
           bindingOnly: result.plan?.bindingOnly === true,
           mode: result.plan?.mode || '',
@@ -24102,6 +24123,15 @@ async function handleApi(req, res, url) {
       const{result}=await mutate(store=>{const current=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!current||!pnp.canManage(store,current,actor)||pnp.signature(current)!==pnp.signature(device))throw Error('Izin atau koneksi OLT berubah');const result=catalogue.save(store,current,actor,input);addActivity(store,'monitoring',input.action==='delete'?'Preset katalog OLT dihapus':'Katalog OLT disimpan',{action:'olt-catalogue-'+input.action,oltId:device.id,userId:actor.id,kind:input.kind,itemId:result.item?.id||input.id});return{...catalogue.view(store,current),message:input.action==='delete'?'Preset katalog dihapus. Profil pada perangkat tetap dipertahankan.':'Katalog tersimpan. ONU existing tidak diubah.'};},{collections:['activity'],includeCore:true});sendJson(res,200,result);
     }catch(error){sendJson(res,error.status||400,{error:error.message||'Katalog OLT belum tersedia'});}return;
   }
+  const oltAutomationProfiles=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/automation-profiles$/);
+  if(oltAutomationProfiles&&['GET','POST'].includes(method)){
+    const context=await requirePermission(req,res,'olt:pnp:manage');if(!context)return;
+    const pnp=require('./olt-zte-pnp'),profiles=require('./olt-automation-profiles'),device=require('./olt-reboot').scopedDevices(context.data,context.user).find(row=>row.id===oltAutomationProfiles[1]&&row.vendor==='zte');if(!device){notFound(res);return;}
+    try{
+      if(method==='GET'){sendJson(res,200,profiles.view(device));return;}
+      const input=await readBody(req,8192),{result}=await mutate(store=>{const current=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!current||!pnp.canManage(store,current,actor)||pnp.signature(current)!==pnp.signature(device))throw Error('Izin atau koneksi OLT berubah');const result=profiles.save(store,current,actor,input);addActivity(store,'monitoring','Profil otomasi OLT disimpan',{action:'olt-automation-profile',operation:input.action,oltId:device.id,userId:actor.id,profileId:input.id,ponKey:input.ponKey});return{...result,message:input.action==='assign'?'Profil ditautkan ke PON. Periksa dan aktifkan registrasi otomatis melalui Pengaturan PON.':'Profil otomasi tersimpan.'};},{collections:['activity'],includeCore:true});sendJson(res,200,result);
+    }catch(error){sendJson(res,error.status||400,{error:error.message||'Profil otomasi belum tersimpan'});}return;
+  }
   const oltZteDiscovery=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/registration\/discovery$/);
   if(oltZteDiscovery&&['GET','POST'].includes(method)){
     const context=await requirePermission(req,res,'olt:pnp:manage');if(!context)return;
@@ -24119,7 +24149,7 @@ async function handleApi(req, res, url) {
     const context=await requirePermission(req,res,'olt:pnp:manage');if(!context)return;
     const registration=require('./olt-zte-registration'),pnp=require('./olt-zte-pnp'),device=require('./olt-reboot').scopedDevices(context.data,context.user).find(row=>row.id===oltZteRegistration[1]&&row.vendor==='zte');if(!device){notFound(res);return;}
     try{
-      if(method==='GET'){sendJson(res,200,{automation:registration.settings(device),jobs:registration.jobs(device).map(registration.publicJob)});return;}
+      if(method==='GET'){sendJson(res,200,{automation:registration.settings(device),jobs:registration.jobs(device).map(registration.publicJob),events:oltRegistrationEvents?.status(device.id)||{listening:false,configured:false}});return;}
       const input=await readBody(req,4096),options={explicitDevAccess:MIGRATION_MODE};
       if(input.action==='prepare'){sendJson(res,200,await registration.prepare(context.data,device,context.user,input,options));return;}
       if(input.action==='activate'){
@@ -24132,6 +24162,51 @@ async function handleApi(req, res, url) {
       const task=registration.executeManual(context.data,device,context.user,input,{...options,persist:job=>persistOltRegistration(device,job)});task.catch(error=>console.error('Registrasi manual ditahan: '+error.message));sendJson(res,202,{ok:true,message:'Permintaan registrasi diterima. Hasil ditampilkan setelah verifikasi.'});
     }catch(error){sendJson(res,error.status||400,{error:error.message||'Registrasi ONU belum tersedia'});}return;
   }
+  const oltZteOnuPolicy=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/onu-policy$/);
+  if(oltZteOnuPolicy&&method==='POST'){
+    const context=await requirePermission(req,res,'olt:pnp:manage');if(!context)return;
+    const pnp=require('./olt-zte-pnp'),policy=require('./olt-onu-policy'),device=require('./olt-reboot').scopedDevices(context.data,context.user).find(row=>row.id===oltZteOnuPolicy[1]&&row.vendor==='zte');if(!device){notFound(res);return;}
+    try{
+      const input=await readBody(req,4096);require('./olt-zte-acs').target(input);
+      if(input.action==='read'){sendJson(res,200,{policy:policy.get(device,input.serialNumber)});return;}
+      if(input.action!=='inherit'||input.confirmTarget!==input.serialNumber||input.confirmImpact!==true)throw Error('Konfirmasi mengikuti ACS OLT tidak sesuai');
+      const {result}=await mutate(store=>{const current=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!current||!pnp.canManage(store,current,actor)||pnp.signature(current)!==pnp.signature(device))throw Error('Izin atau pengaturan OLT berubah');pnp.check(store,current,actor);if(require('./olt-zte-registration').isBusy(device.id))throw Error('Tunggu operasi ONU selesai');const value=policy.save(current,input.serialNumber,{acs:'inherit'});addActivity(store,'monitoring','ACS ONU mengikuti otomasi OLT',{action:'olt-onu-policy',oltId:device.id,userId:actor.id,serialNumber:input.serialNumber,acs:'inherit'});return{policy:value,message:'ACS mengikuti OLT untuk proses berikutnya. Gunakan Enable/Disable untuk menyelaraskan kondisi ONU sekarang.'};},{collections:['activity'],includeCore:true});sendJson(res,200,result);
+    }catch(error){sendJson(res,error.status||400,{error:error.message||'Kebijakan ONU belum tersimpan'});}return;
+  }
+  const oltZteSettings=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/onu-settings$/);
+  if(oltZteSettings&&method==='POST'){
+    const context=await requirePermission(req,res,'olt:pnp:manage');if(!context)return;
+    const pnp=require('./olt-zte-pnp'),settings=require('./olt-zte-settings'),policy=require('./olt-onu-policy'),device=require('./olt-reboot').scopedDevices(context.data,context.user).find(row=>row.id===oltZteSettings[1]&&row.vendor==='zte');if(!device){notFound(res);return;}
+    try{
+      const input=await readBody(req,32768),options={explicitDevAccess:MIGRATION_MODE};
+      if(['read','prepare'].includes(input.action)){
+        const result=await settings[input.action](context.data,device,context.user,input,options),latest=await loadStore(),current=oltMonitor.deviceRows(latest).find(row=>row.id===device.id),actor=(latest.users||[]).find(row=>row.id===context.user.id);
+        if(!current||!pnp.canManage(latest,current,actor)||pnp.signature(current)!==pnp.signature(device)){forbidden(res);return;}sendJson(res,200,result);return;
+      }
+      if(input.action!=='apply')throw Error('Aksi pengaturan ONU tidak valid');
+      const result=await settings.execute(context.data,device,context.user,input,{...options,
+        beforeSend:async value=>{await mutate(store=>{const current=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!current||!pnp.canManage(store,current,actor)||pnp.signature(current)!==pnp.signature(device))throw Error('Izin atau pengaturan OLT berubah. Baca ulang ONU.');policy.save(current,value.serialNumber,{services:'manual'});addActivity(store,'monitoring','Permintaan pengaturan manual ONU',{action:'olt-onu-settings-request',oltId:device.id,userId:actor.id,kind:value.kind,address:value.address,serialNumber:value.serialNumber});},{collections:['activity'],includeCore:true});},
+        afterSend:async(result,value)=>{await mutate(store=>addActivity(store,'monitoring',result.message,{action:'olt-onu-settings-result',oltId:device.id,userId:context.user.id,kind:value.kind,address:value.address,serialNumber:value.serialNumber,verified:result.verified,submitted:result.submitted,uncertain:result.uncertain}),{collections:['activity'],includeCore:false});}
+      });sendJson(res,result.verified?200:202,result);
+    }catch(error){sendJson(res,error.status||400,{error:error.message||'Pengaturan ONU belum dapat diproses'});}return;
+  }
+  const oltZteAcs=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/onu-acs$/);
+  if(oltZteAcs&&method==='POST'){
+    const context=await requirePermission(req,res,'olt:pnp:manage');if(!context)return;
+    const pnp=require('./olt-zte-pnp'),acs=require('./olt-zte-acs'),device=require('./olt-reboot').scopedDevices(context.data,context.user).find(row=>row.id===oltZteAcs[1]&&row.vendor==='zte');if(!device){notFound(res);return;}
+    try{
+      const input=await readBody(req,4096),options={explicitDevAccess:MIGRATION_MODE};
+      if(['read','prepare'].includes(input.action)){
+        const result=await acs[input.action](context.data,device,context.user,input,options),latest=await loadStore(),current=oltMonitor.deviceRows(latest).find(row=>row.id===device.id),actor=(latest.users||[]).find(row=>row.id===context.user.id);
+        if(!current||!pnp.canManage(latest,current,actor)||pnp.signature(current)!==pnp.signature(device)){forbidden(res);return;}sendJson(res,200,result);return;
+      }
+      if(input.action!=='apply')throw Error('Aksi VLAN100 ACS tidak valid');
+      const result=await acs.execute(context.data,device,context.user,input,{...options,
+        beforeSend:async value=>{await mutate(store=>{const current=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!current||!pnp.canManage(store,current,actor)||pnp.signature(current)!==pnp.signature(device))throw Error('Izin atau pengaturan OLT berubah. Periksa ulang ONU.');if(value.operation!=='management')require('./olt-onu-policy').save(current,value.serialNumber,{acs:value.operation==='disable'?'disabled':value.policyMode==='inherit'?'inherit':'manual',acsUrl:value.acsUrl||current.onuAcs?.acsUrl});addActivity(store,'monitoring',value.operation==='management'?'Permintaan IP Host DHCP VLAN100 ONU':'Permintaan '+(value.operation==='disable'?'Disable':'Enable')+' TR069 ONU',{action:'olt-onu-acs-request',oltId:device.id,userId:actor.id,operation:value.operation,address:value.address,serialNumber:value.serialNumber});},{collections:['activity'],includeCore:true});},
+        afterSend:async(result,value)=>{await mutate(store=>addActivity(store,'monitoring',result.message,{action:'olt-onu-acs-result',oltId:device.id,userId:context.user.id,operation:value.operation,address:value.address,serialNumber:value.serialNumber,verified:result.verified,submitted:result.submitted,uncertain:result.uncertain}),{collections:['activity'],includeCore:false});}
+      });sendJson(res,result.verified?200:202,result);
+    }catch(error){sendJson(res,error.status||400,{error:error.message||'VLAN100 ACS belum dapat diproses'});}return;
+  }
   const oltZteBridge=pathname.match(/^\/api\/monitoring\/olt\/([^/]+)\/bridge$/);
   if(oltZteBridge&&method==='POST'){
     const context=await requirePermission(req,res,'olt:pnp:manage');if(!context)return;
@@ -24143,7 +24218,7 @@ async function handleApi(req, res, url) {
       }
       if(input.action!=='apply')throw Error('Aksi binding LAN tidak valid');
       const result=await bridge.execute(context.data,device,context.user,input,{...options,
-        beforeSend:async value=>{await mutate(store=>{const latest=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!latest||!pnp.canManage(store,latest,actor)||pnp.signature(latest)!==pnp.signature(device))throw Error('Izin atau koneksi OLT berubah. Baca ulang ONU.');addActivity(store,'monitoring','Permintaan perubahan binding LAN/SSID ONU',{action:'olt-bridge-request',oltId:device.id,userId:actor.id,target:value.target,kind:value.kind,port:value.port,mode:value.mode,vlans:value.vlans,previous:value.previous});},{collections:['activity'],includeCore:false});},
+        beforeSend:async value=>{await mutate(store=>{const latest=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!latest||!pnp.canManage(store,latest,actor)||pnp.signature(latest)!==pnp.signature(device))throw Error('Izin atau koneksi OLT berubah. Baca ulang ONU.');if(value.target?.serialNumber)require('./olt-onu-policy').save(latest,value.target.serialNumber,{services:'manual'});addActivity(store,'monitoring','Permintaan perubahan binding LAN/SSID ONU',{action:'olt-bridge-request',oltId:device.id,userId:actor.id,target:value.target,kind:value.kind,port:value.port,mode:value.mode,vlans:value.vlans,previous:value.previous});},{collections:['activity'],includeCore:true});},
         afterSend:async(result,value)=>{await mutate(store=>addActivity(store,'monitoring',result.message,{action:'olt-bridge-result',oltId:device.id,userId:context.user.id,target:value.target,kind:value.kind,port:value.port,mode:value.mode,vlans:value.vlans,submitted:result.submitted,verified:result.verified,uncertain:result.uncertain}),{collections:['activity'],includeCore:false});}
       });sendJson(res,result.verified?200:202,result);
     }catch(error){sendJson(res,error.status||400,{error:error.message||'Binding LAN belum tersedia'});}return;
@@ -24156,7 +24231,7 @@ async function handleApi(req, res, url) {
       if(input.action==='prepare'){const result=await bandwidth.prepare(context.data,device,context.user,input,options),latest=await loadStore(),current=oltMonitor.deviceRows(latest).find(row=>row.id===device.id),actor=(latest.users||[]).find(row=>row.id===context.user.id);if(!current||!pnp.canManage(latest,current,actor)||pnp.signature(current)!==pnp.signature(device)){forbidden(res);return;}bandwidth.assertProfile(current,result.value);sendJson(res,200,result);return;}
       if(input.action!=='apply')throw Error('Aksi bandwidth tidak valid');
       const result=await bandwidth.execute(context.data,device,context.user,input,{...options,
-        beforeSend:async value=>{await mutate(store=>{const latest=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!latest||!pnp.canManage(store,latest,actor)||pnp.signature(latest)!==pnp.signature(device))throw Error('Izin atau koneksi OLT berubah. Baca ulang profil.');bandwidth.assertProfile(latest,value);addActivity(store,'monitoring','Permintaan perubahan profil bandwidth OLT',{action:'olt-bandwidth-request',oltId:device.id,userId:actor.id,kind:value.kind,target:value.target,profiles:value.profiles.map(row=>({kind:row.kind,name:row.name})),allocation:value.allocation,kbps:value.policies.map(row=>row.kbps)});},{collections:['activity'],includeCore:false});},
+        beforeSend:async value=>{await mutate(store=>{const latest=oltMonitor.deviceRows(store).find(row=>row.id===device.id),actor=(store.users||[]).find(row=>row.id===context.user.id);if(!latest||!pnp.canManage(store,latest,actor)||pnp.signature(latest)!==pnp.signature(device))throw Error('Izin atau koneksi OLT berubah. Baca ulang profil.');bandwidth.assertProfile(latest,value);if(value.target?.serialNumber)require('./olt-onu-policy').save(latest,value.target.serialNumber,{services:'manual'});addActivity(store,'monitoring','Permintaan perubahan profil bandwidth OLT',{action:'olt-bandwidth-request',oltId:device.id,userId:actor.id,kind:value.kind,target:value.target,profiles:value.profiles.map(row=>({kind:row.kind,name:row.name})),allocation:value.allocation,kbps:value.policies.map(row=>row.kbps)});},{collections:['activity'],includeCore:true});},
         afterSend:async(value,selection)=>{await mutate(store=>addActivity(store,'monitoring',value.message,{action:'olt-bandwidth-result',oltId:device.id,userId:context.user.id,kind:selection.kind,target:selection.target,submitted:value.submitted,verified:value.verified,uncertain:value.uncertain}),{collections:['activity'],includeCore:false});}
       });sendJson(res,result.verified?200:202,result);
     }catch(error){sendJson(res,error.status||400,{error:error.message||'Profil bandwidth belum tersedia'});}return;
@@ -24212,7 +24287,8 @@ async function handleApi(req, res, url) {
     const device=oltMonitor.visibleDevices(context.data,context.user).find(row=>row.id===oltDeviceSettings[1]);if(!device){notFound(res);return;}
     try{
       if(String(device.communityEnc||'').startsWith('v1:')&&Buffer.from(String(context.data.settings?.security?.secretKey||''),'base64').length!==32)throw new Error('Kunci keamanan tidak tersedia');
-      sendJson(res,200,{id:device.id,community:secureSecrets.decryptSecret(context.data,device.communityEnc)},{'Cache-Control':'private, no-store','Pragma':'no-cache'});
+      const acsSuggestion=device.vendor==='zte'?Object.values(require('./olt-zte-pnp').presets(device)).find(row=>row.tr069?.acsUrl)?.tr069.acsUrl||'':'';
+      sendJson(res,200,{id:device.id,community:secureSecrets.decryptSecret(context.data,device.communityEnc),...(device.vendor==='zte'?{onuAcs:require('./olt-acs-policy').settings(device),acsSuggestion}:{})},{'Cache-Control':'private, no-store','Pragma':'no-cache'});
     }
     catch{sendJson(res,500,{error:'Community SNMP belum dapat dibaca. Periksa konfigurasi keamanan aplikasi.'});}
     return;
@@ -28267,7 +28343,8 @@ if (require.main === module) {
     if (routerDashboardBackgroundTimer) clearInterval(routerDashboardBackgroundTimer);
     if (oltBackgroundTimer) clearInterval(oltBackgroundTimer);
     if (oltResourceTimer) clearInterval(oltResourceTimer);
-    if (oltRegistrationTimer) clearInterval(oltRegistrationTimer);
+    oltRegistrationController?.stop();
+    oltRegistrationEvents?.stop();
     if (customerSummaryBackgroundTimer) clearInterval(customerSummaryBackgroundTimer);
     if (genieAcsStaleReplacedCleanupTimer) clearInterval(genieAcsStaleReplacedCleanupTimer);
     if (imageCleanupTimer) clearInterval(imageCleanupTimer);

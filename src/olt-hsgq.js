@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto=require('node:crypto');
-const busy=new Set(),attempts=new Map();
+const busy=new Set(),attempts=new Map(),operationQueues=new Map();
 const opticalCache=new(require('./bounded-json-cache').BoundedJsonCache)({maxEntries:2048,maxBytes:2*1024*1024,maxEntryBytes:4096}),opticalPending=new Map(),opticalAttempts=new Map(),opticalOnuAttempts=new Map();
 const fail=(message,status=409)=>{throw Object.assign(Error(message),{status});};
 const digest=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -27,7 +27,12 @@ function detail(text,target,{allowMissing=false}={}){
 }
 const detailCommand=target=>'show ont-info '+target.pon+' '+target.onuId;
 const tableCommand=target=>'show ont-info '+target.pon+' all';
+function emptyPon(text,pon){
+ const value=String(text||'').replace(/\r/g,''),matches=[...value.matchAll(/^\s*In port (\d+)\s*,\s*the total of ONTs are:\s*0,\s*online:\s*0\s*$/gm)],echoes=[...value.matchAll(/^\s*show ont-info (\d+) all\s*$/gm)];
+ return matches.length===1&&Number(matches[0][1])===pon&&echoes.length<=1&&echoes.every(row=>Number(row[1])===pon)&&!/^\s*\d+\/\d+\b|PON\/ONU|Total:|(?:^|\n)\s*(?:vty%|Error|Failed)\b/m.test(value)&&!value.split('\n').some(line=>line.trim()&&!/^\s*(?:show ont-info \d+ all|In port \d+\s*,\s*the total of ONTs are:\s*0,\s*online:\s*0|[^\r\n<>]{1,100}\(config\)#)\s*$/.test(line));
+}
 function removalTable(text,target){
+ if(emptyPon(text,target.pon))return{state:'missing',registry:[]};
  const value=String(text||'').replace(/\r/g,'');if(!/PON\/ONU\s+Serial\s+State\s+Run\s+Config\s+Match/.test(value))fail('Tabel PON HSGQ belum lengkap',503);
  const totals=[...value.matchAll(/Total:\s*(\d+)\s+Online:\s*(\d+)\s+Offline:\s*(\d+)/g)],rows=[];
  for(const line of value.split('\n')){if(!/^\s*\d+\/\d+\s+/.test(line))continue;const m=line.trim().match(/^(\d+)\/(\d+)\s+([A-Za-z0-9]{12})\s+(Active|Inactive)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$/i);
@@ -90,7 +95,7 @@ async function readInventory(adapter,helpers={}){
  const commands=['enable','configure','show version',...pons.map(pon=>'show ont-info '+pon+' all')],raw=await transport.executeOltCommands({olt:adapter.olt,password:context.decryptSecret(adapter.olt.password_encrypted),commands,timeoutMs:15000});
  if(!raw.success)fail('Inventory HSGQ belum terbaca lengkap; data terakhir dipertahankan',503);
  const version=identity(output(raw,'show version')),items=[];
- for(const pon of pons){const text=output(raw,'show ont-info '+pon+' all'),parsed=adapter.parseOntInfoTable(text),summary=adapter.parseOntInfoSummary(text);if(!/PON\/ONU\s+Serial/.test(text)||!summary||summary.total_onu!==parsed.length||summary.online+summary.offline!==summary.total_onu||summary.online!==parsed.filter(row=>row.status==='online').length||parsed.some(row=>row.pon!==pon)||new Set(parsed.map(row=>row.onu_id)).size!==parsed.length)fail('Daftar ONU HSGQ terpotong atau berasal dari PON lain',503);items.push(...parsed);}
+ for(const pon of pons){const text=output(raw,'show ont-info '+pon+' all');if(emptyPon(text,pon))continue;const parsed=adapter.parseOntInfoTable(text),summary=adapter.parseOntInfoSummary(text);if(!/PON\/ONU\s+Serial/.test(text)||!summary||summary.total_onu!==parsed.length||summary.online+summary.offline!==summary.total_onu||summary.online!==parsed.filter(row=>row.status==='online').length||parsed.some(row=>row.pon!==pon)||new Set(parsed.map(row=>row.onu_id)).size!==parsed.length)fail('Daftar ONU HSGQ terpotong atau berasal dari PON lain',503);items.push(...parsed);}
  const rows=vendors.normalizeOnus(items,{...helpers,classifyCause:typeof helpers.classifyCause==='function'?value=>helpers.classifyCause(adapter.normalizeDownCause(value)):undefined,minimumOnuId:0});if(rows.length!==items.length)fail('Identitas ONU HSGQ belum lengkap',503);
  return{available:true,rows:cachedOptical(context.current().device,rows),modelLabel:version.product,hsgqActions:actionsFor(version),version,warning:version.verified?'':'Monitoring HSGQ aktif; aksi tulis firmware ini belum terverifikasi.'};
 }
@@ -114,13 +119,28 @@ async function waitForOptical(device){
  const pending=opticalPending.get(opticalConnection(device));if(!pending)return;let timer;
  try{await Promise.race([pending,new Promise((resolve,reject)=>{timer=setTimeout(()=>reject(Object.assign(Error('Pembacaan redaman belum selesai; coba kembali sebentar lagi'),{status:503})),5000);timer.unref?.();})]);}finally{clearTimeout(timer);}
 }
+async function claimOperation(device){
+ if(require('./olt-terminal').isOpen(device.id))fail('Tutup Terminal CLI HSGQ sebelum menjalankan aksi ONU',429);
+ if(!busy.has(device.id)){if(busy.size>=2)fail('Operasi HSGQ sedang penuh; coba kembali sebentar lagi',429);busy.add(device.id);return;}
+ const queue=operationQueues.get(device.id)||[];
+ if(queue.length>=4||[...operationQueues.values()].reduce((count,rows)=>count+rows.length,0)>=32)fail('Antrean aksi HSGQ penuh; tunggu operasi sebelumnya selesai',429);
+ await new Promise((resolve,reject)=>{
+  const entry={grant:()=>{clearTimeout(entry.timer);resolve();}};
+  entry.timer=setTimeout(()=>{const index=queue.indexOf(entry);if(index>=0)queue.splice(index,1);if(!queue.length)operationQueues.delete(device.id);reject(Object.assign(Error('Batas waktu antrean aksi HSGQ tercapai; periksa kembali setelah operasi sebelumnya selesai'),{status:429}));},8000);
+  queue.push(entry);operationQueues.set(device.id,queue);
+ });
+}
+function releaseOperation(device){
+ const queue=operationQueues.get(device.id),next=queue?.shift();if(!queue?.length)operationQueues.delete(device.id);
+ if(next)next.grant();else busy.delete(device.id);
+}
 async function run(data,device,onu,operation,payload={},options={}){
  if(device.vendor!=='hsgq'||!device.enabled||!device.cliEnabled||!device.cliUsername||!device.cliPasswordEnc)fail('Akses pengelolaan HSGQ belum dikonfigurasi',400);
  const target=position(onu?.id);if(!target||target.serialNumber!==onu.serialNumber||!['inspect','rename','reboot','delete'].includes(operation))fail('Posisi dan SN ONU HSGQ tidak cocok',400);
- if(require('./olt-terminal').isOpen(device.id)||busy.has(device.id)||busy.size>=2)fail('Tutup terminal atau tunggu operasi HSGQ selesai',429);
- const key=device.id+':'+onu.id;if(operation!=='inspect'&&Date.now()-(attempts.get(key)||0)<(operation==='rename'?5000:60000))fail('Perintah baru diproses; periksa hasil sebelum mengulang',429);
- busy.add(device.id);
+ await claimOperation(device);
  try{
+  if(require('./olt-terminal').isOpen(device.id))fail('Tutup Terminal CLI HSGQ sebelum menjalankan aksi ONU',429);
+  const key=device.id+':'+onu.id;if(operation!=='inspect'&&Date.now()-(attempts.get(key)||0)<(operation==='rename'?5000:60000))fail('Perintah baru diproses; periksa hasil sebelum mengulang',429);
   await waitForOptical(device);
   const inventoryProof=operation==='delete'||operation==='inspect'&&payload.purpose==='delete',query=inventoryProof?tableCommand(target):detailCommand(target);
   const vendors=require('./olt-vendors'),[,context,transport]=await vendors.loadLibrary(),deadline=Date.now()+32000;let raw;
@@ -136,11 +156,11 @@ async function run(data,device,onu,operation,payload={},options={}){
   attempts.set(key,Date.now());while(attempts.size>512)attempts.delete(attempts.keys().next().value);const result=await execute(data,device,spec,options);
   if(!result.success||result.verified!==true&&operation!=='reboot')fail(result.submitted?'Perintah HSGQ sudah dikirim tetapi hasil belum pasti. Periksa sebelum mengulang.':'Aksi HSGQ belum terkirim atau target berubah.',502);
   return operation==='rename'?{description:spec.description,descriptionConfirmed:true}:operation==='delete'?{deleteConfirmed:result.verified===true,alreadyAbsent:false}:{submitted:result.submitted===true,confirmed:false};
- }finally{busy.delete(device.id);}
+ }finally{releaseOperation(device);}
 }
 async function saveConfig(data,device,options={}){
- if(device.vendor!=='hsgq'||!device.enabled||!device.cliEnabled||!device.cliPasswordEnc)fail('Akses HSGQ belum dikonfigurasi',400);if(busy.has(device.id)||busy.size>=2||require('./olt-terminal').isOpen(device.id))fail('Akses HSGQ sedang digunakan',429);busy.add(device.id);
- try{await waitForOptical(device);const vendors=require('./olt-vendors'),[,context,transport]=await vendors.loadLibrary(),raw=await context.withContext(data,device,()=>transport.executeOltCommands({olt:vendors.legacyDevice(device),password:context.decryptSecret(device.cliPasswordEnc),commands:['enable','show version'],timeoutMs:5000}),options);if(!raw.success)fail('Identitas OLT HSGQ belum terverifikasi');const spec={operation:'save',version:output(raw,'show version')};authorize(spec);const result=await execute(data,device,spec,options);return{saveConfirmed:result.success===true&&result.verified===true};}finally{busy.delete(device.id);}
+ if(device.vendor!=='hsgq'||!device.enabled||!device.cliEnabled||!device.cliPasswordEnc)fail('Akses HSGQ belum dikonfigurasi',400);await claimOperation(device);
+ try{if(require('./olt-terminal').isOpen(device.id))fail('Tutup Terminal CLI HSGQ sebelum menyimpan konfigurasi',429);await waitForOptical(device);const vendors=require('./olt-vendors'),[,context,transport]=await vendors.loadLibrary(),raw=await context.withContext(data,device,()=>transport.executeOltCommands({olt:vendors.legacyDevice(device),password:context.decryptSecret(device.cliPasswordEnc),commands:['enable','show version'],timeoutMs:5000}),options);if(!raw.success)fail('Identitas OLT HSGQ belum terverifikasi');const spec={operation:'save',version:output(raw,'show version')};authorize(spec);const result=await execute(data,device,spec,options);return{saveConfirmed:result.success===true&&result.verified===true};}finally{releaseOperation(device);}
 }
 
 module.exports={isReadCommands,isProbeCommands,position,identity,detail,removalTable,missingDetailResponse,actionCommands,authorize,verifyStep,readInventory,enrichPage,opticalReading,cachedOptical,run,saveConfig,isBusy:id=>busy.has(id)};

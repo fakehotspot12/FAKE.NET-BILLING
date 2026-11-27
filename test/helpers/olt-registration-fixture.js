@@ -3,6 +3,7 @@ const base=require('./olt-bandwidth-fixture'),TYPE='FB-GPON-AUTO',key='1/1/13';
 function fixture(){const f=base.fixture(),m=base.model();m.registered=false;m.onu.type=TYPE;m.onu.limits={tcont:1,gem:16};m.onu.tcont=[];m.onu.gems=[];m.onu.services=[];m.management=[];m.types=[];m.onu.configState='success';m.onu.status='working';m.catalogue.vlans=[1,100,101,102];m.native=false;m.interfaceEnabled=true;return{...f,model:m};}
 function reply(command,m){
  const unit=m.onu,iface='gpon-onu_'+unit.address;
+ if(command==='show service-port interface '+iface)return 'Interface '+iface+'\nSport Vport BeginVid EndVid OuterVid InnerVid UserPrio Etype Vlan Cos SVlan SCo\n'+unit.services.map(r=>[r.id,r.gem,r.userVlan,r.userVlan,'--','--','--','--',r.vlan,'--','--','--'].join(' ')+'\n -- -- 1:1 -- -- -- -- OK YES').join('\n')+'\nSport total number:\n'+unit.services.length+'\nOLT#';
  if(command==='show card')return'Rack Shelf Slot CfgType RealType Port  HardVer SoftVer         Status\n1    1     1    GTGH    GTGHG    16    V1.0.0  V2.1.0          INSERVICE\nOLT#';
  if(command==='show interface gpon-olt_'+key)return`gpon-olt_${key} is activate,line protocol is ${m.registered?'up':'down'}.\nThe port has 128 onus, the number of registered onus is ${m.registered?1:0}.\nOLT#`;
  if(command==='show running-config interface gpon-olt_'+key)return`interface gpon-olt_${key}\n ${m.interfaceEnabled?'no shutdown':'shutdown'}\n!\nend\nOLT#`;

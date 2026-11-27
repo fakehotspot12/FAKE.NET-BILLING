@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createHash } = require('crypto');
 const { spawnSync } = require('child_process');
 const { installFreshTemplate } = require('./ui-template');
 
@@ -13,6 +14,37 @@ const cwmpUsername = String(process.env.GENIEACS_CWMP_AUTH_USERNAME || 'admin');
 const cwmpPassword = String(process.env.GENIEACS_CWMP_AUTH_PASSWORD || '1sampai10');
 const mongoUrl = String(process.env.GENIEACS_MONGODB_CONNECTION_URL || 'mongodb://127.0.0.1:27017/genieacs');
 const assetsDir = path.join(__dirname, 'virtual-parameters');
+// Exact hashes from released ancestry through v4.7.2 plus this candidate's
+// canonical scripts. Retain these when updating a bundle; unknown same-name
+// definitions belong to the owner, not to this installer.
+const managedVirtualParameterHistory = {
+  IPTR069: ['038c6def358e7374084fb335555fb03107a3aadd45909787ec8be34384f3c929', '297ea799e2bb4d896e671052a6b4b58fae0fa47fe4000fc67bd56d4e9559096f', '52c164501038186f5a4c4cd7cb7ca9fd3f735004070fb476f247ed02b6a8f00d', '80a317d81383a90798a7b74027d467b53a3fd0145af1b55312e059209fd4622c', '75df75617b5958c74c003cbc494af44f73ea8590bd3efe4de6ce7e8517b5e6d8'],
+  LANActiveClients: ['4b864359160bb3d3637273620bf4c425e752a5e39ca517deda25df545e0eea7d', '7479ad46134e509059ad35bd2465c58be162e52d3116b3f12311f028005a4963', 'b4f8a8eff3995ceee145712c3f770403a5a9275cdf8d7f10f923f13dc87ad072'],
+  LANClients: ['4b864359160bb3d3637273620bf4c425e752a5e39ca517deda25df545e0eea7d', '7479ad46134e509059ad35bd2465c58be162e52d3116b3f12311f028005a4963', 'b4f8a8eff3995ceee145712c3f770403a5a9275cdf8d7f10f923f13dc87ad072'],
+  PonMac: ['35b25d3feaca7002b6056dffa8298bb58d0377e0353b779ad6f1e00af5a377fc', '6ebe0428e9054f977e82202bfc07a4e4cf31d29d3a8a7ced117763e45f93b932', '1e74f8198126adee0a46e47c596209565fa4e8a8467d23f86c1c2b274269d1e4'],
+  RXPower: ['298335e28bfe8a96b974c6c113ba6abf3e0052c5f8ff28f86dddf88235c3d923', '3291f65458e6a1de4118a47c031daa00f179fbe1070d3a69ff02fd1a81198525', '7141e89d297680d39a8bc74ed72021fb22333cd7ee6d9a16d8e119fb0e47af77', 'bdc6017e4a3134e85a71488d176c80e211c12aae0e9a18323569a587e801f200'],
+  WlanPassword: ['44a59f0ff26547ffa8ce1641fd18dce5c461e2beb89acf6bd190d5cbf615ed5b', '964fc6db1355192efea85b22c28cb7e882a234745488616fd9ab6294a596d1d6', 'c4600961ecbd76b683476389af03a6280df9d01b0d7766922505456824b48220', 'd207058f18945aac9c71dee4106c5b62ac93932c44e9577919a69674cf4a3d6e'],
+  activedevices: ['8798cbf6d2207657b3b5c9b75f0815aebed7c3ae5a59faafc977376376b9898a', 'e0b12bf172f29fc752c87e82a58708ae7bae1d0165a6072827940a66c0f14a5f', 'f6446cb6b4bd805e3954b6316ed05466f74430aa415ac533d10578851654ab93', 'add84384e609d2a8ebdf58ba498eddd230a1e80c885d026529df361a432b8ac8'],
+  getSerialNumber: ['062548162f3c377d5e92a77e5c46b1f368dbcf7cf88d52c7951c481db5eb293c', '100bca7f5d7214df7734aef0f8d00d593484f0f7f62910fed283932ee661b032', '7b6faeea751f8673dcc0014eecf34d24f448742b90395d21233fa077d4364cdc', '4130b4774a683cf6585d009f4ee7f17b2d814d85f8a87fb880752e8ccaf333c6'],
+  getdeviceuptime: ['37e326f0430b0a27ac517b06dc6ad79461524f88286d63b8be77375b6068ce8d', '8986080e4a13580e7f4831b6c68b867bb872ab8e02ca4dcf53daa9ea4556e059', 'bf79f7b78b412bf69b07619d6c3ea517d1fe445637ae6d811a043d390e17f279'],
+  getponmode: ['73601873563ed06c0bb8455ecfdb9e5fe650253ea8834dc559232ecdeba59964', 'c1292378265461b98e39a2f38d8831624f0f5e24115e399c79081f6b024d2f4c', 'fece84e9f6a33df9a2182eaecd6fb5c2e848ff56b7138536078c0053a37215be', 'f03f56db570d38d7ea21feb3fc5bb74aa3539f2f30052c5e1e7eb346b439da7c'],
+  getpppuptime: ['2b370f8c9ad00cb060ee5c57177d5f7c1784cfa5ac6a531c5f83f7626eccca01', '30c180eb1e0d6229d2e95ef5a80047fcdb453c8443841b4af0777f4aaf6a620f', '2ebaf3190f4b56470c4c4cc6b84fb6a67fe81f2d2465f82012f0b541cdbd86f3'],
+  gettemp: ['78b9f47763893aea157914ac71477001a1c45dfa580becf6373f085a455980dc', '80ca776b5a00b225fcc7b758cce7565e27494e5cb2c181740ea7ef2e1679588a', 'a1733c763be57c5b79d57a65c99d922ace80e29d39c56cda268733d27c917b2b', 'a2a601f00c719dd1d9e29aabb8dc92c6383929fd587f28bf714c0a97bca97d1d'],
+  ip: ['94f0641814569d0f5ae2867b25a4003cdb595e7ababd7a301aa5ee8597cf2327', 'ab88110caec4c2fabdbaa460badf9dc11709706721cad565755267af2cb4a061', 'b2e10b5eebba5f117958ce1580d2a2d93baba99f0c84853bb4ce82d053e4dd4d'],
+  pppoe: ['060497b397dc6546125955abd91b60253bad3a72ed6fd0e4d48657359368d9a6', '5b9c32023d093b793a6a1e6627413dcf08d36cd4210dd6c9a8fd889c3964594c', '7fb434233c58da007a9562df7c09bb475f842757046d0e9fbbf562fe622649f2'],
+  pppoeIP: ['3fd50df4f55eac724227c242c6829576c399559e7be95cd12be6c7b128145a5d', 'a967b4f47d77767d53b8ec73ef6a070ff5aca4dd74e3dbccedc4b1a372007846', 'e9feca6c76dfcd9ca68a8aac8122365550ea9664737f46979df33d79712550a6', '1eb537ecbc49b0f47548ca853dcb81acc480d6e773609e0ceaecda7027a34f1d'],
+  pppoeMac: ['75a53286990d24fe5d6e516217927284bd5c1c9916baf60ab62167d36c94910b', 'a911d75f02b8b47da1f2a04b308442c1581d730cbe2efe7984262184b23ebf62', '18c41248532235a034ef766c71578f3e6b2d981b1df5c5383b4dc2c28e8a5f12'],
+  pppoePassword: ['47351647f95afad9bb1ad5b8a38302d6da8d5e069f1e8035ecf0b718ea6a20af', 'bb990396f78c511c341185fa2255db29fa8a6a60dc1f28cd9272af1439a7ef86', 'f9c040126c2c0ec8fcba814b1e35706aff08bf599a5030829f74535b58a26c8c', '09edc3787424708fbdf597307477aee74afcfd70016654016976b067b8fef752'],
+  pppoeUsername: ['059bb01f256a5d8c63c1139422de8c038dbe9252fc4b12d53adaf60c08f0e339', '612818f5e17ba30a4f3f3d94b2a733411fe3763fc461fed39efad535cec7d281', '7dc644135a33e4985f9d5147373a66f251469667e022704ed5cf27291e4c7704', '889a8010462622f8ef9efa7f6d111ac31e94eedba27a2e959e212f13dab1b4aa'],
+  pppoeUsername2: ['060497b397dc6546125955abd91b60253bad3a72ed6fd0e4d48657359368d9a6', '5b9c32023d093b793a6a1e6627413dcf08d36cd4210dd6c9a8fd889c3964594c', '7fb434233c58da007a9562df7c09bb475f842757046d0e9fbbf562fe622649f2'],
+  superAdmin: ['15b6a287075574e5abc811e10f6e0fe62e3a0de8e685e33db2f519415a24c178', '17fb732671152d7905e8dd5079b4d4991031525d592bce74b9738c308619bc9d', 'eaf246dd88db96acac824fa5dbd5a43783feec816a1c74ac3a16bea519b3c9f5'],
+  superPassword: ['b246856f515032a699f114a34d6978cd3bf707ace696da2589c269b83669cc62', 'f3433f589a26e8cda9330b5f52e2a12de2572ba817e2416185826f196fb85da2', 'fed46466f67ae8c54b9c6b628f034c9db2463e2f352482911fb1b0e4cdd415dc'],
+  userAdmin: ['892e64028a3a9522ee1200334e4f2e74987564a5720e38b5e43d483771a1cc2b', 'a3be399e80a61e64303aae3de35a5cca264c2ca4f3d4010dbafc352d4f93b12e', 'c77c0b1747a7421f963db0f0888718bb75108168cbca381b0380465d246de563'],
+  userPassword: ['5e05c30f4e08ee78999e59812f4845f44417a8ad4b8e2c53f90a61bd0bcf2e75', '9cebd1701089a8fe234eca4c67d75178d09471619289d4c4c8c7ea7e5e9bbe2d', 'ccf38c5b32ee8501619112354be6ef377edb9f5e6a93b958a7b4a8b4df7b1612'],
+  wanVlan: ['3c41b2365df80affcc415af62574f71ccf77bf49e239b6839bea69b69a6e08da', '637cc93297677df9d8bb69324ec367af237eb5451d32578dc65bdc82d46750bf', '85e793e6829c092c2689e2ae85d3f8924ac7dc484607c45737b6574dacb40c0d'],
+  wifiSsid24: ['7e20f1031480e02508e1530c357a4b1e34389ed47f7ad35ded22475b01c6d2e8', '522958c1d1f0f2373e15a23a707c7cb3d0c31b41e281468ea08f521a709535de'],
+  wifiSsid5: ['36c7d92f0a09fc4756dd158e051430fc1d1985e48dea9cf3305c64c446270a71', 'a522121a9feffdc982db99ade478fe668afb399823104e6eb6191955d65cc708', '69c671a068d371cec2f5e2363fe1fd5b664d8c3b3c6f853487dcd1af044aca25']
+};
 const externalBootstrap = ['1', 'true', 'yes', 'on'].includes(String(process.env.GENIEACS_BOOTSTRAP_EXTERNAL || '').toLowerCase());
 const autoProvisionSetting = process.env.GENIEACS_AUTO_VP_PROVISION;
 const autoProvisionEnabled = autoProvisionSetting === undefined ? !externalBootstrap
@@ -239,11 +271,28 @@ function virtualParameterScripts() {
 }
 
 function virtualParameterName(row = {}) {
-  return String(row._id || row.name || '').trim();
+  return String(row._id || row.name || '');
 }
 
 function virtualParameterScript(row = {}) {
   return String(row.script || '');
+}
+
+function virtualParameterUpgradePlan(sourceRows = [], baselineRows = []) {
+  const baseline = new Map(baselineRows.map(row => [virtualParameterName(row), row]));
+  const writes = [], preserved = [];
+  const expected = sourceRows.map(row => {
+    const previous = baseline.get(row.name);
+    if (previous && previous.script === row.script) return row;
+    if (previous && (typeof previous.script !== 'string' ||
+      !managedVirtualParameterHistory[row.name]?.includes(createHash('sha256').update(previous.script).digest('hex')))) {
+      preserved.push(row.name);
+      return { name: row.name, script: virtualParameterScript(previous) };
+    }
+    writes.push({ ...row, previousScript: previous ? previous.script : null });
+    return row;
+  });
+  return { writes, expected, preserved };
 }
 
 async function readVirtualParametersViaNbi() {
@@ -318,7 +367,8 @@ function installVirtualParametersViaMongo(rows = []) {
   const script = [
     'const rows = ' + JSON.stringify(rows) + ';',
     'for (const row of rows) {',
-    '  db.getCollection("virtualParameters").updateOne({ _id: row.name }, { $set: { script: row.script } }, { upsert: true });',
+    '  if (row.previousScript === null) db.getCollection("virtualParameters").updateOne({ _id: row.name }, { $setOnInsert: { script: row.script } }, { upsert: true });',
+    '  else db.getCollection("virtualParameters").updateOne({ _id: row.name, script: row.previousScript }, { $set: { script: row.script } });',
     '}',
     'print("Virtual Parameters aktif: " + rows.map((row) => row.name).join(", "));'
   ].join('\n');
@@ -329,246 +379,79 @@ function installVirtualParametersViaMongo(rows = []) {
   if (result.stdout) process.stdout.write(result.stdout);
 }
 
+function evaluateCachedVirtualParameters(doc, sources, now = Date.now()) {
+  const definitions = new Map(sources.map(row => [row.name, row.script]));
+  const nodes = new Map(), cache = new Map(), active = new Set(), errors = [];
+  function walk(node, path) {
+    if (!node || typeof node !== 'object' || nodes.size >= 50000) return;
+    if (path && (Object.hasOwn(node, '_value') || Object.hasOwn(node, '_object'))) nodes.set(path, node);
+    for (const [key, value] of Object.entries(node)) if (!key.startsWith('_')) walk(value, path ? path + '.' + key : key);
+  }
+  walk(doc, '');
+  for (const [key, value] of Object.entries({ID: doc._id, SerialNumber: doc._deviceId?._SerialNumber, ProductClass: doc._deviceId?._ProductClass, Manufacturer: doc._deviceId?._Manufacturer, OUI: doc._deviceId?._OUI})) {
+    if (value !== undefined) nodes.set('DeviceID.' + key, {_value: value, _type: 'xsd:string', _writable: false});
+  }
+  function calculate(name) {
+    if (cache.has(name)) return cache.get(name);
+    if (active.has(name) || active.size >= 6 || !definitions.has(name)) return null;
+    active.add(name);
+    try {
+      const declare = (pattern, timestamps = {}, writes) => {
+        if (writes && Object.keys(writes).length) throw Error('Cache backfill cannot write native parameters');
+        if (pattern.startsWith('VirtualParameters.') && !pattern.includes('*')) {
+          const target = pattern.slice(18);
+          if (target !== name && definitions.has(target)) calculate(target);
+        }
+        const regex = new RegExp('^' + pattern.split('.').map(part => part === '*' ? '[^.]+' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\.') + '$');
+        const rows = [];
+        for (const [path, node] of nodes) {
+          if (!regex.test(path)) continue;
+          const row = {path};
+          if (timestamps?.value >= 1) row.value = Object.hasOwn(node, '_value') ? [node._value, node._type || 'xsd:string'] : undefined;
+          if (timestamps?.writable >= 1) row.writable = node._writable;
+          rows.push(row);
+        }
+        for (const key of ['path', 'value', 'writable']) Object.defineProperty(rows, key, {get: () => rows[0]?.[key]});
+        Object.defineProperty(rows, 'size', {value: rows.length});
+        return rows;
+      };
+      const result = new Function('declare', 'commit', 'args', 'log', definitions.get(name))(declare, () => {}, [{}, {}, {}, {}], () => {});
+      if (!result || !Array.isArray(result.value) || result.value.length !== 2 || !/^xsd:(?:string|int|unsignedInt|boolean|dateTime)$/.test(result.value[1])) throw Error('Invalid virtual parameter result');
+      const node = {_object: false, _timestamp: new Date(now), _type: result.value[1], _value: result.value[0], _writable: result.writable === true};
+      cache.set(name, node);nodes.set('VirtualParameters.' + name, node);
+      return node;
+    } catch (error) {
+      errors.push({name, message: String(error.message || error).replace(/[^a-zA-Z0-9 .:-]/g, '').slice(0, 160)});
+      cache.set(name, null);return null;
+    } finally { active.delete(name); }
+  }
+  const set = {};
+  for (const {name} of sources) {
+    const node = calculate(name);if (!node) continue;
+    const old = doc.VirtualParameters?.[name];
+    if (!old || !Object.hasOwn(old, '_value') || old._value !== node._value || old._type !== node._type || old._writable !== node._writable) set['VirtualParameters.' + name] = node;
+  }
+  return {set, errors};
+}
+
 function backfillVirtualParameterValuesViaMongo() {
   const command = mongoShell();
   if (!command) return;
-
+  if (dryRun) { process.stdout.write('Audit backfill Virtual Parameters: cache modem dibaca tanpa permintaan CWMP.\n'); return; }
+  // Run the same bundled VP code against cached leaves; do not maintain a
+  // second set of vendor/VLAN/password selection rules in the installer.
   const script = [
-    'function clean(value) { return value === undefined || value === null ? "" : String(value).trim(); }',
-    'function leaf(doc, path) {',
-    '  const node = path.split(".").reduce((item, key) => item && item[key], doc);',
-    '  if (node && typeof node === "object" && Object.prototype.hasOwnProperty.call(node, "_value")) return node._value;',
-    '  return "";',
-    '}',
-    'function serialText(value) {',
-    '  const serial = clean(value);',
-    '  if (!/^[0-9a-f]{16}$/i.test(serial)) return serial;',
-    '  let vendor = "";',
-    '  for (let index = 0; index < 8; index += 2) vendor += String.fromCharCode(parseInt(serial.substr(index, 2), 16));',
-    '  return /^[A-Z]{4}$/.test(vendor) ? vendor + serial.substr(8).toUpperCase() : serial;',
-    '}',
-    'function managementIp(doc) {',
-    '  for (const path of ["InternetGatewayDevice.ManagementServer.ConnectionRequestURL", "Device.ManagementServer.ConnectionRequestURL"]) {',
-    '    const match = clean(leaf(doc, path)).match(/^https?:\\/\\/(?:\\[([^\\]]+)\\]|([^/:]+))/i);',
-    '    const ip = match && (match[1] || match[2]);',
-    '    if (!ip || !/^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(ip)) continue;',
-    '    const parts = ip.split(".").map(Number);',
-    '    if (parts.every(part => part <= 255) && parts[0] > 0 && parts[0] !== 127 && parts[0] < 224) return ip;',
-    '  }',
-    '  return "";',
-    '}',
-    'function first(doc, paths) {',
-    '  for (const path of paths) {',
-    '    const value = clean(leaf(doc, path));',
-    '    if (value) return { path, value };',
-    '  }',
-    '  return { path: "", value: "" };',
-    '}',
-    'function numberText(value) {',
-    '  const text = clean(value);',
-    '  if (!text) return "";',
-    '  const number = Number(text.replace(",", ".").replace(/[^\\d.-]/g, ""));',
-    '  if (!Number.isFinite(number) || [0,-255,255,65535,32767].includes(number)) return "";',
-    '  return String(Math.round(number * 100) / 100);',
-    '}',
-    'function rxPowerText(value, path) {',
-    '  const text = clean(value);',
-    '  let number = Number(text.replace(",", ".").replace(/[^\\d.-]/g, ""));',
-    '  if (!Number.isFinite(number) || [0, -255, 65535, 32767].includes(number)) return "";',
-    '  if (/dBm/i.test(text)) { /* Already expressed in engineering units. */ }',
-    '  else if (number > 0 && /(CMCC|CT-COM|CU|FH|GPON|EPON|WANPON|Optical|ZTE)/i.test(path)) number = 10 * Math.log10(number / 10000);',
-    '  else if (number < -100) number /= 100;',
-    '  else if (number > 0) return "";',
-    '  if (!Number.isFinite(number) || number < -60 || number > 10) return "";',
-    '  return String(Math.round(number * 100) / 100);',
-    '}',
-    'function tempConvertRaw(value) {',
-    '  const samples = [[11509,45],[11876,46],[10866,42],[10592,41],[11142,43],[11968,46]];',
-    '  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;',
-    '  for (const sample of samples) {',
-    '    sumX += sample[0];',
-    '    sumY += sample[1];',
-    '    sumXY += sample[0] * sample[1];',
-    '    sumX2 += sample[0] * sample[0];',
-    '  }',
-    '  const slope = ((samples.length * sumXY) - (sumX * sumY)) / ((samples.length * sumX2) - (sumX * sumX));',
-    '  return (slope * value) + ((sumY - (slope * sumX)) / samples.length);',
-    '}',
-    'function tempText(value) {',
-    '  let number = Number(clean(value).replace(",", ".").replace(/[^\\d.-]/g, ""));',
-    '  if (!Number.isFinite(number) || [0, -255, 255, 65535, 32767].includes(number)) return "";',
-    '  if (number > 1000 && number < 20000) number = tempConvertRaw(number);',
-    '  else if (number > 150 && number <= 1000) number /= 10;',
-    '  if (!Number.isFinite(number) || number < 5 || number > 120) return "";',
-    '  return String(Math.round(number));',
-    '}',
-    'function wanIndexedPaths(patterns) {',
-    '  const rows = [];',
-    '  for (const pattern of patterns) for (const index of [1,2,3,4]) rows.push(pattern.replace("*", String(index)));',
-    '  return rows;',
-    '}',
-    'function pppUsernamePaths() {',
-    '  const rows = [];',
-    '  for (const wan of [1,2,3,4]) {',
-    '    for (let connection = 1; connection <= 8; connection += 1) {',
-    '      for (let ppp = 1; ppp <= 8; ppp += 1) rows.push("InternetGatewayDevice.WANDevice." + wan + ".WANConnectionDevice." + connection + ".WANPPPConnection." + ppp + ".Username");',
-    '    }',
-    '  }',
-    '  for (let ppp = 1; ppp <= 8; ppp += 1) rows.push("Device.PPP.Interface." + ppp + ".Username");',
-    '  return rows;',
-    '}',
-    'function vlanText(value) {',
-    '  const match = clean(value).match(/(\\d{1,4})/);',
-    '  const number = Number(match && match[1]);',
-    '  return Number.isInteger(number) && number >= 1 && number <= 4094 ? String(number) : "";',
-    '}',
-    'function singleBandWifi(doc) {',
-    '  const text = clean((doc._deviceId && doc._deviceId._ProductClass) || "") + " " + clean(leaf(doc, "InternetGatewayDevice.DeviceInfo.ProductClass")) + " " + clean(leaf(doc, "Device.DeviceInfo.ProductClass")) + " " + clean(leaf(doc, "InternetGatewayDevice.DeviceInfo.ModelName")) + " " + clean(leaf(doc, "Device.DeviceInfo.ModelName"));',
-    '  const lower = text.toLowerCase();',
-    '  if (/5g|5ghz|5 ghz|dual|ac\\d|ax\\d|wifi6|wi-?fi 6/.test(lower)) return false;',
-    '  return /xpon\\+1ge\\+1fe\\+wifi|1ge\\+1fe\\+wifi|\\bf609\\b|\\bzxhn\\s*f609\\b|\\bf660\\b/.test(lower);',
-    '}',
-    'function uptimeText(value) {',
-    '  let seconds = Number(value || 0);',
-    '  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;',
-    '  const days = Math.floor(seconds / 86400);',
-    '  let rem = seconds % 86400;',
-    '  const hours = String(Math.floor(rem / 3600)).padStart(2, "0");',
-    '  rem %= 3600;',
-    '  const minutes = String(Math.floor(rem / 60)).padStart(2, "0");',
-    '  const secs = String(Math.floor(rem % 60)).padStart(2, "0");',
-    '  return days + "d " + hours + ":" + minutes + ":" + secs;',
-    '}',
-    'function hostActive(doc, prefix) {',
-    '  const active = clean(leaf(doc, prefix + ".Active")).toLowerCase();',
-    '  if (["0","false","no","off","down","inactive","disabled","offline"].includes(active)) return false;',
-    '  return Boolean(clean(leaf(doc, prefix + ".IPAddress")) || clean(leaf(doc, prefix + ".MACAddress")) || clean(leaf(doc, prefix + ".HostName")));',
-    '}',
-    'function hostWifi(doc, prefix) {',
-    '  const text = ["InterfaceType","Layer1Interface","Layer2Interface","Interface","X_HW_InterfaceType","X_ZTE-COM_InterfaceType"].map((name) => clean(leaf(doc, prefix + "." + name))).join(" ");',
-    '  return /wifi|wi-?fi|wlan|ssid|radio|wireless|802\\.11/i.test(text);',
-    '}',
-    'function hostInterface(doc, prefix) {',
-    '  return ["InterfaceType","Layer1Interface","Layer2Interface","Interface","X_HW_InterfaceType","X_ZTE-COM_InterfaceType"].map((name) => clean(leaf(doc, prefix + "." + name))).join(" ");',
-    '}',
-    'function hotspotSsid(value) {',
-    '  return /(?:^|[\\s._-])(hotspot|wifi\\s*murah|wifimurah|voucher|free\\s*wifi|wifi\\s*gratis|public\\s*wifi)(?:$|[\\s._-])/i.test(clean(value));',
-    '}',
-    'function hostLooksHotspotWifi(doc, prefix) {',
-    '  const match = hostInterface(doc, prefix).match(/(?:WLANConfiguration|AccessPoint|SSID)[.\\s/_-]*(\\d+)/i);',
-    '  if (!match) return false;',
-    '  return hotspotSsid(leaf(doc, "InternetGatewayDevice.LANDevice.1.WLANConfiguration." + match[1] + ".SSID"));',
-    '}',
-    'function hostPrefixes(doc) {',
-    '  const roots = ["InternetGatewayDevice.LANDevice.1.Hosts.Host", "Device.Hosts.Host"];',
-    '  const rows = [];',
-    '  for (const root of roots) {',
-    '    const node = root.split(".").reduce((item, key) => item && item[key], doc);',
-    '    if (!node || typeof node !== "object") continue;',
-    '    for (const key of Object.keys(node)) if (/^\\d+$/.test(key)) rows.push(root + "." + key);',
-    '  }',
-    '  return rows;',
-    '}',
-    'function wifiTotal(doc) {',
-    '  let total = 0;',
-    '  for (let index = 1; index <= 8; index += 1) {',
-    '    if (hotspotSsid(leaf(doc, "InternetGatewayDevice.LANDevice.1.WLANConfiguration." + index + ".SSID"))) continue;',
-    '    for (const suffix of ["TotalAssociations","AssociatedDeviceNumberOfEntries","WLAN_AssociatedDeviceNumberOfEntries"]) {',
-    '      const value = Number(clean(leaf(doc, "InternetGatewayDevice.LANDevice.1.WLANConfiguration." + index + "." + suffix)));',
-    '      if (Number.isFinite(value) && value > 0) { total += value; break; }',
-    '    }',
-    '  }',
-    '  return total;',
-    '}',
-    'function hostActiveTotal(doc) {',
-    '  return hostPrefixes(doc).filter((prefix) => hostActive(doc, prefix) && !hostLooksHotspotWifi(doc, prefix)).length;',
-    '}',
-    'function setVp(set, name, value, type, writable) {',
-    '  if (value === undefined || value === null || value === "") return;',
-    '  set["VirtualParameters." + name] = { _object: false, _timestamp: new Date(), _type: type || "xsd:string", _value: value, _writable: writable === true };',
-    '}',
-    'function ensureVp(set, doc, name, type, writable) {',
-    '  const key = "VirtualParameters." + name;',
-    '  if (set[key]) return;',
-    '  const node = key.split(".").reduce((item, part) => item && item[part], doc);',
-    '  if (node && typeof node === "object" && Object.prototype.hasOwnProperty.call(node, "_value")) return;',
-    '  set[key] = { _object: false, _timestamp: new Date(), _type: type || "xsd:string", _value: "", _writable: writable === true };',
-    '}',
-    'function changedVpSet(doc, set) {',
-    '  const changed = {};',
-    '  for (const key of Object.keys(set)) {',
-    '    const node = key.split(".").reduce((item, part) => item && item[part], doc);',
-    '    const exists = node && typeof node === "object" && Object.prototype.hasOwnProperty.call(node, "_value");',
-    '    if (!exists || clean(leaf(doc, key)) !== clean(set[key]._value)) changed[key] = set[key];',
-    '  }',
-    '  return changed;',
-    '}',
-    'const rxPaths = ["InternetGatewayDevice.DeviceInfo.XponInterface.RXPower","InternetGatewayDevice.DeviceInfo.XponInterface.RxPower","InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_FH_GponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_ZTE-COM_WANPONInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CMCC_EponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_CMCC_GponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_HW_EponInterfaceConfig.RXPower","InternetGatewayDevice.WANDevice.1.X_HW_GponInterfaceConfig.RXPower","InternetGatewayDevice.X_HW_RMS.PonStatus.RXPower","Device.Optical.Interface.1.RXPower"];',
-    'const tempPaths = ["InternetGatewayDevice.DeviceInfo.XponInterface.Temperature","InternetGatewayDevice.DeviceInfo.XponInterface.TransceiverTemperature","InternetGatewayDevice.DeviceInfo.XponInterface.OpticalTransceiver.Temperature","InternetGatewayDevice.X_HW_RMS.PonStatus.TransceiverTemperature","InternetGatewayDevice.X_HW_RMS.PonStatus.Temperature","Device.Optical.Interface.1.Temperature","Device.Optical.Interface.1.TransceiverTemperature"].concat(wanIndexedPaths(["InternetGatewayDevice.WANDevice.*.X_CU_WANEPONInterfaceConfig.OpticalTransceiver.Temperature","InternetGatewayDevice.WANDevice.*.X_CU_WANGPONInterfaceConfig.OpticalTransceiver.Temperature","InternetGatewayDevice.WANDevice.*.X_ZTE-COM_WANPONInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_GC_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_GC_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_GC_WANPONInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_CMCC_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_CMCC_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_CT-COM_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_CT-COM_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_FH_GponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_FH_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_GponInterafceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_HW_EponInterfaceConfig.TransceiverTemperature","InternetGatewayDevice.WANDevice.*.X_HW_GponInterfaceConfig.TransceiverTemperature"]));',
-    'const ponMacPaths = ["InternetGatewayDevice.DeviceInfo.XponInterface.MACAddress","InternetGatewayDevice.DeviceInfo.XponInterface.PONMACAddress","InternetGatewayDevice.DeviceInfo.XponInterface.PonMac","InternetGatewayDevice.DeviceInfo.XponInterface.MAC","InternetGatewayDevice.DeviceInfo.X_CU_SerialNumber","InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MACAddress","InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.MACAddress","InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.MACAddress","InternetGatewayDevice.WANDevice.1.WANConnectionDevice.3.WANPPPConnection.1.MACAddress"];',
-    'const pppUserPaths = pppUsernamePaths();',
-    'const ssid24Paths = ["InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.SSID","Device.WiFi.SSID.1.SSID","Device.WiFi.SSID.2.SSID"];',
-    'const ssid5Paths = ["InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.6.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.7.SSID","InternetGatewayDevice.LANDevice.1.WLANConfiguration.8.SSID","Device.WiFi.SSID.5.SSID","Device.WiFi.SSID.2.SSID"];',
-    'const userAdminPaths = ["InternetGatewayDevice.X_CU_Function.Web.UserName","InternetGatewayDevice.UserInterface.X_ZTE-COM_WebUserInfo.UserName","InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.UserName","InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.WebUsername","InternetGatewayDevice.User.2.Username","InternetGatewayDevice.X_Authentication.WebAccount.Username","InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Username","InternetGatewayDevice.X_ZTE-COM_UserInterface.X_ZTE-COM_WebUserInfo.UserName"];',
-    'const userPasswordPaths = ["InternetGatewayDevice.X_CU_Function.Web.UserPassword","InternetGatewayDevice.UserInterface.X_ZTE-COM_WebUserInfo.UserPassword","InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Password","InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.WebPassword","InternetGatewayDevice.User.2.Password","InternetGatewayDevice.X_Authentication.WebAccount.Password","InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Password","InternetGatewayDevice.X_ZTE-COM_UserInterface.X_ZTE-COM_WebUserInfo.UserPassword"];',
-    'const superAdminPaths = ["InternetGatewayDevice.X_CU_Function.Web.AdminName","InternetGatewayDevice.UserInterface.X_ZTE-COM_WebUserInfo.AdminName","InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.UserName","InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount.Username","InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.WebSuperUsername","InternetGatewayDevice.User.1.Username","InternetGatewayDevice.X_Authentication.WebAccount.Username","InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Username","InternetGatewayDevice.DeviceInfo.X_ZTE-COM_AdminAccount.UserName","InternetGatewayDevice.X_ZTE-COM_UserInterface.X_ZTE-COM_WebUserInfo.AdminName"];',
-    'const superPasswordPaths = ["InternetGatewayDevice.X_CU_Function.Web.AdminPassword","InternetGatewayDevice.UserInterface.X_ZTE-COM_WebUserInfo.AdminPassword","InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.2.Password","InternetGatewayDevice.DeviceInfo.X_CMCC_TeleComAccount.Password","InternetGatewayDevice.DeviceInfo.X_FH_Account.X_FH_WebUserInfo.WebSuperPassword","InternetGatewayDevice.User.1.Password","InternetGatewayDevice.X_Authentication.WebAccount.Password","InternetGatewayDevice.DeviceInfo.X_CT-COM_TeleComAccount.Password","InternetGatewayDevice.DeviceInfo.X_ZTE-COM_AdminAccount.Password","InternetGatewayDevice.X_ZTE-COM_UserInterface.X_ZTE-COM_WebUserInfo.AdminPassword"];',
-    'function wanVlanPaths(pppBase) {',
-    '  const paths = [];',
-    '  if (pppBase) {',
-    '    for (const suffix of ["X_HW_VLAN","X_ZTE-COM_VLANID","X_FH_VLANID","X_GC_VLANIDMark","X_GC_VLANID","X_CMCC_VLANIDMark","X_CMCC_VLANID","X_CT-COM_VLANID","X_CT-COM_VLANIDMark","VLANID","VLANIDMark"]) paths.push(pppBase + "." + suffix);',
-    '    const connectionDeviceBase = pppBase.replace(/\\.(?:WANPPPConnection|WANIPConnection)\\.\\d+$/, "");',
-    '    if (connectionDeviceBase && connectionDeviceBase !== pppBase) {',
-    '      for (const suffix of ["X_CT-COM_WANEponLinkConfig.VLANIDMark","X_CT-COM_WANGponLinkConfig.VLANIDMark","X_CT-COM_WANEponLinkConfig.VLANID","X_CT-COM_WANGponLinkConfig.VLANID","X_CT-COM_VLANID","X_CT-COM_VLANIDMark"]) paths.push(connectionDeviceBase + "." + suffix);',
-    '    }',
-    '  }',
-    '  return paths.concat(["Device.Ethernet.VLANTermination.1.VLANID","Device.Ethernet.VLANTermination.2.VLANID"]);',
-    '}',
-    'let updated = 0;',
-    'db.getCollection("devices").find({}).forEach((doc) => {',
-    '  const set = {};',
-    '  const rxSource = first(doc, rxPaths);',
-    '  const rx = rxPowerText(rxSource.value, rxSource.path);',
-    '  const temp = tempText(first(doc, tempPaths).value);',
-    '  const pppUser = first(doc, pppUserPaths).value;',
-    '  const pppBase = first(doc, pppUserPaths).path.replace(/\\.Username$/, "");',
-    '  setVp(set, "RXPower", rx);',
-    '  setVp(set, "gettemp", temp);',
-    '  setVp(set, "getSerialNumber", serialText((doc._deviceId && doc._deviceId._SerialNumber) || first(doc, ["InternetGatewayDevice.DeviceInfo.SerialNumber", "Device.DeviceInfo.SerialNumber", "InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber"]).value));',
-    '  setVp(set, "IPTR069", managementIp(doc));',
-    '  setVp(set, "PonMac", first(doc, ponMacPaths).value);',
-    '  setVp(set, "getponmode", first(doc, ["InternetGatewayDevice.DeviceInfo.XponInterface.PonMode","InternetGatewayDevice.DeviceInfo.XponInterface.Mode","InternetGatewayDevice.WANDevice.1.WANCommonInterfaceConfig.WANAccessType"]).value);',
-    '  setVp(set, "getdeviceuptime", uptimeText(first(doc, ["InternetGatewayDevice.DeviceInfo.UpTime","Device.DeviceInfo.UpTime"]).value));',
-    '  if (pppBase) {',
-    '    setVp(set, "getpppuptime", uptimeText(leaf(doc, pppBase + ".Uptime")));',
-    '    setVp(set, "pppoeIP", first(doc, [pppBase + ".ExternalIPAddress", pppBase + ".IPCP.LocalIPAddress"]).value);',
-    '    setVp(set, "pppoeMac", leaf(doc, pppBase + ".MACAddress"));',
-    '    setVp(set, "wanVlan", vlanText(first(doc, wanVlanPaths(pppBase)).value), "xsd:unsignedInt");',
-    '  }',
-    '  setVp(set, "pppoeUsername", pppUser, "xsd:string", true);',
-    '  setVp(set, "pppoe", pppUser);',
-    '  setVp(set, "pppoeUsername2", pppUser);',
-    '  setVp(set, "wifiSsid24", first(doc, ssid24Paths).value);',
-    '  if (singleBandWifi(doc)) set["VirtualParameters.wifiSsid5"] = { _object: false, _timestamp: new Date(), _type: "xsd:string", _value: "", _writable: false };',
-    '  else setVp(set, "wifiSsid5", first(doc, ssid5Paths).value);',
-    '  setVp(set, "userAdmin", first(doc, userAdminPaths).value, "xsd:string", true);',
-    '  setVp(set, "userPassword", first(doc, userPasswordPaths).value, "xsd:string", true);',
-    '  setVp(set, "superAdmin", first(doc, superAdminPaths).value, "xsd:string", true);',
-    '  setVp(set, "superPassword", first(doc, superPasswordPaths).value, "xsd:string", true);',
-    '  setVp(set, "activedevices", Math.max(wifiTotal(doc), hostActiveTotal(doc)), "xsd:int");',
-    '  const lanActive = hostPrefixes(doc).filter((prefix) => hostActive(doc, prefix) && !hostWifi(doc, prefix)).length;',
-    '  setVp(set, "LANActiveClients", lanActive, "xsd:unsignedInt");',
-    '  setVp(set, "LANClients", lanActive, "xsd:unsignedInt");',
-    '  ["IPTR069","PonMac","RXPower","WlanPassword","getSerialNumber","getdeviceuptime","getponmode","getpppuptime","gettemp","ip","pppoe","pppoeIP","pppoeMac","pppoePassword","pppoeUsername2","wanVlan","wifiSsid24","wifiSsid5"].forEach((name) => ensureVp(set, doc, name));',
-    '  ["LANActiveClients","LANClients","activedevices"].forEach((name) => ensureVp(set, doc, name, "xsd:unsignedInt"));',
-    '  ["pppoeUsername","userAdmin","userPassword","superAdmin","superPassword"].forEach((name) => ensureVp(set, doc, name, "xsd:string", ["pppoeUsername","userAdmin","userPassword","superAdmin","superPassword"].includes(name)));',
-    '  const changedSet = changedVpSet(doc, set);',
-    '  if (Object.keys(changedSet).length) {',
-    '    db.getCollection("devices").updateOne({ _id: doc._id }, { $set: changedSet });',
-    '    updated += 1;',
-    '  }',
+    'const evaluate = ' + evaluateCachedVirtualParameters.toString() + ';',
+    'const bundled = ' + JSON.stringify(virtualParameterScripts()) + ';',
+    'const installed = new Map(db.getCollection("virtualParameters").find({}, { _id: 1, script: 1 }).toArray().map(row => [row._id, row.script]));',
+    'const sources = bundled.filter(row => installed.get(row.name) === row.script);',
+    'let updated = 0, failures = 0;',
+    'if (sources.length) db.getCollection("devices").find({}).forEach(doc => {',
+    '  const result = evaluate(doc, sources);',
+    '  failures += result.errors.length;',
+    '  if (Object.keys(result.set).length) { db.getCollection("devices").updateOne({_id: doc._id}, {$set: result.set}); updated++; }',
     '});',
-    'print("Backfill Virtual Parameters devices: " + updated);'
+    'print("Backfill Virtual Parameters devices: " + updated + ", errors: " + failures);'
   ].join('\n');
   const result = runMongo(command, script);
   if (result.status !== 0) {
@@ -582,9 +465,12 @@ function hardenSummonButtonsViaMongo() {
   const command = mongoShell();
   if (!command) return;
 
+  // Full-root refreshes can purge cached WAN branches on some CPEs. Remove
+  // only those read entries, never rebuild the owner's operational leaf list.
   const script = [
     'const bases = ' + JSON.stringify(safeSummonButtonBases) + ';',
     'const parameters = ' + JSON.stringify(safeSummonButtonParameters) + ';',
+    'const fullRootReads = new Set(["", "Device", "Device.", "Device.*", "InternetGatewayDevice", "InternetGatewayDevice.", "InternetGatewayDevice.*"]);',
     'function escapeRegex(value) { return String(value).replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&"); }',
     'function parameterIndex(id, base) {',
     '  const raw = String(id || "").slice(String(base || "").length + ".parameters.".length).split(".")[0];',
@@ -595,22 +481,28 @@ function hardenSummonButtonsViaMongo() {
     'let skipped = 0;',
     'for (const base of bases) {',
     '  const type = db.getCollection("config").findOne({ _id: base + ".type" });',
-    '  if (!type || !String(type.value || "").includes("summon-button")) { skipped += 1; continue; }',
+    '  if (!type || !["summon-button", "\'summon-button\'", \'"summon-button"\'].includes(String(type.value || "").trim())) { skipped += 1; continue; }',
     '  const paramRegex = new RegExp("^" + escapeRegex(base) + "\\\\.parameters\\\\.");',
     '  const existing = db.getCollection("config").find({ _id: paramRegex }).toArray()',
     '    .sort((a, b) => parameterIndex(a._id, base) - parameterIndex(b._id, base));',
-    '  const current = existing.map((row) => String(row.value || ""));',
-    '  if (current.length === parameters.length && current.every((value, index) => value === parameters[index])) continue;',
-    '  db.getCollection("config").deleteMany({ _id: paramRegex });',
-    '  parameters.forEach((value, index) => {',
-    '    db.getCollection("config").updateOne({ _id: base + ".parameters." + index }, { $set: { value } }, { upsert: true });',
+    '  const roots = existing.filter(row => /^\\d+$/.test(String(row._id).slice(base.length + ".parameters.".length)) && typeof row.value === "string" && fullRootReads.has(row.value));',
+    '  let removed = 0;',
+    '  for (const row of roots) removed += db.getCollection("config").deleteOne({ _id: row._id, value: row.value }).deletedCount;',
+    '  const remaining = roots.length ? db.getCollection("config").find({ _id: paramRegex }).toArray() : existing;',
+    '  const indexed = [...existing, ...remaining];',
+    '  const current = remaining.map((row) => String(row.value || ""));',
+    '  if (indexed.some(row => !Number.isSafeInteger(parameterIndex(row._id, base)) || parameterIndex(row._id, base) >= Number.MAX_SAFE_INTEGER - parameters.length)) { if (removed) changed += 1; skipped += 1; continue; }',
+    '  let next = indexed.reduce((index, row) => Math.max(index, parameterIndex(row._id, base) + 1), 0);',
+    '  const missing = parameters.filter(value => !current.includes(value));',
+    '  missing.forEach(value => {',
+    '    db.getCollection("config").updateOne({ _id: base + ".parameters." + next++ }, { $setOnInsert: { value } }, { upsert: true });',
     '  });',
-    '  changed += 1;',
+    '  if (missing.length || removed) changed += 1;',
     '}',
     'print("Summon GenieACS aman: changed=" + changed + ", skipped=" + skipped);'
   ].join('\n');
   if (dryRun) {
-    process.stdout.write('Audit Summon GenieACS: tombol ringkasan akan dibatasi ke parameter aman.\n');
+    process.stdout.write('Audit Summon GenieACS: hanya entri full-root dihapus; path operasional dan konfigurasi UI existing dipertahankan.\n');
     return;
   }
   const result = runMongo(command, script);
@@ -632,16 +524,14 @@ function hardenHuaweiFirewallLevelUiViaMongo() {
     'function setValue(id, value) {',
     '  const op = {};',
     '  op[setKey] = { value };',
-    '  db.getCollection("config").updateOne({ _id: id }, op, { upsert: true });',
+    '  db.getCollection("config").updateOne({ _id: id, value: "InternetGatewayDevice.X_HW_Security.FirewallLevel" }, op);',
     '}',
     'const targets = ["ui.device.3.components.15.parameters.0.components.0.parameters.0", "ui.device.3.components.15.parameters.1.parameter"];',
     'const existing = db.getCollection("config").find({ _id: { $in: targets } }).toArray();',
-    'if (existing.some(row => String(row.value || "").includes("InternetGatewayDevice.X_HW_Security."))) {',
-    '  setValue(targets[0], firewallPath);',
-    '  setValue("ui.device.3.components.15.parameters.1.label", String.fromCharCode(39) + "Firewall Level" + String.fromCharCode(39));',
-    '  setValue(targets[1], firewallPath);',
-    '  print("Firewall Huawei UI GenieACS diarahkan ke " + firewallPath);',
-    '} else print("Bagian Firewall Huawei custom tidak ditemukan; tata letak UI dipertahankan.");'
+    'for (const row of existing) {',
+    '  if (targets.includes(row._id) && row.value === "InternetGatewayDevice.X_HW_Security.FirewallLevel") setValue(row._id, firewallPath);',
+    '}',
+    'print("Alias Firewall Huawei diperiksa; label dan parameter UI custom dipertahankan.");'
   ].join('\n');
   if (dryRun) {
     process.stdout.write(`Audit Firewall Huawei UI: section Firewall akan diarahkan ke ${firewallPath}.\n`);
@@ -708,30 +598,39 @@ function patchGenieacsFirewallDropdownUi() {
 }
 
 async function installVirtualParameters(token, baselineRows = []) {
-  const rows = virtualParameterScripts();
+  const { writes, expected, preserved } = virtualParameterUpgradePlan(virtualParameterScripts(), baselineRows);
+  if (preserved.length) process.stderr.write(`Peringatan: override Virtual Parameters existing dipertahankan (tanpa backfill): ${preserved.join(', ')}.\n`);
   let installed = false;
   try {
-    await installVirtualParametersViaNbi(rows);
+    await installVirtualParametersViaNbi(writes);
     installed = true;
   } catch (error) {
     process.stderr.write(`Peringatan: install Virtual Parameters via NBI gagal: ${error.message || error}\n`);
   }
   if (!installed && token) {
     try {
-      await installVirtualParametersViaUi(token, rows);
+      await installVirtualParametersViaUi(token, writes);
       installed = true;
     } catch (error) {
       process.stderr.write(`Peringatan: install Virtual Parameters via UI gagal: ${error.message || error}\n`);
     }
   }
   try {
-    installVirtualParametersViaMongo(rows);
+    if (writes.length) installVirtualParametersViaMongo(writes);
     installed = true;
   } catch (error) {
     if (!installed) throw error;
     process.stderr.write(`Peringatan: sinkronisasi Virtual Parameters via Mongo gagal: ${error.message || error}\n`);
   }
-  const declarations = rows
+  let currentRows = [];
+  try {
+    currentRows = await readVirtualParametersViaNbi();
+  } catch (error) {
+    process.stderr.write(`Peringatan: verifikasi Virtual Parameters via NBI gagal, fallback Mongo: ${error.message || error}\n`);
+    currentRows = readVirtualParametersViaMongo();
+  }
+  verifyVirtualParameterDefinitions(expected, currentRows, baselineRows);
+  const declarations = expected
     .filter((row) => autoProvisionVirtualParameters.has(row.name))
     .map((row) => `declare("VirtualParameters.${row.name}", {value: daily});`)
     .join('\n');
@@ -741,9 +640,12 @@ async function installVirtualParameters(token, baselineRows = []) {
   ].join('\n');
   const presets = await request(`${nbiBase}/presets`);
   const previous = (presets || []).find(row => row._id === 'fakenet-virtual-parameters');
-  const precondition = externalBootstrap && autoProvisionSetting === undefined && previous
-    ? previous.precondition
+  const precondition = previous ? previous.precondition
     : autoProvisionEnabled ? '{}' : JSON.stringify({ _id: '__disabled_by_fakenet_billing__' });
+  const configurations = [...(previous?.configurations || [])];
+  if (!configurations.some(row => row.type === 'provision' && row.name === 'fakenet-virtual-parameters')) {
+    configurations.push({ type: 'provision', name: 'fakenet-virtual-parameters', args: [] });
+  }
   try {
     await request(`${nbiBase}/provisions/fakenet-virtual-parameters`, {
       method: 'PUT',
@@ -756,21 +658,13 @@ async function installVirtualParameters(token, baselineRows = []) {
         ...(previous ? Object.fromEntries(Object.entries(previous).filter(([key]) => key !== '_id')) : {}),
         weight: previous?.weight ?? 10,
         precondition,
-        configurations: [{ type: 'provision', name: 'fakenet-virtual-parameters', args: [] }]
+        configurations
       })
     });
   } catch (error) {
     throw new Error(`Provision Virtual Parameters gagal disimpan: ${error.message || error}`);
   }
   backfillVirtualParameterValuesViaMongo();
-  let currentRows = [];
-  try {
-    currentRows = await readVirtualParametersViaNbi();
-  } catch (error) {
-    process.stderr.write(`Peringatan: verifikasi Virtual Parameters via NBI gagal, fallback Mongo: ${error.message || error}\n`);
-    currentRows = readVirtualParametersViaMongo();
-  }
-  verifyVirtualParameterDefinitions(rows, currentRows, baselineRows);
 }
 
 function destructiveRootClearProvisionNames(provisions = []) {
@@ -794,6 +688,21 @@ function hardenInformProvisionScript(script = '') {
       /const\s+update\s*=\s*Date\.now\(\)\s*-\s*60000\s*;/g,
       'const update = Date.now() - 86400000;'
     );
+  }
+  // The stock informTime is an offset within a day, serialized as a date in
+  // 1970. Several ZTE/OEM firmwares reject that optional value with 9007,
+  // rolling back the other management parameters in the same 9003 response.
+  // Only remove the stock writes; preserve owner-defined scheduling policies.
+  const stockTimeDeclaration = /^[ \t]*const\s+informTime\s*=\s*daily\s*%\s*86400000\s*;[ \t]*(?:\r?\n|$)/gm;
+  const stockInformTimeWrite = /^[ \t]*declare\(\s*(["'])(?:InternetGatewayDevice|Device)\.ManagementServer\.PeriodicInformTime\1\s*,\s*\{\s*value\s*:\s*daily\s*\}\s*,\s*\{\s*value\s*:\s*informTime\s*\}\s*\)\s*;[ \t]*(?:\r?\n|$)/gm;
+  const stockTimeWrites = hardened.match(stockTimeDeclaration) ? [...hardened.matchAll(stockInformTimeWrite)].length : 0;
+  if (stockTimeWrites) {
+    hardened = hardened.replace(stockInformTimeWrite, '');
+    if (!/\binformTime\b/.test(hardened.replace(stockTimeDeclaration, ''))) {
+      hardened = hardened.replace(stockTimeDeclaration, '')
+        .replace(/^[ \t]*\/\/ Unique inform offset per device for better load distribution[ \t]*(?:\r?\n|$)/gm, '');
+    }
+    hardened = '// FAKENET_INFORM_COMPAT: Preserve ONU scheduling time; retain the configured Inform interval.\n' + hardened;
   }
   const telemetryBlock = [
     '// FAKENET_ACTIVE_CLIENTS_BEGIN',
@@ -877,10 +786,12 @@ async function main() {
   const sourceRows = virtualParameterScripts();
   const baselineRows = await readVirtualParametersViaNbi();
   if (dryRun) {
-    const audit = auditVirtualParameterDefinitions(sourceRows, baselineRows, baselineRows);
+    const plan = virtualParameterUpgradePlan(sourceRows, baselineRows);
+    const audit = auditVirtualParameterDefinitions(plan.expected, baselineRows, baselineRows);
     process.stdout.write(`Audit Virtual Parameters (read-only): managed=${audit.managedCount}, existing=${audit.unmanagedCount}, missing=${audit.missing.length}, changed=${audit.changed.length}.\n`);
     if (audit.missing.length) process.stdout.write(`Parameter billing belum ada: ${audit.missing.join(', ')}.\n`);
     if (audit.changed.length) process.stdout.write(`Parameter billing perlu diperbarui: ${audit.changed.join(', ')}.\n`);
+    if (plan.preserved.length) process.stdout.write(`Override existing dipertahankan: ${plan.preserved.join(', ')}.\n`);
     return;
   }
   let token = '';
@@ -892,9 +803,11 @@ async function main() {
     await waitForUi();
     ({ token, initialized } = await bootstrapUser());
     if (!token) throw new Error('Bootstrap akun GenieACS tidak menghasilkan sesi valid');
-    await uiPut(token, 'config/cwmp.auth', {
-      value: `AUTH(${JSON.stringify(cwmpUsername)}, ${JSON.stringify(cwmpPassword)})`
-    });
+    if (initialized) {
+      await uiPut(token, 'config/cwmp.auth', {
+        value: `AUTH(${JSON.stringify(cwmpUsername)}, ${JSON.stringify(cwmpPassword)})`
+      });
+    }
     if (!await login(uiUsername, uiPassword)) throw new Error('Login akun GenieACS baru gagal diverifikasi');
   }
   await hardenInformProvision();
@@ -923,11 +836,13 @@ if (require.main === module) {
 }
 
 module.exports = {
+  virtualParameterUpgradePlan,
   hardenSummonButtonsViaMongo,
   installVirtualParametersViaMongo,
   destructiveRootClearProvisionNames,
   hardenHuaweiFirewallLevelUiViaMongo,
   hardenInformProvisionScript,
+  evaluateCachedVirtualParameters,
   patchGenieacsFirewallDropdownUi,
   safeSummonButtonBases,
   safeSummonButtonParameters,

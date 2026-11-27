@@ -4,8 +4,27 @@ function clean(value) {
   return String(value === undefined || value === null ? "" : value).trim();
 }
 
+const model = declare("DeviceID.ProductClass", { value: cached });
+commit();
+const unsafeHosts = /^FL327D$/i.test(String(model.value && model.value[0] || ""));
+const patterns = new Set();
+for (let index = 1; index <= 16; index += 1) {
+  const wlan = "InternetGatewayDevice.LANDevice.1.WLANConfiguration." + index;
+  for (const suffix of ["SSID", "Enable", "Status", "TotalAssociations", "AssociatedDeviceNumberOfEntries", "WLAN_AssociatedDeviceNumberOfEntries"]) patterns.add(wlan + "." + suffix);
+  const ap = "Device.WiFi.AccessPoint." + index;
+  for (const suffix of ["Enable", "Status", "AssociatedDeviceNumberOfEntries"]) patterns.add(ap + "." + suffix);
+}
+for (let index = 1; index <= 8; index += 1) {
+  patterns.add("InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig." + index + ".AssociatedDeviceNumberOfEntries");
+  patterns.add("Device.Ethernet.Interface." + index + ".AssociatedDeviceNumberOfEntries");
+}
+for (const root of unsafeHosts ? [] : ["InternetGatewayDevice.LANDevice.1.Hosts.Host", "Device.Hosts.Host"]) {
+  for (const suffix of ["Active", "IPAddress", "IPv4Address", "MACAddress", "PhysAddress", "HostName", "Name", "DeviceName", "InterfaceType", "Layer1Interface", "Layer2Interface", "Interface", "X_HW_InterfaceType", "X_ZTE-COM_InterfaceType"]) patterns.add(root + ".*." + suffix);
+}
+const declarations = new Map(Array.from(patterns, path => [path, declare(path, { path: cached, value: cached })]));
+commit();
 function rows(path) {
-  return declare(path, { path: cached, value: cached });
+  return declarations.get(path) || [];
 }
 
 function first(path) {
@@ -109,5 +128,6 @@ for (let index = 1; index <= 16; index += 1) {
 const hostTotal = hostActiveCount("InternetGatewayDevice.LANDevice.1.Hosts.Host")
   + hostActiveCount("Device.Hosts.Host");
 const total = Math.max(wifi + lanCounter(), wifiTr181 + lanCounter(), hostTotal);
+const reported = [...declarations].some(([pattern, matches]) => /AssociatedDeviceNumberOfEntries|TotalAssociations|Hosts\.Host\.\*\.(?:IPAddress|IPv4Address|MACAddress|PhysAddress)$/.test(pattern) && Array.from(matches).some(row => row.value && row.value[0] !== undefined));
 
-return { writable: false, value: [String(Math.max(0, total)), "xsd:unsignedInt"] };
+return { writable: false, value: [reported ? String(Math.max(0, total)) : "", "xsd:string"] };

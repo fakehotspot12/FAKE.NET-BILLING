@@ -1,7 +1,7 @@
 {
   "name": "fakenet-billing",
-  "version": "4.7.2",
-  "releaseDate": "2026-11-24",
+  "version": "4.7.3",
+  "releaseDate": "2026-11-26",
   "description": "FAKE.NET Billing and Office ISP dan RT/RW Net solution",
   "main": "src/server.js",
   "scripts": {
@@ -26,6 +26,7 @@
     "brace-expansion": "1.1.22",
     "bullmq": "^5.80.7",
     "exceljs": "^4.4.0",
+    "net-snmp": "3.29.3",
     "node-pty": "1.1.0",
     "pg": "^8.23.0",
     "qrcode": "^1.5.4",

@@ -6,14 +6,9 @@ const paths = [
 const selected = declare("VirtualParameters.pppoeUsername", { path: 1, value: 1 });
 const discovered = paths.map(path => declare(path, { path: 1 }));
 commit();
-const rows = [];
-const seen = new Set();
-for (const matches of discovered) for (const item of matches) {
-  if (seen.has(item.path)) continue;
-  seen.add(item.path);
-  rows.push({ parameter: declare(item.path, { value: 1, writable: 1 }),
-    username: declare(item.path.replace(/\.Password$/, ".Username"), { value: 1 }) });
-}
+const names = [...new Set(discovered.flatMap(matches => Array.from(matches, item => item.path)))];
+const rows = names.map(path => ({ parameter: declare(path, { value: 1, writable: 1 }),
+  username: declare(path.replace(/\.Password$/, ".Username"), { value: 1 }) }));
 commit();
 const username = selected?.value?.[0] || "";
 const candidates = username ? rows.filter(row => row.username?.value?.[0] === username && row.parameter.writable === true) : [];

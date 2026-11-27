@@ -44,7 +44,7 @@
       const previous = form.elements.port.value;
       form.elements.port.innerHTML = '<option value="">Pilih ' + (form.elements.kind.value === 'wlan' ? 'SSID WiFi' : 'port LAN') + '</option>' + result.ports.map(port => `<option value="${esc(port.name)}">${esc(portLabel(port))}${port.editable === false ? ' - Lihat saja' : ''}</option>`).join('');
       if (result.ports.some(port => port.name === previous)) form.elements.port.value = previous;
-      form.querySelector('#oltBridgeVlans').innerHTML = result.vlans.map(id => {const service=result.services?.find(row=>row.userVlan===id);return `<label><input type="checkbox" name="vlans" value="${id}"><span>${id}${service&&service.vlan!==id?' → '+service.vlan:''}</span></label>`;}).join('') || '<span>Belum ada VLAN layanan yang dapat dipilih.</span>';
+      form.querySelector('#oltBridgeVlans').innerHTML = result.vlans.map(id => {const service=result.services?.find(row=>row.userVlan===id);return `<label><input type="checkbox" name="vlans" value="${id}"><span>${id}${service&&service.vlan!==id?' → '+service.vlan:''}</span></label>`;}).join('') || '<span>Layanan VLAN belum terpasang pada ONU. Lanjutkan proses tertahan melalui Registrasi ONU &gt; Proses Terakhir.</span>';
       renderBindings();
     };
     const renderPort = () => {

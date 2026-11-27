@@ -1,5 +1,5 @@
 'use strict';
-const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+const fs = require('node:fs'), path = require('node:path');
 const test = require('node:test'), assert = require('node:assert/strict');
 const genie = require('../src/genieacs');
 const root = path.join(__dirname, '..');
@@ -40,15 +40,16 @@ function makeDevice(values, serial) {
   return doc;
 }
 function bootstrapFunction(name, argument) {
-  const bootstrap = fs.readFileSync(path.join(root, 'deploy/genieacs/bootstrap.js'), 'utf8');
-  const start = bootstrap.indexOf("    'function serialText(value) {'");
-  const end = bootstrap.indexOf("    'function first(doc, paths) {'", start);
-  const code = bootstrap.slice(start, end).split('\n').filter(line => line.trim().startsWith("'"))
-    .map(line => vm.runInNewContext(line.trim().replace(/,$/, ''))).join('\n');
-  return vm.runInNewContext(`${code}\n${name}(argument)`, {
-    argument, clean: value => String(value ?? '').trim(),
-    leaf: (doc, parameter) => parameter.split('.').reduce((node, key) => node && node[key], doc)?._value
-  });
+  const key = { serialText: 'getSerialNumber', managementIp: 'IPTR069' }[name];
+  assert(key, 'Select a bundled identity reader');
+  const doc = name === 'serialText' ? makeDevice({}, argument) : argument;
+  const before = JSON.stringify(doc);
+  const result = require('../deploy/genieacs/bootstrap').evaluateCachedVirtualParameters(doc, [{ name: key, script: source(key) }]);
+  assert.deepEqual(result.errors, []);
+  assert.equal(JSON.stringify(doc), before, 'Installer identity readers must not alter native CPE data');
+  const value = result.set['VirtualParameters.' + key] || doc.VirtualParameters?.[key];
+  assert(value, 'Identity reader must return a value, including unknown/empty');
+  return value._value;
 }
 test('encoded GPON serials are readable consistently without changing raw device identity', () => {
   for (const [raw, expected] of [['48575443A08506AF', 'HWTCA08506AF'], ['48575443a08506af', 'HWTCA08506AF'], ['5A54454701234567', 'ZTEG01234567'], ['4648545401234567', 'FHTT01234567']]) {

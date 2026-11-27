@@ -11,84 +11,30 @@ const paths = [
   "Device.IP.Interface.1.IPv4Address.1.IPAddress"
 ];
 
-const usernamePaths = [
-  "VirtualParameters.pppoeUsername",
-  "VirtualParameters.pppoe",
-  "VirtualParameters.pppoeUsername2",
-  "InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.Username",
-  "Device.PPP.Interface.*.Username"
-];
-
-function clean(value) {
-  return String(value === undefined || value === null ? "" : value).trim();
-}
-
+const usernamePaths = ["VirtualParameters.pppoeUsername", "InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.Username", "Device.PPP.Interface.*.Username"];
+const metadata = ["ConnectionStatus", "Name", "X_HW_SERVICELIST", "X_ZTE-COM_ServiceList", "X_CT-COM_ServiceList", "X_FH_ServiceList"];
+const patterns = [...paths.filter(path => !path.startsWith("Device.IP.")), ...usernamePaths, ...metadata.map(key => "InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*." + key)];
+const declarations = patterns.map(path => declare(path, { path: 1, value: 1 }));
+commit();
+const values = new Map();
+for (const rows of declarations) for (const row of rows) if (row.value) values.set(row.path, row.value[0]);
+const clean = value => String(value ?? "").trim();
 function validIp(value) {
-  const text = clean(value);
-  if (!text || text === "0.0.0.0" || text === "::") return "";
-  const parts = text.split(".");
-  if (parts.length !== 4) return text;
-  return parts.every((part) => {
-    const number = Number(part);
-    return Number.isInteger(number) && number >= 0 && number <= 255;
-  }) ? text : "";
+  const ip = clean(value), parts = ip.split(".");
+  if (parts.length === 4) return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip) && parts.every(part => Number(part) <= 255) && Number(parts[0]) > 0 && Number(parts[0]) !== 127 && Number(parts[0]) < 224 ? ip : "";
+  return /^[0-9a-f:]+$/i.test(ip) && ip.includes(":") && !/^(?:::|::1)$/.test(ip) ? ip : "";
 }
-
-function readFirstIp(rows) {
-  for (const row of rows) {
-    const value = validIp(row.value && row.value[0]);
-    if (value) return value;
-  }
-  return "";
+const preferred = clean(values.get("VirtualParameters.pppoeUsername")), bases = [];
+for (const [path, value] of values) if (/\.Username$/.test(path) && !path.startsWith("VirtualParameters.")) {
+  const base = path.replace(/\.Username$/, "");
+  bases.push({base, username: clean(value), connected: /^(?:connected|up)$/i.test(clean(values.get(base + ".ConnectionStatus")))});
 }
-
-function readUsername() {
-  for (const path of usernamePaths) {
-    const rows = declare(path, {});
-    for (const row of rows) {
-      const value = clean(row.value && row.value[0]);
-      if (value) return value;
-    }
-  }
-  return "";
+const matching = preferred ? bases.filter(row => row.username === preferred) : [];
+const selected = matching.length ? matching : bases.filter(row => row.connected);
+const ips = [...new Set(selected.map(row => validIp(values.get(row.base + ".ExternalIPAddress") ?? values.get(row.base + ".IPCP.LocalIPAddress"))).filter(Boolean))];
+let result = ips.length === 1 ? ips[0] : "";
+if (!selected.length) {
+  const fallback = [...new Set([...values].filter(([path]) => /\.(?:ExternalIPAddress|IPCP\.LocalIPAddress)$/.test(path)).map(([,value]) => validIp(value)).filter(Boolean))];
+  if (fallback.length === 1) result = fallback[0];
 }
-
-function readIpForUsername(username) {
-  if (!username) return "";
-  const rows = declare("InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.Username", {});
-  for (const row of rows) {
-    const value = clean(row.value && row.value[0]);
-    if (value !== username || !row.path) continue;
-    const base = row.path.replace(/\.Username$/, "");
-    const candidatePaths = [
-      base + ".ExternalIPAddress",
-      base + ".X_HW_ExternalIPAddress",
-      base + ".X_ZTE-COM_ExternalIPAddress",
-      base + ".X_FH_ExternalIPAddress",
-      base + ".IPAddress",
-      base + ".IPCP.LocalIPAddress"
-    ];
-    for (const path of candidatePaths) {
-      const ip = readFirstIp(declare(path, {}));
-      if (ip) return ip;
-    }
-  }
-  for (const row of declare("Device.PPP.Interface.*.Username", {})) {
-    const value = clean(row.value && row.value[0]);
-    if (value !== username || !row.path) continue;
-    const base = row.path.replace(/\.Username$/, "");
-    const ip = readFirstIp(declare(base + ".IPCP.LocalIPAddress", {}));
-    if (ip) return ip;
-  }
-  return "";
-}
-
-let result = readIpForUsername(readUsername());
-if (!result) {
-  for (const path of paths) {
-    result = readFirstIp(declare(path, {}));
-    if (result) break;
-  }
-}
-
-return { writable: false, value: [result || "", "xsd:string"] };
+return { writable: false, value: [result, "xsd:string"] };

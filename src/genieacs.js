@@ -55,8 +55,11 @@ const DEFAULT_USERNAME_PARAMETERS = [
   'Device.PPP.Interface.1.Username'
 ];
 
-const DEFAULT_PPP_PASSWORD_PARAMETERS = DEFAULT_USERNAME_PARAMETERS
-  .map((path) => path.replace(/\.Username$/, '.Password'));
+const DEFAULT_PPP_PASSWORD_PARAMETERS = [
+  'VirtualParameters.pppoePassword',
+  ...DEFAULT_USERNAME_PARAMETERS.filter(path => /\.Username$/.test(path))
+    .map(path => path.replace(/\.Username$/, '.Password'))
+];
 
 const DEFAULT_RX_POWER_PARAMETERS = [
   'VirtualParameters.RXPower',
@@ -2443,6 +2446,22 @@ async function getRawDevice(settings = {}, deviceId = '', options = {}) {
   return device ? cloneJson(device) : null;
 }
 
+async function onuWanAddresses(settings = {}, serialNumber = '') {
+  const cfg=normalizeSettings(settings),sn=normalizeSerialNumber(serialNumber);
+  if(!configured(cfg)||!/^[A-Z0-9]{12}$/.test(sn))return[];
+  const values=[sn];if(/^[A-Z]{4}[A-F0-9]{8}$/.test(sn))values.push(Buffer.from(sn.slice(0,4),'ascii').toString('hex').toUpperCase()+sn.slice(4));
+  const expression='^(?:'+values.join('|')+')$',query={$or:['_deviceId._SerialNumber','InternetGatewayDevice.DeviceInfo.SerialNumber._value','Device.DeviceInfo.SerialNumber._value'].map(path=>({[path]:{$regex:expression,$options:'i'}}))};
+  const raw=await requestJson(cfg,'/devices/',{timeoutMs:2500,maxResponseBytes:512*1024,query:{query:JSON.stringify(query),projection:'_id,_deviceId,_lastInform,InternetGatewayDevice.DeviceInfo.SerialNumber,Device.DeviceInfo.SerialNumber,InternetGatewayDevice.WANDevice',limit:'3'}});
+  if(!Array.isArray(raw)||raw.length!==1)return[];
+  const device=raw[0],actual=normalizeSerialNumber(device._deviceId?._SerialNumber||getPathValue(device,'InternetGatewayDevice.DeviceInfo.SerialNumber')||getPathValue(device,'Device.DeviceInfo.SerialNumber'));
+  if(actual!==sn)return[];
+  const now=Date.now(),inform=Date.parse(device._lastInform||'');
+  return genieAcsWan.summarizeWanConnections(device).rows.map(row=>{
+    const path=row.basePath+'.ExternalIPAddress',node=path.split('.').reduce((value,key)=>value?.[key],device),ip=cleanText(getPathValue(device,path)),at=Date.parse(node?._timestamp||'');
+    return{vlan:row.vlan,mode:row.objectType==='WANPPPConnection'?'pppoe':row.addressingType?.toLowerCase()==='static'?'static':'dhcp',ip,status:row.status,service:row.serviceList,checkedAt:node?._timestamp||'',fresh:/^(?:connected|up)$/i.test(String(row.status).trim())&&Number.isFinite(inform)&&Number.isFinite(at)&&inform<=now+30000&&at<=now+30000&&now-inform<300000&&now-at<300000};
+  }).filter(row=>require('node:net').isIP(row.ip)===4&&row.ip!=='0.0.0.0');
+}
+
 async function getWanConfiguration(settings = {}, deviceId = '', options = {}) {
   const raw = await getRawDevice(settings, deviceId, { refresh: options.refresh === true });
   if (!raw) throw new Error('Perangkat GenieACS tidak ditemukan');
@@ -2830,6 +2849,14 @@ function wanReadbackVerification(plan = {}, updated = null) {
   };
 }
 
+function wanVerificationState(plan = {}, verification = {}, pendingTaskCount = null) {
+  if (verification.verified) return { state: 'verified', pendingTaskCount: 0, message: 'Pengaturan WAN sudah terbaca sesuai dari modem.' };
+  const mismatch = verification.checks?.target && verification.checks?.vlan === false
+    ? `VLAN yang terbaca masih ${verification.actualVlan === 0 ? '0 (untagged)' : verification.actualVlan ?? 'belum diketahui'}; diminta ${plan.vlan}. ` : '';
+  if (Number.isSafeInteger(pendingTaskCount) && pendingTaskCount > 0) return { state: 'queued', pendingTaskCount, message: `${mismatch}Masih ada ${pendingTaskCount} task konfigurasi menunggu di GenieACS. Jangan kirim ulang.` };
+  return { state: 'unverified', pendingTaskCount, message: `${mismatch}${pendingTaskCount === 0 ? 'Task konfigurasi ini tidak lagi berada di antrean. ' : ''}Hasil belum sesuai atau belum dapat diverifikasi. Periksa ulang WAN sebelum mengirim perubahan lagi.` };
+}
+
 async function configureWan(settings = {}, deviceId = '', payload = {}) {
   const cleanId = cleanText(deviceId);
   return withDeviceMutationLock(cleanId, 'Konfigurasi', async () => {
@@ -2944,6 +2971,15 @@ async function configureWan(settings = {}, deviceId = '', payload = {}) {
           verification.attempt = attempt;
         }
       }
+      let pendingTaskCount = null;
+      if (!verification.verified) {
+        try {
+          const ids = new Set(tasks.map(row => cleanText(row?._id)).filter(Boolean));
+          const pending = await requestJson(normalizeSettings(settings), '/tasks/', { query: { query: JSON.stringify({ device: cleanId }), projection: '_id,device', limit: '64' } });
+          if (Array.isArray(pending) && pending.length < 64 && ids.size) pendingTaskCount = pending.filter(row => ids.has(cleanText(row._id))).length;
+        } catch {}
+      }
+      verification = { ...verification, ...wanVerificationState(plan, verification, pendingTaskCount) };
       return {
         ok: true,
         plan: genieAcsWan.publicWanPlan(plan),
@@ -2956,6 +2992,49 @@ async function configureWan(settings = {}, deviceId = '', payload = {}) {
       error.plan = genieAcsWan.publicWanPlan(plan);
       throw error;
     }
+  });
+}
+
+async function deleteWan(settings = {}, deviceId = '', payload = {}) {
+  const cleanId = cleanText(deviceId), cfg = { ...normalizeSettings(settings), connectionRequest: true };
+  return withDeviceMutationLock(cleanId, 'Konfigurasi WiFi/WAN', async () => {
+    const taskIds = [];
+    try {
+      let raw = await getRawDevice(cfg, cleanId, { refresh: true });
+      if (!raw || raw._id !== cleanId) throw new Error('Perangkat GenieACS tidak ditemukan');
+      let plan = genieAcsWan.prepareWanDeletion(raw, payload);
+      const pending = await requestJson(cfg, '/tasks/', { query: { query: JSON.stringify({ device: cleanId, name: 'deleteObject', objectName: plan.targetWan }), limit: '2' } });
+      if (!Array.isArray(pending) || pending.length) throw new Error('Penghapusan WAN ini masih diproses; periksa ulang nanti');
+      const probe = await task(cfg, cleanId, { name: 'getParameterValues', parameterNames: plan.readParameters, expiry: 30 });
+      if (probe?._httpStatus !== 200) {
+        if (probe?._id) await requestJson(cfg, '/tasks/' + encodeURIComponent(probe._id), { method: 'DELETE' });
+        throw new Error('Modem belum merespons pembacaan WAN; tunggu online lalu coba lagi');
+      }
+      await assertNoTaskFault(cfg, cleanId, probe, 'Pembacaan WAN sebelum hapus');
+      raw = await getRawDevice(cfg, cleanId, { refresh: true });
+      if (!raw || raw._id !== cleanId) throw new Error('Identitas modem belum terverifikasi');
+      plan = genieAcsWan.prepareWanDeletion(raw, payload);
+      const result = await task(cfg, cleanId, { name: 'deleteObject', objectName: plan.targetWan, expiry: 30 });
+      if (result?._id) taskIds.push(cleanText(result._id));
+      if (result?._httpStatus !== 200) {
+        if (result?._id) await requestJson(cfg, '/tasks/' + encodeURIComponent(result._id), { method: 'DELETE' });
+        throw new Error('Penghapusan belum terkonfirmasi. Periksa ulang WAN sebelum mencoba lagi');
+      }
+      await assertNoTaskFault(cfg, cleanId, result, 'Hapus WAN');
+      clearDeviceListCache();
+      let verification = { verified: false, removed: false, protectedWansPreserved: false };
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) await delay(400);
+        const updated = await getRawDevice(cfg, cleanId, { refresh: true });
+        if (!updated || updated._id !== cleanId) continue;
+        const rows = genieAcsWan.summarizeWanConnections(updated).rows;
+        const removed = !rows.some(row => row.id === plan.targetWan);
+        const protectedWansPreserved = plan.protectedWans.every(id => rows.some(row => row.id === id && row.protected));
+        verification = { verified: removed && protectedWansPreserved, removed, protectedWansPreserved };
+        if (verification.verified) break;
+      }
+      return { ok: true, targetWan: plan.targetWan, label: plan.target.label, vlan: plan.target.vlan, taskIds, verification };
+    } catch (error) {error.taskIds = taskIds; throw error;}
   });
 }
 
@@ -3514,6 +3593,7 @@ module.exports = {
   configureWan,
   addWifiSsid,
   deleteDevice,
+  deleteWan,
   findBestDevice,
   findDevice,
   filterRowsByNas,
@@ -3522,6 +3602,7 @@ module.exports = {
   getClientCounts,
   getRawDevice,
   getWanConfiguration,
+  onuWanAddresses,
   getWifiConfiguration,
   listDevices,
   identityDevices,
@@ -3561,6 +3642,7 @@ module.exports = {
     recentlyInformed,
     usernameSuffixExclusionQuery,
     wanReadbackVerification,
+    wanVerificationState,
     wifiCredentialsPlan,
     existingWifiDetailParameterNames,
     wifiSecurityEnabled

@@ -74,6 +74,7 @@ function buildTemplate(summonParameters = []) {
     field('Firmware', 'COALESCE(Device.DeviceInfo.SoftwareVersion, InternetGatewayDevice.DeviceInfo.SoftwareVersion)'),
     field('Akun PPPoE', 'COALESCE(VirtualParameters.pppoeUsername, VirtualParameters.pppoeUsername2)'),
     field('IP PPPoE', 'VirtualParameters.pppoeIP'),
+    field('VLAN Internet', 'VirtualParameters.wanVlan'),
     field('IP TR069', 'VirtualParameters.IPTR069'),
     field('Mode PON', 'VirtualParameters.getponmode'),
     field('Redaman (dBm)', 'VirtualParameters.RXPower'),
@@ -86,9 +87,10 @@ function buildTemplate(summonParameters = []) {
       component('summon-button', { parameters: [...new Set([...summonParameters, ...summonLeafPaths])] })
     ] })
   ] });
-  const pppColumns = [field('Nama', 'Name'), field('Aktif', 'Enable'), field('Status', 'ConnectionStatus'),
+  const vlanColumn = field('VLAN', 'COALESCE(X_HW_VLAN, X_ZTE-COM_VLANID, X_FH_VLANID, X_CMCC_VLANIDMark, X_CMCC_VLANID, X_GC_VLANIDMark, X_GC_VLANID, X_CT-COM_VLANID, X_CT-COM_VLANIDMark, VLANID, VLANIDMark)');
+  const pppColumns = [field('Nama', 'Name'), vlanColumn, field('Aktif', 'Enable'), field('Status', 'ConnectionStatus'),
     field('Username', 'Username'), field('IP', 'ExternalIPAddress'), field('Tipe', 'ConnectionType')];
-  const ipColumns = [field('Nama', 'Name'), field('Aktif', 'Enable'), field('Status', 'ConnectionStatus'),
+  const ipColumns = [field('Nama', 'Name'), vlanColumn, field('Aktif', 'Enable'), field('Status', 'ConnectionStatus'),
     field('IP', 'ExternalIPAddress'), field('Tipe', 'ConnectionType'), field('Mode IP', 'AddressingType')];
   const hostColumns = [field('Nama perangkat', 'HostName'), field('IP', 'IPAddress'), field('MAC', 'MACAddress'),
     field('Aktif', 'Active'), field('Antarmuka', 'InterfaceType')];
@@ -135,6 +137,7 @@ function buildTemplate(summonParameters = []) {
   const index = [
     component('device-link', { ...field('Serial Number', 'DeviceID.SerialNumber'), components: [component('parameter')] }),
     field('Model', 'DeviceID.ProductClass'), field('PPPoE', 'VirtualParameters.pppoeUsername'),
+    field('VLAN Internet', 'VirtualParameters.wanVlan'),
     field('IP TR069', 'VirtualParameters.IPTR069'), field('Redaman (dBm)', 'VirtualParameters.RXPower'),
     field('Suhu (C)', 'VirtualParameters.gettemp'), field('Klien aktif', 'VirtualParameters.activedevices'),
     component('container', { ...field('Inform terakhir', 'DATE_STRING(Events.Inform)'), element: quote('span.inform'), components: [

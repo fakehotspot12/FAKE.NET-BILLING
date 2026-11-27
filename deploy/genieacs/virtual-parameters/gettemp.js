@@ -50,9 +50,10 @@ function normalize(value) {
   return Math.round(number);
 }
 
+const declarations = paths.map(path => declare(path, { path: 1, value: 1 }));
+commit();
 let result = null;
-for (const path of paths) {
-  const values = declare(path, { value: Date.now() - 86400000 });
+for (const values of declarations) {
   for (const item of values) {
     const normalized = normalize(item.value && item.value[0]);
     if (normalized !== null) {

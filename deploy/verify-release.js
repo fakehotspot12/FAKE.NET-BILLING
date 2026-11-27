@@ -31,7 +31,7 @@ async function verifyRelease(root, options = {}) {
     const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
     terminal.dispose();
     for (const module of ['olt-monitor', 'olt-telemetry', 'olt-hsgq', 'onu-model', 'olt-pon', 'olt-cdata-pon', 'olt-terminal-native', 'olt-zte-pnp', 'olt-zte-bandwidth',
-      'olt-zte-registration', 'olt-zte-tr069', 'olt-zte-catalogue', 'olt-zte-bridge', 'olt-zte-onu', 'ont-radio-capability', 'whatsapp-queue',
+      'olt-zte-registration', 'olt-events', 'olt-registration-scheduler', 'olt-zte-tr069', 'olt-acs-policy', 'olt-zte-acs', 'olt-onu-policy', 'olt-zte-settings', 'olt-zte-view', 'olt-automation-profiles', 'olt-zte-catalogue', 'olt-zte-bridge', 'olt-zte-onu', 'ont-radio-capability', 'whatsapp-queue',
       'payment-promise', 'login-turnstile', 'olt-auto-identity', 'olt-device-removal', 'customer-device-removal', 'network-address',
       'olt-planned-reboot', 'olt-ticketing', 'olt-ticket-control', 'service-tickets', 'ticket-incidents', 'ticket-network', 'ticket-team', 'ticket-reference',
       'ticket-recovery', 'ticket-templates', 'ticket-customer-notifications', 'wifiku-modem-status']) require(path.join(root, 'src', module));

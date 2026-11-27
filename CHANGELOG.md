@@ -2,6 +2,26 @@
 
 Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 
+## [4.7.3] - 2026-11-26
+
+### Added
+
+- Memisahkan VLAN manajemen/IP Host DHCP dari TR-069/ACS pada pengaturan OLT, registrasi PON/manual, dan pengaturan ONU. Jalur TR-069 existing yang terverifikasi dapat dipakai tanpa membuat VLAN atau WAN manajemen baru; layanan gabungan dan konfigurasi Internet existing dipertahankan.
+- Menambahkan pengaturan manajemen per ONU serta profil otomasi yang memakai ulang preset terverifikasi. Perubahan tetap memerlukan izin, konfirmasi target, pemeriksaan revisi dan pembacaan hasil; penyimpanan pengaturan tidak mengubah modem existing secara massal.
+- Menampilkan VLAN Internet termasuk nilai asli `0 (untagged)` pada daftar/detail ACS dan menyediakan hapus WAN existing yang tidak dilindungi, dengan verifikasi identitas/target. WAN TR-069/manajemen tidak mempunyai aksi hapus.
+
+### Fixed
+
+- Memperbaiki pembacaan Virtual Parameters dengan deklarasi berkelompok agar tidak memicu terlalu banyak commit. Pembacaan VLAN, IP, serial, redaman, suhu, dan klien mengikuti parameter native yang tersedia; parameter password tidak lagi mengambil nilai username sebagai pengganti.
+- Menghapus hanya penulisan waktu Inform bawaan yang dapat ditolak firmware dengan fault 9003/9007, tanpa mengganti jadwal kustom, interval Inform atau autentikasi existing.
+- Status konfigurasi WAN membedakan hasil terverifikasi, task yang benar-benar masih antre, dan hasil belum sesuai saat antrean kosong. Mode PPPoE native existing dipertahankan; PPPoE memakai Service `INTERNET`, sedangkan bridge memakai `OTHER`.
+- Memperbaiki antrean aksi HSGQ saat inventory sementara tidak lengkap, penggunaan IP Host/VEIP existing dan pembacaan WAN legacy. Identitas ambigu tetap menahan aksi; perintah yang hasilnya belum pasti tidak dikirim ulang otomatis.
+
+### Security
+
+- Pembaruan parameter hanya mengganti definisi bawaan yang dikenali; override kustom, parameter tambahan, konfigurasi preset dan tampilan ACS existing dipertahankan. Backfill hanya memakai skrip bundel terverifikasi terhadap cache lokal, tanpa menghapus parameter native atau mengirim konfigurasi CPE.
+- Installer/updater menyertakan seluruh modul, dependency SNMP, Virtual Parameters, dan pengujian baru. Kredensial, data pelanggan, invoice, transaksi serta konfigurasi operasional tidak disertakan dalam rilis.
+
 ## [4.7.2] - 2026-11-24
 
 ### Fixed

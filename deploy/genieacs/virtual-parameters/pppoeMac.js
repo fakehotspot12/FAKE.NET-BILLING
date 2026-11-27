@@ -6,17 +6,15 @@ const paths = [
   "InternetGatewayDevice.WANDevice.*.WANConnectionDevice.*.WANPPPConnection.*.MACAddress"
 ];
 
+const discovered = paths.map(path => declare(path, { path: 1 }));
+commit();
+const names = [...new Set(discovered.flatMap(rows => Array.from(rows, row => row.path)))];
+const values = names.map(path => declare(path, { value: 1 }));
+commit();
 let result = "";
-for (const path of paths) {
-  const rows = declare(path, {});
-  for (const row of rows) {
-    const value = row.value && row.value[0];
-    if (value) {
-      result = value;
-      break;
-    }
-  }
-  if (result) break;
+for (const row of values) {
+  const text = String(row.value && row.value[0] || "").trim();
+  const mac = text.replace(/[^a-f0-9]/gi, "").toUpperCase();
+  if (/^[A-F0-9]{12}$/.test(mac) && !/^0{12}$/.test(mac)) { result = text; break; }
 }
-
 return { writable: false, value: [result, "xsd:string"] };

@@ -1,4 +1,3 @@
-const refresh = Date.now() - 24 * 60 * 60 * 1000;
 const paths = [
   "InternetGatewayDevice.DeviceInfo.XponInterface.PonMode",
   "InternetGatewayDevice.DeviceInfo.XponInterface.Mode",
@@ -14,8 +13,11 @@ function normalize(value) {
   return "";
 }
 
+const readPaths = [...paths, "DeviceID.Manufacturer", "DeviceID.ProductClass"];
+const declarations = new Map(readPaths.map(path => [path, declare(path, { path: 1, value: 1 })]));
+commit();
 function readFirst(path) {
-  for (const row of declare(path, { path: refresh, value: refresh })) {
+  for (const row of declarations.get(path) || []) {
     const value = row.value && row.value[0];
     if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
   }

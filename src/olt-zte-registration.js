@@ -7,6 +7,7 @@ const discoveryCache=new(require('./bounded-json-cache').BoundedJsonCache)({maxE
 const discoveryPending=new Map(),discoveryAttempts=new Map();
 const fail=(message,status=409)=>{throw Object.assign(Error(message),{status});};
 const hash=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 const connection=device=>pnp.signature({...device,updatedAt:''});
 const validSerial=value=>typeof value==='string'&&/^[A-Z0-9]{12}$/.test(value);
 const empty=text=>/%Code 62310-GPONSRV\s*:\s*No related information to show\./i.test(text);
@@ -31,6 +32,7 @@ function publicJob(job){
  const fields=['id','kind','ponKey','serialNumber','address','type','model','status','automatic','actorId','presetRevision','catalogueRevision','message','updatedAt','tr069Result'];
  const safe=Object.fromEntries(fields.filter(key=>job[key]!==undefined).map(key=>[key,job[key]]));
  if(job.manualConfig||job.value?.manualConfig)safe.manualConfig=structuredClone(job.manualConfig||job.value.manualConfig);
+ if(job.relocation)safe.relocation={oldAddress:job.relocation.oldAddress,destination:job.relocation.destination,status:job.relocation.status};
  if(job.diagnostic)safe.diagnostic=Object.fromEntries(['phase','submitted','error','completedCommands','failedCommandIndex','cliStage','connectionAttempts','nativeMessage'].filter(key=>job.diagnostic[key]!==undefined).map(key=>[key,typeof job.diagnostic[key]==='string'?job.diagnostic[key].slice(0,200):job.diagnostic[key]]));
  return safe;
 }
@@ -40,7 +42,7 @@ function manualPreset(device,state,key,input){
  if(!['auto60','catalogue','manual'].includes(input.bandwidthMode)||typeof input.onuType!=='string'||input.onuType&&!state.onuTypes.some(row=>row.name===input.onuType))fail('Profil atau jenis ONU manual tidak tersedia',400);
  if(input.bandwidthMode==='manual'&&(typeof input.bandwidth!=='string'||!state.catalogue.tcont.some(row=>row.name===input.bandwidth)))fail('Profil bandwidth manual tidak tersedia',400);
  if(input.bandwidthMode==='catalogue'&&typeof input.bandwidthPresetId!=='string')fail('Pilih profil bandwidth katalog',400);
- const tr069=require('./olt-zte-tr069').setting(input.tr069);if(tr069?.enabled&&!input.vlans.includes(100))fail('TR069 DHCP memerlukan VLAN100 pada ONU ini',400);
+ const tr069=require('./olt-zte-tr069').setting(input.tr069);if(require('./olt-zte-tr069').managementEnabled(tr069)&&!input.vlans.includes(100))fail('IP Host DHCP memerlukan VLAN100 pada ONU ini',400);
  return{ponKey:key,vlanMode:'selected',vlans:[...input.vlans].sort((a,b)=>a-b),bandwidthMode:input.bandwidthMode,...(input.bandwidthMode==='manual'?{bandwidth:input.bandwidth}:{}),...(input.bandwidthMode==='catalogue'?{bandwidthPresetId:input.bandwidthPresetId}:{}),onuType:input.onuType,...(tr069?{tr069}:{}),revision:pnp.presets(device)[key]?.revision};
 }
 function selection(device,state,key,manualConfig){
@@ -50,7 +52,7 @@ function selection(device,state,key,manualConfig){
  if(type===TYPE&&existing&&(existing.tcont!==1||existing.gem!==16))fail('Profil GPON otomatis bertabrakan dengan definisi existing');
  let policy;if(preset.bandwidthMode==='catalogue')policy=require('./olt-zte-catalogue').policyFor(device,state,preset.bandwidthPresetId);else if(preset.bandwidthMode==='auto60')policy=bandwidth.policy(state.catalogue,60000);else{const up=state.catalogue.tcont.find(row=>row.name===preset.bandwidth);if(!up||up.type!==4||up.fixed!==0||up.assured!==0||![60000,120000].includes(up.maximum))fail('Pilih bandwidth best-effort 60/120 Mbps atau preset katalog');policy=bandwidth.policy(state.catalogue,up.maximum);}
  const normalized=manualConfig?{vlans:preset.vlans,bandwidthMode:preset.bandwidthMode,...(preset.bandwidthMode==='manual'?{bandwidth:preset.bandwidth}:{}),...(preset.bandwidthMode==='catalogue'?{bandwidthPresetId:preset.bandwidthPresetId}:{}),onuType:preset.onuType,...(preset.tr069?{tr069:preset.tr069}:{})}:null;
- return{ponKey:key,presetRevision:preset.revision,vlans:preset.vlans,type,createType:!existing,policy,...(preset.tr069?.enabled?{tr069:require('./olt-zte-tr069').setting(preset.tr069)}:{}),...(normalized?{manualConfig:normalized}:{})};
+ return{ponKey:key,presetRevision:preset.revision,vlans:preset.vlans,type,createType:!existing,policy,...(require('./olt-zte-tr069').active(preset.tr069)?{tr069:require('./olt-zte-tr069').setting(preset.tr069)}:{}),...(normalized?{manualConfig:normalized}:{})};
 }
 function proof(state){return hash({global:state.global,ports:state.ports,physicalPorts:state.physicalPorts,catalogue:state.catalogue,onuTypes:state.onuTypes,units:state.units});}
 function bySerial(text,serial){if(empty(text)&&!text.includes('gpon-onu_'))return[];const lines=String(text).replace(/\r/g,'').split('\n'),found=[];for(const line of lines){if(!/^\s*gpon-onu_/.test(line))continue;const match=line.trim().match(/^gpon-onu_(\d+\/\d+\/\d+:\d+)\s*$/);if(!match||!profiles.address(match[1]))fail('Pencarian SN ambigu');found.push(match[1]);}if(!found.length)fail('Pencarian SN belum terverifikasi',503);return found;}
@@ -68,6 +70,8 @@ function registerPlan(state,config,serial,device=null){
 }
 function setupMutations(config){return[...(config.createType?['pon',`onu-type ${TYPE} gpon max-tcont 1 max-gemport 16`,'exit']:[]),...(config.policy.profiles.some(row=>row.action==='create')?['gpon',...config.policy.profiles.filter(row=>row.action==='create').map(row=>row.kind==='tcont'?`profile tcont ${row.name} type 4 maximum ${row.maximum}`:`profile traffic ${row.name} sir 0 pir ${row.pir}`),'exit']:[])];}
 function phaseCommands(spec){
+ if(spec.phase==='settings-onu')return require('./olt-zte-settings').writeCommands(spec);
+ if(spec.phase==='acs-onu')return require('./olt-zte-acs').writeCommands(spec);
  if(spec.phase==='tr069')return require('./olt-zte-tr069').writeCommands(spec);
  const key=spec.value.ponKey,serial=spec.value.serialNumber,iface='gpon-onu_'+spec.value.address;
  if(spec.phase==='setup')return[...baseCommands(key),'configure terminal',...setupMutations(spec.value),'end','show onu-type gpon','show version-running','show gpon profile tcont','show gpon profile traffic','show gpon onu profile vlan','show vlan summary'];
@@ -84,15 +88,19 @@ function serviceReadback(result,value,last=true,n=value.vlans.length){
  value.vlans.slice(0,n).forEach((vlan,i)=>{const id=i+1;if(!actual.parsed.gems.some(row=>row.id===id&&row.tcont===1&&row.downstream===value.policy.profiles[1].name)||!actual.parsed.services.some(row=>row.id===id&&row.gem===id&&row.vlan===vlan&&row.userVlan===vlan)||!actual.rows.some(row=>row.name==='FBV'+vlan&&row.gem===id&&row.vlan===vlan))fail('Pemetaan VLAN/GEM tidak sesuai');});return actual.parsed;
 }
 function authorize(spec){
+ if(spec.phase==='settings-onu')return require('./olt-zte-settings').authorize(spec);
+ if(spec.phase==='acs-onu')return require('./olt-zte-acs').authorize(spec);
  if(spec.phase==='tr069')return require('./olt-zte-tr069').authorize(spec);
  if(!['setup','register','services'].includes(spec.phase))fail('Tahap registrasi tidak valid');const config=selection(spec.device,spec.state,spec.value.ponKey,spec.value.manualConfig);
  if(spec.phase==='setup'){if(hash(config)!==hash(spec.value))fail('Profil persiapan berubah');}
  else if(spec.phase==='register'){if(hash(registerPlan(spec.state,config,spec.value.serialNumber,spec.device))!==hash(spec.value))fail('Rencana SN berubah');}
- else if(hash({...resolvedConfig(spec.device,spec.state,config,spec.value.model),createType:false,policy:{...config.policy,profiles:config.policy.profiles.map(row=>({...row,action:'reuse'}))}})!==hash({...spec.value,serialNumber:undefined,address:undefined,model:undefined}))fail('Preset layanan berubah');
+ else if(hash(canonical({...resolvedConfig(spec.device,spec.state,config,spec.value.model),createType:false,policy:{...config.policy,profiles:config.policy.profiles.map(row=>({...row,action:'reuse'}))}}))!==hash(canonical({...spec.value,serialNumber:undefined,address:undefined,model:undefined})))fail('Preset layanan berubah');
  if(spec.phase==='services'&&(!Number.isInteger(spec.offset)||spec.offset<0||spec.offset%2||spec.end!==Math.min(spec.offset+2,spec.value.vlans.length)||spec.offset>=spec.end))fail('Urutan batch layanan tidak valid');
  const commands=phaseCommands(spec),start=commands.indexOf('configure terminal')+1,end=commands.indexOf('end');return{...spec,commands,mutationStart:start,mutationEnd:end,used:false,submitted:false,verified:false};
 }
 function verifyStep(outputs,grant,index,prompt){
+ if(grant.phase==='settings-onu')return require('./olt-zte-settings').verifyStep(outputs,grant,index,prompt);
+ if(grant.phase==='acs-onu')return require('./olt-zte-acs').verifyStep(outputs,grant,index,prompt);
  if(grant.phase==='tr069')return require('./olt-zte-tr069').verifyStep(outputs,grant,index,prompt);
  const result={success:true,outputs},key=grant.value.ponKey,base=baseCommands(key).length,start=grant.commands.indexOf('configure terminal');
  if((grant.phase==='setup'||grant.phase==='register')&&index===base-1){const fresh=inspect(result,key);if(proof(fresh)!==proof(grant.state))fail('Status OLT/PON berubah sebelum registrasi');if(grant.phase==='register')registerPlan(fresh,selection(grant.device,fresh,key,grant.value.manualConfig),grant.value.serialNumber,grant.device);}
@@ -105,6 +113,8 @@ function verifyStep(outputs,grant,index,prompt){
  if(index===grant.commands.length-1){verifyResult(result,grant);grant.verified=true;}
 }
 function verifyResult(result,spec){
+ if(spec.phase==='settings-onu')return require('./olt-zte-settings').verifyResult(result,spec);
+ if(spec.phase==='acs-onu')return require('./olt-zte-acs').verifyResult(result,spec);
  if(spec.phase==='tr069')return require('./olt-zte-tr069').verifyResult(result,spec);
  if(spec.phase==='setup'){const types=pnp.types(output(result,'show onu-type gpon',true)),type=types.find(row=>row.name===spec.value.type);if(!type||type.tcont<1||type.gem<spec.value.vlans.length)fail('Profil ONU otomatis belum sesuai');const catalogue=profiles.parseCatalogue({success:true,outputs:['show version-running','show gpon profile tcont','show gpon profile traffic','show gpon onu profile vlan','show vlan summary'].map(command=>({command,stdout:output(result,command,true)}))});if(bandwidth.customPolicy(catalogue,spec.value.policy.kbps,spec.value.policy.downloadKbps??spec.value.policy.kbps).profiles.some(row=>row.action!=='reuse'))fail('Profil bandwidth belum tersedia');return{prepared:true};}
  const addresses=bySerial(output(result,'show gpon onu by sn '+spec.value.serialNumber,true),spec.value.serialNumber);if(addresses.length!==1||addresses[0]!==spec.value.address)fail('Posisi SN akhir tidak sesuai');
@@ -134,26 +144,28 @@ function discoveryCandidate(automation,history,row,now){
  if(row.ambiguous||!automation[row.ponKey]?.enabled)return false;
  const latest=history.get(row.serialNumber)||new Map();
  for(const job of latest.values())if(job.ponKey!==row.ponKey&&job.status!=='verified'&&!retryableUnsent(job))return false;
- const previous=latest.get(row.ponKey);return !previous||retryableUnsent(previous)&&now-Date.parse(previous.updatedAt)>=120000;
+ const previous=latest.get(row.ponKey);return !previous||(previous.status==='verified'||retryableUnsent(previous))&&now-Date.parse(previous.updatedAt)>=120000;
 }
 async function resumeState(data,device,state,config,prior,options,preparedRaw=null){
  const value=prior?.value?{...prior.value,presetRevision:config.presetRevision}:null;
  if(prior?.status!=='held'||!value||value.serialNumber!==prior.serialNumber||value.address!==prior.address||value.ponKey!==config.ponKey||!state.units.some(row=>row.id===value.address&&row.serialNumber===value.serialNumber)||state.newOnus.some(row=>row.serialNumber===value.serialNumber))fail('Proses sebelumnya tidak dapat dilanjutkan dengan aman');
- if(hash({...resolvedConfig(device,state,config,prior.model),createType:false})!==hash({...value,serialNumber:undefined,address:undefined,model:undefined}))fail('Preset atau profil proses sebelumnya berubah');
+ if(hash(canonical({...resolvedConfig(device,state,config,prior.model),createType:false}))!==hash(canonical({...value,serialNumber:undefined,address:undefined,model:undefined})))fail('Preset atau profil proses sebelumnya berubah');
  const raw=preparedRaw||await run(data,device,['enable','terminal length 0','show gpon onu by sn '+value.serialNumber,...unitCommands(value),'show onu running config gpon-onu_'+value.address],options);if(!raw.success)fail('Pemeriksaan kelanjutan ONU belum lengkap');const addresses=bySerial(output(raw,'show gpon onu by sn '+value.serialNumber),value.serialNumber);if(addresses.length!==1||addresses[0]!==value.address)fail('SN berpindah atau terdaftar ganda');
  const parsed=unit(raw,value),offset=parsed.services.length;if(offset>value.vlans.length||offset%2&&offset!==value.vlans.length)fail('Batch layanan sebelumnya belum lengkap; periksa manual');serviceReadback(raw,value,false,offset);return{value,offset,working:parsed.status.toLowerCase()==='working'&&parsed.configState.toLowerCase()==='success'};
 }
 async function prepare(data,device,actor,input,options={}){
  if(input.kind==='automation'&&input.enabled===false){if(!pnp.canManage(data,device,actor))fail('Tidak memiliki izin registrasi',403);const key=pon.ponKey(input.ponKey);return rememberPlan(data,device,actor,{kind:'automation',value:{ponKey:key,presetRevision:pnp.presets(device)[key]?.revision,enabled:false}});}
  pnp.check(data,device,actor,{readOnly:true});const key=pon.ponKey(input.ponKey);if(busy.has(device.id)||busy.size>=2)fail('Registrasi sedang digunakan',429);busy.add(device.id);
- try{if(input.kind==='automation'&&input.enabled===false)return rememberPlan(data,device,actor,{kind:'automation',value:{ponKey:key,presetRevision:pnp.presets(device)[key]?.revision,enabled:false}});if(input.kind==='manual'&&settings(device)[key]?.enabled)fail('PON ini memakai registrasi otomatis. Nonaktifkan otomatis sebelum otorisasi manual.');const prior=input.kind==='manual'?lastJob(device,key,input.serialNumber):null,{state,raw}=await preparation(data,device,key,prior?.status==='held'?prior:null,options),config=selection(device,state,key,input.kind==='manual'?(input.manualConfig??prior?.value?.manualConfig??prior?.manualConfig):undefined);if(!['automation','manual'].includes(input.kind)||input.kind==='automation'&&typeof input.enabled!=='boolean')fail('Pilihan registrasi tidak valid',400);
-  const value=input.kind==='automation'?{...config,enabled:input.enabled}:{...config,serialNumber:input.serialNumber};if(input.kind==='manual'){
+ try{if(!['automation','manual','resume'].includes(input.kind)||input.kind==='automation'&&typeof input.enabled!=='boolean')fail('Pilihan registrasi tidak valid',400);if(input.kind==='manual'&&settings(device)[key]?.enabled)fail('PON ini memakai registrasi otomatis. Nonaktifkan otomatis sebelum otorisasi manual.');if(input.kind==='resume'&&input.manualConfig!==undefined)fail('Kelanjutan memakai pengaturan proses sebelumnya; VLAN tidak dapat diganti.',400);
+  const prior=input.kind!=='automation'?lastJob(device,key,input.serialNumber):null;if(input.kind==='resume'&&(!prior||prior.status!=='held'||!prior.address||prior.kind==='tr069'))fail('Pilih proses registrasi tertahan yang sudah memiliki alamat ONU.');
+  const{state,raw}=await preparation(data,device,key,prior?.status==='held'?prior:null,options),config=selection(device,state,key,input.kind!=='automation'?(input.manualConfig??prior?.value?.manualConfig??prior?.manualConfig):undefined);
+  const value=input.kind==='automation'?{...config,enabled:input.enabled}:{...config,serialNumber:input.serialNumber};if(input.kind!=='automation'){
    if(!validSerial(input.serialNumber))fail('Pilih SN terdeteksi yang tidak ganda');
-   if(!state.newOnus.some(row=>row.ponKey===key&&row.serialNumber===input.serialNumber&&!row.ambiguous)){await resumeState(data,device,state,config,prior,options,raw);value.resumeJobId=prior.id;}
+   if(input.kind==='resume'||!state.newOnus.some(row=>row.ponKey===key&&row.serialNumber===input.serialNumber&&!row.ambiguous)){await resumeState(data,device,state,config,prior,options,raw);value.resumeJobId=prior.id;}
   }return rememberPlan(data,device,actor,{kind:input.kind,state,value});
  }finally{busy.delete(device.id);}
 }
-function confirmed(data,device,actor,input){const plan=plans.get(input.token);if(plan?.kind==='automation'&&!plan.value.enabled){if(!pnp.canManage(data,device,actor))fail('Tidak memiliki izin registrasi',403);}else pnp.check(data,device,actor);if(!plan||plan.expires<Date.now()||plan.actorId!==actor.id||plan.deviceId!==device.id||plan.signature!==pnp.signature(device)||plan.catalogueRevision!==require('./olt-zte-catalogue').selectionRevision(device)||input.revision!==(device.updatedAt||'')||input.confirmId!==device.id||input.confirmTarget!==(plan.kind==='manual'?plan.value.serialNumber:plan.value.ponKey)||input.confirmImpact!==true||pnp.presets(device)[plan.value.ponKey]?.revision!==plan.value.presetRevision)fail('Konfirmasi registrasi tidak sesuai');return plan;}
+function confirmed(data,device,actor,input){const plan=plans.get(input.token);if(plan?.kind==='automation'&&!plan.value.enabled){if(!pnp.canManage(data,device,actor))fail('Tidak memiliki izin registrasi',403);}else pnp.check(data,device,actor);if(!plan||plan.expires<Date.now()||plan.actorId!==actor.id||plan.deviceId!==device.id||plan.signature!==pnp.signature(device)||plan.catalogueRevision!==require('./olt-zte-catalogue').selectionRevision(device)||input.revision!==(device.updatedAt||'')||input.confirmId!==device.id||input.confirmTarget!==(plan.kind==='automation'?plan.value.ponKey:plan.value.serialNumber)||input.confirmImpact!==true||pnp.presets(device)[plan.value.ponKey]?.revision!==plan.value.presetRevision)fail('Konfirmasi registrasi tidak sesuai');return plan;}
 function activate(data,device,actor,input){const plan=confirmed(data,device,actor,input);if(plan.kind!=='automation')fail('Aksi bukan pengaturan otomatis');if(plan.value.enabled&&busy.has(device.id))fail('Tunggu registrasi yang sedang berjalan selesai',429);device.onuRegistration={...(device.onuRegistration||{}),[plan.value.ponKey]:{enabled:plan.value.enabled,presetRevision:plan.value.presetRevision,connection:connection(device),actorId:actor.id,devAllowed:process.env.MIGRATION_MODE==='1',updatedAt:new Date().toISOString()}};return{ok:true,enabled:plan.value.enabled,ponKey:plan.value.ponKey,message:plan.value.enabled?'Registrasi otomatis aktif. ONU baru diproses berdasarkan SN dan VLAN preset.':'Registrasi otomatis nonaktif; ONU existing tetap dipertahankan.'};}
 function record(device,job){const rows=(device.onuRegistrationJobs||[]).filter(row=>row.connection===connection(device)&&row.id!==job.id&&Date.now()-Date.parse(row.updatedAt||0)<30*86400000);device.onuRegistrationJobs=[...rows,{...job,connection:connection(device),updatedAt:new Date().toISOString()}].slice(-128);}
 async function phase(data,device,spec,options){
@@ -180,6 +192,7 @@ async function waitCapability(data,device,value,options){
  }
 }
 async function configureTr069(data,device,value,options){
+ if(require('./olt-onu-policy').get(device,value.serialNumber).acs!=='inherit')fail('ACS ONU memakai pengecualian manual. Kelola melalui Pengaturan ONU > ACS/TR069.');
  const tr069=require('./olt-zte-tr069'),key=hash([pnp.signature(device),value]),cached=tr069States.get(key);let raw,tr069State;
  if(cached&&Date.now()-cached.at<60000){({raw,state:tr069State}=cached);}else{
   raw=await run(data,device,tr069.commands(value),options);if(!raw.success)fail('Status TR069 ONU belum lengkap; tidak ada perubahan dikirim',503);
@@ -196,7 +209,7 @@ async function configureTr069(data,device,value,options){
 async function applyExistingTr069(data,device,actor,input,options={}){
  pnp.check(data,device,actor);const key=pon.ponKey(input.ponKey),address=profiles.address(input.address),serial=input.serialNumber;
  if(!address||!address.startsWith(key+':')||!validSerial(serial)||input.confirmTarget!==serial||input.confirmImpact!==true||input.confirmId!==device.id)fail('Konfirmasi ONU TR069 tidak sesuai',400);
- const preset=pnp.presets(device)[key];if(!preset?.tr069?.enabled||preset.revision!==input.presetRevision)fail('Simpan dan baca ulang preset TR069 PON dahulu');
+ const preset=pnp.presets(device)[key];if(!require('./olt-zte-tr069').active(preset?.tr069)||preset.revision!==input.presetRevision)fail('Simpan dan baca ulang preset manajemen ONU dahulu');
  if(typeof options.persist!=='function')fail('Audit persisten TR069 wajib tersedia');if(busy.has(device.id)||busy.size>=2)fail('OLT sedang digunakan',429);
  const previous=jobs(device).find(row=>row.serialNumber===serial&&row.address===address&&row.type);if(!previous)fail('Identitas penuh ONU belum tersedia; registrasi existing tidak ditebak');
  const value={ponKey:key,address,serialNumber:serial,type:previous.type,presetRevision:preset.revision,tr069:preset.tr069};
@@ -207,7 +220,8 @@ async function applyExistingTr069(data,device,actor,input,options={}){
  finally{pnp.invalidate(device);profiles.invalidate(device);busy.delete(device.id);}
 }
 async function processJob(data,device,actor,key,serial,options){
- pnp.check(data,device,actor);if(typeof options.persist!=='function')fail('Audit persisten registrasi wajib tersedia');const prior=lastJob(device,key,serial);if(prior&&!(options.manual===true&&prior.status==='held')&&!(options.automatic===true&&options.retryUnsentId===prior.id&&retryableUnsent(prior)&&Date.now()-Date.parse(prior.updatedAt)>=120000))fail('SN sudah diproses. Periksa hasil sebelumnya; tidak dikirim ulang otomatis.');if(options.resumeJobId&&prior?.id!==options.resumeJobId)fail('Proses kelanjutan sudah berubah');
+ require('./olt-onu-policy').assertAutomation(device,serial);
+ pnp.check(data,device,actor);if(typeof options.persist!=='function')fail('Audit persisten registrasi wajib tersedia');const prior=lastJob(device,key,serial);if(prior&&!(options.manual===true&&prior.status==='held')&&!(options.automatic===true&&options.retryUnsentId===prior.id&&(prior.status==='verified'||retryableUnsent(prior))&&Date.now()-Date.parse(prior.updatedAt)>=120000))fail('SN sudah diproses. Periksa hasil sebelumnya; tidak dikirim ulang otomatis.');if(options.resumeJobId&&prior?.id!==options.resumeJobId)fail('Proses kelanjutan sudah berubah');
  if(busy.has(device.id)||busy.size>=2)fail('OLT sedang digunakan',429);busy.add(device.id);let job={id:crypto.randomUUID(),ponKey:key,serialNumber:serial,status:'preparing',automatic:options.automatic===true,actorId:actor.id,catalogueRevision:require('./olt-zte-catalogue').selectionRevision(device),address:'',message:'Memeriksa prasyarat',...(options.resumeJobId?{address:prior.address,model:prior.model,type:prior.type,value:prior.value}:{})};
  const persist=async patch=>{job={...job,...patch};await options.persist(job);};
  const phaseOptions={...options,validateBeforeRetry:()=>persist({message:'Memulihkan koneksi CLI sebelum perintah pertama; belum ada layanan dikirim ulang.'})};
@@ -215,25 +229,39 @@ async function processJob(data,device,actor,key,serial,options){
   if(config.createType||config.policy.profiles.some(row=>row.action==='create')){await phase(data,device,{phase:'setup',device,state,value:config},phaseOptions);state=await readState(data,device,key,options);config=selection(device,state,key,options.manualConfig);}
   let value,offset=0,configured;
   if(options.resumeJobId){const resume=await resumeState(data,device,state,config,prior,options,raw);({value,offset}=resume);configured={working:resume.working};await persist({status:'registered',address:value.address,model:value.model,type:value.type,value,presetRevision:config.presetRevision,message:'SN existing terverifikasi; melanjutkan layanan yang belum diterapkan'});}
-  else{value=registerPlan(state,config,serial,device);await persist({status:'registering',address:value.address,model:value.model,type:value.type,value,presetRevision:config.presetRevision});await phase(data,device,{phase:'register',device,state,value},phaseOptions);await persist({status:'registered',message:'SN terdaftar; menerapkan layanan VLAN'});await waitCapability(data,device,value,options);}
+  else{
+   value=registerPlan(state,config,serial,device);await persist({status:'registering',address:value.address,model:value.model,type:value.type,value,presetRevision:config.presetRevision});
+   try{await phase(data,device,{phase:'register',device,state,value},phaseOptions);}catch(error){
+    const diagnostic=error.registrationDiagnostic;
+    if(!options.automatic||diagnostic?.phase!=='register'||diagnostic.submitted!==false||!/^(?:SN telah terdaftar pada posisi lain|SN masih terdaftar di posisi )/.test(diagnostic.error||''))throw error;
+    const command='show gpon onu by sn '+serial,lookup=await run(data,device,['enable','terminal length 0',command],options);if(!lookup.success)fail('Posisi registrasi lama belum dapat dipastikan');
+    const addresses=bySerial(output(lookup,command),serial);if(addresses.length!==1||addresses[0].split(':')[0]===key)fail('Registrasi lama tidak tunggal atau masih berada pada PON tujuan');
+    await persist({status:'relocating',message:'Memeriksa SN dan status offline pada registrasi lama',relocation:{oldAddress:addresses[0],destination:key,status:'checking'}});
+    const moved=await require('./olt-zte-onu').relocateOffline(data,device,{id:addresses[0],serialNumber:serial},key,{...(options.transportOptions||{}),relocationBackupDir:options.relocationBackupDir,beforeRelocationDelete:async relocation=>{await persist({status:'relocating',message:'Cadangan tersimpan; memindahkan registrasi lama yang offline',relocation});pnp.check(data,device,actor);}});
+    if(!moved.deleteConfirmed)fail('Penghapusan posisi lama belum terverifikasi');await persist({status:'relocating',message:'Registrasi lama sudah dilepas; memeriksa ulang PON tujuan',relocation:moved.relocation});
+    state=await readState(data,device,key,options);config=selection(device,state,key,options.manualConfig);value=registerPlan(state,config,serial,device);
+    await persist({status:'registering',address:value.address,model:value.model,type:value.type,value,presetRevision:config.presetRevision});await phase(data,device,{phase:'register',device,state,value},phaseOptions);
+   }
+   await persist({status:'registered',message:'SN terdaftar; menerapkan layanan VLAN'});await waitCapability(data,device,value,options);
+  }
   for(;offset<value.vlans.length;offset+=2){await persist({status:'configuring',message:'Menerapkan VLAN '+(offset+1)+'-'+Math.min(offset+2,value.vlans.length)});configured=await phase(data,device,{phase:'services',device,state,value,offset,end:Math.min(offset+2,value.vlans.length)},phaseOptions);}
   let tr069Result;
-  if(value.tr069?.enabled){await persist({status:'configuring',message:'Memeriksa TR069 pada VLAN100 existing'});tr069Result=await configureTr069(data,device,value,phaseOptions);}
-  await persist({status:configured.working?'verified':'checking',message:configured.working?(tr069Result?'ONU dan TR069 tersimpan; koneksi ACS belum diverifikasi.':'ONU terdaftar dan layanan VLAN terverifikasi.'):'Layanan tersimpan; menunggu verifikasi OMCI.',value,...(tr069Result?{tr069Result}:{})});return job;
+  if(require('./olt-zte-tr069').active(value.tr069)&&require('./olt-onu-policy').get(device,serial).acs==='inherit'){await persist({status:'configuring',message:require('./olt-zte-tr069').managementEnabled(value.tr069)?'Memeriksa IP Host manajemen VLAN100':'Memeriksa jalur TR069 existing'});tr069Result=await configureTr069(data,device,value,phaseOptions);}
+  await persist({status:configured.working?'verified':'checking',message:configured.working?(tr069Result?(value.tr069?.enabled?'ONU dan TR069 tersimpan; koneksi ACS belum diverifikasi.':'ONU dan IP Host DHCP tersimpan; TR069 tidak diubah.'):'ONU terdaftar dan layanan VLAN terverifikasi.'):'Layanan tersimpan; menunggu verifikasi OMCI.',value,...(tr069Result?{tr069Result}:{})});return job;
  }catch(error){await persist({status:'held',message:error.message,...(error.registrationDiagnostic?{diagnostic:error.registrationDiagnostic}:{})}).catch(()=>{});return job;}finally{pnp.invalidate(device);profiles.invalidate(device);discoveryCache.delete(connection(device));busy.delete(device.id);}
 }
-function executeManual(data,device,actor,input,options={}){const plan=confirmed(data,device,actor,input);if(plan.kind!=='manual')fail('Aksi bukan registrasi manual');if(settings(device)[plan.value.ponKey]?.enabled)fail('PON ini memakai registrasi otomatis.');if(plan.used)fail('Permintaan sudah diproses');if(busy.has(device.id)||busy.size>=2)fail('Pendaftaran sedang berjalan. Tunggu proses selesai sebelum mengirim pendaftaran berikutnya.',429);const prior=lastJob(device,plan.value.ponKey,plan.value.serialNumber);if(prior&&prior.status!=='held'||plan.value.resumeJobId&&prior?.id!==plan.value.resumeJobId)fail('Proses ONU sudah berubah. Baca ulang status sebelum melanjutkan.');plan.used=true;return processJob(data,device,actor,plan.value.ponKey,plan.value.serialNumber,{...options,manual:true,resumeJobId:plan.value.resumeJobId,manualConfig:plan.value.manualConfig});}
+function executeManual(data,device,actor,input,options={}){const plan=confirmed(data,device,actor,input);if(!['manual','resume'].includes(plan.kind))fail('Aksi bukan registrasi manual atau kelanjutan layanan');const automatic=settings(device)[plan.value.ponKey]?.enabled===true;if(plan.kind==='manual'&&automatic)fail('PON ini memakai registrasi otomatis.');if(plan.used)fail('Permintaan sudah diproses');if(busy.has(device.id)||busy.size>=2)fail('Pendaftaran sedang berjalan. Tunggu proses selesai sebelum mengirim pendaftaran berikutnya.',429);const prior=lastJob(device,plan.value.ponKey,plan.value.serialNumber);if(prior&&prior.status!=='held'||plan.value.resumeJobId&&prior?.id!==plan.value.resumeJobId)fail('Proses ONU sudah berubah. Baca ulang status sebelum melanjutkan.');plan.used=true;return processJob(data,device,actor,plan.value.ponKey,plan.value.serialNumber,{...options,manual:true,automatic:plan.kind==='resume'&&automatic,resumeJobId:plan.value.resumeJobId,manualConfig:plan.value.manualConfig});}
 async function verifyPending(data,device,job,config,options){
  const value=job.value,expired=Date.now()-Date.parse(job.updatedAt)>120000;
  try{if(!value)fail('Persiapan sebelumnya terputus');const commands=['enable','terminal length 0',...unitCommands(value),'show onu running config gpon-onu_'+value.address,'show gpon onu by sn '+value.serialNumber],raw=await run(data,device,commands,{...options,explicitDevAccess:config.devAllowed}),addresses=bySerial(output(raw,'show gpon onu by sn '+value.serialNumber),value.serialNumber),parsed=serviceReadback(raw,value);if(addresses.length!==1||addresses[0]!==value.address)fail('Posisi verifikasi SN berubah');if(parsed.status.toLowerCase()==='working'&&parsed.configState.toLowerCase()==='success')return options.persist(device,{...job,status:'verified',message:'ONU terdaftar dan layanan VLAN terverifikasi.'});if(expired)fail('Verifikasi OMCI belum berhasil');
  }catch(error){if(expired)return options.persist(device,{...job,status:'held',message:error.message+'; perlu pemeriksaan manual, tanpa pengiriman ulang otomatis.'});}
 }
 async function tick(data,options={}){
- const candidates=[];for(const device of(data.oltDevices||[]).filter(row=>row.vendor==='zte'&&row.enabled))for(const[key,config]of Object.entries(settings(device)).filter(([,row])=>row.enabled))if(!(process.env.MIGRATION_MODE==='1'&&!config.devAllowed)&&!busy.has(device.id)&&!require('./olt-zte-bridge').isBusy(device.id)&&Date.now()-(times.get(device.id)||0)>=20000)candidates.push({device,key,config});
- candidates.sort((a,b)=>(times.get(a.device.id)||0)-(times.get(b.device.id)||0));const selected=candidates[0];if(!selected)return{processed:0};let{device,key,config}=selected;let actor=(data.users||[]).find(row=>row.id===config.actorId);if(!pnp.canManage(data,device,actor))return{processed:0};const[,,transport]=await vendors.loadLibrary();if(transport.isBusy(device.id))return{processed:0};times.set(device.id,Date.now());while(times.size>256)times.delete(times.keys().next().value);
+ const wakeId=typeof options.wakeDeviceId==='string'?options.wakeDeviceId:'',candidates=[];for(const device of(data.oltDevices||[]).filter(row=>row.vendor==='zte'&&row.enabled&&(!wakeId||row.id===wakeId)))for(const[key,config]of Object.entries(settings(device)).filter(([,row])=>row.enabled))if(!(process.env.MIGRATION_MODE==='1'&&!config.devAllowed)&&!busy.has(device.id)&&!require('./olt-zte-bridge').isBusy(device.id)&&Date.now()-(times.get(device.id)||0)>=(wakeId?2000:20000))candidates.push({device,key,config});
+ candidates.sort((a,b)=>(times.get(a.device.id)||0)-(times.get(b.device.id)||0));const selected=candidates[0];if(!selected){const target=wakeId&&(data.oltDevices||[]).find(row=>row.id===wakeId&&row.vendor==='zte'&&row.enabled);if(target&&Object.values(settings(target)).some(row=>row.enabled)&& (busy.has(wakeId)||require('./olt-zte-bridge').isBusy(wakeId)))return{processed:0,waiting:true,deviceId:wakeId};return{processed:0};}let{device,key,config}=selected;let actor=(data.users||[]).find(row=>row.id===config.actorId);if(!pnp.canManage(data,device,actor))return{processed:0};const[,,transport]=await vendors.loadLibrary();if(transport.isBusy(device.id))return wakeId?{processed:0,waiting:true,deviceId:device.id}:{processed:0};times.set(device.id,Date.now());while(times.size>256)times.delete(times.keys().next().value);
  try{const checking=jobs(device).find(row=>settings(device)[row.ponKey]?.enabled&&!['held','verified'].includes(row.status));if(checking){await verifyPending(data,device,checking,settings(device)[checking.ponKey],options);return{checked:1};}
   const raw=await run(data,device,['enable','terminal length 0','show pon onu uncfg'],{...options,explicitDevAccess:config.devAllowed});if(!raw.success)fail('Discovery belum terbaca');const discovered=pnp.discovery(output(raw,'show pon onu uncfg'));rememberDiscovery(device,discovered);const automation=settings(device),history=new Map(),now=Date.now();for(const job of jobs(device)){if(!history.has(job.serialNumber))history.set(job.serialNumber,new Map());history.get(job.serialNumber).set(job.ponKey,job);}const detected=discovered.find(row=>discoveryCandidate(automation,history,row,now));
-  if(detected){key=detected.ponKey;config=settings(device)[key];actor=(data.users||[]).find(row=>row.id===config.actorId);if(!pnp.canManage(data,device,actor))return{processed:0};await processJob(data,device,actor,key,detected.serialNumber,{...options,automatic:true,retryUnsentId:lastJob(device,key,detected.serialNumber)?.id,explicitDevAccess:config.devAllowed,persist:job=>options.persist(device,job)});return{processed:1};}return{processed:0};
+  if(detected){key=detected.ponKey;config=settings(device)[key];actor=(data.users||[]).find(row=>row.id===config.actorId);if(!pnp.canManage(data,device,actor))return{processed:0};await processJob(data,device,actor,key,detected.serialNumber,{...options,automatic:true,retryUnsentId:lastJob(device,key,detected.serialNumber)?.id,explicitDevAccess:config.devAllowed,persist:job=>options.persist(device,job)});return{processed:1,deviceId:device.id,more:discovered.some(row=>row.serialNumber!==detected.serialNumber&&discoveryCandidate(automation,history,row,now))};}return{processed:0};
  }catch(error){return{held:true,message:error.message};}
 }
 function rememberDiscovery(device,onus,checkedAt=new Date().toISOString()){
@@ -255,4 +283,14 @@ async function refreshDiscovery(data,device,actor,options={}){
  const task=(async()=>{const raw=await run(data,device,['enable','terminal length 0','show pon onu uncfg'],options);if(!raw.success)fail('Modem baru belum dapat dibaca dari OLT',503);rememberDiscovery(device,pnp.discovery(output(raw,'show pon onu uncfg')));})();
  discoveryPending.set(key,task);try{await task;}finally{discoveryPending.delete(key);}
 }
-module.exports={TYPE,settings,jobs,publicJob,baseCommands,inspect,selection,registerPlan,phaseCommands,authorize,verifyStep,verifyResult,bySerial,unitCommands,prepare,activate,record,executeManual,processJob,tick,readState,applyExistingTr069,connection,discoveryPage,refreshDiscovery,isBusy:id=>busy.has(id),TTL};
+const viewWaiters=new Map();
+async function managementOperation(data,device,actor,operation,{invalidate=true,readOnly=false}={}){
+ pnp.check(data,device,actor,{readOnly});
+ if(readOnly&&(busy.has(device.id)||busy.size>=2)){
+  const count=viewWaiters.get(device.id)||0;if(count>=6)fail('Antrean pembacaan ONU penuh',429);viewWaiters.set(device.id,count+1);const deadline=Date.now()+7000;
+  try{while(busy.has(device.id)||busy.size>=2){if(Date.now()>=deadline)fail('OLT masih menyelesaikan operasi; data terakhir tetap tersedia',429);await new Promise(resolve=>setTimeout(resolve,150));pnp.check(data,device,actor,{readOnly:true});}}finally{const left=(viewWaiters.get(device.id)||1)-1;if(left)viewWaiters.set(device.id,left);else viewWaiters.delete(device.id);}
+ }
+ if(busy.has(device.id)||busy.size>=2)fail('Tunggu operasi ONU selesai',429);
+ busy.add(device.id);try{return await operation();}finally{busy.delete(device.id);if(invalidate)profiles.invalidate(device);}
+}
+module.exports={TYPE,settings,jobs,publicJob,baseCommands,inspect,selection,registerPlan,phaseCommands,authorize,verifyStep,verifyResult,bySerial,unitCommands,prepare,activate,record,executeManual,processJob,tick,readState,applyExistingTr069,connection,discoveryPage,refreshDiscovery,managementOperation,isBusy:id=>busy.has(id),TTL};

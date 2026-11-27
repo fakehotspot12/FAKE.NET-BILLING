@@ -17536,6 +17536,12 @@ function genieDeviceLabel(row = {}) {
   return [row.manufacturer, row.productClass, row.serialNumber].filter(Boolean).join(' / ') || row.id || '-';
 }
 
+function genieVlanText(value) {
+  const text = String(value ?? '').trim();
+  if (text === '0') return '0 (untagged)';
+  return text || 'Belum terbaca';
+}
+
 function genieTagText(row = {}) {
   const tags = Array.isArray(row.tags) ? row.tags.filter(Boolean) : [];
   return tags.length ? tags.join(', ') : '-';
@@ -18193,6 +18199,7 @@ async function openGenieWanModal(row = {}) {
           ${item.primary ? '<span class="badge positive">Utama</span>' : ''}
           ${wanStatus(item)}
           <span>${escapeHtml((item.bindings || []).join(', ') || 'Tanpa binding')}</span>
+          ${item.protected ? '' : `<button class="danger-button compact" type="button" data-genie-wan-delete="${escapeHtml(item.id)}" ${item.deletable ? '' : 'disabled'} title="${escapeHtml(item.deleteReason || 'Hapus koneksi WAN ini')}">Hapus WAN</button>`}
         </div>
       </div>
     `).join('')
@@ -18266,6 +18273,7 @@ async function openGenieWanModal(row = {}) {
     </div>
     <div class="modal-actions field full">
       <button class="ghost-button" type="button" data-close-modal>Tutup</button>
+      <button class="ghost-button" id="genieWanRead" type="button">Periksa Ulang</button>
       <button class="ghost-button" id="genieWanCreateNew" type="button">Tambah WAN Baru</button>
       <button class="ghost-button" id="genieWanBindingOnly" type="button">Simpan Binding</button>
       <button class="button" id="genieWanSubmit" type="submit">Kirim Konfigurasi</button>
@@ -18323,10 +18331,10 @@ async function openGenieWanModal(row = {}) {
         verification.verified ? 'success' : 'pending',
         verification.verified
           ? (bindingOnly ? 'Binding WAN berhasil disimpan' : 'WAN berhasil dikonfigurasi')
-          : (bindingOnly ? 'Binding WAN sudah dikirim' : 'Konfigurasi WAN sudah dikirim'),
+          : verification.state === 'unverified' ? 'Hasil WAN belum sesuai' : (bindingOnly ? 'Binding WAN sudah dikirim' : 'Konfigurasi WAN sudah dikirim'),
         verification.verified
           ? 'Binding dan inform modem sudah terverifikasi melalui GenieACS.'
-          : 'Modem belum mengirim inform terbaru. Konfigurasi tetap berada di antrean GenieACS.'
+          : (verification.message || 'Hasil WAN belum terverifikasi. Periksa ulang konfigurasi sebelum mengirim lagi.')
       );
       renderGenieAcs({ refresh: true });
     } catch (error) {
@@ -18347,6 +18355,30 @@ async function openGenieWanModal(row = {}) {
   const formTitle = document.getElementById('genieWanFormTitle');
   const modeInputs = [...modalBody.querySelectorAll('input[name="mode"]')];
   const bindingInputs = [...modalBody.querySelectorAll('input[name="bindings"]')];
+  let deletingWan = false;
+  modalBody.querySelectorAll('[data-genie-wan-delete]').forEach(button => button.addEventListener('click', async () => {
+    const selected = rowById.get(button.dataset.genieWanDelete || '');
+    if (deletingWan || !selected?.deletable) return;
+    if (!window.confirm(`Hapus ${selected.label}${selected.username ? ` (${selected.username})` : ''} dari modem ${genieDeviceLabel(row)}?${selected.connected ? ' Koneksi pada WAN ini akan terputus.' : ''}`)) return;
+    deletingWan = true;
+    const controls = [...modalBody.querySelectorAll('button:not([data-close-modal]), input, select')];
+    controls.forEach(control => {control.disabled = true;});
+    const status = document.getElementById('genieWanOperationStatus');
+    try {
+      setGenieModalStatus(status, 'loading', 'Menghapus WAN', 'Memeriksa target dan menunggu jawaban modem.');
+      const result = await api(`/api/genieacs/devices/${encodeURIComponent(row.id)}/wan`, { method: 'DELETE', timeoutMs: 45000,
+        body: JSON.stringify({targetWan: selected.id, expectedRevision: selected.deleteRevision, confirm: true}) });
+      if (result.verification?.verified) {
+        setToast('WAN berhasil dihapus');
+        await openGenieWanModal(row);
+        void renderGenieAcs({refresh: true});
+      } else {
+        setGenieModalStatus(status, 'pending', 'Penghapusan sudah diproses', 'Periksa ulang daftar WAN untuk memastikan hasilnya.');
+      }
+    } catch (error) {setGenieModalStatus(status, 'error', 'WAN belum terverifikasi terhapus', error.message || 'Periksa ulang sebelum mencoba lagi');}
+    finally {const read = document.getElementById('genieWanRead');if (read) read.disabled = false;}
+  }));
+  document.getElementById('genieWanRead')?.addEventListener('click', () => {void openGenieWanModal(row).catch(error => setToast(error.message));});
   const syncWanForm = () => {
     const selected = createWanRequested ? null : (rowById.get(target?.value || '') || null);
     if (formTitle) formTitle.textContent = createWanRequested ? 'Tambah WAN baru' : (selected ? `Edit WAN ${selected.label}` : 'Pilih WAN existing');
@@ -18740,6 +18772,10 @@ async function renderGenieAcs(options = {}) {
                     ${nasActiveBadge(nasName)}
                   </div>
                   <div class="genieacs-card-item">
+                    <span>VLAN Internet</span>
+                    <strong>${escapeHtml(genieVlanText(row.wanVlan))}</strong>
+                  </div>
+                  <div class="genieacs-card-item">
                     <span>Type</span>
                     <strong title="${escapeHtml(row.productClass || '-')}">${escapeHtml(row.productClass || '-')}</strong>
                   </div>
@@ -18824,6 +18860,7 @@ async function renderGenieAcs(options = {}) {
                         </button>
                       ` : ''}
                     </div>
+                    <small class="muted">VLAN Internet: ${escapeHtml(genieVlanText(row.wanVlan))}</small>
                   </td>
                   <td class="genieacs-nowrap" title="${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}">${escapeHtml(row.ipAddress || row.framedIpAddress || '-')}</td>
                   <td class="genieacs-truncate" title="${escapeHtml(row.nasName || row.nasIpAddress || '-')}">${nasActiveBadge(row.nasName || row.nasIpAddress || '-')}</td>
@@ -26824,15 +26861,15 @@ async function renderPartnerReport(kind = 'report', options = {}) {
 let oltUiLoadPromise = null;
 async function renderMonitoringOlt(mode = 'olt') {
   const currentView=mode==='tickets'?'monitoringTickets':'monitoringOlt';
-  if (!window.FakenetOltUI || !window.FakenetTicketContext || !window.FakenetOltRegistration || !window.FakenetOltCatalogue || !window.FakenetOltBridge || !window.FakenetOltBandwidth) {
+  if (!window.FakenetOltUI || !window.FakenetTicketContext || !window.FakenetOltRegistration || !window.FakenetOltCatalogue || !window.FakenetOltBridge || !window.FakenetOltBandwidth || !window.FakenetOltSettings || !window.FakenetOltOnuSettings) {
     if (!oltUiLoadPromise) oltUiLoadPromise = (async () => {
-      const version = 'olt-resources-20261124-r1';
+      const version = 'acs-management-split-20261126-r1';
       for (const path of ['/olt.css', '/ticket-context.css']) {
         const href = path + '?ui=' + version;
         if (document.querySelector(`link[href="${href}"]`)) continue;
         const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = href; document.head.appendChild(style);
       }
-      for (const [path, loaded] of [['/ticket-context.js', 'FakenetTicketContext'], ['/olt-catalogue.js', 'FakenetOltCatalogue'], ['/olt-registration.js', 'FakenetOltRegistration'], ['/olt-bridge.js', 'FakenetOltBridge'], ['/olt-bandwidth.js', 'FakenetOltBandwidth'], ['/olt.js', 'FakenetOltUI']]) {
+      for (const [path, loaded] of [['/ticket-context.js', 'FakenetTicketContext'], ['/olt-catalogue.js', 'FakenetOltCatalogue'], ['/olt-registration.js', 'FakenetOltRegistration'], ['/olt-bridge.js', 'FakenetOltBridge'], ['/olt-bandwidth.js', 'FakenetOltBandwidth'], ['/olt-acs.js', 'FakenetOltAcs'], ['/olt-settings.js', 'FakenetOltSettings'], ['/olt-onu-settings.js', 'FakenetOltOnuSettings'], ['/olt.js', 'FakenetOltUI']]) {
         if (window[loaded]) continue;
         await new Promise((resolve, reject) => {
           const script = document.createElement('script'); script.src = path + '?ui=' + version;

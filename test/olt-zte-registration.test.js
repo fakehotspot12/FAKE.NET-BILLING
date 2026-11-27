@@ -76,6 +76,12 @@ test('discovery yields to an active bridge editor without resetting the automati
  try{bridge.isBusy=id=>id===f.device.id;assert.deepEqual(await registration.tick(f.data,options),{processed:0});assert.equal(requests,0);assert.equal(registration.settings(f.device)[key].enabled,true);}finally{bridge.isBusy=original;}
  assert.equal((await registration.tick(f.data,options)).processed,1);assert.equal(registration.jobs(f.device).at(-1).status,'verified');
 });
+test('a trusted event can wake discovery after two seconds without repeating an existing registration or enabling a manual PON',async t=>{
+ const f=await seeded(),plan=await registration.prepare(f.data,f.device,f.actor,{kind:'automation',ponKey:key,enabled:true},f.options);registration.activate(f.data,f.device,f.actor,{token:plan.token,revision:plan.revision,confirmId:f.device.id,confirmTarget:key,confirmImpact:true});let time=Date.now(),reads=0;const nativeNow=Date.now;t.mock.method(Date,'now',()=>time);
+ const options={...f.options,transportOptions:{transports:{commands:async({commands})=>{reads++;return response(commands,f.model);}}},persist:async(device,job)=>registration.record(device,job)};
+ assert.equal((await registration.tick(f.data,options)).processed,1);const after=reads;time+=3000;assert.equal((await registration.tick(f.data,options)).processed,0);assert.equal(reads,after);
+ assert.equal((await registration.tick(f.data,{...options,wakeDeviceId:f.device.id})).processed,0);assert.equal(reads,after+1);assert.equal(registration.settings(f.device)['1/1/8'],undefined);time=nativeNow();
+});
 test('native PnP races, disabled PON, malformed tables, unknown firmware and copied generic profiles hold safely',async()=>{
  const f=await seeded();for(const change of[m=>m.native=true,m=>m.interfaceEnabled=false,m=>m.catalogue.firmwares=['V9']]){const model=structuredClone(f.model);change(model);await assert.rejects(registration.readState(f.data,f.device,key,{...f.options,transportOptions:{transports:{commands:async({commands})=>response(commands,model)}}}));assert.equal(model.registered,false);}
  const state=await registration.readState(f.data,f.device,key,f.options);state.onuTypes.push({name:registration.TYPE,tcont:8,gem:32});assert.throws(()=>registration.selection(f.device,state,key),/bertabrakan/);state.onuTypes.pop();state.catalogue.vlans=[1,100];assert.throws(()=>registration.selection(f.device,state,key),/VLAN/);

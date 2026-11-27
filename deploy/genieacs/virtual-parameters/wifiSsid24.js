@@ -7,13 +7,16 @@ const paths = [
   "Device.WiFi.SSID.2.SSID"
 ];
 
+const declarations = new Map(paths.map(path => [path, declare(path, { path: 1, value: 1 })]));
+commit();
+
 function clean(value) {
   return String(value || "").trim();
 }
 
 let result = "";
 for (const path of paths) {
-  const rows = declare(path, { value: Date.now() - 86400000 });
+  const rows = declarations.get(path) || [];
   for (const row of rows) {
     const value = clean(row.value && row.value[0]);
     if (value) {

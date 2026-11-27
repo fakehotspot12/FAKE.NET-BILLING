@@ -25,10 +25,12 @@ function evaluateVp(raw) {
   return { value: result.value[0] === '' ? null : Number(result.value[0]), reads };
 }
 function backfill(value) {
-  const lines = bootstrap.slice(bootstrap.indexOf("    'function rxPowerText(value, path) {'"), bootstrap.indexOf("    'function tempConvertRaw(value) {'"));
-  const code = lines.split('\n').filter(line => line.trim().startsWith("'")).map(line => vm.runInNewContext(line.trim().replace(/,$/, ''))).join('\n');
-  return vm.runInNewContext(`${code}\nrxPowerText(value, parameter)`, { value, parameter: rawPath, clean: v => String(v ?? '').trim() });
+  const {evaluateCachedVirtualParameters} = require('../deploy/genieacs/bootstrap');
+  const result = evaluateCachedVirtualParameters(device(value), [{name:'RXPower',script:vp}]);
+  assert.deepEqual(result.errors, []);
+  return result.set['VirtualParameters.RXPower']._value;
 }
+
 test('ZTE unsigned optical counters use logarithmic 0.1-uW conversion consistently in billing, VP and installer', () => {
   for (const [raw, expected] of [[46, -23.37], [77, -21.14], [127, -18.96], [233, -16.33], [255, -15.93], [312, -15.06]]) {
     assert.equal(genie.normalizeDevice(device(raw), {}).rxPowerValue, expected, String(raw));

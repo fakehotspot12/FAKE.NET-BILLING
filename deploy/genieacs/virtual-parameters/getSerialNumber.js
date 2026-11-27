@@ -18,7 +18,8 @@ const paths = [
 ];
 const knownPaths = paths.map(path => declare(path, { path: 1 }));
 commit();
-const cachedValues = knownPaths.map(rows => Array.from(rows, item => declare(item.path, { value: 1 })));
+const knownNames = knownPaths.map(rows => Array.from(rows, item => item.path));
+const cachedValues = knownNames.map(names => names.map(path => declare(path, { value: 1 })));
 commit();
 
 let result = "";

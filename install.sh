@@ -307,7 +307,7 @@ install_node_deps() {
   node -e "require('bullmq'); require('web-push'); require('sharp'); require('ssh2'); require('./src/whatsapp-queue'); require('./src/payment-promise'); require('./src/login-turnstile'); require('./src/olt-monitor'); require('./src/olt-auto-identity'); require('./src/olt-device-removal'); require('./src/customer-device-removal'); require('./src/network-address'); require('./src/olt-planned-reboot'); require('./src/olt-ticketing'); require('./src/service-tickets'); require('./src/ticket-incidents'); require('./src/ticket-network'); require('./src/ticket-team'); require('./src/ticket-reference'); require('./src/ticket-recovery'); require('./src/ticket-templates'); require('./src/ticket-customer-notifications'); require('./src/wifiku-modem-status'); require('./src/olt-vendors').loadLibrary().catch(error => { console.error(error.message); process.exitCode=1; })" >/dev/null
   node -e "const fs=require('fs'),path=require('path'); for(const file of[require.resolve('@xterm/xterm'),require.resolve('@xterm/addon-fit'),path.join(path.dirname(require.resolve('@xterm/xterm')),'../css/xterm.css')])fs.accessSync(file)"
   node -e "require('node-pty'); const {Terminal}=require('@xterm/headless'); const terminal=new Terminal({cols:80,rows:24,allowProposedApi:true}); terminal.dispose(); require('./src/olt-terminal-native')"
-  node -e "require('./src/olt-pon'); require('./src/olt-cdata-pon'); require('./src/olt-zte-pnp'); require('./src/olt-zte-bandwidth'); require('./src/olt-zte-registration'); require('./src/olt-zte-tr069'); require('./src/olt-zte-catalogue'); require('./src/olt-zte-bridge'); require('./src/olt-zte-onu'); require('./src/olt-ticket-control'); require('./src/ont-radio-capability')"
+  node -e "require('net-snmp'); require('./src/olt-pon'); require('./src/olt-cdata-pon'); require('./src/olt-zte-pnp'); require('./src/olt-zte-bandwidth'); require('./src/olt-zte-registration'); require('./src/olt-events'); require('./src/olt-registration-scheduler'); require('./src/olt-zte-tr069'); require('./src/olt-zte-catalogue'); require('./src/olt-zte-bridge'); require('./src/olt-zte-onu'); require('./src/olt-ticket-control'); require('./src/ont-radio-capability')"
 }
 
 install_genieacs_runtime() {
@@ -1407,6 +1407,7 @@ uninstall_total() {
     /etc/fakenet-billing-waha.env \
     /etc/fakenet-billing-turnstile.env \
     /etc/fakenet-billing-isolir-context.env \
+    /etc/fakenet-billing-olt-events.json \
     /etc/systemd/system/fakenet-billing.service.d/60-turnstile.conf \
     /etc/systemd/system/fakenet-billing.service.d/61-isolir-context.conf \
     /etc/systemd/system/fakenet-billing-isolir.service.d/61-isolir-context.conf \

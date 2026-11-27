@@ -27,7 +27,8 @@ const addressPaths = [
 ];
 const knownPaths = connectionPaths.map(path => declare(path, { path: 1 }));
 commit();
-const connectionValues = knownPaths.map(rows => Array.from(rows, item => declare(item.path, { value: 1 })));
+const connectionNames = knownPaths.map(rows => Array.from(rows, item => item.path));
+const connectionValues = connectionNames.map(names => names.map(path => declare(path, { value: 1 })));
 commit();
 
 let result = "";
@@ -41,16 +42,17 @@ for (const rows of connectionValues) {
 if (!result) {
   const knownAddresses = addressPaths.map(path => declare(path, { path: 1 }));
   commit();
-  const addresses = knownAddresses.map(rows => Array.from(rows, item => ({
-    address: declare(item.path, { value: 1 }),
-    metadataPaths: declare(item.path.replace(/\.(?:ExternalIPAddress|IPv4Address\.\d+\.IPAddress)$/, ".*"), { path: 1 })
+  const addressNames = knownAddresses.map(rows => Array.from(rows, item => item.path));
+  const addresses = addressNames.map(names => names.map(path => ({
+    address: declare(path, { value: 1 }),
+    metadataPaths: declare(path.replace(/\.(?:ExternalIPAddress|IPv4Address\.\d+\.IPAddress)$/, ".*"), { path: 1 })
   })));
   commit();
   const metadataNames = ["Name", "Alias", "ConnectionType", "X_HW_SERVICELIST", "X_FH_ServiceList", "X_CT-COM_ServiceList", "X_CMCC_ServiceList", "X_ZTE-COM_ServiceList", "X_GC_ServiceList"];
-  const cachedValues = addresses.map(rows => rows.map(row => ({
+  const metadataPaths = addresses.map(rows => rows.map(row => Array.from(row.metadataPaths, item => item.path).filter(path => metadataNames.includes(path.split(".").pop()))));
+  const cachedValues = addresses.map((rows, i) => rows.map((row, j) => ({
     address: row.address,
-    metadata: Array.from(row.metadataPaths).filter(item => metadataNames.includes(item.path.split(".").pop()))
-      .map(item => declare(item.path, { value: 1 }))
+    metadata: metadataPaths[i][j].map(path => declare(path, { value: 1 }))
   })));
   commit();
   for (const rows of cachedValues) {

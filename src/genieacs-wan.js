@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const PROTECTED_WAN_VLANS = new Set([100, 1111]);
 const LAN_KEYS = Array.from({ length: 4 }, (_, index) => `LAN${index + 1}`);
 const SSID_KEYS = Array.from({ length: 8 }, (_, index) => `SSID${index + 1}`);
@@ -163,6 +164,9 @@ function wanVlan(connection = {}, connectionDevice = {}, vendor = {}) {
     'X_CT-COM_WANGponLinkConfig.VLANIDMark'
   ]);
   const value = direct !== '' ? direct : xpon;
+  // Zero is a reported untagged WAN, not a missing VLAN. Provisioning still
+  // validates tagged VLANs separately before any configuration write.
+  if (cleanText(value) === '0') return 0;
   const valid = validVlanNumber(value);
   if (valid !== null) return valid;
   const nameVlan = cleanText(firstValue(connection, ['Name'])).match(/(?:^|_)VID_(\d{1,4})(?:_|$)/i);
@@ -263,7 +267,7 @@ function bridgeTarget(device = {}, vendor = detectWanVendor(device)) {
 }
 
 function wanDisplayLabel(row = {}) {
-  const vlanText = row.vlan ? row.vlan : 'belum terbaca';
+  const vlanText = row.vlan === 0 ? '0 (untagged)' : (row.vlan ?? 'belum terbaca');
   if (row.protected) return `WAN Management - VLAN ${vlanText}`;
   if (row.mode === 'pppoe') return `PPPoE - VLAN ${vlanText}`;
   if (row.mode === 'bridge') return `Bridge - VLAN ${vlanText}`;
@@ -331,7 +335,7 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
           const editable = !locked && ['pppoe', 'bridge'].includes(mode);
           const bindingEditable = !locked
             && ['pppoe', 'bridge', 'ip'].includes(mode)
-            && vlan !== null
+            && vlan !== null && vlan > 0
             && parameterFamily !== 'unknown';
           rows.push({
             id: basePath,
@@ -347,8 +351,8 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
             serviceList,
             name,
             status,
-            active: truthy(firstValue(connection, ['Enable'])) || /connected|up/i.test(status),
-            connected: /connected|up/i.test(status),
+            active: truthy(firstValue(connection, ['Enable'])) || /^(?:connected|up)$/i.test(status),
+            connected: /^(?:connected|up)$/i.test(status),
             bindings,
             bindingExtraPaths: vendor.portBindingRows
               ? vendor.portBindingRows.filter(row => row.wan === basePath).flatMap(row => extraPathBindings({ 'X_ZTE-COM_LanInterface': row.lan }))
@@ -379,12 +383,25 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
     return score(right) - score(left);
   })[0] || null;
   const fallbackVlan = validVlanNumber(pathValue(device, 'VirtualParameters.wanVlan'));
-  if (primary && !primary.vlan && fallbackVlan !== null) {
+  if (primary && primary.vlan === null && fallbackVlan !== null) {
     primary.vlan = fallbackVlan;
   }
   rows.forEach((row) => {
     row.primary = Boolean(primary && row.id === primary.id);
     row.label = wanDisplayLabel(row);
+    const object = row.basePath.split('.').reduce((node, key) => node?.[key], device);
+    const parent = device.InternetGatewayDevice?.WANDevice?.[row.wanDeviceIndex]?.WANConnectionDevice?.[row.connectionIndex];
+    // A display fallback may depend on which account the UI selected. The
+    // deletion identity must always reflect this connection's native VLAN.
+    const revisionVlan = wanVlan(object, parent, vendor);
+    row.deletable = !row.protected && object?._writable === true;
+    row.deleteReason = row.protected ? 'WAN TR069/ACS dilindungi'
+      : object?._writable === false ? 'Modem tidak mengizinkan penghapusan WAN ini'
+        : object?._writable !== true ? 'Izin hapus WAN belum terbaca dari modem' : '';
+    row.deleteRevision = crypto.createHash('sha256').update(JSON.stringify([
+      device._id, device._deviceId?._SerialNumber, row.basePath, row.mode, revisionVlan,
+      row.username, row.name, row.serviceList, row.bindings, row.protected, object?._writable
+    ])).digest('hex');
   });
   const managementRows = rows.filter((row) => row.protected).sort((left, right) => {
     const score = (row) => (row.connected ? 20 : 0) + (row.active ? 10 : 0) + (row.vlan ? 1 : 0);
@@ -404,6 +421,28 @@ function summarizeWanConnections(device = {}, preferredUsername = '') {
       || left.instance - right.instance;
   });
   return { vendor, rows, primary, management };
+}
+
+function prepareWanDeletion(device = {}, payload = {}) {
+  const targetWan = cleanText(payload.targetWan);
+  if (!/^InternetGatewayDevice\.WANDevice\.[1-9]\d*\.WANConnectionDevice\.[1-9]\d*\.(?:WANPPPConnection|WANIPConnection)\.[1-9]\d*$/.test(targetWan)) {
+    throw new Error('Pilih satu koneksi WAN existing yang akan dihapus');
+  }
+  const summary = summarizeWanConnections(device);
+  const target = summary.rows.find(row => row.id === targetWan);
+  if (!target) throw new Error('WAN tidak ditemukan; periksa ulang daftar WAN');
+  if (!target.deletable) throw new Error(target.deleteReason || 'WAN ini tidak dapat dihapus');
+  if (payload.confirm !== true) throw new Error('Konfirmasi penghapusan WAN diperlukan');
+  if (!/^[a-f0-9]{64}$/.test(String(payload.expectedRevision || '')) || payload.expectedRevision !== target.deleteRevision) {
+    throw new Error('Identitas atau pengaturan WAN berubah; periksa ulang sebelum menghapus');
+  }
+  const object = targetWan.split('.').reduce((node, key) => node?.[key], device);
+  const keys = ['Name', 'Username', 'ConnectionType', ...WAN_VLAN_PATHS,
+    'X_HW_SERVICELIST', 'X_HW_ServiceList', 'X_ZTE-COM_ServiceList', 'X_FH_ServiceList',
+    'X_CT-COM_ServiceList', 'X_CMCC_ServiceList', 'X_GC_ServiceList', 'ServiceList'];
+  const readParameters = keys.filter(key => Object.hasOwn(object?.[key] || {}, '_value')).map(key => targetWan + '.' + key);
+  if (!readParameters.length) throw new Error('Identitas WAN belum lengkap untuk penghapusan');
+  return { targetWan, target, readParameters, protectedWans: summary.rows.filter(row => row.protected).map(row => row.id) };
 }
 
 function availableWanBindings(device = {}) {
@@ -555,7 +594,8 @@ function connectionParameterValues(plan = {}) {
   const params = vendorParameterNames(vendor, mode);
   const connectionType = mode === 'bridge'
     ? (plan.objectType === 'WANPPPConnection' ? 'PPPoE_Bridged' : 'IP_Bridged')
-    : 'IP_Routed';
+    : mode === 'pppoe' && plan.existing?.mode === 'pppoe' && ['PPPoE_Routed', 'IP_Routed'].includes(plan.existing.connectionType)
+      ? plan.existing.connectionType : 'IP_Routed';
   const values = [
     [`${basePath}.ConnectionType`, connectionType, 'xsd:string'],
     [`${basePath}.NATEnabled`, mode === 'bridge' ? false : true, 'xsd:boolean'],
@@ -832,6 +872,7 @@ module.exports = {
   defaultWanTarget,
   detectWanVendor,
   prepareWanBinding,
+  prepareWanDeletion,
   prepareWanProvision,
   publicWanPlan,
   rebaseNewWanPlan,
