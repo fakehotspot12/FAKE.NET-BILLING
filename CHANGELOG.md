@@ -13,6 +13,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 ### Fixed
 
 - Memperbaiki pembacaan Virtual Parameters dengan deklarasi berkelompok agar tidak memicu terlalu banyak commit. Pembacaan VLAN, IP, serial, redaman, suhu, dan klien mengikuti parameter native yang tersedia; parameter password tidak lagi mengambil nilai username sebagai pengganti.
+- Pembacaan serial mengutamakan identitas TR-069 lokal tanpa menunggu discovery objek CPE. Serial native tetap menjadi cadangan dan normalisasi kode vendor tidak mengubah identitas asli modem.
 - Menghapus hanya penulisan waktu Inform bawaan yang dapat ditolak firmware dengan fault 9003/9007, tanpa mengganti jadwal kustom, interval Inform atau autentikasi existing.
 - Status konfigurasi WAN membedakan hasil terverifikasi, task yang benar-benar masih antre, dan hasil belum sesuai saat antrean kosong. Mode PPPoE native existing dipertahankan; PPPoE memakai Service `INTERNET`, sedangkan bridge memakai `OTHER`.
 - Memperbaiki antrean aksi HSGQ saat inventory sementara tidak lengkap, penggunaan IP Host/VEIP existing dan pembacaan WAN legacy. Identitas ambigu tetap menahan aksi; perintah yang hasilnya belum pasti tidak dikirim ulang otomatis.

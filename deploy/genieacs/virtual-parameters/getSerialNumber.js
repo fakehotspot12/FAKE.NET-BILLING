@@ -8,8 +8,14 @@ function normalizeSerial(value) {
   return /^[A-Z]{4}$/.test(vendor) ? vendor + serial.substr(8).toUpperCase() : serial;
 }
 
+// DeviceID is local ACS identity, not a discoverable CPE object. Read its
+// cached value directly before falling back to discovered native leaves.
+const identity = declare("DeviceID.SerialNumber", { value: 1 });
+commit();
+const identitySerial = normalizeSerial(identity.value && identity.value[0]);
+if (identitySerial) return { writable: false, value: [identitySerial, "xsd:string"] };
+
 const paths = [
-  "DeviceID.SerialNumber",
   "InternetGatewayDevice.DeviceInfo.SerialNumber",
   "Device.DeviceInfo.SerialNumber",
   "InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber",

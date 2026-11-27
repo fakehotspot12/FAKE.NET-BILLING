@@ -21,10 +21,10 @@ function evaluate(script, values) {
       } };
     }
     assert.equal(freshness.value, 1, 'Only epoch-cached parameter reads are allowed');
-    assert(Object.hasOwn(values, parameter), `Do not query unsupported leaves: ${parameter}`);
+    assert(parameter === 'DeviceID.SerialNumber' || Object.hasOwn(values, parameter), `Do not query unsupported leaves: ${parameter}`);
     return { path: parameter, get value() {
       assert(commits > issued, 'Value declarations must be committed first');
-      return [values[parameter]];
+      return [values[parameter] ?? ''];
     } };
   }, () => { commits++; }, [{}, { value: ['ignored-readonly-write'] }]);
   return { value: result.value[0], reads, commits, writable: result.writable };
@@ -72,6 +72,13 @@ test('serial fallback reads the vendor value only if canonical serial leaves are
   const values = { 'InternetGatewayDevice.DeviceInfo.X_HW_SerialNumber': 'HWTCA08506AF' };
   assert.equal(evaluate(serialSource, values).value, 'HWTCA08506AF');
   assert.equal(genie.normalizeDevice(makeDevice(values, ''), {}).serialNumber, 'HWTCA08506AF');
+});
+test('serial identity never depends on path discovery or queries native objects when DeviceID is available', () => {
+  const result = evaluate(serialSource, { 'DeviceID.SerialNumber': '4857544311223344' });
+  assert.equal(result.value, 'HWTC11223344');
+  assert.deepEqual(result.reads, [{ parameter: 'DeviceID.SerialNumber', freshness: { value: 1 } }]);
+  assert.equal(result.commits, 1);
+  assert.equal(result.writable, false);
 });
 test('IPTR069 reads cached connection-request addresses with two committed declaration stages', () => {
   for (const prefix of ['InternetGatewayDevice', 'Device']) {
