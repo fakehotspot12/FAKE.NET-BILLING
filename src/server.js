@@ -3151,7 +3151,7 @@ function terminationSourceText(...values) {
 }
 
 function billingManagedTerminationSource(value = '') {
-  return ['billing', 'overdue', 'system', 'auto', 'invoice', 'payment'].includes(terminationSourceText(value));
+  return ['billing', 'billing-auto-terminate', 'overdue', 'system', 'auto', 'invoice', 'payment'].includes(terminationSourceText(value));
 }
 
 function statusSeverity(status = '') {
@@ -6482,7 +6482,43 @@ function generateHotspotVouchers(data = {}, payload = {}, actor = {}) {
   return { batchId, created };
 }
 
-function syncRadiusCustomerStatus(data = {}, radiusUser = {}) {
+function resumeTerminatedCustomerBilling(data = {}, customer = {}, radiusUser = {}, options = {}) {
+  if (radiusUser.serviceType === 'hotspot') return null;
+  const wasTerminated = [customer.status, radiusUser.status, options.previousStatus]
+    .some(status => ['terminate', 'terminated', 'diberhentikan', 'berhenti'].includes(String(status || '').trim().toLowerCase()));
+  if (!wasTerminated) return null;
+
+  const now = options.now instanceof Date ? options.now : new Date();
+  const parts = localDateParts(now, data.settings?.timeZone);
+  const resumedAt = `${parts.year}-${parts.month}-${parts.day}`;
+  const nextPeriod = addMonthsToPeriod(resumedAt.slice(0, 7), 1);
+  const scheduledDue = dueDateForPeriod(nextPeriod, billingDueDayForCustomer(data.settings || {}, customer));
+  const existingDue = [customer.nextDue, customer.dueDate]
+    .map(value => String(value || '').slice(0, 10))
+    .filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .sort().at(-1) || '';
+  const nextDue = existingDue > scheduledDue ? existingDue : scheduledDue;
+  const previousTerminatedAt = customer.terminatedAt || radiusUser.terminatedAt || '';
+  customer.nextDue = nextDue;
+  customer.dueDate = nextDue;
+  // Automatic history marker, not an editable setting. Legacy initial-unpaid
+  // flags must not recreate a skipped period after this reactivation.
+  customer.billingResumedAt = resumedAt;
+  addActivity(data, 'customer', `Jadwal tagihan ${customer.name || customer.username || radiusUser.username} setelah aktivasi terminated: ${nextDue}`, {
+    action: 'terminated-billing-resumed',
+    customerId: customer.id || '',
+    radiusUserId: radiusUser.id || '',
+    username: radiusUser.username || customer.username || '',
+    terminatedAt: previousTerminatedAt,
+    resumedAt,
+    previousNextDue: existingDue,
+    nextDue,
+    actor: options.actor?.name || options.actor?.username || radiusUser.updatedBy || 'Billing'
+  });
+  return { resumedAt, nextDue };
+}
+
+function syncRadiusCustomerStatus(data = {}, radiusUser = {}, options = {}) {
   if (!radiusUser) return null;
   const customer = findCustomerForRadiusUser(data, radiusUser);
   if (!customer) return null;
@@ -6494,6 +6530,9 @@ function syncRadiusCustomerStatus(data = {}, radiusUser = {}) {
       : radiusUser.status === 'disabled'
         ? 'inactive'
         : 'active';
+  if (nextStatus === 'active' && radiusStatusForCustomer(radiusUser) === 'active') {
+    resumeTerminatedCustomerBilling(data, customer, radiusUser, options);
+  }
   customer.status = nextStatus;
   if (nextStatus === 'active' && radiusUser.billingIsolationOverride === true) {
     customer.billingIsolationOverride = true;
@@ -11566,13 +11605,14 @@ async function stampHotspotVoucherValidityFromSessions(data = {}, actor = {}) {
   return stampHotspotVoucherValidityFromFirstOnline(data, firstOnlineByUsername, actor);
 }
 
-function syncCustomerToRadiusActive(data = {}, customer = {}, actor = {}) {
+function syncCustomerToRadiusActive(data = {}, customer = {}, actor = {}, options = {}) {
   const user = (data.radiusUsers || []).find((item) => {
     return item.customerId === customer.id
       || item.id === customer.radiusUserId
       || String(item.username || '').trim().toLowerCase() === String(customer.username || '').trim().toLowerCase();
   });
   if (!user) return null;
+  resumeTerminatedCustomerBilling(data, customer, user, { ...options, actor });
   user.status = 'active';
   user.isolatedAt = '';
   user.isolationSource = '';
@@ -12011,7 +12051,7 @@ function customerHasUncoveredInvoices(data = {}, customer = {}) {
   });
 }
 
-function reactivateCustomerAfterPaidInvoice(data = {}, invoice = {}, actor = {}) {
+function reactivateCustomerAfterPaidInvoice(data = {}, invoice = {}, actor = {}, options = {}) {
   const customer = customerForInvoice(data, invoice);
   if (!customer?.id) {
     return { customer: null, activatedUser: null, requiresAdmin: false, source: '' };
@@ -12032,7 +12072,7 @@ function reactivateCustomerAfterPaidInvoice(data = {}, invoice = {}, actor = {})
   if (customerHasUncoveredInvoices(data, customer)) {
     return { customer, activatedUser: null, requiresAdmin: false, source: state.source, status: state.status };
   }
-  const activatedUser = syncCustomerToRadiusActive(data, customer, actor);
+  const activatedUser = syncCustomerToRadiusActive(data, customer, actor, options);
   return {
     customer,
     activatedUser,
@@ -12227,7 +12267,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     if (!customer) continue;
     const hasUnpaid = unpaidByCustomer.has(customer.id);
     if (!hasUnpaid) {
-      const activation = reactivateCustomerAfterPaidInvoice(data, invoice, actor);
+      const activation = reactivateCustomerAfterPaidInvoice(data, invoice, actor, { now });
       if (activation.activatedUser) activatedUsers.push(activation.activatedUser);
     }
   }
@@ -25126,7 +25166,7 @@ async function handleApi(req, res, url) {
           if (method === 'PUT') {
             memberProfileSync = syncRadiusMemberProfile(store, next, authContext.user);
           }
-          syncRadiusCustomerStatus(store, next);
+          syncRadiusCustomerStatus(store, next, { previousStatus, actor: authContext.user });
         }
         const targetUsername = payload.username || url.searchParams.get('username') || next.username || id;
         addActivity(store, 'monitoring', `Radius PPP-DHCP user ${targetUsername || id} ${method === 'POST' ? 'ditambahkan' : method === 'PUT' ? 'diperbarui' : 'dihapus'} oleh ${authContext.user.name || authContext.user.username}`, {

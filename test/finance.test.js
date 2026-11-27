@@ -1840,6 +1840,185 @@ test('terminating radius user keeps unpaid invoice pending and skips future invo
   assert.equal(generateInvoices(data, '2026-08').length, 0);
 });
 
+function terminatedResumeFixture(overrides = {}) {
+  const data = createDefaultStore();
+  data.settings.appMode = 'standalone';
+  data.settings.billingSource = 'local';
+  data.settings.waGateway.enabled = false;
+  data.settings.billing.postpaidDueDay = 25;
+  data.settings.billing.fixedInvoiceAdvanceDays = 3;
+  data.customers.push({
+    id: 'cus-resume', username: 'resume@isp.test', name: 'Pelanggan Uji',
+    status: 'terminate', terminationSource: 'billing-auto-terminate', terminatedAt: '2026-10-30',
+    price: 150000, paymentType: 'postpaid', billingPeriod: 'fixed', dueDay: 25,
+    activeDate: '2025-01-25', nextDue: '2026-11-25', dueDate: '2026-11-25',
+    firstInvoiceStatus: 'paid', ...overrides
+  });
+  data.radiusUsers.push({
+    id: 'rad-resume', customerId: 'cus-resume', username: 'resume@isp.test',
+    serviceType: 'pppoe', status: 'terminated', terminationSource: 'billing-auto-terminate',
+    terminatedAt: '2026-10-30'
+  });
+  data.invoices.push({
+    id: 'inv-resume-old', invoiceNo: '000101', customerId: 'cus-resume', username: 'resume@isp.test',
+    customerName: 'Pelanggan Uji', period: '2026-10', coveredPeriods: ['2026-10'],
+    amount: 150000, dueDate: '2026-10-25', status: 'pending'
+  });
+  return data;
+}
+
+for (const method of ['Tunai', 'Tunai - Loket', 'Transfer', 'Online']) {
+  test(`terminated reactivation after ${method} does not backfill its stopped month`, () => {
+    const data = terminatedResumeFixture({ firstInvoiceStatus: 'unpaid' });
+    const paid = markInvoicePaid(data, 'inv-resume-old', { paymentMethod: method, paidAt: '2026-11-24' });
+    const originalPaid = structuredClone(paid), payments = structuredClone(data.payments);
+    const result = serverInternals.reactivateCustomerAfterPaidInvoice(data, paid, { name: 'Finance' }, { now: new Date('2026-11-24T04:00:00Z') });
+    assert.ok(result.activatedUser);
+    assert.equal(data.customers[0].nextDue, '2026-12-25');
+    assert.equal(data.customers[0].dueDate, '2026-12-25');
+    assert.equal(data.customers[0].billingResumedAt, '2026-11-24');
+    assert.equal(data.customers[0].activeDate, '2025-01-25');
+    assert.deepEqual(data.invoices[0], originalPaid);
+    assert.deepEqual(data.payments, payments);
+    assert.equal(generateInvoices(data, '2026-11').length, 0);
+    assert.equal(generateInvoices(data, '2026-09').length, 0);
+    serverInternals.standaloneBillingAutomation(data, undefined, { now: new Date('2026-12-21T04:00:00Z') });
+    assert.equal(data.invoices.length, 1);
+    serverInternals.standaloneBillingAutomation(data, undefined, { now: new Date('2026-12-22T04:00:00Z') });
+    assert.equal(data.invoices.length, 2);
+    assert.equal(data.invoices[1].period, '2026-12');
+    assert.equal(data.invoices[1].dueDate, '2026-12-25');
+    assert.equal(data.invoices[1].amount, 150000);
+    assert.equal(data.invoices[1].status, 'pending');
+    assert.equal(data.customers[0].nextDue, '2027-01-25');
+    assert.equal(data.waMessages.length, 0);
+    assert.equal(data.activity.filter(row => row.meta?.action === 'terminated-billing-resumed').length, 1);
+  });
+}
+
+for (const day of [5, 10, 15, 20]) {
+  test(`terminated cycle reactivation retains global due day ${day}`, () => {
+    const data = terminatedResumeFixture({ billingPeriod: 'cycle', billingDueDayOverride: 28, firstInvoiceStatus: 'unpaid' });
+    data.settings.billing.postpaidDueDay = day;
+    const user = data.radiusUsers[0]; user.status = 'active'; user.terminatedAt = '';
+    serverInternals.syncRadiusCustomerStatus(data, user, { previousStatus: 'terminated', now: new Date('2026-11-24T04:00:00Z') });
+    assert.equal(data.customers[0].nextDue, `2026-12-${String(day).padStart(2, '0')}`);
+    assert.equal(generateInvoices(data, '2026-11').length, 0);
+    const next = generateInvoices(data, '2026-12');
+    assert.equal(next.length, 1);
+    assert.equal(next[0].dueDate, `2026-12-${String(day).padStart(2, '0')}`);
+  });
+}
+
+for (const sample of [
+  { date: '2026-12-31T04:00:00Z', day: 31, expected: '2027-01-31' },
+  { date: '2027-01-31T04:00:00Z', day: 31, expected: '2027-02-28' },
+  { date: '2028-01-31T04:00:00Z', day: 31, expected: '2028-02-29' },
+  { date: '2026-11-30T17:30:00Z', day: 25, expected: '2027-01-25' }
+]) test(`terminated reactivation respects local month and clamped due date ${sample.expected}`, () => {
+  const data = terminatedResumeFixture({ dueDay: sample.day });
+  data.radiusUsers[0].status = 'active';
+  serverInternals.syncRadiusCustomerStatus(data, data.radiusUsers[0], { now: new Date(sample.date) });
+  assert.equal(data.customers[0].nextDue, sample.expected);
+});
+
+test('terminated reactivation retains a later existing schedule and is not repeated on normal edits', () => {
+  const data = terminatedResumeFixture({ nextDue: '2027-03-25', dueDate: '2027-03-25' });
+  data.radiusUsers[0].status = 'active';
+  serverInternals.syncRadiusCustomerStatus(data, data.radiusUsers[0], { now: new Date('2026-11-24T04:00:00Z') });
+  assert.equal(data.customers[0].nextDue, '2027-03-25');
+  serverInternals.syncRadiusCustomerStatus(data, data.radiusUsers[0], { now: new Date('2027-04-24T04:00:00Z') });
+  assert.equal(data.customers[0].nextDue, '2027-03-25');
+  assert.equal(data.customers[0].billingResumedAt, '2026-11-24');
+  assert.equal(data.activity.filter(row => row.meta?.action === 'terminated-billing-resumed').length, 1);
+});
+
+test('terminated reactivation waits for all old invoices and keeps other existing bills unchanged', () => {
+  const data = terminatedResumeFixture();
+  data.invoices.push({ ...data.invoices[0], id: 'inv-resume-second', invoiceNo: '000102', period: '2026-09', coveredPeriods: ['2026-09'] });
+  const paid = markInvoicePaid(data, 'inv-resume-old', { paymentMethod: 'Tunai' });
+  assert.equal(serverInternals.reactivateCustomerAfterPaidInvoice(data, paid).activatedUser, null);
+  assert.equal(data.customers[0].status, 'terminate');
+  assert.equal(data.customers[0].nextDue, '2026-11-25');
+  assert.equal(data.customers[0].billingResumedAt, undefined);
+  const second = markInvoicePaid(data, 'inv-resume-second', { paymentMethod: 'Transfer' });
+  const invoices = structuredClone(data.invoices);
+  assert.ok(serverInternals.reactivateCustomerAfterPaidInvoice(data, second, {}, { now: new Date('2026-11-24T04:00:00Z') }).activatedUser);
+  assert.deepEqual(data.invoices, invoices);
+  assert.equal(data.customers[0].nextDue, '2026-12-25');
+});
+
+test('terminated reactivation preserves manual termination payment lock', () => {
+  const data = terminatedResumeFixture();
+  data.customers[0].terminationSource = 'manual'; data.radiusUsers[0].terminationSource = 'manual';
+  const paid = markInvoicePaid(data, 'inv-resume-old', { paymentMethod: 'Tunai' });
+  const result = serverInternals.reactivateCustomerAfterPaidInvoice(data, paid, {}, { now: new Date('2026-11-24T04:00:00Z') });
+  assert.equal(result.requiresAdmin, true);
+  assert.equal(data.customers[0].status, 'terminate');
+  assert.equal(data.customers[0].billingResumedAt, undefined);
+  data.radiusUsers[0].status = 'active';
+  serverInternals.syncRadiusCustomerStatus(data, data.radiusUsers[0], { previousStatus: 'terminated', now: new Date('2026-11-24T04:00:00Z') });
+  assert.equal(data.customers[0].nextDue, '2026-12-25');
+});
+
+test('ordinary isolated reactivation does not skip the current invoice period', () => {
+  const data = terminatedResumeFixture({ status: 'isolir', terminationSource: '', terminatedAt: '' });
+  data.radiusUsers[0].status = 'isolated';
+  const paid = markInvoicePaid(data, 'inv-resume-old', { paymentMethod: 'Tunai' });
+  assert.ok(serverInternals.reactivateCustomerAfterPaidInvoice(data, paid, {}, { now: new Date('2026-11-24T04:00:00Z') }).activatedUser);
+  assert.equal(data.customers[0].nextDue, '2026-11-25');
+  assert.equal(data.customers[0].billingResumedAt, undefined);
+  assert.equal(generateInvoices(data, '2026-11').length, 1);
+});
+
+test('terminated Hotspot reactivation does not alter voucher or monthly billing dates', () => {
+  const data = terminatedResumeFixture(); data.radiusUsers[0].serviceType = 'hotspot';
+  const paid = markInvoicePaid(data, 'inv-resume-old', { paymentMethod: 'Tunai' });
+  assert.ok(serverInternals.reactivateCustomerAfterPaidInvoice(data, paid, {}, { now: new Date('2026-11-24T04:00:00Z') }).activatedUser);
+  assert.equal(data.customers[0].nextDue, '2026-11-25');
+  assert.equal(data.customers[0].billingResumedAt, undefined);
+});
+
+test('non-terminated manual enable does not reset billing and pending is not a reactivation', () => {
+  const data = terminatedResumeFixture({ status: 'inactive' }); data.radiusUsers[0].status = 'active';
+  serverInternals.syncRadiusCustomerStatus(data, data.radiusUsers[0], { previousStatus: 'disabled', now: new Date('2026-11-24T04:00:00Z') });
+  assert.equal(data.customers[0].nextDue, '2026-11-25');
+  assert.equal(data.customers[0].billingResumedAt, undefined);
+  data.customers[0].status = 'terminate'; data.radiusUsers[0].status = 'pending';
+  serverInternals.syncRadiusCustomerStatus(data, data.radiusUsers[0], { previousStatus: 'terminated', now: new Date('2026-11-24T04:00:00Z') });
+  assert.equal(data.customers[0].nextDue, '2026-11-25');
+  assert.equal(data.customers[0].billingResumedAt, undefined);
+});
+
+test('terminated manual reactivation preserves an existing current-month invoice', () => {
+  const data = terminatedResumeFixture();
+  data.invoices.push({ ...data.invoices[0], id: 'inv-existing-current', invoiceNo: '000102', period: '2026-11', coveredPeriods: ['2026-11'] });
+  const invoices = structuredClone(data.invoices); data.radiusUsers[0].status = 'active';
+  serverInternals.syncRadiusCustomerStatus(data, data.radiusUsers[0], { now: new Date('2026-11-24T04:00:00Z') });
+  assert.deepEqual(data.invoices, invoices);
+  assert.equal(data.customers[0].nextDue, '2026-12-25');
+});
+
+test('cancelled stopped-month invoice does not rewind a terminated reactivation schedule', () => {
+  const data = terminatedResumeFixture({ status: 'active', billingResumedAt: '2026-11-24', nextDue: '2026-12-25', dueDate: '2026-12-25' });
+  data.radiusUsers[0].status = 'active';
+  data.invoices.push({ ...data.invoices[0], id: 'inv-resume-wrong', invoiceNo: '000102', period: '2026-11', coveredPeriods: ['2026-11'] });
+  cancelInvoice(data, 'inv-resume-wrong', { reason: 'Koreksi masa terminated' });
+  assert.equal(data.customers[0].nextDue, '2026-12-25');
+  assert.equal(generateInvoices(data, '2026-11').length, 0);
+  assert.equal(data.invoices.find(row => row.id === 'inv-resume-old').status, 'pending');
+});
+
+test('terminated online callback uses actual activation date rather than an old gateway payment date', () => {
+  const data = terminatedResumeFixture();
+  data.settings.paymentGateway.enabled = true; data.settings.paymentGateway.provider = 'tripay';
+  serverInternals.fulfillPaymentGatewayCallback(data, { merchant_ref: '000101', reference: 'T-RESUME', status: 'PAID', total_amount: 150000, payment_method: 'QRIS', paid_at: '2026-10-31T04:00:00Z' }, { username: 'payment-gateway', name: 'Payment Gateway' });
+  const nextPeriod = addMonthsToPeriod(currentPeriod(), 1);
+  assert.equal(data.customers[0].status, 'active');
+  assert.equal(data.customers[0].nextDue, `${nextPeriod}-25`);
+  assert.equal(generateInvoices(data, currentPeriod()).length, 0);
+});
+
 test('monthly statistics combines new ppp installs, removed users, and paid vouchers by period', async () => {
   const data = createDefaultStore();
   const period = currentPeriod();

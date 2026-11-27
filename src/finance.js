@@ -1016,6 +1016,10 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
     if (!customerIsActive(customer)) {
       continue;
     }
+    const resumedPeriod = periodFromDateText(customer.billingResumedAt);
+    if (resumedPeriod && selectedPeriod <= resumedPeriod) {
+      continue;
+    }
     const proration = postpaidCycleProrationInfo(data.settings, customer, selectedPeriod);
     const registrationPeriod = periodFromDateText(customer.activeDate || customer.installedAt || customer.createdAt || '');
     // Paid at registration must not settle a first cycle that falls in a later month.
@@ -1030,7 +1034,8 @@ function generateInvoices(data, period = currentPeriod(), options = {}) {
       continue;
     }
     const nextDuePeriod = periodFromDateText(customer.nextDue || customer.dueDate || '');
-    if (nextDuePeriod && selectedPeriod < nextDuePeriod && !customerFirstInvoiceUnpaid(customer) && !firstInvoicePaidProration) {
+    if (nextDuePeriod && selectedPeriod < nextDuePeriod
+      && (resumedPeriod || (!customerFirstInvoiceUnpaid(customer) && !firstInvoicePaidProration))) {
       continue;
     }
 
@@ -1398,6 +1403,8 @@ function cancelInvoice(data, invoiceId, payload = {}) {
   const customer = (data.customers || []).find((item) => item.id === invoice.customerId);
   if (customer) {
     const releasedPeriod = invoiceCoveredPeriods(invoice)
+      .filter((period) => !periodFromDateText(customer.billingResumedAt)
+        || period > periodFromDateText(customer.billingResumedAt))
       .filter((period) => !(data.invoices || []).some((item) => (
         item.id !== invoice.id
         && item.customerId === customer.id
