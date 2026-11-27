@@ -13,6 +13,7 @@ Semua perubahan penting FAKE.NET Billing dicatat di file ini.
 ### Fixed
 
 - Reaktivasi pelanggan terminated memajukan Next Invoice otomatis ke bulan berikutnya dengan tanggal tagihan tetap mengikuti Fixed/Billing Cycle. Masa terminated tidak ditagih susulan meski status invoice awal masih unpaid; jadwal yang sudah lebih jauh, invoice/pembayaran existing, isolir biasa dan voucher Hotspot dipertahankan. Berlaku pada pelunasan otomatis maupun aktivasi manual tanpa form pengaturan tambahan.
+- Pemeriksaan scheduler atas invoice lama yang sudah lunas tidak dianggap sebagai pembayaran baru untuk mengaktifkan pelanggan terminated. Pemulihan otomatis memerlukan bukti pembayaran setelah tanggal berhenti; transaksi pembayaran yang sedang diproses tetap dapat mengaktifkan layanan pada hari yang sama.
 - Memperbaiki pembacaan Virtual Parameters dengan deklarasi berkelompok agar tidak memicu terlalu banyak commit. Pembacaan VLAN, IP, serial, redaman, suhu, dan klien mengikuti parameter native yang tersedia; parameter password tidak lagi mengambil nilai username sebagai pengganti.
 - Pembacaan serial mengutamakan identitas TR-069 lokal tanpa menunggu discovery objek CPE. Serial native tetap menjadi cadangan dan normalisasi kode vendor tidak mengubah identitas asli modem.
 - Menghapus hanya penulisan waktu Inform bawaan yang dapat ditolak firmware dengan fault 9003/9007, tanpa mengganti jadwal kustom, interval Inform atau autentikasi existing.

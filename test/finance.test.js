@@ -2019,6 +2019,26 @@ test('terminated online callback uses actual activation date rather than an old 
   assert.equal(generateInvoices(data, currentPeriod()).length, 0);
 });
 
+test('terminated scheduler does not activate a stopped customer from historical paid invoices', () => {
+  const data = terminatedResumeFixture();
+  markInvoicePaid(data, 'inv-resume-old', { paymentMethod: 'Tunai', paidAt: '2026-10-15' });
+  serverInternals.standaloneBillingAutomation(data, undefined, { now: new Date('2026-11-24T04:00:00Z') });
+  assert.equal(data.customers[0].status, 'terminate');
+  assert.equal(data.radiusUsers[0].status, 'terminated');
+  assert.equal(data.customers[0].nextDue, '2026-11-25');
+  assert.equal(data.customers[0].billingResumedAt, undefined);
+});
+
+test('terminated scheduler can recover a payment that happened after termination', () => {
+  const data = terminatedResumeFixture();
+  markInvoicePaid(data, 'inv-resume-old', { paymentMethod: 'Tunai', paidAt: '2026-11-24' });
+  serverInternals.standaloneBillingAutomation(data, undefined, { now: new Date('2026-11-24T04:00:00Z') });
+  assert.equal(data.customers[0].status, 'active');
+  assert.equal(data.customers[0].nextDue, '2026-12-25');
+  assert.equal(data.customers[0].billingResumedAt, '2026-11-24');
+  assert.equal(generateInvoices(data, '2026-11').length, 0);
+});
+
 test('monthly statistics combines new ppp installs, removed users, and paid vouchers by period', async () => {
   const data = createDefaultStore();
   const period = currentPeriod();

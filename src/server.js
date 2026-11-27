@@ -12069,6 +12069,15 @@ function reactivateCustomerAfterPaidInvoice(data = {}, invoice = {}, actor = {},
       status: state.status
     };
   }
+  if (options.fromAutomation === true && state.status === 'terminate') {
+    const stoppedAt = String(customer.terminatedAt || state.user?.terminatedAt || '').slice(0, 10);
+    const paidAt = String(invoice.paidAt || '').slice(0, 10);
+    // A scan of old paid invoices is not a new payment event. Actual payment
+    // handlers still reactivate immediately, including same-day settlements.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(stoppedAt) || !/^\d{4}-\d{2}-\d{2}$/.test(paidAt) || paidAt <= stoppedAt) {
+      return { customer, activatedUser: null, requiresAdmin: false, source: state.source, status: state.status };
+    }
+  }
   if (customerHasUncoveredInvoices(data, customer)) {
     return { customer, activatedUser: null, requiresAdmin: false, source: state.source, status: state.status };
   }
@@ -12267,7 +12276,7 @@ function standaloneBillingAutomation(data = {}, actor = { username: 'billing-aut
     if (!customer) continue;
     const hasUnpaid = unpaidByCustomer.has(customer.id);
     if (!hasUnpaid) {
-      const activation = reactivateCustomerAfterPaidInvoice(data, invoice, actor, { now });
+      const activation = reactivateCustomerAfterPaidInvoice(data, invoice, actor, { now, fromAutomation: true });
       if (activation.activatedUser) activatedUsers.push(activation.activatedUser);
     }
   }
